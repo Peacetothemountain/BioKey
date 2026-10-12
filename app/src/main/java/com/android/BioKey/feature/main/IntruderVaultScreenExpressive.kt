@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +60,7 @@ import com.android.BioKey.core.intruder.IntruderManager
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.ui.theme.ExpressiveTokens
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 object VaultThumbnailCache {
@@ -100,6 +102,7 @@ fun IntruderVaultSheet(onDismiss: () -> Unit, onChanged: (count: Int) -> Unit = 
     val stepUp = LocalStepUpAuth.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
+    val scope = rememberCoroutineScope()
     var reloadKey by remember { mutableIntStateOf(0) }
     var entries by remember { mutableStateOf<List<IntruderEntry>?>(null) }
     var preview by remember { mutableStateOf<IntruderEntry?>(null) }
@@ -117,9 +120,11 @@ fun IntruderVaultSheet(onDismiss: () -> Unit, onChanged: (count: Int) -> Unit = 
         stepUp.require("Delete intruder photo") {
             VaultThumbnailCache.remove(entry.record.file.absolutePath)
             entries = entries?.filterNot { it.record.file == entry.record.file }
-            IntruderManager.deleteIntruderRecord(entry.record)
             preview = null
-            reloadKey++
+            scope.launch(Dispatchers.IO) {
+                IntruderManager.deleteIntruderRecord(entry.record)
+                reloadKey++
+            }
         }
     }
 
@@ -255,8 +260,13 @@ fun IntruderVaultSheet(onDismiss: () -> Unit, onChanged: (count: Int) -> Unit = 
                     onClick = {
                         confirmClear = false
                         stepUp.require("Delete all intruder photos") {
-                            IntruderManager.clearAllIntruders(context)
-                            reloadKey++
+                            VaultThumbnailCache.clear()
+                            entries = emptyList()
+                            preview = null
+                            scope.launch(Dispatchers.IO) {
+                                IntruderManager.clearAllIntruders(context)
+                                reloadKey++
+                            }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(

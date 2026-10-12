@@ -1,5 +1,6 @@
 package com.android.BioKey.feature.lock
 
+import android.app.ActivityOptions
 import android.content.Intent
 import android.app.admin.DevicePolicyManager
 import android.graphics.Bitmap
@@ -122,7 +123,7 @@ class LockScreenActivity : FragmentActivity() {
         if (pkg.isBlank()) return false
         if (!selfProtection && (!vault.isGlobalLockEnabled() || LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode()))) {
             // Nothing to unlock; still honour a tap on a hidden-notification stand-in.
-            if (intent.getBooleanExtra(EXTRA_LAUNCH_AFTER_UNLOCK, false)) launchApp(pkg)
+            if (intent.getBooleanExtra(EXTRA_LAUNCH_AFTER_UNLOCK, false)) sendPendingDeepLink(pkg)
             return false
         }
         lockedPackage = pkg
@@ -233,12 +234,7 @@ class LockScreenActivity : FragmentActivity() {
                 } else {
                     LockStateTracker.onAppUnlocked(pkg)
                     if (launchAfter) {
-                        val pending = com.android.BioKey.feature.notification.BioKeyNotificationShieldService.cachedPendingIntents.remove(pkg)
-                        if (pending != null) {
-                            runCatching { pending.send() }.onFailure { launchApp(pkg) }
-                        } else {
-                            launchApp(pkg)
-                        }
+                        sendPendingDeepLink(pkg)
                     }
                 }
                 LockStateTracker.clearRegularLockPending(pkg)
@@ -288,6 +284,26 @@ class LockScreenActivity : FragmentActivity() {
         val realPkg = if (pkg == BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS) BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER else pkg
         packageManager.getLaunchIntentForPackage(realPkg)?.let { launch ->
             runCatching { startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        }
+    }
+
+    private fun sendPendingDeepLink(pkg: String) {
+        val pending = com.android.BioKey.feature.notification.BioKeyNotificationShieldService.cachedPendingIntents.remove(pkg)
+        if (pending != null) {
+            val options = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ActivityOptions.makeBasic().apply {
+                    pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                }.toBundle()
+            } else null
+            runCatching {
+                if (options != null) pending.send(this, 0, null, null, null, null, options)
+                else pending.send()
+            }.onFailure {
+                Log.w(TAG, "Failed sending deep link PendingIntent for $pkg, falling back to launch: ${it.message}")
+                launchApp(pkg)
+            }
+        } else {
+            launchApp(pkg)
         }
     }
 

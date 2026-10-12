@@ -15,10 +15,12 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.os.UserManager
 import android.provider.Settings
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.view.inputmethod.InputMethodManager
 import androidx.core.content.ContextCompat
 import com.android.BioKey.core.security.LockStateTracker
@@ -202,6 +204,29 @@ class BioKeyAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         isRunning = true
+        val userManager = getSystemService(UserManager::class.java)
+        if (userManager?.isUserUnlocked == false) {
+            Log.w(TAG, "Device in Direct Boot (before first unlock): deferring initialization")
+            ContextCompat.registerReceiver(
+                this,
+                object : BroadcastReceiver() {
+                    override fun onReceive(context: Context?, intent: Intent?) {
+                        if (intent?.action == Intent.ACTION_USER_UNLOCKED) {
+                            runCatching { this@BioKeyAccessibilityService.unregisterReceiver(this) }
+                            initServiceComponents()
+                        }
+                    }
+                },
+                IntentFilter(Intent.ACTION_USER_UNLOCKED),
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+            return
+        }
+        initServiceComponents()
+    }
+
+    private fun initServiceComponents() {
+        if (!isRunning) return
         vault = SecurityVault.getInstance(this)
         shield = InstantShieldOverlay(this, ::onShieldTimeout)
         selfProtection = SelfProtectionDetector(this)
@@ -219,7 +244,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         ProtectionAlerts.serviceRestored(this)
         // A locked app may already be in front (service restarted, or enabled over it).
         mainHandler.postDelayed(::reevaluateForeground, 250)
-        Log.i(TAG, "Accessibility service connected")
+        Log.i(TAG, "Accessibility service connected & components initialized")
     }
 
     /**
@@ -352,7 +377,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             // and opened Overview/Recents, route them to clean Home to prevent task thumbnail leak.
             if (isLauncher && vault.isRecentsShieldEnabled() && previous != null && vault.isAppLocked(previous) &&
                 !LockStateTracker.isAppUnlocked(previous, timeoutMode) &&
-                (cls.contains("QuickstepLauncher", ignoreCase = true) || cls.contains("Overview", ignoreCase = true) || cls.contains("Recents", ignoreCase = true))
+                isRecentsOverviewClass(cls)
             ) {
                 Log.i(TAG, "Recents shield active: routing to Home from Overview for $previous")
                 performGlobalAction(GLOBAL_ACTION_HOME)
@@ -368,6 +393,15 @@ class BioKeyAccessibilityService : AccessibilityService() {
         lock(target)
     }
 
+    private fun isRecentsOverviewClass(cls: String): Boolean {
+        val lower = cls.lowercase()
+        return lower.contains("quickstep") ||
+            lower.contains("overview") ||
+            lower.contains("recents") ||
+            lower.contains("nexuslauncher") || // Google Pixel Launcher
+            lower.contains("launcheractivity") // Samsung One UI Launcher
+    }
+
     private fun getTargetWindowBounds(target: String): Rect? {
         try {
             val currentWindows = windows
@@ -376,13 +410,18 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 val screenWidth = displayMetrics.widthPixels
                 val screenHeight = displayMetrics.heightPixels
                 for (win in currentWindows) {
+                    if (win.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
                     val root = win.root ?: continue
                     val pkg = root.packageName?.toString()
                     release(root)
-                    if (pkg == target) {
+                    if (pkg != null && (pkg == target || sameApp(pkg, target))) {
                         val bounds = Rect()
                         win.getBoundsInScreen(bounds)
-                        if (!bounds.isEmpty && (bounds.width() < screenWidth || bounds.height() < screenHeight)) {
+                        val isSplit = !bounds.isEmpty && (
+                            bounds.width() <= (screenWidth * 0.85f).toInt() ||
+                            bounds.height() <= (screenHeight * 0.85f).toInt()
+                        )
+                        if (isSplit) {
                             Log.d(TAG, "Multi-window split bounds detected for $target: $bounds")
                             return bounds
                         }

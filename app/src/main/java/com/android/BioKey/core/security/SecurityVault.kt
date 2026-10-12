@@ -59,6 +59,7 @@ class SecurityVault private constructor(private val context: Context) {
         private const val KEY_ID_HOLD_BOOT = "identity_hold_boot"
         private const val KEY_ID_HOLD_START = "identity_hold_start_elapsed"
         private const val KEY_SEAL = "integrity_seal_v1"
+        private const val KEY_TAMPER_LOCKDOWN = "tamper_lockdown"
 
         /** Identity Check's security delay after a biometric change. */
         private const val IDENTITY_HOLD_MS = 30 * 60_000L
@@ -190,7 +191,11 @@ class SecurityVault private constructor(private val context: Context) {
     @Volatile private var identityHoldBoot = NO_HOLD
     @Volatile private var identityHoldStart = 0L
 
+    @Volatile private var isTamperLockdown = false
+    fun isTamperLockdown(): Boolean = isTamperLockdown
+
     init {
+        isTamperLockdown = sharedPrefs.getBoolean(KEY_TAMPER_LOCKDOWN, false)
         val savedLocked = sharedPrefs.getStringSet(KEY_LOCKED, emptySet()).orEmpty()
         lockedAppsSet.addAll(savedLocked)
         _lockedAppsFlow.value = savedLocked.toSet()
@@ -296,7 +301,13 @@ class SecurityVault private constructor(private val context: Context) {
         // Clearing the setup flag would switch off self-protection and BioKey's own lock gate.
         _setupCompletedFlow.value = true
         _tamperDetectedFlow.value = true
-        writeAll()
+        if (lockedAppsSet.isEmpty() && (stored != null || HardwareKeyManager.hasIntegrityKey())) {
+            Log.w(TAG, "Integrity check failed with wiped/empty lock list: entering tamper lockdown mode")
+            isTamperLockdown = true
+            sharedPrefs.edit().putBoolean(KEY_TAMPER_LOCKDOWN, true).apply()
+        } else {
+            writeAll()
+        }
         ProtectionAlerts.tamperDetected(context)
     }
 
@@ -375,8 +386,10 @@ class SecurityVault private constructor(private val context: Context) {
     }
 
     fun acknowledgeTamper() {
-        if (!_tamperDetectedFlow.value) return
+        if (!_tamperDetectedFlow.value && !isTamperLockdown) return
         _tamperDetectedFlow.value = false
+        isTamperLockdown = false
+        sharedPrefs.edit().putBoolean(KEY_TAMPER_LOCKDOWN, false).apply()
         persist()
     }
 
@@ -394,6 +407,9 @@ class SecurityVault private constructor(private val context: Context) {
 
     /** Whether [packageName] is protected right now. When a profile is active, its packages govern. */
     fun isAppLocked(packageName: String): Boolean {
+        if (isTamperLockdown) {
+            return packageName != context.packageName
+        }
         if (!isGlobalLockEnabled()) return false
         val aliases = aliasesOf(packageName)
         val profile = activeProfile()

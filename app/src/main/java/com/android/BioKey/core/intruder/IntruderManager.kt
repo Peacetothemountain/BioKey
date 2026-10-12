@@ -179,7 +179,7 @@ object IntruderManager {
                 ?: sizes.minByOrNull { it.width * it.height }
                 ?: android.util.Size(640, 480)
 
-            val reader = ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, 1)
+            val reader = ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, 2)
             imageReader = reader
 
             handler.postDelayed({
@@ -301,7 +301,12 @@ object IntruderManager {
             else -> 0
         }
         val sensor = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 270
-        return (sensor + displayDegrees) % 360 // front camera: rotations add up (mirrored sensor)
+        val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
+        return if (facing == CameraCharacteristics.LENS_FACING_FRONT) {
+            (sensor - displayDegrees + 360) % 360
+        } else {
+            (sensor + displayDegrees) % 360
+        }
     }
 
     // ---------------------------------------------------------------------------------------

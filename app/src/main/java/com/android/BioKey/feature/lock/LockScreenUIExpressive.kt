@@ -118,7 +118,7 @@ fun LockScreenUIExpressive(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Android security locked biometrics after multiple failed attempts. Turn your screen off and unlock your phone with your PIN or pattern to reset the sensor.",
+                        text = statusMessage ?: "Biometric sensor locked by Titan M2 hardware policy. Please lock your device screen and unlock with your PIN or pattern to reset the sensor.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         textAlign = TextAlign.Center

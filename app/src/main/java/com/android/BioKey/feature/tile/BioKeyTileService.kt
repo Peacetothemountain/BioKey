@@ -1,19 +1,20 @@
 package com.android.BioKey.feature.tile
 
 import android.app.PendingIntent
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.main.MainActivity
-
-import android.content.ComponentName
-import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
@@ -37,11 +38,28 @@ class BioKeyTileService : TileService() {
         super.onStartListening()
         updateTile()
         listeningScope?.cancel()
-        val scope = CoroutineScope(Dispatchers.Main + Job())
+        val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
         listeningScope = scope
         scope.launch {
-            SecurityVault.getInstance(this@BioKeyTileService).globalLockEnabledFlow.collect {
+            val vault = SecurityVault.getInstance(this@BioKeyTileService)
+            combine(
+                vault.setupCompletedFlow,
+                vault.globalLockEnabledFlow,
+                vault.pausedUntilFlow
+            ) { setupCompleted, enabled, pausedUntil ->
+                Triple(setupCompleted, enabled, pausedUntil)
+            }.collect { (setupCompleted, _, pausedUntil) ->
                 updateTile()
+                if (setupCompleted && pausedUntil > 0L) {
+                    val remaining = pausedUntil - System.currentTimeMillis()
+                    if (remaining > 0L) {
+                        launch {
+                            delay(remaining)
+                            vault.isGlobalLockEnabled()
+                            updateTile()
+                        }
+                    }
+                }
             }
         }
     }
@@ -55,6 +73,10 @@ class BioKeyTileService : TileService() {
     override fun onClick() {
         super.onClick()
         val vault = SecurityVault.getInstance(this)
+        if (!vault.isSetupCompleted()) {
+            openApp()
+            return
+        }
         if (vault.isGlobalLockEnabled()) {
             if (isLocked) unlockAndRun { openPauseScreen() } else openPauseScreen()
         } else {
@@ -68,6 +90,17 @@ class BioKeyTileService : TileService() {
             action = MainActivity.ACTION_PAUSE_PROTECTION
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
+        launchActivityAndCollapse(intent)
+    }
+
+    private fun openApp() {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        launchActivityAndCollapse(intent)
+    }
+
+    private fun launchActivityAndCollapse(intent: Intent) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             val pending = PendingIntent.getActivity(
                 this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -81,10 +114,25 @@ class BioKeyTileService : TileService() {
 
     private fun updateTile() {
         val tile = qsTile ?: return
-        val enabled = SecurityVault.getInstance(this).isGlobalLockEnabled()
-        tile.state = if (enabled) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
+        val vault = SecurityVault.getInstance(this)
+        val setupCompleted = vault.isSetupCompleted()
+        val enabled = vault.isGlobalLockEnabled()
+
         tile.label = "BioKey"
-        tile.subtitle = if (enabled) "Protecting" else "Paused"
+        when {
+            !setupCompleted -> {
+                tile.state = Tile.STATE_UNAVAILABLE
+                tile.subtitle = "Setup required"
+            }
+            enabled -> {
+                tile.state = Tile.STATE_ACTIVE
+                tile.subtitle = "Protecting"
+            }
+            else -> {
+                tile.state = Tile.STATE_INACTIVE
+                tile.subtitle = "Paused"
+            }
+        }
         tile.updateTile()
     }
 }

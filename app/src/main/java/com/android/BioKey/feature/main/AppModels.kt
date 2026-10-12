@@ -17,5 +17,6 @@ data class AppItem(
     val iconBitmap: ImageBitmap?,
     val category: AppCategory,
     val isRecommended: Boolean,
-    val isWorkProfile: Boolean = false
+    val isWorkProfile: Boolean = false,
+    val uniqueKey: String = "${packageName}_${if (isWorkProfile) "work" else "personal"}"
 )

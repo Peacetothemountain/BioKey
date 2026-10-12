@@ -57,12 +57,16 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     private val onAppUnlocked: (String) -> Unit = { pkg ->
         if (connected) restoreNotificationsForPackage(pkg)
     }
+    private val onAppLocked: (String) -> Unit = { _ ->
+        if (connected) sweepActiveNotifications()
+    }
 
     override fun onListenerConnected() {
         super.onListenerConnected()
         connected = true
         LockStateTracker.addLockAllListener(onLockAll)
         LockStateTracker.addAppUnlockListener(onAppUnlocked)
+        LockStateTracker.addAppLockListener(onAppLocked)
         sweepActiveNotifications()
     }
 
@@ -70,12 +74,14 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         connected = false
         LockStateTracker.removeLockAllListener(onLockAll)
         LockStateTracker.removeAppUnlockListener(onAppUnlocked)
+        LockStateTracker.removeAppLockListener(onAppLocked)
         super.onListenerDisconnected()
     }
 
     override fun onDestroy() {
         LockStateTracker.removeLockAllListener(onLockAll)
         LockStateTracker.removeAppUnlockListener(onAppUnlocked)
+        LockStateTracker.removeAppLockListener(onAppLocked)
         super.onDestroy()
     }
 

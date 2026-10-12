@@ -234,7 +234,7 @@ fun MainScreenExpressive() {
                             AppCategory.PRIVACY,
                             AppCategory.SOCIAL
                         )
-                        items.add(AppItem(pkg, label, bitmap.asImageBitmap(), category, isRec, isWorkProfile = isWork))
+                        items.add(AppItem(pkg, label, bitmap.asImageBitmap(), category, isRec, isWorkProfile = isWork, uniqueKey = key))
                     }
                 }
             }
@@ -635,7 +635,7 @@ fun MainScreenExpressive() {
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(top = 4.dp, bottom = 32.dp)
                 ) {
-                    items(filteredApps, key = { "${it.packageName}_${it.isWorkProfile}" }) { app ->
+                    items(filteredApps, key = { it.uniqueKey }) { app ->
                         val isLocked = if (isViewingAll || currentProfile == null) {
                             lockedApps.contains(app.packageName)
                         } else {
@@ -1959,7 +1959,7 @@ private fun ProfileEditorModalSheetExpressive(
                     )
                 }
 
-                items(filteredApps, key = { it.packageName }) { app ->
+                items(filteredApps, key = { it.uniqueKey }) { app ->
                     val isChecked = selectedPackages.contains(app.packageName)
                     Surface(
                         onClick = {

@@ -4,12 +4,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.UserManager
+import android.util.Log
 import com.android.BioKey.core.security.HardwareKeyManager
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.lock.DeviceAdminHelper
-import kotlin.concurrent.thread
+import java.util.concurrent.Executors
 
 /**
  * Warms up settings and Keystore keys after boot or an app update, so the first lock after a
@@ -18,19 +19,29 @@ import kotlin.concurrent.thread
  */
 class BioKeyBootReceiver : BroadcastReceiver() {
 
+    companion object {
+        private const val TAG = "BioKeyBootReceiver"
+        private val bootExecutor = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "biokey-boot-worker").apply { isDaemon = true }
+        }
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             Intent.ACTION_BOOT_COMPLETED,
-            Intent.ACTION_MY_PACKAGE_REPLACED,
-            Intent.ACTION_LOCKED_BOOT_COMPLETED -> Unit
+            Intent.ACTION_MY_PACKAGE_REPLACED -> Unit
             else -> return
         }
         val appContext = context.applicationContext
         // Credential-encrypted storage and auth-bound keys aren't usable before the first unlock.
-        if (appContext.getSystemService(UserManager::class.java)?.isUserUnlocked == false) return
+        val userManager = appContext.getSystemService(UserManager::class.java)
+        if (userManager?.isUserUnlocked == false) {
+            Log.d(TAG, "Ignoring boot broadcast: user is locked in Direct Boot mode")
+            return
+        }
 
         val pending = goAsync()
-        thread(name = "biokey-boot-init") {
+        bootExecutor.execute {
             try {
                 val vault = SecurityVault.getInstance(appContext)
                 HardwareKeyManager.initialize(appContext)
@@ -42,6 +53,8 @@ class BioKeyBootReceiver : BroadcastReceiver() {
                         ProtectionAlerts.adminRemoved(appContext)
                     }
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to complete boot initialization", e)
             } finally {
                 pending.finish()
             }

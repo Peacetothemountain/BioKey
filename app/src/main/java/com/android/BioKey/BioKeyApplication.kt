@@ -6,14 +6,22 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.UserManager
+import android.util.Log
 import androidx.core.content.ContextCompat
 import com.android.BioKey.core.intruder.IntruderManager
 import com.android.BioKey.core.security.HardwareKeyManager
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.ScreenReceiver
-import kotlin.concurrent.thread
+import java.util.concurrent.Executors
 
 class BioKeyApplication : Application() {
+
+    companion object {
+        private const val TAG = "BioKeyApplication"
+        private val initExecutor = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "biokey-async-init").apply { isDaemon = true }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -44,10 +52,17 @@ class BioKeyApplication : Application() {
 
     private fun initCredentialProtectedComponents() {
         val app = this
-        thread(name = "biokey-async-init") {
-            HardwareKeyManager.initialize(app)
-            IntruderManager.migrateLegacyPhotos(app)
-            SecurityVault.getInstance(app)
+        initExecutor.execute {
+            try {
+                // Pre-warm SecurityVault first so UI threads find it ready in memory
+                SecurityVault.getInstance(app)
+                // Initialize and verify Keystore keys
+                HardwareKeyManager.initialize(app)
+                // Migrate legacy intruder captures in background
+                IntruderManager.migrateLegacyPhotos(app)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error initializing credential-protected components", e)
+            }
         }
     }
 }

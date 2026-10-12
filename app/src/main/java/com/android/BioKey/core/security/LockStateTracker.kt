@@ -67,6 +67,7 @@ object LockStateTracker {
 
     private val lockAllListeners = CopyOnWriteArraySet<() -> Unit>()
     private val appUnlockListeners = CopyOnWriteArraySet<(String) -> Unit>()
+    private val appLockListeners = CopyOnWriteArraySet<(String) -> Unit>()
 
     /** Notified after every [lockAll] (screen-off, manual lock), e.g. to re-redact notifications. */
     fun addLockAllListener(listener: () -> Unit) { lockAllListeners += listener }
@@ -75,6 +76,10 @@ object LockStateTracker {
     /** Notified whenever an app is unlocked, e.g. for notification shield stand-in dismissal. */
     fun addAppUnlockListener(listener: (String) -> Unit) { appUnlockListeners += listener }
     fun removeAppUnlockListener(listener: (String) -> Unit) { appUnlockListeners -= listener }
+
+    /** Notified whenever an app is locked or exits to launcher, e.g. to re-mask notifications. */
+    fun addAppLockListener(listener: (String) -> Unit) { appLockListeners += listener }
+    fun removeAppLockListener(listener: (String) -> Unit) { appLockListeners -= listener }
 
     // Short-lived Step-Up lease for dangerous security modifications
     @Volatile private var stepUpGrantedAt = 0L
@@ -148,6 +153,9 @@ object LockStateTracker {
                 launcherExited.remove(pkg)
             }
         }
+        if (isLauncherExit) {
+            appLockListeners.forEach { runCatching { it(packageName) } }
+        }
     }
 
     fun isAppUnlocked(packageName: String, timeoutMode: LockTimeoutMode): Boolean {
@@ -187,6 +195,7 @@ object LockStateTracker {
             launcherExited.remove(pkg)
             authSubFlows.remove(pkg)
         }
+        appLockListeners.forEach { runCatching { it(packageName) } }
     }
 
     /**
