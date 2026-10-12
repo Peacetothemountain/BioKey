@@ -238,32 +238,36 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || !::vault.isInitialized) return
-        val type = event.eventType
+        try {
+            val type = event.eventType
 
-        // Self-protection runs first: installers count as system overlays below.
-        val eventPkg = event.packageName?.toString()
-        if (eventPkg != null && selfProtection.isHost(eventPkg) && shouldGuardSelf() &&
-            selfProtection.isGuardedScreen(eventPkg, event)
-        ) {
-            triggerSelfProtection()
-            return
+            // Self-protection runs first: installers count as system overlays below.
+            val eventPkg = event.packageName?.toString()
+            if (eventPkg != null && selfProtection.isHost(eventPkg) && shouldGuardSelf() &&
+                selfProtection.isGuardedScreen(eventPkg, event)
+            ) {
+                triggerSelfProtection()
+                return
+            }
+
+            if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+                checkPipWindows()
+                return
+            }
+
+            // Only explicit activity window transitions trigger foreground app evaluation.
+            // Window changes (TYPE_WINDOWS_CHANGED) and content changes (TYPE_WINDOW_CONTENT_CHANGED)
+            // must never trigger app locking, preventing false authentication prompts when exiting,
+            // closing apps, or swiping home.
+            if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                return
+            }
+
+            val target = resolveForegroundPackage(event) ?: return
+            handleForeground(target, event.className?.toString().orEmpty())
+        } catch (t: Throwable) {
+            Log.e(TAG, "Unexpected error processing accessibility event: ${t.message}", t)
         }
-
-        if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-            checkPipWindows()
-            return
-        }
-
-        // Only explicit activity window transitions trigger foreground app evaluation.
-        // Window changes (TYPE_WINDOWS_CHANGED) and content changes (TYPE_WINDOW_CONTENT_CHANGED)
-        // must never trigger app locking, preventing false authentication prompts when exiting,
-        // closing apps, or swiping home.
-        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            return
-        }
-
-        val target = resolveForegroundPackage(event) ?: return
-        handleForeground(target, event.className?.toString().orEmpty())
     }
 
     private fun checkPipWindows() {
