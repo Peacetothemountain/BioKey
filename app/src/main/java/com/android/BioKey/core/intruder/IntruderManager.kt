@@ -8,532 +8,599 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.Matrix
-import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureFailure
 import android.hardware.camera2.CaptureRequest
-import android.hardware.camera2.TotalCaptureResult
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
+import android.hardware.display.DisplayManager
 import android.media.ExifInterface
 import android.media.ImageReader
-import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.util.Log
+import android.view.Display
 import android.view.Surface
-import android.view.WindowManager
 import androidx.core.content.ContextCompat
+import com.android.BioKey.core.security.HardwareKeyManager
 import com.android.BioKey.core.security.SecurityVault
-import com.android.BioKey.core.security.TitanM3SecurityManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
 import java.io.File
-import java.io.FileOutputStream
 import java.security.SecureRandom
-import java.text.SimpleDateFormat
+import java.text.DateFormat
 import java.util.Date
-import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
+/**
+ * Intruder photos: a silent front-camera capture after repeated failed unlocks.
+ *
+ * Each photo is envelope-encrypted: a random per-photo AES-256 key (DEK) encrypts the JPEG and a
+ * small metadata block (which app, when), and the DEK itself is wrapped by the non-exportable
+ * Keystore master key. File names are random, so the directory listing reveals nothing about
+ * which apps are locked. Nothing is ever written unencrypted; if the Keystore is unavailable the
+ * photo is dropped.
+ */
 object IntruderManager {
 
     private const val TAG = "IntruderManager"
     private const val INTRUDER_DIR_NAME = "intruders"
+    private const val FILE_EXTENSION = "enc"
 
-    private val MAGIC_HEADER_ENV = "BIOKEY_ENV_V1".toByteArray(Charsets.UTF_8)
-    private val MAGIC_HEADER_LEGACY = "BIOKEY_ENC_V1".toByteArray(Charsets.UTF_8)
+    /** Source used for failed device (keyguard) unlocks reported by the device admin. */
+    const val DEVICE_LOCK_SOURCE = "biokey:device-lock"
+
+    private const val MAX_STORED_PHOTOS = 100
+    private const val CAPTURE_COOLDOWN_MS = 20_000L
+    private const val CAPTURE_WATCHDOG_MS = 8_000L
+    private const val GCM_TAG_BITS = 128
+
+    private val MAGIC_V2 = "BIOKEY_ENV_V2".toByteArray(Charsets.US_ASCII)
+    private val MAGIC_V1 = "BIOKEY_ENV_V1".toByteArray(Charsets.US_ASCII)
+    private val MAGIC_LEGACY = "BIOKEY_ENC_V1".toByteArray(Charsets.US_ASCII)
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val random = SecureRandom()
+    private val lastCapture = ConcurrentHashMap<String, Long>()
+    private val captureInFlight = AtomicBoolean(false)
 
     data class IntruderRecord(
         val file: File,
         val packageName: String,
         val timestamp: Long,
         val formattedDate: String
-    )
-
-    fun getIntrudersDir(context: Context): File {
-        val dir = File(context.filesDir, INTRUDER_DIR_NAME)
-        if (!dir.exists()) {
-            dir.mkdirs()
-        }
-        return dir
+    ) {
+        val isDeviceLock: Boolean get() = packageName == DEVICE_LOCK_SOURCE
     }
 
-    /**
-     * Standard entrypoint: Waits 500ms to allow any concurrent face unlock service / system biometric prompt
-     * to relinquish the camera HAL, then triggers silent capture.
-     */
-    fun captureIntruderPhoto(context: Context, packageName: String) {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            Log.w(TAG, "Camera permission not granted, skipping intruder capture.")
-            return
-        }
+    private fun intrudersDir(context: Context): File =
+        File(context.noBackupFilesDir, INTRUDER_DIR_NAME).apply { mkdirs() }
 
-        val vault = SecurityVault.getInstance(context)
-        if (!vault.isIntruderDetectionEnabled()) {
-            Log.d(TAG, "Intruder detection disabled in preferences.")
-            return
-        }
+    /** Legacy location (inside filesDir) used by earlier versions; emptied by [migrateLegacyPhotos]. */
+    private fun legacyDir(context: Context): File = File(context.filesDir, INTRUDER_DIR_NAME)
 
-        CoroutineScope(Dispatchers.IO).launch {
-            delay(500L)
-            takeSilentFrontPhoto(context.applicationContext, packageName, retryCount = 0)
-        }
-    }
+    // ---------------------------------------------------------------------------------------
+    // Capture
+    // ---------------------------------------------------------------------------------------
 
-    /**
-     * Immediate capture entrypoint: Used when BiometricPrompt has already been dismissed,
-     * cancelled, or locked out, meaning the front camera is completely free.
-     */
-    fun captureIntruderPhotoNow(context: Context, packageName: String) {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            Log.w(TAG, "Camera permission not granted, skipping immediate intruder capture.")
-            return
-        }
+    /** Capture after a short delay, giving a biometric prompt or face unlock time to release the camera. */
+    fun captureIntruderPhoto(context: Context, packageName: String) = scheduleCapture(context, packageName, 500L)
 
-        val vault = SecurityVault.getInstance(context)
-        if (!vault.isIntruderDetectionEnabled()) {
-            Log.d(TAG, "Intruder detection disabled in preferences.")
-            return
-        }
+    /** Capture right away; for when the biometric prompt has already been dismissed. */
+    fun captureIntruderPhotoNow(context: Context, packageName: String) = scheduleCapture(context, packageName, 150L)
 
-        CoroutineScope(Dispatchers.IO).launch {
-            delay(150L) // Brief yield to ensure HAL stream teardown
-            takeSilentFrontPhoto(context.applicationContext, packageName, retryCount = 0)
+    private fun scheduleCapture(context: Context, packageName: String, delayMs: Long) {
+        val appContext = context.applicationContext
+        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) return
+        if (!SecurityVault.getInstance(appContext).isIntruderDetectionEnabled()) return
+
+        // One photo per app per cooldown window; repeated failures don't need a burst of photos.
+        val now = SystemClock.elapsedRealtime()
+        val previous = lastCapture[packageName]
+        if (previous != null && now - previous < CAPTURE_COOLDOWN_MS) return
+        lastCapture[packageName] = now
+
+        scope.launch {
+            delay(delayMs)
+            if (captureInFlight.compareAndSet(false, true)) {
+                takeSilentFrontPhoto(appContext, packageName, attempt = 0)
+            }
         }
     }
 
     @SuppressLint("MissingPermission")
-    private fun takeSilentFrontPhoto(context: Context, packageName: String, retryCount: Int = 0) {
-        val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return
+    private fun takeSilentFrontPhoto(context: Context, packageName: String, attempt: Int) {
+        val cameraManager = context.getSystemService(CameraManager::class.java)
+        if (cameraManager == null) {
+            captureInFlight.set(false)
+            return
+        }
+
+        val thread = HandlerThread("BioKeyIntruderCapture").apply { start() }
+        val handler = Handler(thread.looper)
+        var imageReader: ImageReader? = null
+        var activeCamera: CameraDevice? = null
+        var activeSession: CameraCaptureSession? = null
+        val cleanedUp = AtomicBoolean(false)
+        val openPending = AtomicBoolean(false)
+        var retryScheduled = false
+
+        fun cleanup() {
+            if (!cleanedUp.compareAndSet(false, true)) return
+            runCatching { activeSession?.close() }
+            runCatching { activeCamera?.close() }
+            runCatching { imageReader?.close() }
+            if (openPending.get()) {
+                // The camera may still open after the watchdog gave up, and it is delivered on this
+                // thread: keep the looper alive so onOpened can close it (bounded backstop).
+                handler.postDelayed({ thread.quitSafely() }, CAPTURE_WATCHDOG_MS)
+            } else {
+                thread.quitSafely()
+            }
+            if (!retryScheduled) captureInFlight.set(false)
+        }
 
         try {
-            val frontCameraId = cameraManager.cameraIdList.firstOrNull { id ->
-                val characteristics = cameraManager.getCameraCharacteristics(id)
-                val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
-                facing == CameraCharacteristics.LENS_FACING_FRONT
-            } ?: cameraManager.cameraIdList.firstOrNull() ?: run {
-                Log.w(TAG, "No front camera found for intruder selfie.")
+            val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
+                val chars = cameraManager.getCameraCharacteristics(id)
+                val facing = chars.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT
+                val caps = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: IntArray(0)
+                val isBackwardCompatible = caps.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE)
+                val hasJpeg = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(ImageFormat.JPEG)?.isNotEmpty() == true
+                facing && isBackwardCompatible && hasJpeg
+            } ?: cameraManager.cameraIdList.firstOrNull { id ->
+                cameraManager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT
+            }
+            if (cameraId == null) {
+                Log.w(TAG, "No front camera")
+                cleanup()
                 return
             }
-
-            val characteristics = cameraManager.getCameraCharacteristics(frontCameraId)
-            val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            val outputSizes = map?.getOutputSizes(ImageFormat.JPEG) ?: emptyArray()
-            val chosenSize = outputSizes.firstOrNull { it.width in 640..1920 }
-                ?: outputSizes.firstOrNull()
+            val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+            val sizes = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                ?.getOutputSizes(ImageFormat.JPEG).orEmpty()
+            val size = sizes.filter { it.width in 640..1920 }.maxByOrNull { it.width * it.height }
+                ?: sizes.minByOrNull { it.width * it.height }
                 ?: android.util.Size(640, 480)
 
-            val width = chosenSize.width
-            val height = chosenSize.height
-            Log.d(TAG, "Configuring intruder trap: ${width}x${height} on camera $frontCameraId (attempt $retryCount)")
+            val reader = ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, 1)
+            imageReader = reader
 
-            val thread = HandlerThread("BioKeyIntruderCapture").apply { start() }
-            val handler = Handler(thread.looper)
-            val bgExecutor = Executor { command -> handler.post(command) }
-
-            val imageReader = ImageReader.newInstance(width, height, ImageFormat.JPEG, 2)
-            var activeCamera: CameraDevice? = null
-            var activeSession: CameraCaptureSession? = null
-            val isCleanedUp = AtomicBoolean(false)
-
-            fun cleanup() {
-                if (isCleanedUp.compareAndSet(false, true)) {
-                    try { activeSession?.close() } catch (_: Exception) {}
-                    try { activeCamera?.close() } catch (_: Exception) {}
-                    try { imageReader.close() } catch (_: Exception) {}
-                    thread.quitSafely()
-                    Log.d(TAG, "Intruder camera resources safely released.")
-                }
-            }
-
-            // Watchdog timer: automatically clean up if camera hangs for 8 seconds
             handler.postDelayed({
-                if (!isCleanedUp.get()) {
-                    Log.w(TAG, "Watchdog triggered: camera capture timed out after 8s.")
+                if (!cleanedUp.get()) {
+                    Log.w(TAG, "Capture timed out")
                     cleanup()
                 }
-            }, 8000L)
+            }, CAPTURE_WATCHDOG_MS)
 
-            imageReader.setOnImageAvailableListener({ reader ->
+            reader.setOnImageAvailableListener({ r ->
                 try {
-                    val image = reader.acquireLatestImage()
-                    if (image != null) {
-                        val planes = image.planes
-                        if (planes.isNotEmpty()) {
-                            val buffer = planes[0].buffer
-                            val bytes = ByteArray(buffer.remaining())
-                            buffer.get(bytes)
-                            image.close()
-
-                            Log.i(TAG, "Intruder frame acquired: ${bytes.size} bytes. Persisting to encrypted vault...")
-                            saveIntruderFile(context, packageName, bytes)
-                        } else {
-                            image.close()
-                        }
+                    r.acquireLatestImage()?.use { image ->
+                        val buffer = image.planes.firstOrNull()?.buffer ?: return@use
+                        val bytes = ByteArray(buffer.remaining()).also(buffer::get)
+                        saveEncrypted(context, packageName, bytes)
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error acquiring intruder image: ${e.message}", e)
+                    Log.e(TAG, "Couldn't read captured frame: ${e.message}")
                 } finally {
                     cleanup()
                 }
             }, handler)
 
-            cameraManager.openCamera(frontCameraId, object : CameraDevice.StateCallback() {
+            openPending.set(true)
+            cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {
+                    openPending.set(false)
+                    if (cleanedUp.get()) {
+                        // Opened after the watchdog fired: release it straight away.
+                        camera.close()
+                        thread.quitSafely()
+                        return
+                    }
                     activeCamera = camera
                     try {
-                        val captureBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
-                        captureBuilder.addTarget(imageReader.surface)
-                        captureBuilder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                        captureBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                        captureBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-                        val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
-                        val displayRotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                            try {
-                                @Suppress("UNNECESSARY_SAFE_CALL")
-                                context.display?.rotation ?: Surface.ROTATION_0
-                            } catch (_: Exception) {
-                                Surface.ROTATION_0
-                            }
-                        } else {
-                            @Suppress("DEPRECATION")
-                            windowManager?.defaultDisplay?.rotation ?: Surface.ROTATION_0
-                        }
-                        val deviceDegrees = when (displayRotation) {
-                            Surface.ROTATION_90 -> 90
-                            Surface.ROTATION_180 -> 180
-                            Surface.ROTATION_270 -> 270
-                            else -> 0
-                        }
-                        val sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 270
-                        val lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING) ?: CameraCharacteristics.LENS_FACING_FRONT
-                        val jpegOrientation = if (lensFacing == CameraCharacteristics.LENS_FACING_FRONT) {
-                            (sensorOrientation + deviceDegrees) % 360
-                        } else {
-                            (sensorOrientation - deviceDegrees + 360) % 360
-                        }
-                        captureBuilder.set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation)
+                        val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                            addTarget(reader.surface)
+                            set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                            set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                            set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
+                            set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation(context, characteristics))
+                        }.build()
 
-                        val sessionStateCallback = object : CameraCaptureSession.StateCallback() {
+                        val sessionCallback = object : CameraCaptureSession.StateCallback() {
                             override fun onConfigured(session: CameraCaptureSession) {
                                 activeSession = session
                                 try {
-                                    session.capture(captureBuilder.build(), object : CameraCaptureSession.CaptureCallback() {
-                                        override fun onCaptureCompleted(
-                                            session: CameraCaptureSession,
-                                            request: CaptureRequest,
-                                            result: TotalCaptureResult
-                                        ) {
-                                            super.onCaptureCompleted(session, request, result)
-                                            Log.i(TAG, "Hardware sensor capture completed. Awaiting JPEG frame delivery in ImageReader.")
-                                            // The HAL delivers the encoded JPEG buffer to imageReader asynchronously.
-                                        }
-
+                                    session.capture(request, object : CameraCaptureSession.CaptureCallback() {
                                         override fun onCaptureFailed(
                                             session: CameraCaptureSession,
                                             request: CaptureRequest,
                                             failure: CaptureFailure
                                         ) {
-                                            super.onCaptureFailed(session, request, failure)
-                                            Log.e(TAG, "Capture failed in HAL: reason=${failure.reason}")
+                                            Log.w(TAG, "Capture failed: reason=${failure.reason}")
                                             cleanup()
                                         }
                                     }, handler)
                                 } catch (e: Exception) {
-                                    Log.e(TAG, "Failed executing capture request: ${e.message}", e)
+                                    Log.e(TAG, "Capture request failed: ${e.message}")
                                     cleanup()
                                 }
                             }
 
                             override fun onConfigureFailed(session: CameraCaptureSession) {
-                                Log.e(TAG, "Camera capture session configuration failed.")
+                                Log.w(TAG, "Capture session configuration failed")
                                 cleanup()
                             }
                         }
-
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                            val outputConfig = OutputConfiguration(imageReader.surface)
-                            val sessionConfig = SessionConfiguration(
+                        val executor = Executor { handler.post(it) }
+                        camera.createCaptureSession(
+                            SessionConfiguration(
                                 SessionConfiguration.SESSION_REGULAR,
-                                listOf(outputConfig),
-                                bgExecutor,
-                                sessionStateCallback
+                                listOf(OutputConfiguration(reader.surface)),
+                                executor,
+                                sessionCallback
                             )
-                            camera.createCaptureSession(sessionConfig)
-                        } else {
-                            @Suppress("DEPRECATION")
-                            camera.createCaptureSession(listOf(imageReader.surface), sessionStateCallback, handler)
-                        }
+                        )
                     } catch (e: Exception) {
-                        Log.e(TAG, "Failed configuring capture session: ${e.message}", e)
+                        Log.e(TAG, "Couldn't configure capture: ${e.message}")
                         cleanup()
                     }
                 }
 
                 override fun onDisconnected(camera: CameraDevice) {
-                    Log.w(TAG, "Camera disconnected during intruder capture.")
+                    openPending.set(false)
+                    camera.close()
                     cleanup()
                 }
 
                 override fun onError(camera: CameraDevice, error: Int) {
-                    Log.e(TAG, "CameraDevice error: $error during intruder capture.")
-                    cleanup()
-
-                    // If camera was busy (system face unlock or biometric holding HAL), retry with backoff
-                    if (retryCount < 3 && (error == ERROR_CAMERA_IN_USE || error == ERROR_MAX_CAMERAS_IN_USE)) {
-                        val backoffMs = 800L * (retryCount + 1)
-                        Log.i(TAG, "Camera busy; scheduling retry attempt ${retryCount + 1} in ${backoffMs}ms...")
-                        CoroutineScope(Dispatchers.IO).launch {
-                            delay(backoffMs)
-                            takeSilentFrontPhoto(context, packageName, retryCount + 1)
+                    openPending.set(false)
+                    camera.close()
+                    // Face unlock or the biometric prompt may still hold the camera: back off and retry.
+                    val busy = error == ERROR_CAMERA_IN_USE || error == ERROR_MAX_CAMERAS_IN_USE
+                    if (busy && attempt < 3) {
+                        retryScheduled = true
+                        scope.launch {
+                            delay(800L * (attempt + 1))
+                            takeSilentFrontPhoto(context, packageName, attempt + 1)
                         }
                     }
+                    cleanup()
                 }
             }, handler)
-
-        } catch (e: CameraAccessException) {
-            Log.e(TAG, "CameraAccessException during intruder capture: ${e.message}", e)
         } catch (e: Exception) {
-            Log.e(TAG, "Error during intruder capture: ${e.message}", e)
+            Log.e(TAG, "Intruder capture failed: ${e.message}")
+            openPending.set(false)
+            cleanup()
         }
+    }
+
+    private fun jpegOrientation(context: Context, characteristics: CameraCharacteristics): Int {
+        val rotation = context.getSystemService(DisplayManager::class.java)
+            ?.getDisplay(Display.DEFAULT_DISPLAY)?.rotation ?: Surface.ROTATION_0
+        val displayDegrees = when (rotation) {
+            Surface.ROTATION_90 -> 90
+            Surface.ROTATION_180 -> 180
+            Surface.ROTATION_270 -> 270
+            else -> 0
+        }
+        val sensor = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 270
+        return (sensor + displayDegrees) % 360 // front camera: rotations add up (mirrored sensor)
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Storage format (V2)
+    //
+    //   magic "BIOKEY_ENV_V2"
+    //   u8  wrappedDekIvLen,  wrappedDekIv     DEK wrapped by the Keystore master key (AAD = magic)
+    //   u16 wrappedDekLen,    wrappedDek
+    //   u8  metaIvLen,        metaIv           AES-GCM(DEK, AAD = magic|"meta"): u64 timestamp, UTF source
+    //   u16 metaLen,          meta
+    //   u8  photoIvLen,       photoIv          AES-GCM(DEK, AAD = magic|"photo"): JPEG bytes
+    //   ... photo ciphertext (rest of file)
+    // ---------------------------------------------------------------------------------------
+
+    /** Returns whether the photo was stored. */
+    private fun saveEncrypted(
+        context: Context,
+        packageName: String,
+        jpeg: ByteArray,
+        timestamp: Long = System.currentTimeMillis()
+    ): Boolean {
+        val dek = ByteArray(32).also(random::nextBytes)
+        try {
+            val wrapped = HardwareKeyManager.encryptWithMasterKey(dek, context, aad = MAGIC_V2)
+            if (wrapped == null) {
+                Log.e(TAG, "Keystore unavailable; intruder photo discarded rather than stored unencrypted")
+                return false
+            }
+            val meta = ByteArrayOutputStream().use { bytes ->
+                DataOutputStream(bytes).use { out ->
+                    out.writeLong(timestamp)
+                    out.writeUTF(packageName.ifBlank { "unknown" })
+                }
+                bytes.toByteArray()
+            }
+            val (metaIv, metaCt) = gcmEncrypt(dek, meta, MAGIC_V2 + "meta".toByteArray())
+            val (photoIv, photoCt) = gcmEncrypt(dek, jpeg, MAGIC_V2 + "photo".toByteArray())
+
+            val name = ByteArray(16).also(random::nextBytes).joinToString("") { "%02x".format(it) }
+            val dir = intrudersDir(context)
+            val file = File(dir, "$name.$FILE_EXTENSION")
+            val tmp = File(dir, "$name.tmp")
+            DataOutputStream(tmp.outputStream().buffered()).use { out ->
+                out.write(MAGIC_V2)
+                out.writeByte(wrapped.iv.size); out.write(wrapped.iv)
+                out.writeShort(wrapped.ciphertext.size); out.write(wrapped.ciphertext)
+                out.writeByte(metaIv.size); out.write(metaIv)
+                out.writeShort(metaCt.size); out.write(metaCt)
+                out.writeByte(photoIv.size); out.write(photoIv)
+                out.write(photoCt)
+            }
+            tmp.renameTo(file)
+            pruneOldest(context)
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "Couldn't save intruder photo: ${e.message}")
+            return false
+        } finally {
+            HardwareKeyManager.zeroize(dek)
+            HardwareKeyManager.zeroize(jpeg)
+        }
+    }
+
+    private fun gcmEncrypt(key: ByteArray, plaintext: ByteArray, aad: ByteArray): Pair<ByteArray, ByteArray> {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"))
+        cipher.updateAAD(aad)
+        return cipher.iv to cipher.doFinal(plaintext)
+    }
+
+    private fun gcmDecrypt(key: ByteArray, iv: ByteArray, ciphertext: ByteArray, aad: ByteArray?): ByteArray {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
+        if (aad != null) cipher.updateAAD(aad)
+        return cipher.doFinal(ciphertext)
+    }
+
+    private fun pruneOldest(context: Context) {
+        val files = intrudersDir(context).listFiles().orEmpty()
+        if (files.size <= MAX_STORED_PHOTOS) return
+        files.sortedBy { it.lastModified() }.take(files.size - MAX_STORED_PHOTOS).forEach { it.delete() }
+    }
+
+    private class V2Envelope(
+        val wrappedIv: ByteArray,
+        val wrappedDek: ByteArray,
+        val metaIv: ByteArray,
+        val meta: ByteArray,
+        val photoIv: ByteArray,
+        val photoOffset: Int
+    )
+
+    private fun ByteArray.startsWith(prefix: ByteArray) =
+        size > prefix.size && prefix.indices.all { this[it] == prefix[it] }
+
+    private fun parseV2(bytes: ByteArray): V2Envelope {
+        val input = DataInputStream(ByteArrayInputStream(bytes, MAGIC_V2.size, bytes.size - MAGIC_V2.size))
+        fun read(length: Int) = ByteArray(length).also(input::readFully)
+        val wrappedIv = read(input.readUnsignedByte())
+        val wrappedDek = read(input.readUnsignedShort())
+        val metaIv = read(input.readUnsignedByte())
+        val meta = read(input.readUnsignedShort())
+        val photoIv = read(input.readUnsignedByte())
+        return V2Envelope(wrappedIv, wrappedDek, metaIv, meta, photoIv, bytes.size - input.available())
+    }
+
+    private fun unwrapDek(envelope: V2Envelope): ByteArray? = HardwareKeyManager.decryptWithMasterKey(
+        HardwareKeyManager.EncryptedPayload(envelope.wrappedIv, envelope.wrappedDek), aad = MAGIC_V2
+    )
+
+    // ---------------------------------------------------------------------------------------
+    // Reading
+    // ---------------------------------------------------------------------------------------
+
+    private val legacyMigrated = AtomicBoolean(false)
+
+    /**
+     * Moves photos out of the legacy folder into the current format: random file names (the old
+     * names exposed the app and time) and envelope encryption. Earlier versions could also leave a
+     * plain JPEG there when the Keystore was unavailable; those are encrypted, then deleted.
+     * Encrypted files that can't be read right now are retried on the next call; files that are
+     * neither are corrupt and dropped. Does Keystore and disk work: call off the main thread.
+     */
+    fun migrateLegacyPhotos(context: Context) {
+        if (!legacyMigrated.compareAndSet(false, true)) return
+        var retryLater = false
+        for (file in legacyDir(context).listFiles().orEmpty()) {
+            if (!file.isFile) continue
+            try {
+                val bytes = file.readBytes()
+                val isEncrypted = bytes.startsWith(MAGIC_V1) || bytes.startsWith(MAGIC_LEGACY)
+                val jpeg = when {
+                    bytes.isJpeg() -> bytes
+                    isEncrypted -> decryptPhoto(bytes)
+                    else -> null
+                }
+                val (timestamp, packageName) = legacyNameParts(file)
+                when {
+                    jpeg != null && saveEncrypted(context, packageName, jpeg, timestamp) -> file.delete()
+                    isEncrypted || jpeg != null -> retryLater = true
+                    else -> file.delete()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Legacy intruder photo not migrated: ${e.message}")
+                retryLater = true
+            }
+        }
+        if (retryLater) legacyMigrated.set(false)
+    }
+
+    private fun ByteArray.isJpeg() =
+        size > 3 && this[0] == 0xFF.toByte() && this[1] == 0xD8.toByte() && this[2] == 0xFF.toByte()
+
+    /** V1 and legacy files kept the time and app in the file name. */
+    private fun legacyNameParts(file: File): Pair<Long, String> {
+        val parts = file.nameWithoutExtension.split("_")
+        return if (parts.size >= 3 && parts[0] == "intruder") {
+            (parts[1].toLongOrNull() ?: file.lastModified()) to parts.drop(2).joinToString(".")
+        } else {
+            file.lastModified() to "unknown"
+        }
+    }
+
+    /** All readable records, newest first. Does Keystore work per file: call off the main thread. */
+    fun getIntruderRecords(context: Context): List<IntruderRecord> {
+        migrateLegacyPhotos(context)
+        val dateFormat = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+        val files = intrudersDir(context).listFiles().orEmpty().toList() + legacyDir(context).listFiles().orEmpty().toList()
+        return files.filter { it.isFile && it.extension == FILE_EXTENSION }
+            .mapNotNull { file -> readMetadata(file)?.let { (ts, pkg) -> IntruderRecord(file, pkg, ts, dateFormat.format(Date(ts))) } }
+            .sortedByDescending { it.timestamp }
+    }
+
+    private fun readMetadata(file: File): Pair<Long, String>? = try {
+        file.inputStream().buffered().use { fis ->
+            val input = DataInputStream(fis)
+            val magic = ByteArray(MAGIC_V2.size)
+            input.readFully(magic)
+            if (magic.contentEquals(MAGIC_V2)) {
+                fun read(len: Int) = ByteArray(len).also(input::readFully)
+                val wrappedIv = read(input.readUnsignedByte())
+                val wrappedDek = read(input.readUnsignedShort())
+                val metaIv = read(input.readUnsignedByte())
+                val metaCt = read(input.readUnsignedShort())
+                val envelope = V2Envelope(wrappedIv, wrappedDek, metaIv, metaCt, ByteArray(0), 0)
+                val dek = unwrapDek(envelope)
+                if (dek == null) null else try {
+                    val meta = gcmDecrypt(dek, envelope.metaIv, envelope.meta, MAGIC_V2 + "meta".toByteArray())
+                    DataInputStream(ByteArrayInputStream(meta)).use { it.readLong() to it.readUTF() }
+                } finally {
+                    HardwareKeyManager.zeroize(dek)
+                }
+            } else if (magic.contentEquals(MAGIC_V1) || magic.contentEquals(MAGIC_LEGACY)) {
+                legacyNameParts(file)
+            } else {
+                null
+            }
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "Unreadable intruder record: ${e.message}")
+        null
     }
 
     /**
-     * Military-grade hardware envelope encryption:
-     * 1. Generates ephemeral 256-bit AES Data Encryption Key (DEK).
-     * 2. Encrypts the 32-byte DEK inside Titan M3 hardware (StrongBox Keymaster) via Master Key.
-     * 3. Encrypts the raw JPEG byte stream using the DEK with AES-GCM (fast, hardware-accelerated, zero buffer limits).
-     * 4. Zeroizes all plaintext keys and frames in memory immediately.
+     * Decrypts and decodes a photo, downsampled so neither side exceeds [maxDimension] pixels
+     * (0 = full size). Does Keystore and decode work: call off the main thread.
      */
-    private fun saveIntruderFile(context: Context, packageName: String, jpegBytes: ByteArray) {
-        try {
-            val dir = getIntrudersDir(context)
-            val timestamp = System.currentTimeMillis()
-            val sanitizedPkg = packageName.ifBlank { "unknown" }.replace(".", "_")
-            val file = File(dir, "intruder_${timestamp}_${sanitizedPkg}.enc")
-
-            // 1. Generate ephemeral 256-bit DEK
-            val dek = ByteArray(32)
-            SecureRandom().nextBytes(dek)
-
-            // 2. Encrypt DEK with Titan M3 StrongBox Master Key (32 bytes comfortably fits inside StrongBox RAM)
-            val encryptedDekPayload = TitanM3SecurityManager.INSTANCE.encryptWithMasterKey(dek, context)
-
-            if (encryptedDekPayload != null) {
-                // 3. Encrypt bulk JPEG bytes with DEK using AES-GCM-256
-                val gcmCipher = Cipher.getInstance("AES/GCM/NoPadding")
-                gcmCipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(dek, "AES"))
-                val payloadIv = gcmCipher.iv
-                val encryptedPayload = gcmCipher.doFinal(jpegBytes)
-
-                // 4. Write Envelope to disk
-                FileOutputStream(file).use { fos ->
-                    fos.write(MAGIC_HEADER_ENV)
-
-                    // DEK IV (1 byte length + bytes)
-                    fos.write(encryptedDekPayload.iv.size)
-                    fos.write(encryptedDekPayload.iv)
-
-                    // Encrypted DEK (2 bytes short length + bytes)
-                    val encDekBytes = encryptedDekPayload.ciphertext
-                    fos.write((encDekBytes.size shr 8) and 0xFF)
-                    fos.write(encDekBytes.size and 0xFF)
-                    fos.write(encDekBytes)
-
-                    // Payload IV (1 byte length + bytes)
-                    fos.write(payloadIv.size)
-                    fos.write(payloadIv)
-
-                    // Ciphertext Payload (remaining bytes)
-                    fos.write(encryptedPayload)
-                }
-
-                // Zeroize DEK from memory
-                TitanM3SecurityManager.INSTANCE.zeroize(dek)
-                Log.i(TAG, "Intruder selfie safely sealed with Titan M3 envelope encryption: ${file.name}")
-            } else {
-                Log.w(TAG, "Titan M3 StrongBox key unavailable; falling back to direct hardware-backed encryption.")
-                val legacyPayload = TitanM3SecurityManager.INSTANCE.encryptWithMasterKey(jpegBytes, context)
-                if (legacyPayload != null) {
-                    FileOutputStream(file).use { fos ->
-                        fos.write(MAGIC_HEADER_LEGACY)
-                        fos.write(legacyPayload.iv.size)
-                        fos.write(legacyPayload.iv)
-                        fos.write(legacyPayload.ciphertext)
-                    }
-                    Log.i(TAG, "Intruder snapshot saved with legacy hardware key: ${file.name}")
-                } else {
-                    // Fail-safe storage: save direct encrypted file in private directory
-                    file.writeBytes(jpegBytes)
-                    Log.w(TAG, "Stored frame safely in private storage sandbox.")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed saving encrypted intruder photo: ${e.message}", e)
-        } finally {
-            // Memory security: Always zeroize raw camera byte buffer in RAM
-            TitanM3SecurityManager.INSTANCE.zeroize(jpegBytes)
-        }
-    }
-
-    fun loadDecryptedBitmap(context: Context, file: File): Bitmap? {
+    fun loadDecryptedBitmap(file: File, maxDimension: Int = 0): Bitmap? {
         if (!file.exists()) return null
+        var jpeg: ByteArray? = null
         return try {
-            val fileBytes = file.readBytes()
-
-            // 1. Envelope encryption ("BIOKEY_ENV_V1")
-            if (fileBytes.size > MAGIC_HEADER_ENV.size &&
-                fileBytes.sliceArray(0 until MAGIC_HEADER_ENV.size).contentEquals(MAGIC_HEADER_ENV)
-            ) {
-                var offset = MAGIC_HEADER_ENV.size
-
-                val dekIvLen = fileBytes[offset++].toInt() and 0xFF
-                val dekIv = fileBytes.copyOfRange(offset, offset + dekIvLen)
-                offset += dekIvLen
-
-                val encDekLen = ((fileBytes[offset++].toInt() and 0xFF) shl 8) or (fileBytes[offset++].toInt() and 0xFF)
-                val encDek = fileBytes.copyOfRange(offset, offset + encDekLen)
-                offset += encDekLen
-
-                val payloadIvLen = fileBytes[offset++].toInt() and 0xFF
-                val payloadIv = fileBytes.copyOfRange(offset, offset + payloadIvLen)
-                offset += payloadIvLen
-
-                val ciphertext = fileBytes.copyOfRange(offset, fileBytes.size)
-
-                // Decrypt 32-byte DEK using Titan M3 Master Key
-                val decryptedDek = TitanM3SecurityManager.INSTANCE.decryptWithMasterKey(
-                    TitanM3SecurityManager.EncryptedPayload(dekIv, encDek)
-                ) ?: return null
-
-                try {
-                    // Decrypt bulk JPEG with decrypted DEK using AES-GCM
-                    val gcmCipher = Cipher.getInstance("AES/GCM/NoPadding")
-                    val spec = GCMParameterSpec(128, payloadIv)
-                    gcmCipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(decryptedDek, "AES"), spec)
-                    val decryptedJpeg = gcmCipher.doFinal(ciphertext)
-
-                    try {
-                        decodeJpegWithExifCompensation(decryptedJpeg)
-                    } finally {
-                        TitanM3SecurityManager.INSTANCE.zeroize(decryptedJpeg)
-                    }
-                } finally {
-                    TitanM3SecurityManager.INSTANCE.zeroize(decryptedDek)
-                }
-            }
-            // 2. Legacy direct master key encryption ("BIOKEY_ENC_V1")
-            else if (fileBytes.size > MAGIC_HEADER_LEGACY.size &&
-                fileBytes.sliceArray(0 until MAGIC_HEADER_LEGACY.size).contentEquals(MAGIC_HEADER_LEGACY)
-            ) {
-                val ivLength = fileBytes[MAGIC_HEADER_LEGACY.size].toInt() and 0xFF
-                val ivStart = MAGIC_HEADER_LEGACY.size + 1
-                val ivEnd = ivStart + ivLength
-                val iv = fileBytes.copyOfRange(ivStart, ivEnd)
-                val ciphertext = fileBytes.copyOfRange(ivEnd, fileBytes.size)
-                val decrypted = TitanM3SecurityManager.INSTANCE.decryptWithMasterKey(
-                    TitanM3SecurityManager.EncryptedPayload(iv, ciphertext)
-                ) ?: return null
-                try {
-                    decodeJpegWithExifCompensation(decrypted)
-                } finally {
-                    TitanM3SecurityManager.INSTANCE.zeroize(decrypted)
-                }
-            } else {
-                // 3. Fallback unencrypted JPEG
-                decodeJpegWithExifCompensation(fileBytes)
-            }
+            jpeg = decryptPhoto(file.readBytes()) ?: return null
+            decode(jpeg, maxDimension)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed decrypting intruder image: ${e.message}", e)
+            Log.e(TAG, "Couldn't decrypt intruder photo: ${e.message}")
             null
+        } finally {
+            HardwareKeyManager.zeroize(jpeg)
         }
     }
 
-    private fun decodeJpegWithExifCompensation(jpegBytes: ByteArray): Bitmap? {
-        val bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size) ?: return null
-        return try {
-            val exif = ExifInterface(java.io.ByteArrayInputStream(jpegBytes))
-            val orientation = exif.getAttributeInt(
-                ExifInterface.TAG_ORIENTATION,
-                ExifInterface.ORIENTATION_NORMAL
+    private fun decryptPhoto(bytes: ByteArray): ByteArray? = when {
+        bytes.startsWith(MAGIC_V2) -> {
+            val envelope = parseV2(bytes)
+            val dek = unwrapDek(envelope)
+            if (dek == null) null else try {
+                gcmDecrypt(dek, envelope.photoIv, bytes.copyOfRange(envelope.photoOffset, bytes.size), MAGIC_V2 + "photo".toByteArray())
+            } finally {
+                HardwareKeyManager.zeroize(dek)
+            }
+        }
+        bytes.startsWith(MAGIC_V1) -> {
+            val input = DataInputStream(ByteArrayInputStream(bytes, MAGIC_V1.size, bytes.size - MAGIC_V1.size))
+            fun read(length: Int) = ByteArray(length).also(input::readFully)
+            val dekIv = read(input.readUnsignedByte())
+            val encDek = read(input.readUnsignedShort())
+            val payloadIv = read(input.readUnsignedByte())
+            val ciphertext = read(input.available())
+            val dek = HardwareKeyManager.decryptWithMasterKey(HardwareKeyManager.EncryptedPayload(dekIv, encDek))
+            if (dek == null) null else try {
+                gcmDecrypt(dek, payloadIv, ciphertext, aad = null)
+            } finally {
+                HardwareKeyManager.zeroize(dek)
+            }
+        }
+        bytes.startsWith(MAGIC_LEGACY) -> {
+            val ivLength = bytes[MAGIC_LEGACY.size].toInt() and 0xFF
+            val ivStart = MAGIC_LEGACY.size + 1
+            HardwareKeyManager.decryptWithMasterKey(
+                HardwareKeyManager.EncryptedPayload(
+                    bytes.copyOfRange(ivStart, ivStart + ivLength),
+                    bytes.copyOfRange(ivStart + ivLength, bytes.size)
+                )
             )
-            val matrix = Matrix()
-            when (orientation) {
-                ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
-                ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
-                ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
-                ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.preScale(-1f, 1f)
-                ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.preScale(1f, -1f)
-                ExifInterface.ORIENTATION_TRANSPOSE -> {
-                    matrix.postRotate(90f)
-                    matrix.preScale(-1f, 1f)
-                }
-                ExifInterface.ORIENTATION_TRANSVERSE -> {
-                    matrix.postRotate(270f)
-                    matrix.preScale(-1f, 1f)
-                }
-                else -> return bitmap
-            }
-            val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-            if (rotated != bitmap) {
-                bitmap.recycle()
-            }
-            rotated
-        } catch (e: Exception) {
-            Log.w(TAG, "EXIF compensation exception: ${e.message}")
-            bitmap
         }
+        else -> null
     }
 
-    fun getIntruderRecords(context: Context): List<IntruderRecord> {
-        val dir = getIntrudersDir(context)
-        val files = dir.listFiles { f ->
-            f.extension.equals("enc", ignoreCase = true) || f.extension.equals("jpg", ignoreCase = true)
-        } ?: emptyArray()
-        val dateFormat = SimpleDateFormat("MMM dd, yyyy HH:mm:ss", Locale.getDefault())
-
-        return files.mapNotNull { file ->
-            val parts = file.nameWithoutExtension.split("_")
-            if (parts.size >= 3 && parts[0] == "intruder") {
-                val timestamp = parts[1].toLongOrNull() ?: file.lastModified()
-                val pkg = parts.drop(2).joinToString(".")
-                IntruderRecord(
-                    file = file,
-                    packageName = pkg,
-                    timestamp = timestamp,
-                    formattedDate = dateFormat.format(Date(timestamp))
-                )
-            } else {
-                IntruderRecord(
-                    file = file,
-                    packageName = "Unknown",
-                    timestamp = file.lastModified(),
-                    formattedDate = dateFormat.format(Date(file.lastModified()))
-                )
-            }
-        }.sortedByDescending { it.timestamp }
-    }
-
-    fun deleteIntruderRecord(record: IntruderRecord): Boolean {
-        return try {
-            record.file.delete()
-        } catch (e: Exception) {
-            false
+    private fun decode(jpeg: ByteArray, maxDimension: Int): Bitmap? {
+        val options = BitmapFactory.Options()
+        if (maxDimension > 0) {
+            options.inJustDecodeBounds = true
+            BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, options)
+            var sample = 1
+            while (options.outWidth / (sample * 2) >= maxDimension || options.outHeight / (sample * 2) >= maxDimension) sample *= 2
+            options.inJustDecodeBounds = false
+            options.inSampleSize = sample
         }
+        val bitmap = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, options) ?: return null
+
+        val orientation = try {
+            ExifInterface(ByteArrayInputStream(jpeg)).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+        } catch (_: Exception) {
+            ExifInterface.ORIENTATION_NORMAL
+        }
+        val matrix = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.preScale(-1f, 1f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.preScale(1f, -1f)
+            ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.postRotate(90f); matrix.preScale(-1f, 1f) }
+            ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.postRotate(270f); matrix.preScale(-1f, 1f) }
+            else -> return bitmap
+        }
+        val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        if (rotated != bitmap) bitmap.recycle()
+        return rotated
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Deletion
+    // ---------------------------------------------------------------------------------------
+
+    fun deleteIntruderRecord(record: IntruderRecord): Boolean = record.file.delete()
 
     fun clearAllIntruders(context: Context) {
-        val dir = getIntrudersDir(context)
-        dir.listFiles()?.forEach { it.delete() }
+        intrudersDir(context).listFiles()?.forEach { it.delete() }
+        legacyDir(context).listFiles()?.forEach { it.delete() }
     }
 }

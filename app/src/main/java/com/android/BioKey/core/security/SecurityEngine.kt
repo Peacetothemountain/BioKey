@@ -1,296 +1,323 @@
 package com.android.BioKey.core.security
 
 import android.content.Context
+import android.text.format.DateFormat
 import android.util.Log
 import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
+import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.android.BioKey.core.intruder.IntruderManager
+import java.util.Date
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * BioKey Security Engine.
+ * Runs every BioKey authentication.
  *
- * Implements hardened biometric security architecture:
- * 1. Google Identity Check Integration: Enforces Strong Biometrics
- *    (BIOMETRIC_STRONG) when active, while allowing device PIN/pattern fallback in standard mode.
- * 2. Titan M3 StrongBox Hardware Cryptographic Authorization:
- *    Generates fresh 256-bit cryptographic nonces per-operation, binds them to
- *    StrongBox KeyMint via BiometricPrompt.CryptoObject (authTimeout = 0), and verifies
- *    Hardware Auth Token (HAT) execution upon success.
- * 3. Anti-Brute-Force Enforcement:
- *    Triggers camera trap upon repeated failures and allows PIN fallback.
+ * Success on biometric paths is bound to the Android Keystore: the prompt is given a [BiometricPrompt.CryptoObject]
+ * whose cipher only works after a genuine, fresh authentication, and success is only reported
+ * once that cipher has actually executed ([HardwareKeyManager.verify]). A hooked or spoofed
+ * callback therefore can't unlock anything on its own.
+ *
+ * Fallback to device PIN/pattern/password is supported on standard paths via [BiometricPrompt] credential authentication.
+ *
+ * Modes:
+ * - Standard: Class 3 biometric, with the device PIN/pattern/password as a fallback.
+ * - Identity Check (strict): Class 3 biometric only, no credential fallback.
+ *
+ * If the enrolled biometrics change, the biometric key is invalidated by the platform; the owner
+ * must confirm with the device credential before a new key is issued, and the event is logged.
+ * Under Identity Check that confirmation only becomes possible after a 30-minute security delay.
  */
 class SecurityEngine private constructor() {
 
     companion object {
         private const val TAG = "SecurityEngine"
+
+        /** Failed biometric matches in one prompt before BioKey cancels it and treats it as a lockout. */
+        const val MAX_FAILED_ATTEMPTS = 5
+
+        /** Failed matches before the intruder camera fires (the first miss is usually the owner). */
+        private const val INTRUDER_CAPTURE_THRESHOLD = 2
+
         val INSTANCE: SecurityEngine by lazy { SecurityEngine() }
     }
 
     private val authenticating = AtomicBoolean(false)
+    @Volatile private var authenticatingPackage: String? = null
+    @Volatile private var currentSession: Session? = null
+    @Volatile private var activePrompt: BiometricPrompt? = null
 
     fun isAuthenticating(): Boolean = authenticating.get()
 
+    fun isAuthenticatingFor(packageName: String): Boolean =
+        authenticating.get() && authenticatingPackage == packageName
+
     fun resetAuthenticatingState() {
+        val promptToCancel = activePrompt
+        activePrompt = null
+        currentSession = null
         authenticating.set(false)
-    }
-
-    fun initialize(context: Context) {
-        TitanM3SecurityManager.INSTANCE.initializeTitanM3Protocols(context)
-    }
-
-    /**
-     * Determines whether authentication is possible under current policy.
-     */
-    fun canAuthenticate(context: Context): Int {
-        val bm = BiometricManager.from(context)
-        val vault = SecurityVault.getInstance(context)
-        val authenticators = if (vault.isIdentityCheckEnabled()) {
-            BiometricManager.Authenticators.BIOMETRIC_STRONG
-        } else {
-            BiometricManager.Authenticators.BIOMETRIC_STRONG or
-            BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        authenticatingPackage = null
+        try {
+            promptToCancel?.cancelAuthentication()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to cancel active prompt: ${e.message}")
         }
-        return bm.canAuthenticate(authenticators)
     }
 
-    /**
-     * Dispatches biometric prompt enforcing Google Identity Check & Titan M3 StrongBox hardware auth.
-     */
+    /** A late callback from an abandoned session (e.g. before a rotation) must not end its successor. */
+    private fun endSession(session: Session) {
+        if (currentSession === session) resetAuthenticatingState()
+    }
+
+    /** Whether authentication is possible under the current policy (a [BiometricManager] status code). */
+    fun canAuthenticate(context: Context): Int {
+        val strict = SecurityVault.getInstance(context).isIdentityCheckEnabled()
+        return BiometricManager.from(context).canAuthenticate(
+            if (strict) BIOMETRIC_STRONG else BIOMETRIC_STRONG or DEVICE_CREDENTIAL
+        )
+    }
+
     fun showBiometricPrompt(
         activity: FragmentActivity,
         appName: String,
         packageName: String,
         onSuccess: () -> Unit,
         onFailure: () -> Unit = {},
-        onError: (Int, CharSequence) -> Unit = { _, _ -> }
+        onError: (Int, CharSequence) -> Unit = { _, _ -> },
+        promptTitle: String? = null
     ) {
-        if (authenticating.get()) {
-            Log.d(TAG, "BiometricPrompt already visible, skipping duplicate request.")
+        if (!authenticating.compareAndSet(false, true)) {
+            Log.d(TAG, "Prompt already showing; ignoring duplicate request")
             return
         }
+        authenticatingPackage = packageName
 
-        val executor = ContextCompat.getMainExecutor(activity)
-        val identityPolicy = IdentityCheckManager.getIdentityCheckPolicy(activity, packageName)
-        val isIdentityCheck = identityPolicy.isEnforced
-
-        // Issue fresh per-operation cryptographic challenge for Titan M3 StrongBox
-        val challengeNonce = TitanM3SecurityManager.INSTANCE.generateAuthenticationChallenge()
-        val cryptoObject = TitanM3SecurityManager.INSTANCE.createBiometricCryptoObject(activity, challengeNonce)
-
-        var biometricPromptRef: BiometricPrompt? = null
-
-        val callback = object : BiometricPrompt.AuthenticationCallback() {
-            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                super.onAuthenticationSucceeded(result)
-                authenticating.set(false)
-
-                // Cryptographic validation: Verify Titan M3 StrongBox Hardware Key authorization
-                val cryptoProof = TitanM3SecurityManager.INSTANCE.verifyBiometricCryptoResult(result, challengeNonce)
-                if (isIdentityCheck || cryptoObject != null) {
-                    if (!cryptoProof.isHardwareVerified) {
-                        Log.e(TAG, "CRITICAL SECURITY ALERT: Titan M3 hardware auth token validation failed! Tampering suspected.")
-                        IntruderManager.captureIntruderPhotoNow(activity.applicationContext, packageName)
-                        onError(
-                            BiometricPrompt.ERROR_SECURITY_UPDATE_REQUIRED,
-                            "Hardware security token mismatch: ${cryptoProof.errorMessage}"
-                        )
-                        return
-                    }
-                    Log.i(TAG, "Titan M3 StrongBox Hardware Cryptographic match confirmed! Proof Hash: ${cryptoProof.verificationHash}")
-                } else {
-                    Log.i(TAG, "Biometric authentication confirmed for $packageName (Standard mode)")
-                }
-
-                LockStateTracker.clearFailedAttempts(packageName)
-                LockStateTracker.onAppUnlocked(packageName)
-                Log.i(TAG, "Authentication succeeded for $packageName (IdentityCheck: $isIdentityCheck)")
-                onSuccess()
-            }
-
-            override fun onAuthenticationFailed() {
-                super.onAuthenticationFailed()
-                val attempts = LockStateTracker.recordFailedAttempt(packageName)
-                Log.w(TAG, "Authentication failed for $packageName (attempt $attempts)")
-
-                // Google Identity Check / Permanent Lockout: 5 consecutive failures lock device permanently
-                if (attempts >= IdentityCheckManager.IDENTITY_CHECK_MAX_FAILED_ATTEMPTS) {
-                    Log.e(TAG, "Permanent Lockout Threshold Reached: $attempts attempts exceeded for $packageName! Triggering immediate camera trap.")
-                    IntruderManager.captureIntruderPhotoNow(activity.applicationContext, packageName)
-                    biometricPromptRef?.cancelAuthentication()
-                    authenticating.set(false)
-                    onError(BiometricPrompt.ERROR_LOCKOUT_PERMANENT, "Identity Check: $attempts failed biometric attempts. Device Locked.")
-                    return
-                }
-
-                if (attempts >= 1) {
-                    IntruderManager.captureIntruderPhoto(activity.applicationContext, packageName)
-                }
-
-                onFailure()
-            }
-
-            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                super.onAuthenticationError(errorCode, errString)
-                authenticating.set(false)
-                Log.w(TAG, "Authentication error ($errorCode): $errString for $packageName")
-
-                // If Identity Check is active: NEVER allow PIN/Pattern fallback on cancellation or negative button
-                if (isIdentityCheck) {
-                    val failedCount = LockStateTracker.getFailedAttempts(packageName)
-                    if (failedCount >= 1 || errorCode == BiometricPrompt.ERROR_LOCKOUT || errorCode == BiometricPrompt.ERROR_LOCKOUT_PERMANENT) {
-                        Log.i(TAG, "Identity Check prompt dismissed or locked out after $failedCount failure(s). Firing camera trap.")
-                        IntruderManager.captureIntruderPhotoNow(activity.applicationContext, packageName)
-                    }
-                    onError(errorCode, errString)
-                    return
-                }
-
-                // Standard Mode: Allow user to fallback to device PIN / Pattern
-                if (errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
-                    errorCode == BiometricPrompt.ERROR_LOCKOUT ||
-                    errorCode == BiometricPrompt.ERROR_LOCKOUT_PERMANENT
-                ) {
-                    val attempts = LockStateTracker.getFailedAttempts(packageName)
-                    if (attempts >= 1) {
-                        IntruderManager.captureIntruderPhotoNow(activity.applicationContext, packageName)
-                    }
-                    showCredentialFallback(activity, appName, packageName, onSuccess, onFailure, onError)
-                    return
-                }
-
-                val failedCount = LockStateTracker.getFailedAttempts(packageName)
-                if (failedCount >= 1 || errorCode == BiometricPrompt.ERROR_LOCKOUT || errorCode == BiometricPrompt.ERROR_LOCKOUT_PERMANENT) {
-                    Log.i(TAG, "BiometricPrompt dismissed after $failedCount failure(s) (errorCode: $errorCode). Firing camera trap!")
-                    IntruderManager.captureIntruderPhotoNow(activity.applicationContext, packageName)
-                }
-                onError(errorCode, errString)
-            }
-        }
-
-        val biometricPrompt = BiometricPrompt(activity, executor, callback)
-        biometricPromptRef = biometricPrompt
-
-        if (isIdentityCheck) {
-            // Google Identity Check Mode: Strictly enforce BIOMETRIC_STRONG with ZERO PIN fallback
-            val promptTitle = if (appName.isNotBlank()) "Unlock $appName" else "Identity Check"
-            val promptInfo = IdentityCheckManager.buildIdentityCheckPromptInfo(
-                title = promptTitle,
-                subtitle = "Biometrics Enabled",
-                description = "Identity Check is on and requires a biometric",
-                negativeButtonText = "Cancel"
+        try {
+            val policy = IdentityCheckManager.getIdentityCheckPolicy(activity)
+            val name = appName.ifBlank { "BioKey" }
+            val session = Session(
+                activity, name, packageName, strict = !policy.allowsDeviceCredential,
+                title = promptTitle ?: "Unlock $name", onSuccess = onSuccess, onFailure = onFailure, onError = onError
             )
+            currentSession = session
 
-            // Identity Check mandates Titan M3 StrongBox hardware crypto object
-            val activeCrypto = cryptoObject ?: TitanM3SecurityManager.INSTANCE.createBiometricCryptoObject(activity, challengeNonce)
-            if (activeCrypto == null) {
-                Log.e(TAG, "Identity Check requires Titan M3 hardware CryptoObject, but key initialization failed.")
-                onError(BiometricPrompt.ERROR_HW_UNAVAILABLE, "Hardware security module unavailable for Identity Check")
-                return
+            when (val crypto = HardwareKeyManager.prepareBiometricCrypto(activity)) {
+                is HardwareKeyManager.CryptoResult.Ready -> session.promptBiometric(crypto)
+                HardwareKeyManager.CryptoResult.BiometricsChanged ->
+                    if (session.strict) session.identityCheckDelay(policy.biometricsEnrolled) else session.confirmBiometricChange()
+                is HardwareKeyManager.CryptoResult.Unavailable -> when {
+                    session.strict && !policy.biometricsEnrolled -> session.identityCheckDelay(biometricsEnrolled = false)
+                    session.strict -> session.fail(
+                        BiometricPrompt.ERROR_HW_UNAVAILABLE,
+                        "Biometric unlock is unavailable right now. Try again in a moment."
+                    )
+                    else -> session.promptCredential()
+                }
             }
-
-            authenticating.set(true)
-            try {
-                biometricPrompt.authenticate(promptInfo, activeCrypto)
-                Log.d(TAG, "Identity Check BiometricPrompt displayed for $packageName (StrongBox backed)")
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "Identity Check BiometricPrompt failed: ${e.message}")
-                authenticating.set(false)
-                onError(-1, e.message ?: "Identity Check initialization failed")
-                return
-            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize authentication prompt: ${e.message}", e)
+            resetAuthenticatingState()
+            onError(BiometricPrompt.ERROR_HW_UNAVAILABLE, "Authentication unavailable")
         }
-
-        // Standard Mode: Attempt hardware crypto prompt with PIN fallback
-        if (cryptoObject != null) {
-            val promptInfo = BiometricPrompt.PromptInfo.Builder()
-                .setTitle(if (appName.isNotBlank()) "Unlock $appName" else "Unlock Application")
-                .setSubtitle("Biometrics Enabled")
-                .setDescription("Face Unlock or Fingerprint")
-                .setConfirmationRequired(false)
-                .setNegativeButtonText("Use PIN / Pattern")
-                .build()
-
-            authenticating.set(true)
-            try {
-                biometricPrompt.authenticate(promptInfo, cryptoObject)
-                Log.d(TAG, "Hardware CryptoObject BiometricPrompt displayed for $packageName")
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "Hardware CryptoObject authenticate failed, falling back to credentials: ${e.message}")
-                authenticating.set(false)
-            }
-        }
-
-        showCredentialFallback(activity, appName, packageName, onSuccess, onFailure, onError)
     }
 
-    private fun showCredentialFallback(
-        activity: FragmentActivity,
-        appName: String,
-        packageName: String,
-        onSuccess: () -> Unit,
-        onFailure: () -> Unit,
-        onError: (Int, CharSequence) -> Unit
+    private inner class Session(
+        val activity: FragmentActivity,
+        val appName: String,
+        val packageName: String,
+        val strict: Boolean,
+        val title: String,
+        val onSuccess: () -> Unit,
+        val onFailure: () -> Unit,
+        val onError: (Int, CharSequence) -> Unit
     ) {
-        // Strict Google Identity Check defense: unconditionally prohibit device PIN/pattern fallback
-        val identityPolicy = IdentityCheckManager.getIdentityCheckPolicy(activity, packageName)
-        if (identityPolicy.isEnforced && !identityPolicy.allowsDeviceCredential) {
-            Log.w(TAG, "Refusing credential fallback: Identity Check is strictly enforced for $packageName (PIN/Pattern prohibited).")
-            authenticating.set(false)
-            onError(
-                BiometricPrompt.ERROR_NEGATIVE_BUTTON,
-                "Identity Check is active. Device PIN, pattern, or password fallback is strictly prohibited."
-            )
-            return
+        private val finished = AtomicBoolean(false)
+        private val executor = ContextCompat.getMainExecutor(activity)
+        private val appContext = activity.applicationContext
+
+        fun succeed() {
+            if (!finished.compareAndSet(false, true)) return
+            endSession(this)
+            LockStateTracker.clearFailedAttempts(packageName)
+            if (packageName == activity.packageName) {
+                SecurityEventLog.record(appContext, SecurityEventLog.Type.UNLOCK_SUCCESS, "BioKey Settings unlocked")
+            }
+            if (com.android.BioKey.BuildConfig.DEBUG) {
+                Log.i(TAG, "Authentication succeeded for $packageName")
+            }
+            onSuccess()
         }
 
-        val executor = ContextCompat.getMainExecutor(activity)
-        val callback = object : BiometricPrompt.AuthenticationCallback() {
-            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                super.onAuthenticationSucceeded(result)
-                authenticating.set(false)
-                LockStateTracker.clearFailedAttempts(packageName)
-                LockStateTracker.onAppUnlocked(packageName)
-                Log.i(TAG, "Credential fallback succeeded for $packageName")
-                onSuccess()
+        fun fail(code: Int, message: CharSequence) {
+            if (!finished.compareAndSet(false, true)) return
+            endSession(this)
+            if (LockStateTracker.getFailedAttempts(packageName) >= INTRUDER_CAPTURE_THRESHOLD) {
+                IntruderManager.captureIntruderPhotoNow(appContext, packageName)
             }
+            onError(code, message)
+        }
 
-            override fun onAuthenticationFailed() {
-                super.onAuthenticationFailed()
-                val attempts = LockStateTracker.recordFailedAttempt(packageName)
-                Log.w(TAG, "Credential fallback failed for $packageName (attempt $attempts)")
-                IntruderManager.captureIntruderPhotoNow(activity.applicationContext, packageName)
-                onFailure()
+        private fun onBiometricMismatch(prompt: BiometricPrompt) {
+            val attempts = LockStateTracker.recordFailedAttempt(packageName)
+            Log.w(TAG, "Biometric mismatch for $packageName (attempt $attempts)")
+            if (attempts == INTRUDER_CAPTURE_THRESHOLD) {
+                IntruderManager.captureIntruderPhoto(appContext, packageName)
+                SecurityEventLog.record(appContext, SecurityEventLog.Type.INTRUDER_CAPTURED, "Triggered on ${label()} (attempt $attempts)")
+            } else {
+                SecurityEventLog.record(appContext, SecurityEventLog.Type.UNLOCK_FAILED, "Attempt $attempts on ${label()}")
             }
+            if (attempts >= MAX_FAILED_ATTEMPTS) {
+                fail(BiometricPrompt.ERROR_LOCKOUT, "Too many failed attempts.")
+                prompt.cancelAuthentication()
+                return
+            }
+            onFailure()
+        }
 
-            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                super.onAuthenticationError(errorCode, errString)
-                authenticating.set(false)
-                val attempts = LockStateTracker.getFailedAttempts(packageName)
-                if (attempts >= 1 || errorCode == BiometricPrompt.ERROR_LOCKOUT || errorCode == BiometricPrompt.ERROR_LOCKOUT_PERMANENT) {
-                    IntruderManager.captureIntruderPhotoNow(activity.applicationContext, packageName)
+        private fun label() = if (packageName == activity.packageName) "BioKey" else appName
+
+        fun promptBiometric(crypto: HardwareKeyManager.CryptoResult.Ready) {
+            val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    if (HardwareKeyManager.verify(result, crypto.challenge)) {
+                        succeed()
+                    } else {
+                        Log.e(TAG, "Biometric success without a valid hardware auth token for $packageName")
+                        fail(BiometricPrompt.ERROR_VENDOR, "Hardware verification failed. Try again.")
+                    }
                 }
-                onError(errorCode, errString)
+
+                override fun onAuthenticationFailed() {
+                    activePrompt?.let { onBiometricMismatch(it) }
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    if (finished.get()) return
+                    val wantsFallback = errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
+                        errorCode == BiometricPrompt.ERROR_LOCKOUT ||
+                        errorCode == BiometricPrompt.ERROR_LOCKOUT_PERMANENT ||
+                        errorCode == BiometricPrompt.ERROR_NO_BIOMETRICS ||
+                        errorCode == BiometricPrompt.ERROR_HW_UNAVAILABLE ||
+                        errorCode == BiometricPrompt.ERROR_HW_NOT_PRESENT
+
+                    if (wantsFallback && !strict) {
+                        promptCredential()
+                    } else {
+                        fail(errorCode, errString)
+                    }
+                }
+            })
+            activePrompt = prompt
+
+            val info = BiometricPrompt.PromptInfo.Builder()
+                .setTitle(title)
+                .setSubtitle(if (strict) "Identity Check: biometric required" else "Verify it's you")
+                .setAllowedAuthenticators(BIOMETRIC_STRONG)
+                .setNegativeButtonText(if (strict) "Cancel" else "Use PIN or pattern")
+                .setConfirmationRequired(false)
+                .build()
+
+            try {
+                prompt.authenticate(info, crypto.cryptoObject)
+            } catch (e: Exception) {
+                Log.w(TAG, "Biometric prompt failed to start: ${e.message}")
+                if (strict) fail(BiometricPrompt.ERROR_HW_UNAVAILABLE, "Biometric prompt unavailable") else promptCredential()
             }
         }
 
-        val biometricPrompt = BiometricPrompt(activity, executor, callback)
-        val promptInfo = IdentityCheckManager.buildStandardCredentialPromptInfo(
-            title = if (appName.isNotBlank()) "Unlock $appName" else "Unlock Application",
-            subtitle = "Biometrics Enabled",
-            description = "Enter device PIN, pattern, or password"
-        )
+        /**
+         * Device credential fallback prompt (PIN, pattern, password).
+         * Note: Android explicitly prohibits passing a CryptoObject when DEVICE_CREDENTIAL is set.
+         */
+        fun promptCredential(
+            title: String = this.title,
+            description: String? = null,
+            credentialOnly: Boolean = false,
+            onVerified: () -> Unit = ::succeed
+        ) {
+            val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    onVerified()
+                }
 
-        authenticating.set(true)
-        try {
-            biometricPrompt.authenticate(promptInfo)
-        } catch (e: Exception) {
-            authenticating.set(false)
-            onError(-1, e.message ?: "Authentication initialization failed")
+                override fun onAuthenticationFailed() {
+                    activePrompt?.let { onBiometricMismatch(it) }
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    if (!finished.get()) fail(errorCode, errString)
+                }
+            })
+            activePrompt = prompt
+
+            val info = BiometricPrompt.PromptInfo.Builder()
+                .setTitle(title)
+                .setSubtitle("Verify it's you")
+                .apply { if (description != null) setDescription(description) }
+                .setAllowedAuthenticators(if (credentialOnly) DEVICE_CREDENTIAL else BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
+                .setConfirmationRequired(false)
+                .build()
+
+            try {
+                prompt.authenticate(info)
+            } catch (e: Exception) {
+                Log.e(TAG, "Credential prompt failed to start: ${e.message}")
+                fail(BiometricPrompt.ERROR_HW_UNAVAILABLE, "Authentication unavailable on this device")
+            }
+        }
+
+        /**
+         * The platform invalidated the biometric key because fingerprints/faces were added or
+         * removed. Someone who knows the PIN could have enrolled their own finger, so require the
+         * device credential (biometrics are not accepted here) before issuing a new key.
+         */
+        fun confirmBiometricChange() {
+            SecurityEventLog.record(appContext, SecurityEventLog.Type.BIOMETRICS_CHANGED, "Detected while unlocking ${label()}")
+            promptCredential(
+                title = "Biometrics changed",
+                description = "Fingerprints or face data on this device changed since BioKey last checked. " +
+                    "Confirm with your device PIN, pattern, or password to continue.",
+                credentialOnly = true,
+                onVerified = {
+                    executor.execute {
+                        HardwareKeyManager.resetBiometricKey(appContext)
+                    }
+                    SecurityVault.getInstance(appContext).clearIdentityHold()
+                    SecurityEventLog.record(appContext, SecurityEventLog.Type.BIOMETRICS_CHANGED, "Confirmed with device credential")
+                    succeed()
+                }
+            )
+        }
+
+        fun identityCheckDelay(biometricsEnrolled: Boolean) {
+            val vault = SecurityVault.getInstance(appContext)
+            val remaining = vault.identityHoldRemaining()
+            if (remaining > 0L) {
+                val until = DateFormat.getTimeFormat(appContext).format(Date(System.currentTimeMillis() + remaining))
+                fail(
+                    BiometricPrompt.ERROR_LOCKOUT,
+                    "Biometrics on this device changed. For your security, Identity Check keeps apps locked until $until."
+                )
+                return
+            }
+            if (biometricsEnrolled) {
+                confirmBiometricChange()
+                return
+            }
+            promptCredential(
+                title = "Turn off Identity Check",
+                description = "No fingerprint or face is enrolled any more, so Identity Check can't work. " +
+                    "Confirm with your device PIN, pattern, or password to turn it off and continue.",
+                credentialOnly = true,
+                onVerified = {
+                    vault.endIdentityCheckAfterHold()
+                    succeed()
+                }
+            )
         }
     }
 }

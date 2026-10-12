@@ -3,49 +3,49 @@ package com.android.BioKey.feature.lock
 import android.app.admin.DeviceAdminReceiver
 import android.content.Context
 import android.content.Intent
-import android.util.Log
+import android.os.UserHandle
 import com.android.BioKey.core.intruder.IntruderManager
+import com.android.BioKey.core.security.ProtectionAlerts
+import com.android.BioKey.core.security.SecurityEventLog
 import com.android.BioKey.core.security.SecurityVault
 
+/**
+ * Device admin with no policies. Its job is to make uninstalling BioKey a two-step process
+ * (deactivate the admin, then uninstall), and both steps happen on screens that self-protection
+ * guards with a biometric challenge.
+ */
 class BioKeyDeviceAdminReceiver : DeviceAdminReceiver() {
-
-    companion object {
-        private const val TAG = "BioKeyDeviceAdmin"
-    }
 
     override fun onEnabled(context: Context, intent: Intent) {
         super.onEnabled(context, intent)
-        Log.i(TAG, "BioKey Device Administration enabled.")
-        SecurityVault.getInstance(context).setSelfProtection(true)
+        if (SecurityVault.getInstance(context).isSetupCompleted()) {
+            ProtectionAlerts.adminRestored(context)
+        }
     }
 
     override fun onDisableRequested(context: Context, intent: Intent): CharSequence {
-        return "Disabling BioKey device administration allows unauthorized users to uninstall or stop BioKey protection."
+        if (SecurityVault.getInstance(context).isSetupCompleted() && !com.android.BioKey.core.security.LockStateTracker.hasActiveOwnerSession()) {
+            val dpm = context.getSystemService(android.app.admin.DevicePolicyManager::class.java)
+            runCatching { dpm?.lockNow() }
+            SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_TAMPERED, "Unauthorized admin deactivation attempt")
+        }
+        return "Deactivating BioKey's device admin lets BioKey be uninstalled without unlocking it first."
     }
 
     override fun onDisabled(context: Context, intent: Intent) {
         super.onDisabled(context, intent)
-        Log.w(TAG, "BioKey Device Administration disabled.")
-        SecurityVault.getInstance(context).setSelfProtection(false)
-    }
-
-    @Deprecated("Deprecated in Java")
-    @Suppress("DEPRECATION")
-    override fun onPasswordFailed(context: Context, intent: Intent) {
-        super.onPasswordFailed(context, intent)
-        Log.w(TAG, "Device lock screen authentication failed! Triggering intruder capture.")
-        val vault = SecurityVault.getInstance(context)
-        if (vault.isIntruderDetectionEnabled()) {
-            IntruderManager.captureIntruderPhoto(context, "device_system_lock")
+        if (SecurityVault.getInstance(context).isSetupCompleted()) {
+            SecurityEventLog.record(context, SecurityEventLog.Type.ADMIN_REMOVED)
+            ProtectionAlerts.adminRemoved(context)
         }
     }
 
-    override fun onPasswordFailed(context: Context, intent: Intent, user: android.os.UserHandle) {
+    override fun onPasswordFailed(context: Context, intent: Intent, user: UserHandle) {
         super.onPasswordFailed(context, intent, user)
-        Log.w(TAG, "Device lock screen authentication failed for user $user! Triggering intruder capture.")
-        val vault = SecurityVault.getInstance(context)
-        if (vault.isIntruderDetectionEnabled()) {
-            IntruderManager.captureIntruderPhoto(context, "device_system_lock")
+        SecurityEventLog.record(context, SecurityEventLog.Type.UNLOCK_FAILED, "Device lock screen failure")
+        if (SecurityVault.getInstance(context).isIntruderDetectionEnabled()) {
+            IntruderManager.captureIntruderPhoto(context, IntruderManager.DEVICE_LOCK_SOURCE)
+            SecurityEventLog.record(context, SecurityEventLog.Type.INTRUDER_CAPTURED, "Device lock screen failure")
         }
     }
 }

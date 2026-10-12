@@ -1,8 +1,9 @@
 package com.android.BioKey.feature.lock
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,15 +26,17 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.android.BioKey.core.security.rejectObscuredTouches
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun StealthCrashDialog(
     appName: String,
@@ -44,13 +47,23 @@ fun StealthCrashDialog(
         modifier = Modifier
             .fillMaxSize()
             .rejectObscuredTouches()
-            .background(Color.Black.copy(alpha = 0.85f)),
+            .background(Color.Black.copy(alpha = 0.85f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onCloseApp
+            ),
         contentAlignment = Alignment.Center
     ) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth(0.85f)
-                .padding(16.dp),
+                .padding(16.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = { /* consume clicks inside dialog */ }
+                ),
             shape = RoundedCornerShape(28.dp),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             tonalElevation = 6.dp
@@ -65,11 +78,13 @@ fun StealthCrashDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .combinedClickable(
-                            onClick = {},
-                            onDoubleClick = onSecretUnlockTrigger,
-                            onLongClick = onSecretUnlockTrigger
-                        )
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onDoubleTap = { onSecretUnlockTrigger() },
+                                onLongPress = { onSecretUnlockTrigger() }
+                            )
+                        }
+                        .clearAndSetSemantics { }
                 ) {
                     Icon(
                         imageVector = Icons.Default.Warning,
@@ -102,13 +117,9 @@ fun StealthCrashDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
-                    OutlinedButton(
-                        onClick = onSecretUnlockTrigger,
-                        modifier = Modifier.combinedClickable(
-                            onClick = onSecretUnlockTrigger,
-                            onLongClick = onSecretUnlockTrigger
-                        )
-                    ) {
+                    // Behaves like a real crash dialog: only the hidden gesture on the title
+                    // (double tap or long press) reveals the unlock prompt.
+                    OutlinedButton(onClick = onCloseApp) {
                         Text(text = "App info")
                     }
 

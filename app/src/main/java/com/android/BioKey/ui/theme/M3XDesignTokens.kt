@@ -723,6 +723,14 @@ object M3XShapes {
     val BiometricCard = RoundedCornerShape(24.dp)
     val BentoTile = RoundedCornerShape(20.dp)
     val TriggerPill = CircleShape
+
+    fun toMaterial3Shapes(): androidx.compose.material3.Shapes = androidx.compose.material3.Shapes(
+        extraSmall = ExtraSmall,
+        small = Small,
+        medium = Medium,
+        large = Large,
+        extraLarge = ExtraLarge
+    )
 }
 
 /**
@@ -902,7 +910,7 @@ private const val BIOMETRIC_HALO_AGSL_SHADER = """
 
         // Radial falloff envelope
         float envelope = exp(-dist * 3.6);
-        float coreRing = smoothstep(0.04, 0.0, abs(dist - 0.32 - 0.04 * sin(uTime * 3.0)));
+        float coreRing = 1.0 - smoothstep(0.0, 0.04, abs(dist - 0.32 - 0.04 * sin(uTime * 3.0)));
 
         float alpha = (harmonic * envelope * 0.45 + coreRing * 0.55) * uIntensity;
         half3 col = half3(uAuraColor.rgb) + half3(0.12 * sin(dist * 12.0), 0.18 * wave1, 0.24 * wave2);
@@ -954,7 +962,7 @@ private const val MESH_HALATION_AGSL_SHADER = """
 
         // Radial falloff envelope
         float envelope = exp(-dist * 3.4);
-        float coreAura = smoothstep(0.06, 0.0, abs(dist - 0.30 - 0.03 * sin(uTime * 2.8)));
+        float coreAura = 1.0 - smoothstep(0.0, 0.06, abs(dist - 0.30 - 0.03 * sin(uTime * 2.8)));
 
         float alpha = ((standingWave * 0.55 + coreAura * 0.45) * envelope) * uIntensity;
         meshCol += half3(0.08 * wave1, 0.06 * wave2, 0.10 * wave3);

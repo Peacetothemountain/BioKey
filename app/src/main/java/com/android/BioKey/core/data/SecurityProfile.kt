@@ -21,7 +21,8 @@ data class SecurityProfile(
             put("isStealth", isStealth)
             put("timeoutMode", timeoutMode.name)
             val pkgArray = JSONArray()
-            packages.forEach { pkgArray.put(it) }
+            // Deterministic sorting guarantees identical HMAC-SHA256 integrity seal calculation
+            packages.sorted().forEach { pkgArray.put(it) }
             put("packages", pkgArray)
         }
     }

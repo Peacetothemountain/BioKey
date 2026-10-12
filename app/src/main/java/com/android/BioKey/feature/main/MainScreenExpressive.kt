@@ -98,7 +98,11 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.produceState
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -121,6 +125,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -132,8 +137,7 @@ import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.SecurityProfile
 import com.android.BioKey.core.intruder.IntruderManager
 import com.android.BioKey.core.security.SecurityVault
-import com.android.BioKey.core.security.TitanM3SecurityManager
-import com.android.BioKey.core.security.TitanM3SecurityManager.ReKeyProof
+import com.android.BioKey.core.security.HardwareKeyManager
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.lock.DeviceAdminHelper
 import com.android.BioKey.ui.theme.ExpressiveTokens
@@ -156,13 +160,16 @@ import java.util.UUID
 @Composable
 fun MainScreenExpressive() {
     val context = LocalContext.current
+    // Icons are drawn at up to 54dp; rendering them at their intrinsic size (adaptive icons are
+    // 108dp) costs ~4x the memory, which adds up to an OOM with a few hundred apps.
+    val iconPx = with(LocalDensity.current) { ICON_RENDER_DP.dp.roundToPx() }
     val vault = remember { SecurityVault.getInstance(context) }
 
-    val lockedApps by vault.lockedAppsFlow.collectAsState()
-    val stealthApps by vault.stealthAppsFlow.collectAsState()
-    val globalLockEnabled by vault.globalLockEnabledFlow.collectAsState()
-    val profiles by vault.profilesFlow.collectAsState()
-    val activeProfileId by vault.activeProfileIdFlow.collectAsState()
+    val lockedApps by vault.lockedAppsFlow.collectAsStateWithLifecycle()
+    val stealthApps by vault.stealthAppsFlow.collectAsStateWithLifecycle()
+    val globalLockEnabled by vault.globalLockEnabledFlow.collectAsStateWithLifecycle()
+    val profiles by vault.profilesFlow.collectAsStateWithLifecycle()
+    val activeProfileId by vault.activeProfileIdFlow.collectAsStateWithLifecycle()
 
     var installedApps by remember { mutableStateOf<List<AppItem>>(emptyList()) }
     var isLoadingApps by remember { mutableStateOf(true) }
@@ -176,27 +183,24 @@ fun MainScreenExpressive() {
     var showProfileEditor by remember { mutableStateOf(false) }
     var showPermissionsSheet by remember { mutableStateOf(false) }
     var showAllAppsActionsSheet by remember { mutableStateOf(false) }
-    var reKeyProofResult by remember { mutableStateOf<ReKeyProof?>(null) }
+    var showPauseDialog by remember { mutableStateOf(false) }
+    val pausedUntil by vault.pausedUntilFlow.collectAsStateWithLifecycle()
+    val stepUp = LocalStepUpAuth.current
 
-    var intruderCount by remember { mutableStateOf(0) }
-    var a11yActive by remember { mutableStateOf(BioKeyAccessibilityService.isServiceEnabled(context)) }
-    var canDrawOverlays by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    var intruderCount by remember { mutableIntStateOf(0) }
 
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                a11yActive = BioKeyAccessibilityService.isServiceEnabled(context)
-                canDrawOverlays = Settings.canDrawOverlays(context)
-            }
+    /** Locking is immediate; unlocking (protection-reducing) needs a fresh authentication. */
+    fun setLocked(app: AppItem, lock: Boolean, profile: SecurityProfile?) {
+        ExpressiveTokens.triggerHaptic(
+            context,
+            if (lock) ExpressiveTokens.HapticFeedbackStyle.TOGGLE_ON else ExpressiveTokens.HapticFeedbackStyle.TOGGLE_OFF
+        )
+        when {
+            lock && profile != null -> vault.addAppToProfile(profile.id, app.packageName)
+            lock -> vault.setAppLock(app.packageName, true)
+            profile != null -> stepUp.require("Unlock ${app.label}") { vault.removeAppFromProfile(profile.id, app.packageName) }
+            else -> stepUp.require("Unlock ${app.label}") { vault.setAppLock(app.packageName, false) }
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    LaunchedEffect(showSettingsSheet, showPermissionsSheet) {
-        a11yActive = BioKeyAccessibilityService.isServiceEnabled(context)
-        canDrawOverlays = Settings.canDrawOverlays(context)
     }
 
     LaunchedEffect(Unit) {
@@ -210,7 +214,7 @@ fun MainScreenExpressive() {
                 if (pkg == BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER) return@mapNotNull null
                 val label = resolveInfo.loadLabel(pm).toString()
                 val drawable = resolveInfo.loadIcon(pm)
-                val bitmap = drawableToBitmap(drawable)
+                val bitmap = drawableToBitmap(drawable, iconPx)
                 val category = categorizeApp(label, pkg)
                 val isRec = category in setOf(
                     AppCategory.FINANCE,
@@ -249,7 +253,7 @@ fun MainScreenExpressive() {
                         val gmsAppInfo = pm.getApplicationInfo("com.google.android.gms", 0)
                         pm.getApplicationIcon(gmsAppInfo)
                     }
-                    drawableToBitmap(iconDrawable)
+                    drawableToBitmap(iconDrawable, iconPx)
                 } catch (_: Exception) {
                     null
                 }
@@ -265,7 +269,6 @@ fun MainScreenExpressive() {
             }
 
             val finalItems = items.distinctBy { it.packageName }.sortedBy { it.label.lowercase() }
-            vault.purgeExcludedApps(pm)
 
             if (vault.isAutoSortProfilesEnabled()) {
                 val appPairs = finalItems.map { it.packageName to it.label }
@@ -285,7 +288,7 @@ fun MainScreenExpressive() {
     val currentProfile = profiles.firstOrNull { it.id == activeProfileId }
     val isViewingAll = activeProfileId == null || activeProfileId == "all"
 
-    val filteredApps = remember(installedApps, lockedApps, searchQuery, activeProfileId, profiles) {
+    val filteredApps = remember(installedApps, searchQuery, activeProfileId, profiles) {
         val baseList = if (isViewingAll || currentProfile == null) {
             installedApps
         } else {
@@ -328,7 +331,7 @@ fun MainScreenExpressive() {
                         context,
                         if (enabled) ExpressiveTokens.HapticFeedbackStyle.TOGGLE_ON else ExpressiveTokens.HapticFeedbackStyle.TOGGLE_OFF
                     )
-                    vault.setGlobalLockEnabled(enabled)
+                    if (enabled) vault.resumeProtection() else showPauseDialog = true
                 },
                 onOpenDiagnostics = {
                     ExpressiveTokens.triggerHaptic(context, ExpressiveTokens.HapticFeedbackStyle.CLICK_SUBTLE)
@@ -347,20 +350,21 @@ fun MainScreenExpressive() {
             // Centered BioKey Dual-Layer Logo with Breathing Neural Aura
             CenteredBioKeyLogoExpressive()
 
-            // Expressive Permission Setup Banner (if Core Permissions Missing)
-            if (!a11yActive || !canDrawOverlays) {
+            // Paused-protection banner: the state an attacker would most like to leave unnoticed.
+            if (!globalLockEnabled) {
+                val resumeText = if (pausedUntil > 0L) {
+                    "Resumes automatically at " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT)
+                        .format(java.util.Date(pausedUntil))
+                } else {
+                    "Locked apps open without authentication until you resume"
+                }
                 Surface(
-                    onClick = {
-                        ExpressiveTokens.triggerHaptic(context, ExpressiveTokens.HapticFeedbackStyle.CLICK_SUBTLE)
-                        showPermissionsSheet = true
-                    },
                     shape = ExpressiveTokens.Shapes.BentoCardMedium,
                     color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 4.dp)
-                        .springPress()
                 ) {
                     Row(
                         modifier = Modifier
@@ -368,49 +372,40 @@ fun MainScreenExpressive() {
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Warning,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onError,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(24.dp)
+                        )
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Setup Permissions Required",
+                                text = "Protection paused",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
                             Text(
-                                text = if (!a11yActive && !canDrawOverlays) "Accessibility & Overlay required for 0ms protection"
-                                else if (!a11yActive) "Accessibility service required to intercept apps"
-                                else "Overlay permission required for biometric barrier",
+                                text = resumeText,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f)
                             )
                         }
                         Spacer(modifier = Modifier.width(8.dp))
-                        Surface(
+                        Button(
+                            onClick = {
+                                ExpressiveTokens.triggerHaptic(context, ExpressiveTokens.HapticFeedbackStyle.TOGGLE_ON)
+                                vault.resumeProtection()
+                            },
                             shape = CircleShape,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.springPress()
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error,
+                                contentColor = MaterialTheme.colorScheme.onError
+                            ),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                         ) {
-                            Text(
-                                text = "Setup",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = MaterialTheme.colorScheme.onError,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                            )
+                            Text("Resume", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -422,7 +417,10 @@ fun MainScreenExpressive() {
                 activeProfileId = activeProfileId,
                 onSelectProfile = { profileId ->
                     ExpressiveTokens.triggerHaptic(context, ExpressiveTokens.HapticFeedbackStyle.CONFIRM_SUCCESS)
-                    vault.activateProfile(profileId)
+                    // A profile with a more lenient timeout needs a fresh authentication.
+                    if (!vault.activateProfile(profileId)) {
+                        stepUp.require("Switch profile") { vault.activateProfile(profileId) }
+                    }
                 },
                 onEditProfile = { profile ->
                     ExpressiveTokens.triggerHaptic(context, ExpressiveTokens.HapticFeedbackStyle.CLICK_SUBTLE)
@@ -615,19 +613,7 @@ fun MainScreenExpressive() {
                             isLocked = isLocked,
                             isStealth = isStealth,
                             onToggleLock = { lock ->
-                                ExpressiveTokens.triggerHaptic(
-                                    context,
-                                    if (lock) ExpressiveTokens.HapticFeedbackStyle.TOGGLE_ON else ExpressiveTokens.HapticFeedbackStyle.TOGGLE_OFF
-                                )
-                                if (isViewingAll || currentProfile == null) {
-                                    vault.setAppLock(app.packageName, lock)
-                                } else {
-                                    if (lock) {
-                                        vault.addAppToProfile(currentProfile.id, app.packageName)
-                                    } else {
-                                        vault.removeAppFromProfile(currentProfile.id, app.packageName)
-                                    }
-                                }
+                                setLocked(app, lock, if (isViewingAll) null else currentProfile)
                             },
                             onOpenOptions = {
                                 ExpressiveTokens.triggerHaptic(context, ExpressiveTokens.HapticFeedbackStyle.CLICK_SUBTLE)
@@ -650,10 +636,7 @@ fun MainScreenExpressive() {
             isLocked = isLocked,
             isStealth = isStealth,
             onDismiss = { selectedAppForDetails = null },
-            onToggleLock = { lock ->
-                ExpressiveTokens.triggerHaptic(context, ExpressiveTokens.HapticFeedbackStyle.CONFIRM_SUCCESS)
-                vault.setAppLock(app.packageName, lock)
-            },
+            onToggleLock = { lock -> setLocked(app, lock, profile = null) },
             onToggleStealth = { stealth ->
                 ExpressiveTokens.triggerHaptic(context, ExpressiveTokens.HapticFeedbackStyle.CONFIRM_SUCCESS)
                 vault.setAppStealthCrash(app.packageName, stealth)
@@ -706,12 +689,19 @@ fun MainScreenExpressive() {
     }
 
     if (showIntruderVaultSheet) {
-        IntruderVaultModalSheetExpressive(
-            onDismiss = {
-                val attempts = IntruderManager.getIntruderRecords(context)
-                intruderCount = attempts.size
-                showIntruderVaultSheet = false
-            }
+        IntruderVaultSheet(
+            onDismiss = { showIntruderVaultSheet = false },
+            onChanged = { intruderCount = it }
+        )
+    }
+
+    if (showPauseDialog) {
+        PauseProtectionDialog(
+            onPause = { duration ->
+                showPauseDialog = false
+                stepUp.require("Pause protection") { vault.pauseProtection(duration) }
+            },
+            onDismiss = { showPauseDialog = false }
         )
     }
 
@@ -721,9 +711,14 @@ fun MainScreenExpressive() {
             installedApps = installedApps,
             onDismiss = { showProfileEditor = false },
             onSaveProfile = { profile ->
-                vault.saveProfile(profile)
-                vault.activateProfile(profile.id)
-                showProfileEditor = false
+                // Both calls refuse protection-reducing changes (removing apps from the active
+                // profile, a more lenient timeout) without a fresh authentication, so retry after one.
+                val save = { vault.saveProfile(profile) && vault.activateProfile(profile.id) }
+                if (save()) {
+                    showProfileEditor = false
+                } else {
+                    stepUp.require("Save ${profile.name}") { if (save()) showProfileEditor = false }
+                }
             },
             onDeleteProfile = { profileId ->
                 vault.deleteProfile(profileId)
@@ -759,16 +754,12 @@ fun MainScreenExpressive() {
                 } else {
                     installedApps.map { it.packageName }
                 }
-                vault.setMultipleAppLocks(targetPkgs, false)
-                Toast.makeText(context, "Unlocked all applications (${targetPkgs.size})", Toast.LENGTH_SHORT).show()
+                stepUp.require("Unlock ${targetPkgs.size} apps") {
+                    if (vault.setMultipleAppLocks(targetPkgs, false)) {
+                        Toast.makeText(context, "Unlocked ${targetPkgs.size} apps", Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
-        )
-    }
-
-    reKeyProofResult?.let { proof ->
-        ReKeyVerificationDialogExpressive(
-            proof = proof,
-            onDismiss = { reKeyProofResult = null }
         )
     }
 }
@@ -786,7 +777,9 @@ private fun ExpressiveTopHeader(
     onOpenSettings: () -> Unit
 ) {
     val context = LocalContext.current
-    val diagnostics = remember { TitanM3SecurityManager.INSTANCE.getDiagnostics(context) }
+    val chipBadge by produceState("KEYSTORE") {
+        value = withContext(Dispatchers.IO) { HardwareKeyManager.getDiagnostics(context).getChipBadge() }
+    }
 
     Row(
         modifier = Modifier
@@ -821,7 +814,7 @@ private fun ExpressiveTopHeader(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = diagnostics.getChipBadge(),
+                    text = chipBadge,
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
@@ -912,7 +905,7 @@ private fun ExpressiveTopHeader(
 @Composable
 private fun CenteredBioKeyLogoExpressive() {
     val infiniteTransition = rememberInfiniteTransition(label = "logo_aura_expressive")
-    val pulseAura by infiniteTransition.animateFloat(
+    val pulseAura = infiniteTransition.animateFloat(
         initialValue = 0.94f,
         targetValue = 1.08f,
         animationSpec = infiniteRepeatable(
@@ -932,7 +925,11 @@ private fun CenteredBioKeyLogoExpressive() {
         Box(
             modifier = Modifier
                 .size(160.dp, 72.dp)
-                .scale(pulseAura)
+                // Read the animated value in the draw phase only: no recomposition per frame.
+                .graphicsLayer {
+                    scaleX = pulseAura.value
+                    scaleY = pulseAura.value
+                }
                 .background(
                     brush = Brush.radialGradient(
                         colors = listOf(
@@ -1320,6 +1317,7 @@ private fun AppSecurityBottomSheetExpressive(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        modifier = Modifier.reportsInteraction(),
         shape = ExpressiveTokens.Shapes.BentoCardLarge,
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow
     ) {
@@ -1485,6 +1483,7 @@ private fun AllAppsActionsModalSheetExpressive(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        modifier = Modifier.reportsInteraction(),
         shape = ExpressiveTokens.Shapes.BentoCardLarge,
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow
     ) {
@@ -1597,7 +1596,8 @@ private fun AllAppsActionsModalSheetExpressive(
 }
 
 /**
- * Hardware Diagnostics Modal Sheet.
+ * Keystore and protection status, read from the platform (KeyInfo, BiometricManager) rather
+ * than assumed. Loaded off the main thread because Keystore queries can block.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1606,11 +1606,16 @@ private fun HardwareDiagnosticsSheetExpressive(
 ) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val diagnostics = remember { TitanM3SecurityManager.INSTANCE.getDiagnostics(context) }
+    val diagnostics by produceState<HardwareKeyManager.KeystoreDiagnostics?>(null) {
+        value = withContext(Dispatchers.IO) { HardwareKeyManager.getDiagnostics(context) }
+    }
+    val a11yActive = remember { BioKeyAccessibilityService.isServiceEnabled(context) }
+    val adminActive = remember { DeviceAdminHelper.isAdminActive(context) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        modifier = Modifier.reportsInteraction(),
         shape = ExpressiveTokens.Shapes.BentoCardLarge,
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow
     ) {
@@ -1627,7 +1632,7 @@ private fun HardwareDiagnosticsSheetExpressive(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Hardware Security Telemetry",
+                    text = "Security status",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
@@ -1643,12 +1648,16 @@ private fun HardwareDiagnosticsSheetExpressive(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    DiagnosticItemExpressive("Hardware Security", diagnostics.getChipBadge())
-                    DiagnosticItemExpressive("Biometric Class", if (diagnostics.isBiometricHardwarePresent) "Class 3 (Strong Biometric)" else "None")
-                    DiagnosticItemExpressive("Hardware Keystore", if (diagnostics.isHardwareKeystoreBacked) "StrongBox / TEE Hardware-Backed" else "Software Fallback")
-                    DiagnosticItemExpressive("Device Admin Active", if (diagnostics.isDeviceAdminActive) "Enforced" else "Inactive")
-                    DiagnosticItemExpressive("Overlay Permission", if (diagnostics.canDrawOverlays) "Granted" else "Restricted")
-                    DiagnosticItemExpressive("Accessibility Service", if (diagnostics.isAccessibilityActive) "Bound & Running" else "Inactive")
+                    val d = diagnostics
+                    if (d == null) {
+                        CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                    } else {
+                        DiagnosticItemExpressive("Key storage", d.securityLevel)
+                        DiagnosticItemExpressive("StrongBox available", if (d.isStrongBoxSupported) "Yes" else "No")
+                        DiagnosticItemExpressive("Biometrics", d.biometricStatus)
+                    }
+                    DiagnosticItemExpressive("App lock service", if (a11yActive) "Running" else "Off")
+                    DiagnosticItemExpressive("Uninstall protection", if (adminActive) "On" else "Off")
                 }
             }
         }
@@ -1667,134 +1676,13 @@ private fun DiagnosticItemExpressive(title: String, value: String) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        Spacer(modifier = Modifier.width(12.dp))
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary
         )
-    }
-}
-
-/**
- * Intruder Vault Modal Sheet.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun IntruderVaultModalSheetExpressive(
-    onDismiss: () -> Unit
-) {
-    val context = LocalContext.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var records by remember { mutableStateOf(IntruderManager.getIntruderRecords(context)) }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        shape = ExpressiveTokens.Shapes.BentoCardLarge,
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 36.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Intruder Breach Vault",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                if (records.isNotEmpty()) {
-                    TextButton(onClick = {
-                        IntruderManager.clearAllIntruders(context)
-                        records = emptyList()
-                    }) {
-                        Text("Clear All", color = MaterialTheme.colorScheme.error)
-                    }
-                }
-            }
-
-            if (records.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            modifier = Modifier.size(64.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Shield,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(32.dp)
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "No unauthorized breaches recorded",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(records, key = { it.file.absolutePath }) { record ->
-                        Surface(
-                            shape = ExpressiveTokens.Shapes.BentoCardMedium,
-                            color = MaterialTheme.colorScheme.surfaceContainer,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(14.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Text(
-                                        text = record.packageName,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = record.formattedDate,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.error
-                                    )
-                                }
-                                IconButton(onClick = {
-                                    IntruderManager.deleteIntruderRecord(record)
-                                    records = IntruderManager.getIntruderRecords(context)
-                                }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -1838,6 +1726,7 @@ private fun ProfileEditorModalSheetExpressive(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        modifier = Modifier.reportsInteraction(),
         shape = ExpressiveTokens.Shapes.BentoCardLarge,
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow
     ) {
@@ -2134,7 +2023,8 @@ private fun ProfileEditorModalSheetExpressive(
 }
 
 /**
- * Security & Permissions Center Modal Bottom Sheet.
+ * Optional permissions. The required ones (app lock service, uninstall protection) are enforced
+ * by MainActivity, which shows the repair screen whenever one is missing.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -2144,62 +2034,37 @@ private fun SecurityPermissionsModalSheetExpressive(
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    var a11yActive by remember { mutableStateOf(BioKeyAccessibilityService.isServiceEnabled(context)) }
-    var canDrawOverlays by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
-    var isAdminActive by remember { mutableStateOf(DeviceAdminHelper.isAdminActive(context)) }
-    var hasCamera by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        )
-    }
-    val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-    var hasUsage by remember {
-        mutableStateOf(
-            appOps.checkOpNoThrow(
-                AppOpsManager.OPSTR_GET_USAGE_STATS,
-                android.os.Process.myUid(),
-                context.packageName
-            ) == AppOpsManager.MODE_ALLOWED
-        )
+    fun granted(permission: String) =
+        ContextCompat.checkSelfPermission(context, permission) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    var hasCamera by remember { mutableStateOf(granted(android.Manifest.permission.CAMERA)) }
+    // POST_NOTIFICATIONS only exists from Android 13; earlier versions allow notifications by default.
+    fun notificationsAllowed() = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU ||
+        granted(android.Manifest.permission.POST_NOTIFICATIONS)
+
+    var hasNotifications by remember { mutableStateOf(notificationsAllowed()) }
+    var hasNotificationAccess by remember {
+        mutableStateOf(BioKeyNotificationShieldService.isNotificationAccessGranted(context))
     }
 
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                a11yActive = BioKeyAccessibilityService.isServiceEnabled(context)
-                canDrawOverlays = Settings.canDrawOverlays(context)
-                isAdminActive = DeviceAdminHelper.isAdminActive(context)
-                hasCamera = ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                hasUsage = appOps.checkOpNoThrow(
-                    AppOpsManager.OPSTR_GET_USAGE_STATS,
-                    android.os.Process.myUid(),
-                    context.packageName
-                ) == AppOpsManager.MODE_ALLOWED
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    LifecycleResumeEffect(Unit) {
+        hasCamera = granted(android.Manifest.permission.CAMERA)
+        hasNotifications = notificationsAllowed()
+        hasNotificationAccess = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
+        onPauseOrDispose { }
     }
 
-    val deviceAdminLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) {
-        isAdminActive = DeviceAdminHelper.isAdminActive(context)
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        hasCamera = it
     }
-
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        hasCamera = granted
-        if (!granted) {
-            Toast.makeText(context, "Camera permission needed for Intruder Selfie", Toast.LENGTH_SHORT).show()
-        }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        hasNotifications = it
     }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        modifier = Modifier.reportsInteraction(),
         shape = ExpressiveTokens.Shapes.BentoCardLarge,
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow
     ) {
@@ -2218,13 +2083,13 @@ private fun SecurityPermissionsModalSheetExpressive(
                 ) {
                     Column {
                         Text(
-                            text = "Security & Permissions Center",
+                            text = "Permissions",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "Manage system defenses & hardware security",
+                            text = "Optional features and the permissions they need",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -2237,76 +2102,39 @@ private fun SecurityPermissionsModalSheetExpressive(
 
             item {
                 PermissionCardExpressive(
-                    title = "Accessibility Shield Service",
-                    subtitle = "Foreground application detection to intercept locked apps instantly",
-                    isActive = a11yActive,
-                    isRequired = true,
-                    actionText = if (a11yActive) "Active" else "Enable Service",
+                    title = "Protection alerts",
+                    subtitle = "Notifies you if app locking stops or settings are tampered with",
+                    isActive = hasNotifications,
+                    isRequired = false,
+                    actionText = if (hasNotifications) "On" else "Allow",
                     onAction = {
-                        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        }
-                        context.startActivity(intent)
+                        if (!hasNotifications) notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
                     }
                 )
             }
 
             item {
                 PermissionCardExpressive(
-                    title = "0ms Instant Overlay Shield",
-                    subtitle = "Draws secure hardware authentication barrier over locked apps",
-                    isActive = canDrawOverlays,
-                    isRequired = true,
-                    actionText = if (canDrawOverlays) "Active" else "Grant Overlay",
-                    onAction = {
-                        val intent = Intent(
-                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:${context.packageName}")
-                        ).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
-                        context.startActivity(intent)
-                    }
-                )
-            }
-
-            item {
-                PermissionCardExpressive(
-                    title = "Device Administrator Policy",
-                    subtitle = "Prevents malicious app uninstallation and tampering without authentication",
-                    isActive = isAdminActive,
-                    isRequired = true,
-                    actionText = if (isAdminActive) "Active" else "Activate Admin",
-                    onAction = {
-                        DeviceAdminHelper.launchActivation(context, deviceAdminLauncher)
-                    }
-                )
-            }
-
-            item {
-                PermissionCardExpressive(
-                    title = "Front Camera Sensor",
-                    subtitle = "Silently captures intruder selfie on failed biometric unlock attempts",
+                    title = "Intruder photos",
+                    subtitle = "Front camera, used only after repeated failed unlocks",
                     isActive = hasCamera,
                     isRequired = false,
-                    actionText = if (hasCamera) "Active" else "Grant Camera",
+                    actionText = if (hasCamera) "On" else "Allow",
                     onAction = {
                         if (!hasCamera) cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
-                        else Toast.makeText(context, "Camera permission already granted", Toast.LENGTH_SHORT).show()
                     }
                 )
             }
 
             item {
                 PermissionCardExpressive(
-                    title = "Usage Statistics Access",
-                    subtitle = "Backup foreground app state monitor for devices with background restrictions",
-                    isActive = hasUsage,
+                    title = "Notification shield",
+                    subtitle = "Notification access, to hide notifications from locked apps",
+                    isActive = hasNotificationAccess,
                     isRequired = false,
-                    actionText = if (hasUsage) "Active" else "Grant Access",
+                    actionText = if (hasNotificationAccess) "On" else "Allow",
                     onAction = {
-                        val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        }
-                        context.startActivity(intent)
+                        context.openSystemSettings(BioKeyNotificationShieldService.getNotificationSettingsIntent())
                     }
                 )
             }
@@ -2382,105 +2210,14 @@ private fun PermissionCardExpressive(
     }
 }
 
-/**
- * Re-Key Verification Dialog.
- */
-@Composable
-private fun ReKeyVerificationDialogExpressive(
-    proof: ReKeyProof,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        shape = ExpressiveTokens.Shapes.BentoCardLarge,
-        icon = {
-            Icon(
-                Icons.Default.CheckCircle,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(36.dp)
-            )
-        },
-        title = {
-            Text(
-                "Hardware Security Re-Key Verified",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-        },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text(
-                    "Master biometric encryption key was regenerated directly inside the hardware security module.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+private const val ICON_RENDER_DP = 56
 
-                Surface(
-                    shape = ExpressiveTokens.Shapes.BentoCardSmall,
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            text = "SECURITY PROVIDER: ${proof.provider}",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = "KEY ALIAS: ${proof.keyAlias}",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            text = "VERIFICATION HASH:",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = proof.verificationHash,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "TIMESTAMP: ${proof.creationTimestamp}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = onDismiss,
-                shape = CircleShape,
-                modifier = Modifier.springPress()
-            ) {
-                Text("Done")
-            }
-        }
-    )
-}
-
-
-
-private fun drawableToBitmap(drawable: Drawable): Bitmap {
-    if (drawable is BitmapDrawable && drawable.bitmap != null) {
+/** Renders [drawable] into a [sizePx]-square bitmap (reusing an existing bitmap no larger than that). */
+private fun drawableToBitmap(drawable: Drawable, sizePx: Int): Bitmap {
+    if (drawable is BitmapDrawable && drawable.bitmap != null && drawable.bitmap.width <= sizePx) {
         return drawable.bitmap
     }
-    val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 128
-    val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 128
-    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     drawable.setBounds(0, 0, canvas.width, canvas.height)
     drawable.draw(canvas)

@@ -25,6 +25,11 @@ enum class LockTimeoutMode(val title: String, val description: String, val durat
         title = "5 Minutes Grace Period",
         description = "Locks after 5 minutes of inactivity",
         durationMillis = 300_000L
+    ),
+    GRACE_15_MINUTES(
+        title = "15 Minutes Grace Period",
+        description = "Locks after 15 minutes of inactivity",
+        durationMillis = 900_000L
     );
 
     val label: String get() = title

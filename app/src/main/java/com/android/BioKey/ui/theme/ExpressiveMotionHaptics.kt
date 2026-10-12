@@ -830,6 +830,8 @@ fun Modifier.springPress(
     val haptics = LocalExpressiveHaptics.current
     val scaleAnim = remember { Animatable(1.0f) }
 
+    var gestureModifier: Modifier = Modifier
+
     if (interactionSource != null) {
         LaunchedEffect(interactionSource) {
             var isPressed = false
@@ -874,9 +876,9 @@ fun Modifier.springPress(
         }
     } else {
         val gestureScope = rememberCoroutineScope()
-        this.pointerInput(enabled) {
+        gestureModifier = Modifier.pointerInput(pressScale, releasePopScale, hapticsEnabled) {
             awaitEachGesture {
-                val down = awaitFirstDown(requireUnconsumed = false)
+                awaitFirstDown(requireUnconsumed = false)
                 if (hapticsEnabled) haptics.tick(amplitude = 0.5f)
                 gestureScope.launch {
                     scaleAnim.animateTo(
@@ -913,7 +915,7 @@ fun Modifier.springPress(
         }
     }
 
-    return@composed this.graphicsLayer {
+    return@composed gestureModifier.graphicsLayer {
         scaleX = scaleAnim.value
         scaleY = scaleAnim.value
         transformOrigin = TransformOrigin.Center
@@ -943,7 +945,7 @@ fun Modifier.expressiveBounceClickable(
             pressedScale = pressedScale,
             releasePopScale = releasePopScale,
             enabled = enabled,
-            hapticFeedbackEnabled = hapticFeedbackEnabled,
+            hapticFeedbackEnabled = false,
             customHaptics = haptics
         )
         .clickable(
@@ -975,16 +977,6 @@ fun Modifier.expressiveClickable(
     val interactionSource = remember { MutableInteractionSource() }
     val haptics = LocalExpressiveHaptics.current
 
-    val mappedType = when (hapticStyle) {
-        ExpressiveTokens.HapticFeedbackStyle.TICK -> ExpressiveHapticType.Tick
-        ExpressiveTokens.HapticFeedbackStyle.CLICK_SUBTLE -> ExpressiveHapticType.Click
-        ExpressiveTokens.HapticFeedbackStyle.CONFIRM_SUCCESS -> ExpressiveHapticType.HeavyClick
-        ExpressiveTokens.HapticFeedbackStyle.REJECT_ERROR -> ExpressiveHapticType.ErrorRumble
-        ExpressiveTokens.HapticFeedbackStyle.TOGGLE_ON -> ExpressiveHapticType.HeavyClick
-        ExpressiveTokens.HapticFeedbackStyle.TOGGLE_OFF -> ExpressiveHapticType.Tick
-        ExpressiveTokens.HapticFeedbackStyle.HEAVY_SNAP -> ExpressiveHapticType.HeavyClick
-    }
-
     this
         .expressiveScaleOnPress(
             interactionSource = interactionSource,
@@ -1000,7 +992,6 @@ fun Modifier.expressiveClickable(
             enabled = enabled,
             onClick = {
                 ExpressiveTokens.triggerHaptic(context, hapticStyle)
-                haptics.perform(mappedType)
                 onClick()
             }
         )

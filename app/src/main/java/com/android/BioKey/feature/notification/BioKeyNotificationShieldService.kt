@@ -1,13 +1,11 @@
 package com.android.BioKey.feature.notification
 
-import android.app.ActivityOptions
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -18,141 +16,198 @@ import com.android.BioKey.R
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.LockScreenActivity
+import java.util.concurrent.ConcurrentHashMap
 
 /**
- * BioKey Notification Privacy Shield
+ * Non-destructive notification shield: while a locked app is locked, its notifications are
+ * snoozed in the shade and replaced by one neutral "N hidden notifications" entry per app.
  *
- * Replicates and enhances Google's native Android Canary (ZP11) App Lock notification privacy.
- * Automatically intercepts incoming notifications from locked applications.
- * If the application is currently in a locked state, this service intercepts the sensitive notification,
- * suppresses raw text, OTP codes, and previews, and replaces it with a privacy-preserving sanitized badge.
+ * Tapping the entry opens BioKey's lock and then launches the preserved content Intent.
+ * When the app is unlocked from launcher or recents, the stand-in notification is automatically
+ * dismissed and snoozed notifications are restored.
  */
 class BioKeyNotificationShieldService : NotificationListenerService() {
 
     companion object {
         private const val TAG = "BioKeyNotifShield"
         private const val CHANNEL_ID = "biokey_privacy_shield_channel"
-        private const val CHANNEL_NAME = "BioKey Privacy Shield"
+        private const val TAG_PREFIX = "biokey-shield:"
+        private const val SUMMARY_ID = 1
+        private const val SNOOZE_24_HOURS_MS = 24 * 60 * 60 * 1000L
 
-        var isConnected: Boolean = false
-            private set
+        private val IGNORED_PACKAGES = setOf("android", "com.android.systemui")
 
-        fun isNotificationAccessGranted(context: Context): Boolean {
-            val enabledPackages = NotificationManagerCompat.getEnabledListenerPackages(context)
-            return enabledPackages.contains(context.packageName)
-        }
+        /** Deep-link intents cached per locked package to preserve notification routing. */
+        val cachedPendingIntents = ConcurrentHashMap<String, PendingIntent>()
 
-        fun getNotificationSettingsIntent(): Intent {
-            return Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-        }
+        fun isNotificationAccessGranted(context: Context): Boolean =
+            NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+
+        fun getNotificationSettingsIntent(): Intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
     }
 
-    private lateinit var securityVault: SecurityVault
+    private val vault by lazy { SecurityVault.getInstance(applicationContext) }
+
+    /** Set of active snoozed notification keys per package to prevent count ballooning. */
+    private val hiddenNotificationKeys = ConcurrentHashMap<String, MutableSet<String>>()
+
+    @Volatile private var connected = false
+
+    private val onLockAll: () -> Unit = { if (connected) sweepActiveNotifications() }
+    private val onAppUnlocked: (String) -> Unit = { pkg ->
+        if (connected) restoreNotificationsForPackage(pkg)
+    }
 
     override fun onListenerConnected() {
         super.onListenerConnected()
-        isConnected = true
-        securityVault = SecurityVault.getInstance(applicationContext)
-        Log.i(TAG, "BioKey Notification Privacy Shield connected and active.")
+        connected = true
+        LockStateTracker.addLockAllListener(onLockAll)
+        LockStateTracker.addAppUnlockListener(onAppUnlocked)
+        sweepActiveNotifications()
     }
 
     override fun onListenerDisconnected() {
-        isConnected = false
+        connected = false
+        LockStateTracker.removeLockAllListener(onLockAll)
+        LockStateTracker.removeAppUnlockListener(onAppUnlocked)
         super.onListenerDisconnected()
-        Log.i(TAG, "BioKey Notification Privacy Shield disconnected.")
     }
 
-    override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        super.onNotificationPosted(sbn)
-        if (sbn == null) return
-        val pkg = sbn.packageName ?: return
+    override fun onDestroy() {
+        LockStateTracker.removeLockAllListener(onLockAll)
+        LockStateTracker.removeAppUnlockListener(onAppUnlocked)
+        super.onDestroy()
+    }
 
-        // Never intercept BioKey's own notifications or core system alerts
-        if (pkg == packageName || pkg == "com.android.systemui" || pkg == "android") return
+    override fun onNotificationPosted(sbn: StatusBarNotification) {
+        if (shouldHide(sbn)) hide(sbn)
+    }
 
-        if (!::securityVault.isInitialized) {
-            securityVault = SecurityVault.getInstance(applicationContext)
-        }
-
-        if (!securityVault.isGlobalLockEnabled()) return
-        if (!securityVault.isNotificationShieldEnabled()) return
-
-        // Check if the package is protected by BioKey
-        if (securityVault.isAppLocked(pkg)) {
-            // Check if the app is currently in an active unlocked session
-            if (!LockStateTracker.isAppUnlocked(pkg, securityVault.getTimeoutMode())) {
-                try {
-                    // Censor original sensitive notification
-                    cancelNotification(sbn.key)
-                    Log.d(TAG, "Redacted sensitive notification from locked package: $pkg")
-                    postSanitizedNotification(pkg, sbn.id)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed masking notification for $pkg: ${e.message}")
-                }
+    override fun onNotificationRemoved(sbn: StatusBarNotification) {
+        // Our replacement entry was tapped or swiped away
+        if (sbn.packageName == packageName) {
+            sbn.tag?.takeIf { it.startsWith(TAG_PREFIX) }?.let {
+                val pkg = it.removePrefix(TAG_PREFIX)
+                hiddenNotificationKeys.remove(pkg)
+                cachedPendingIntents.remove(pkg)
             }
         }
     }
 
-    private fun postSanitizedNotification(lockedPackage: String, originalId: Int) {
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                CHANNEL_NAME,
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Privacy-shielded notifications for locked applications"
-                setShowBadge(true)
-            }
-            nm.createNotificationChannel(channel)
-        }
+    private fun sweepActiveNotifications() {
+        val active = try {
+            activeNotifications
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Listener not bound: ${e.message}")
+            return
+        } ?: return
+        active.filter(::shouldHide).forEach(::hide)
+    }
 
-        val pm = packageManager
-        val appLabel = try {
-            val appInfo = pm.getApplicationInfo(lockedPackage, 0)
-            pm.getApplicationLabel(appInfo).toString()
+    private fun shouldHide(sbn: StatusBarNotification): Boolean {
+        val pkg = sbn.packageName ?: return false
+        if (pkg == packageName || pkg in IGNORED_PACKAGES) return false
+        if (!sbn.isClearable || sbn.notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0) return false
+        // Never suppress emergency calls or alarms
+        if (sbn.notification.category in setOf(Notification.CATEGORY_CALL, Notification.CATEGORY_ALARM)) return false
+        if (sbn.notification.fullScreenIntent != null) return false
+
+        if (!vault.isGlobalLockEnabled() || !vault.isNotificationShieldEnabled()) return false
+        if (!vault.isAppLocked(pkg)) return false
+        return !LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode())
+    }
+
+    private fun hide(sbn: StatusBarNotification) {
+        val pkg = sbn.packageName
+        try {
+            // Non-destructive snooze: snooze notification for 24h so user messages and OTPs are preserved
+            snoozeNotification(sbn.key, SNOOZE_24_HOURS_MS)
         } catch (e: Exception) {
-            "Protected Application"
+            Log.w(TAG, "Couldn't snooze notification: ${e.message}")
+            return
         }
 
-        // Tap action immediately prompts BioKey unlock screen for the target package
+        // Cache deep link intent for navigation after unlock
+        sbn.notification.contentIntent?.let { cachedPendingIntents[pkg] = it }
+
+        val isSummary = sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0
+        val keys = hiddenNotificationKeys.computeIfAbsent(pkg) { ConcurrentHashMap.newKeySet() }
+        if (!isSummary) {
+            keys.add(sbn.key)
+        }
+        val count = keys.size.coerceAtLeast(1)
+        postReplacement(pkg, count)
+    }
+
+    private fun restoreNotificationsForPackage(pkg: String) {
+        // Dismiss stand-in notification immediately
+        NotificationManagerCompat.from(this).cancel(TAG_PREFIX + pkg, SUMMARY_ID)
+        val keys = hiddenNotificationKeys.remove(pkg) ?: return
+        for (key in keys) {
+            runCatching {
+                // Re-awaken snoozed notification
+                snoozeNotification(key, 50L)
+            }
+        }
+    }
+
+    private fun postReplacement(lockedPackage: String, count: Int) {
+        val manager = NotificationManagerCompat.from(this)
+        if (!manager.areNotificationsEnabled()) return
+        ensureChannel()
+
         val unlockIntent = Intent(this, LockScreenActivity::class.java).apply {
             putExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE, lockedPackage)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(LockScreenActivity.EXTRA_LAUNCH_AFTER_UNLOCK, true)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        val options = ActivityOptions.makeBasic()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            @Suppress("DEPRECATION")
-            options.setPendingIntentCreatorBackgroundActivityStartMode(
-                ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
-            )
-        }
-        val pi = PendingIntent.getActivity(
+        val contentIntent = PendingIntent.getActivity(
             this,
             lockedPackage.hashCode(),
             unlockIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            options.toBundle()
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+
+        val label = try {
+            packageManager.getApplicationLabel(packageManager.getApplicationInfo(lockedPackage, 0)).toString()
+        } catch (_: Exception) {
+            "Locked app"
+        }
+        val publicVersion = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_lock_key)
+            .setContentTitle("Locked app")
+            .setContentText("Notification hidden by BioKey")
+            .build()
+        val text = if (count == 1) "1 hidden notification" else "$count hidden notifications"
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_lock_key)
-            .setContentTitle(appLabel)
-            .setContentText("Sensitive notification content hidden")
-            .setSubText("BioKey Shield")
-            .setContentIntent(pi)
+            .setContentTitle(label)
+            .setContentText("$text · tap to unlock")
+            .setNumber(count)
+            .setContentIntent(contentIntent)
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicVersion)
             .setLocalOnly(true)
             .build()
-
         try {
-            nm.notify(lockedPackage, originalId, notification)
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed posting sanitized notification for $lockedPackage: ${e.message}")
+            manager.notify(TAG_PREFIX + lockedPackage, SUMMARY_ID, notification)
+        } catch (_: SecurityException) {
+            // POST_NOTIFICATIONS revoked between the check and notify.
         }
+    }
+
+    private fun ensureChannel() {
+        val nm = getSystemService(NotificationManager::class.java)
+        if (nm.getNotificationChannel(CHANNEL_ID) != null) return
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_ID, "Hidden notifications", NotificationManager.IMPORTANCE_LOW).apply {
+                description = "Stand-ins for notifications from locked apps"
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+            }
+        )
     }
 }

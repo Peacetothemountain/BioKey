@@ -1,228 +1,171 @@
 package com.android.BioKey.feature.lock
 
-import android.content.Context
+import android.annotation.SuppressLint
+import android.accessibilityservice.AccessibilityService
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.provider.Settings
 import android.util.Log
 import android.util.LruCache
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
-import android.widget.TextView
 import com.android.BioKey.R
-import com.android.BioKey.core.security.IdentityCheckManager
 
 /**
- * Zero-Latency (0ms) Hardware-Accelerated Instant Shield Overlay
+ * Opaque cover shown the instant a locked app comes to the foreground, so its content is hidden
+ * during the few frames before [LockScreenActivity] draws.
  *
- * Attaches directly to WindowManagerGlobal with zero frame delay (< 5ms),
- * consuming all touch interactions and hardware-occluding the target app before its
- * first window frame can compose or leak to the user.
- *
- * Implements:
- * - Direct LruCache icon pooling to eliminate synchronous flash/APK icon decoding latency.
- * - Persistent view hierarchy pooling to eliminate object allocation churn on the hot path.
- * - Hardware acceleration flags + display cutout immersion.
- * - Clean lifecycle teardown with immediate drawable dereferencing to prevent memory leaks.
+ * Implements a solid, opaque surface (0xFF121316) matching native Android App Lock.
+ * It is an accessibility overlay (no SYSTEM_ALERT_WINDOW needed), consumes every touch, and is
+ * removed by the lock screen once it has drawn. If the lock screen never appears, the shield
+ * fails closed: [onTimeout] decides whether to relaunch the lock or send the user home; the app
+ * underneath is never simply revealed.
  */
-class InstantShieldOverlay(private val context: Context) {
+class InstantShieldOverlay(
+    private val service: AccessibilityService,
+    private val onTimeout: (targetPackage: String, attempt: Int) -> Boolean
+) {
 
     companion object {
         private const val TAG = "InstantShieldOverlay"
+        private const val TIMEOUT_MS = 2_500L
+        private const val MAX_ATTEMPTS = 3
 
+        // Only set while the shield is on screen and cleared in hide(), so it never outlives the window.
+        @SuppressLint("StaticFieldLeak")
         @Volatile
-        var activeInstance: InstantShieldOverlay? = null
-            private set
+        private var activeInstance: InstantShieldOverlay? = null
 
-        private val mainHandler = Handler(Looper.getMainLooper())
+        private val iconCache = LruCache<String, Drawable>(48)
 
-        // In-memory icon cache to eliminate blocking APK resource decoding in the hot path
-        private val iconCache = object : LruCache<String, Drawable>(64) {}
-
+        /** Called by the lock screen (after its first frame) and when protection is paused. */
         fun dismiss() {
             activeInstance?.hide()
         }
     }
 
-    private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val windowManager = service.getSystemService(WindowManager::class.java)
     private var isShowing = false
+    private var targetPackage: String? = null
+    private var attempt = 0
 
-    // Safety timeout runnable to avoid stuck overlays if unlock flow is aborted
-    private val safetyTimeoutRunnable = Runnable {
-        Log.w(TAG, "Safety timeout reached (4s); dismissing overlay.")
-        hide()
+    private val timeoutRunnable = Runnable {
+        val pkg = targetPackage ?: return@Runnable hide()
+        attempt++
+        val keepShowing = attempt < MAX_ATTEMPTS && onTimeout(pkg, attempt)
+        if (keepShowing) {
+            armTimeout()
+        } else {
+            Log.w(TAG, "Lock screen did not appear for $pkg; failing closed")
+            if (attempt >= MAX_ATTEMPTS) service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+            hide()
+        }
     }
 
-    // Reusable WindowManager.LayoutParams
-    private val wmLayoutParams = WindowManager.LayoutParams(
+    private val layoutParams = WindowManager.LayoutParams(
         WindowManager.LayoutParams.MATCH_PARENT,
         WindowManager.LayoutParams.MATCH_PARENT,
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-        },
+        WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
         WindowManager.LayoutParams.FLAG_SECURE or
-        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-        WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-        PixelFormat.TRANSLUCENT
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+        PixelFormat.OPAQUE
     ).apply {
         gravity = Gravity.CENTER
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-        }
+        layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
     }
 
-    // Pre-warmed View Hierarchy: avoids FrameLayout, ImageView, TextView heap churn on every lock
-    private val iconView: ImageView by lazy {
-        ImageView(context)
-    }
+    private val iconView by lazy { ImageView(service) }
 
-    private val statusTextView: TextView by lazy {
-        TextView(context).apply {
-            setTextColor(0xDDFFFFFF.toInt())
-            textSize = 15f
-            gravity = Gravity.CENTER
-        }
-    }
+    private val frame by lazy {
+        val density = service.resources.displayMetrics.density
+        val iconSize = (84 * density).toInt().coerceAtLeast(168)
 
-    private val overlayFrame: FrameLayout by lazy {
-        FrameLayout(context).apply {
-            setBackgroundColor(0xF0121316.toInt())
+        FrameLayout(service).apply {
+            setBackgroundColor(0xFF121316.toInt())
             isClickable = true
-            filterTouchesWhenObscured = true
-            setOnTouchListener { _, motionEvent ->
-                if (IdentityCheckManager.isMotionEventObscured(motionEvent)) {
-                    Log.w(TAG, "InstantShieldOverlay: Consuming and rejecting obscured touch event (Tapjacking attempt).")
-                    true
-                } else {
-                    false
-                }
-            }
-
-            val iconLp = FrameLayout.LayoutParams(160, 160, Gravity.CENTER).apply {
-                bottomMargin = 60
-            }
-            addView(iconView, iconLp)
-
-            val textLp = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER
-            ).apply {
-                topMargin = 100
-            }
-            addView(statusTextView, textLp)
+            isFocusable = false
+            filterTouchesWhenObscured = false
+            setOnTouchListener { _, _ -> true }
+            // Centered adaptive icon matching native Android splash window
+            addView(iconView, FrameLayout.LayoutParams(iconSize, iconSize, Gravity.CENTER))
         }
     }
 
-    fun show(targetPackage: String, onTapped: (() -> Unit)? = null) {
+    fun onConfigurationChanged() {
+        if (isShowing && frame.isAttachedToWindow) {
+            try {
+                windowManager.updateViewLayout(frame, layoutParams)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to update shield layout on configuration change: ${e.message}")
+            }
+        }
+    }
+
+    fun show(targetPackage: String, onTapped: () -> Unit) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             mainHandler.post { show(targetPackage, onTapped) }
             return
         }
+        if (isShowing && this.targetPackage == targetPackage) return
+        if (isShowing) hide()
 
-        if (isShowing) {
-            hide()
-        }
-
-        if (!Settings.canDrawOverlays(context)) {
-            Log.w(TAG, "Cannot draw overlay: SYSTEM_ALERT_WINDOW permission missing.")
-            return
-        }
-
-        val wm = windowManager ?: return
-
+        this.targetPackage = targetPackage
+        attempt = 0
         try {
-            overlayFrame.setOnClickListener { onTapped?.invoke() }
-
-            // Fast O(1) cached icon lookup or lazy retrieval
-            val realPkg = resolveRealPackage(targetPackage)
-            var appIcon: Drawable? = iconCache.get(realPkg)
-            if (appIcon == null) {
-                try {
-                    appIcon = context.packageManager.getApplicationIcon(realPkg)
-                    iconCache.put(realPkg, appIcon)
-                } catch (e: Exception) {
-                    appIcon = null
-                }
-            }
-
-            if (appIcon != null) {
-                iconView.setImageDrawable(appIcon)
-            } else {
-                iconView.setImageResource(R.drawable.ic_lock_key)
-            }
-
-            statusTextView.text = if (targetPackage == BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS ||
-                targetPackage == BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER
-            ) {
-                "Google Password Manager"
-            } else {
-                "Verifying Identity"
-            }
-
-            // Direct WindowManagerGlobal attachment with zero frame delay (< 5ms)
-            wm.addView(overlayFrame, wmLayoutParams)
+            frame.setOnClickListener { onTapped() }
+            iconView.setImageDrawable(loadIcon(targetPackage))
+            windowManager.addView(frame, layoutParams)
             isShowing = true
             activeInstance = this
-
-            // Arm safety timeout (4s)
-            mainHandler.removeCallbacks(safetyTimeoutRunnable)
-            mainHandler.postDelayed(safetyTimeoutRunnable, 4000L)
-
-            Log.d(TAG, "Instant Shield Overlay active for $targetPackage (zero-latency attached).")
+            armTimeout()
         } catch (e: Exception) {
-            Log.e(TAG, "Failed attaching instant shield overlay: ${e.message}", e)
+            Log.e(TAG, "Could not attach shield: ${e.message}")
         }
     }
 
-    private fun resolveRealPackage(targetPackage: String): String {
-        return if (targetPackage == BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS ||
-            targetPackage == BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER
-        ) {
-            try {
-                context.packageManager.getApplicationInfo(BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER, 0)
-                BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER
-            } catch (e: Exception) {
-                "com.google.android.gms"
-            }
-        } else {
-            targetPackage
+    fun isShowingFor(pkg: String): Boolean = isShowing && targetPackage == pkg
+
+    private fun armTimeout() {
+        mainHandler.removeCallbacks(timeoutRunnable)
+        mainHandler.postDelayed(timeoutRunnable, TIMEOUT_MS)
+    }
+
+    private fun isPasswordManager(pkg: String) =
+        pkg == BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS || pkg == BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER
+
+    private fun loadIcon(targetPackage: String): Drawable? {
+        val realPkg = if (isPasswordManager(targetPackage)) BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER else targetPackage
+        iconCache.get(realPkg)?.let { return it }
+        return try {
+            service.packageManager.getApplicationIcon(realPkg).also { iconCache.put(realPkg, it) }
+        } catch (e: Exception) {
+            service.getDrawable(R.drawable.ic_lock_key)
         }
     }
 
     fun hide() {
-        if (!isShowing) return
         if (Looper.myLooper() != Looper.getMainLooper()) {
             mainHandler.post { hide() }
             return
         }
-
-        mainHandler.removeCallbacks(safetyTimeoutRunnable)
-        val wm = windowManager ?: return
-
+        mainHandler.removeCallbacks(timeoutRunnable)
+        if (!isShowing) return
         try {
-            wm.removeViewImmediate(overlayFrame)
+            windowManager.removeViewImmediate(frame)
         } catch (e: Exception) {
-            try {
-                wm.removeView(overlayFrame)
-            } catch (ignored: Exception) {}
+            Log.w(TAG, "Shield removal failed: ${e.message}")
         } finally {
-            // Clean teardown: dereference drawable to prevent RAM / bitmap leaks
             iconView.setImageDrawable(null)
             isShowing = false
-            if (activeInstance === this) {
-                activeInstance = null
-            }
-            Log.d(TAG, "Instant Shield Overlay removed and sanitized.")
+            targetPackage = null
+            if (activeInstance === this) activeInstance = null
         }
     }
 }

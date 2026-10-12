@@ -1,169 +1,106 @@
-# BioKey 🛡️🔑
+# BioKey
 
-> **Hardware-backed biometric app lock engineered with zero-latency instant shielding, StrongBox Keystore cryptography, and refined Material 3 Expressive design.**
+An Android app lock that puts the apps you choose behind your fingerprint, face, or screen lock, backed by Android Keystore keys that only work after a real authentication.
 
-[![Platform](https://img.shields.io/badge/Platform-Android%2010%2B%20(API%2029--35)-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
-[![Language](https://img.shields.io/badge/Language-Kotlin%202.0%2B-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
-[![UI Framework](https://img.shields.io/badge/UI-Jetpack%20Compose%20%2F%20Material%203%20Expressive-4285F4?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
-[![Security Level](https://img.shields.io/badge/Hardware%20Security-StrongBox%20%2F%20TEE%20(EAL6%2B)-00C853?logo=google&logoColor=white)](https://source.android.com/docs/security/features/keystore)
-[![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen)]()
+[![Platform](https://img.shields.io/badge/Android-12%2B%20(API%2031%E2%80%9337)-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
+[![UI](https://img.shields.io/badge/UI-Jetpack%20Compose%20%2F%20Material%203-4285F4?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ---
 
-## 📖 Overview
+## How it works
 
-**BioKey** is an advanced, high-performance Android application locker designed from the silicon up for speed, privacy, and unyielding defense. Unlike legacy app lockers that rely on delayed polling loops or clunky overlays, BioKey combines a low-overhead, native Accessibility Shield Service with Android's hardware-backed **StrongBox / Titan M Security Chip** to deliver instantaneous 0ms app interception, tamper resistance, and zero-flash biometric authentication.
+1. **Detection.** An accessibility service watches which app is in the foreground (including split-screen and picture-in-picture windows). When a locked app appears, BioKey covers it straight away with an opaque, screenshot-proof window, then shows its lock screen.
+2. **Authentication.** Unlocking uses `BiometricPrompt` with a `CryptoObject`. The prompt is bound to an AES-GCM key in the Android Keystore that can only be used right after a successful authentication. BioKey only treats an unlock as successful once that key has actually encrypted a fresh random challenge. A spoofed or hooked "success" callback unlocks nothing.
+3. **Sessions.** An unlocked app stays unlocked according to your re-lock setting (immediately, 30 s, 1 min, 5 min, or until the screen turns off). Turning the screen off always locks everything.
 
-Featuring a bespoke **Material 3 Expressive** interface, fluid spring-physics transitions, and an adaptive native splash engine, BioKey ensures your sensitive personal and work apps remain private without sacrificing usability or device battery life.
+## Security features
 
----
+| Feature | What it does |
+|---|---|
+| **Hardware-bound unlock** | Keystore keys (StrongBox when available, otherwise the TEE) gate every unlock. The real storage level is read from `KeyInfo`, not assumed. |
+| **Biometric change detection** | If fingerprints or faces are added or removed, the biometric key is invalidated by the platform. BioKey then requires your device PIN/pattern/password before issuing a new key, and logs the event. |
+| **Identity Check** | Optional strict mode: Class 3 biometrics only, with no PIN fallback. This protects against someone who has watched or forced your PIN. Adding or removing a fingerprint or face (which needs only the PIN) starts a 30-minute security delay with an alert, after which the PIN confirms the change. |
+| **BioKey locks itself** | BioKey's own UI always requires authentication. Pausing protection or missing permissions doesn't skip it. |
+| **Step-up authentication** | Anything that *weakens* protection needs an authentication from the last 60 seconds: unlocking an app, pausing, lengthening the re-lock delay, turning off a shield, deleting intruder photos. The settings store refuses these changes on its own, so a missed UI check fails closed. |
+| **Self-protection** | BioKey's App info page (force stop, uninstall, clear storage), its accessibility toggle, device-admin page, and the uninstall dialog all require authentication. Pages you open from inside BioKey are pre-authorised. |
+| **Uninstall protection** | A device admin with **no policies** makes uninstalling a two-step process (deactivate, then uninstall). Both steps are guarded by self-protection. |
+| **Tamper-evident settings** | Settings are sealed with an HMAC under a non-exportable Keystore key. If they're changed outside BioKey, it re-arms protection, alerts you, and logs the event. |
+| **Protection alerts** | A high-priority notification fires if the accessibility service stops, the device admin is removed, or tampering is detected. |
+| **Timed pause** | Pause protection for 15 minutes or 1 hour (it resumes automatically), or until you turn it back on. Available from the Quick Settings tile, behind authentication. |
+| **Intruder photos** | Optional. After two failed unlocks, BioKey takes a silent front-camera photo. Each photo is envelope-encrypted (a random AES-256 key per photo, wrapped by a Keystore key). File names are random, so the storage reveals nothing about which apps you lock. |
+| **Notification shield** | Optional. Notifications from locked apps are replaced with "N hidden notifications" until you unlock. Even the app name is hidden on the lock screen. |
+| **Security log** | An encrypted, on-device log of pauses, tampering, biometric changes, failed unlocks, and blocked attempts to switch BioKey off. |
+| **Crash disguise** | Optional. Shows a fake "app keeps stopping" dialog instead of the lock screen. A double tap or long press on its title opens the real prompt. |
+| **Window hardening** | `FLAG_SECURE`, no recents thumbnails, `setHideOverlayWindows`, and rejection of touches through obscuring overlays (tapjacking). |
+| **No network access** | BioKey has no `INTERNET` permission. Backup and device-to-device transfer are disabled for all data. |
 
-## ✨ Key Features
+## Limits (read this)
 
-### ⚡ 0ms Instant Shield Interception
-- **Real-Time Foreground Detection**: Monitors window state changes via `BioKeyAccessibilityService` to intercept protected applications at the exact moment of launch before sensitive content renders.
-- **Instant Barrier Overlay**: Renders a hardware-accelerated `InstantShieldOverlay` directly over the target window to eliminate screen flicker and preview leakage.
-- **Zero Framework Leaks**: Employs rigorous node object pooling and recycled accessibility node references for ultra-efficient memory usage.
+An app lock running as a regular app can't defend against everything:
 
-### 🛡️ Silicon Hardware Security & StrongBox
-- **Hardware-Backed Keystore**: Cryptographic keys are generated and securely stored inside hardware-isolated secure elements (StrongBox / TEE / Titan M2/M3).
-- **CryptoObject Biometric Authentication**: Enforces hardware-backed biometric verification using `BiometricPrompt.CryptoObject` initialized with an `AES-256-GCM` hardware cipher.
-- **Silicon Attestation Telemetry**: Live telemetry dashboard inspecting chip security level, EAL6+ compliance, key alias status, and hardware biometric classes.
+- **Root, ADB, or a modified OS** can bypass any app lock, BioKey included.
+- **Safe mode** disables third-party accessibility services, so locked apps open without a check until you reboot normally. Protection alerts tell you the service stopped.
+- **Self-protection is heuristic.** There's no Android API for "this screen can disable app X", so BioKey recognises those screens by package and content. It's tested against AOSP/Pixel layouts. OEM Settings apps may differ.
+- **Notification shield** can't edit another app's notification, only dismiss it. The content is still in the app itself. Ongoing notifications (calls, media, foreground services) can't be dismissed.
+- **Intruder photos** are best-effort. The camera may be busy (face unlock), or the OS may block camera access in some states.
 
-### 🎨 Material 3 Expressive Interface
-- **Dark Surface Palette**: Cohesive, immersive dark theme (`#121212`) engineered specifically for OLED displays and low-light environments.
-- **Dynamic Physics & Gestures**: Spring-interpolated switches, breathing neural glow indicators, and tactile haptic feedback (`HapticFeedbackConstants.CONFIRM` / `REJECT`).
-- **Bento Grid Architecture**: Grouped, glanceable bento modules for security profiles, quick actions, diagnostic telemetry, and locked application management.
+## Permissions
 
-### 🚀 Seamless Android 12+ Splash Engine
-- **Zero-Flash Transition**: Native `android:windowSplashScreen` implementation that smoothly transitions into the Compose theme.
-- **Adaptive Vector Assets**: High-resolution circular branding with zero squircle or container box visual artifacts across standard and third-party launchers.
+| Permission | Why |
+|---|---|
+| Accessibility service | Detects when a locked app (or a BioKey settings page) is in the foreground. Doesn't read what you type. |
+| Device admin (`watch-login` only) | Two-step uninstall. Optionally notices failed screen unlocks, for intruder photos. Can't lock, wipe, or change the device. |
+| `USE_BIOMETRIC` | Fingerprint and face authentication. |
+| `HIDE_OVERLAY_WINDOWS` | Hides other apps' overlays while BioKey's lock screen is showing. |
+| `POST_NOTIFICATIONS` | Protection alerts and hidden-notification stand-ins. |
+| `CAMERA` (optional) | Intruder photos. |
+| Notification access (optional) | Notification shield. |
+| `RECEIVE_BOOT_COMPLETED` | Prepares Keystore keys after a reboot. |
 
-### 📸 Intruder Vault & Stealth Disguise
-- **Automated Intruder Capture**: Silently triggers front-facing camera snapshots upon repeated failed biometric attempts.
-- **Secure Encrypted Log**: Stores timestamped intruder records with device state telemetry inside private application storage.
-- **Stealth Crash Disguise**: Misleads unauthorized users with a simulated "App has stopped" system crash dialog, accessible only via a hidden unlock sequence.
+Package visibility is limited to launchable apps, launchers, and keyboards (`<queries>`); BioKey doesn't request `QUERY_ALL_PACKAGES`.
 
-### 🗂️ Dynamic Security Profiles
-- **Contextual Categorization**: Organize applications into customizable profiles: *All Apps*, *Social*, *Finance*, *Work*, or *Private Spaces*.
-- **Flexible Lock Delays**: Choose between *Instant (0ms)*, *Screen Off*, or configurable timeout windows (30s, 1m, 5m, 15m) before re-locking.
-
-### 🔒 Anti-Tamper & Device Admin Protection
-- **Uninstall Prevention**: Binds to the system `DevicePolicyManager` to prevent malicious or accidental app uninstallation.
-- **Reliable Fallback**: PIN / Pattern backup authentication powered by PBKDF2 with SHA-256 and salt randomization when biometrics are unavailable.
-
----
-
-## 🏛️ System Architecture
+## Architecture
 
 ```
-┌────────────────────────────────────────────────────────┐
-│               Jetpack Compose UI Layer                │
-│    (MainActivity, MainScreenExpressive, SetupWizard)   │
-└───────────────────────────┬────────────────────────────┘
-                            │
-┌───────────────────────────▼────────────────────────────┐
-│                  Security Vault Core                   │
-│   • Multi-Store Atomic State Sync (DataStore + Vault)  │
-│   • Profile Routing & App Lock State Management        │
-│   • Intruder Detection & Telemetry Logger              │
-└─────────────┬────────────────────────────┬─────────────┘
-              │                            │
-┌─────────────▼──────────────┐ ┌───────────▼─────────────┐
-│ BioKeyAccessibilityService │ │  TitanM3SecurityManager │
-│ • 0ms Window State Listen  │ │ • StrongBox Keymaster   │
-│ • Instant Shield Barrier   │ │ • AES-256-GCM Keystore  │
-│ • App Launch Interception  │ │ • Biometric CryptoObject│
-└────────────────────────────┘ └─────────────────────────┘
+feature/main      MainActivity (own lock, step-up provider), main screen, settings, intruder photos
+feature/setup     First-run setup and the repair screen for revoked permissions
+feature/lock      Accessibility service, lock screen, instant cover, self-protection detector,
+                  device admin, crash disguise
+feature/notification  Notification shield (NotificationListenerService)
+feature/tile      Quick Settings tile
+core/security     HardwareKeyManager (Keystore keys, crypto-bound prompts, integrity MAC)
+                  SecurityEngine (all authentication), LockStateTracker (sessions, step-up)
+                  SecurityVault (sealed settings), SecurityEventLog, ProtectionAlerts
+core/intruder     Intruder photo capture and envelope encryption
 ```
 
----
+## Building
 
-## 📋 Permissions Overview
+Requirements: JDK 17 and the Android SDK (compileSdk 37).
 
-To deliver non-bypassable 0ms protection, BioKey utilizes standard Android system permissions:
-
-| Permission | Purpose | Required |
-| :--- | :--- | :---: |
-| **Accessibility Service** | Detects foreground app launches to intercept locked targets immediately. | **Yes** |
-| **Device Administrator** | Prevents unauthorized uninstallation or force-stopping by intruders. | **Yes** |
-| **Display Over Other Apps** | Displays the instant 0ms biometric authentication barrier over locked apps. | **Recommended** |
-| **Biometric / Fingerprint** | Queries hardware biometric sensors (Class 3 Strong Biometrics) for unlock. | **Yes** |
-| **Usage Stats** | Provides fallback app usage tracking and foreground activity detection. | Optional |
-| **Camera** | Captures photos of unauthorized users attempting to access locked applications. | Optional |
-
----
-
-## 🛠️ Building & Installation
-
-### Prerequisites
-- **Android Studio**: Ladybug (2024.2.1+) or newer
-- **JDK**: Java 17+ (JDK 21 recommended)
-- **Android SDK**: API 35 (Android 15) build tools
-- **Gradle**: 8.9+ (bundled via Gradle Wrapper 9.7)
-
-### Clone the Repository
 ```bash
-git clone https://github.com/Peacetothemountain/BioKey.git
-cd BioKey
+./gradlew :app:assembleDebug
 ```
 
-### Keystore Configuration (Release Builds)
-Copy the example signing configuration:
+### Release builds
+
+Release builds use R8 (minify and resource shrinking). `Log.d/i/v` calls are stripped.
+
+To sign a release, copy the example config and fill in your own keystore:
+
 ```bash
-cp key.properties.example key.properties
-```
-Edit `key.properties` with your signing credentials:
-```properties
-storeFile=/path/to/your/release-key.keystore
-storePassword=yourStorePassword
-keyAlias=yourKeyAlias
-keyPassword=yourKeyPassword
+cp key.properties.example key.properties   # git-ignored
+./gradlew :app:assembleRelease
 ```
 
-### Compile with Gradle
-- **Debug Build**:
-  ```bash
-  ./gradlew assembleDebug
-  ```
-- **Release Build**:
-  ```bash
-  ./gradlew assembleRelease
-  ```
+Without `key.properties`, the release APK is left **unsigned**. It never silently falls back to the public debug key. For local testing only, you can opt in explicitly:
 
-Output APKs will be located in:
-- `app/build/outputs/apk/release/app-release.apk`
-- `app/build/outputs/apk/debug/app-debug.apk`
+```bash
+./gradlew :app:assembleRelease -Pbiokey.allowDebugSignedRelease=true
+```
 
----
+## License
 
-## 📱 Supported Devices
-
-- **Google Pixel**: Pixel 6, 7, 8, 9, 10, 11 series (full Titan M2 / M3 StrongBox hardware crypto support).
-- **Samsung Galaxy**: Galaxy S21 through S25 / Z Fold / Flip series (Knox Vault / TEE hardware integration).
-- **All Android Devices**: Running Android 10 (API 29) through Android 15 / 16+ with biometric hardware.
-
----
-
-## 🤝 Contributing
-
-Contributions, bug reports, and feature requests are welcome!
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
----
-
-## 📜 License
-
-Distributed under the Apache 2.0 License. See [LICENSE](LICENSE) for more information.
-
----
-
-<p align="center">
-  <b>Engineered with precision for uncompromised privacy.</b><br>
-  <sub>BioKey • Hardware-Backed Application Security</sub>
-</p>
+Apache 2.0. See [LICENSE](LICENSE).
