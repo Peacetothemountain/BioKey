@@ -2,6 +2,7 @@ package com.android.BioKey.feature.lock
 
 import android.annotation.SuppressLint
 import android.accessibilityservice.AccessibilityService
+import android.graphics.Rect
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
 import android.os.Handler
@@ -51,6 +52,7 @@ class InstantShieldOverlay(
     private val windowManager = service.getSystemService(WindowManager::class.java)
     private var isShowing = false
     private var targetPackage: String? = null
+    private var currentBounds: Rect? = null
     private var attempt = 0
 
     private val timeoutRunnable = Runnable {
@@ -108,16 +110,32 @@ class InstantShieldOverlay(
         }
     }
 
-    fun show(targetPackage: String, onTapped: () -> Unit) {
+    fun show(targetPackage: String, bounds: Rect? = null, onTapped: () -> Unit) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            mainHandler.post { show(targetPackage, onTapped) }
+            mainHandler.post { show(targetPackage, bounds, onTapped) }
             return
         }
         if (isShowing && this.targetPackage == targetPackage) return
         if (isShowing) hide()
 
         this.targetPackage = targetPackage
+        this.currentBounds = bounds
         attempt = 0
+
+        if (bounds != null && !bounds.isEmpty) {
+            layoutParams.gravity = Gravity.TOP or Gravity.START
+            layoutParams.x = bounds.left
+            layoutParams.y = bounds.top
+            layoutParams.width = bounds.width()
+            layoutParams.height = bounds.height()
+        } else {
+            layoutParams.gravity = Gravity.CENTER
+            layoutParams.x = 0
+            layoutParams.y = 0
+            layoutParams.width = WindowManager.LayoutParams.MATCH_PARENT
+            layoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
+        }
+
         try {
             frame.setOnClickListener { onTapped() }
             iconView.setImageDrawable(loadIcon(targetPackage))
@@ -165,6 +183,7 @@ class InstantShieldOverlay(
             iconView.setImageDrawable(null)
             isShowing = false
             targetPackage = null
+            currentBounds = null
             if (activeInstance === this) activeInstance = null
         }
     }

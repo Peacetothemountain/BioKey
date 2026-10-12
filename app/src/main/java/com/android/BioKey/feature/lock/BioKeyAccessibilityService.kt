@@ -1,6 +1,7 @@
 package com.android.BioKey.feature.lock
 
 import android.accessibilityservice.AccessibilityService
+import android.graphics.Rect
 import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -347,6 +348,15 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
         if (isLauncher || !vault.isAppLocked(target)) {
             shield.hide()
+            // Recents protection: if user exited from a locked app that locked immediately,
+            // and opened Overview/Recents, route them to clean Home to prevent task thumbnail leak.
+            if (isLauncher && vault.isRecentsShieldEnabled() && previous != null && vault.isAppLocked(previous) &&
+                !LockStateTracker.isAppUnlocked(previous, timeoutMode) &&
+                (cls.contains("QuickstepLauncher", ignoreCase = true) || cls.contains("Overview", ignoreCase = true) || cls.contains("Recents", ignoreCase = true))
+            ) {
+                Log.i(TAG, "Recents shield active: routing to Home from Overview for $previous")
+                performGlobalAction(GLOBAL_ACTION_HOME)
+            }
             return
         }
         if (SecurityEngine.INSTANCE.isAuthenticatingFor(target)) return
@@ -358,11 +368,39 @@ class BioKeyAccessibilityService : AccessibilityService() {
         lock(target)
     }
 
+    private fun getTargetWindowBounds(target: String): Rect? {
+        try {
+            val currentWindows = windows
+            if (!currentWindows.isNullOrEmpty()) {
+                val displayMetrics = resources.displayMetrics
+                val screenWidth = displayMetrics.widthPixels
+                val screenHeight = displayMetrics.heightPixels
+                for (win in currentWindows) {
+                    val root = win.root ?: continue
+                    val pkg = root.packageName?.toString()
+                    release(root)
+                    if (pkg == target) {
+                        val bounds = Rect()
+                        win.getBoundsInScreen(bounds)
+                        if (!bounds.isEmpty && (bounds.width() < screenWidth || bounds.height() < screenHeight)) {
+                            Log.d(TAG, "Multi-window split bounds detected for $target: $bounds")
+                            return bounds
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking window bounds for $target: ${e.message}")
+        }
+        return null
+    }
+
     private fun lock(target: String) {
         if (LockStateTracker.isRegularLockPending(target)) return
         LockStateTracker.setRegularLockPending(target)
         if (vault.isOverlayShieldEnabled()) {
-            shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
+            val bounds = getTargetWindowBounds(target)
+            shield.show(target, bounds) { launchLockScreen(target, isSelfProtection = false) }
         } else {
             // No shield is watching the launch: check once that the lock screen came up.
             mainHandler.postDelayed({ onShieldTimeout(target, attempt = 1) }, LOCK_VERIFY_DELAY_MS)

@@ -1,6 +1,7 @@
 package com.android.BioKey.feature.lock
 
 import android.content.Intent
+import android.app.admin.DevicePolicyManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
@@ -68,6 +69,7 @@ class LockScreenActivity : FragmentActivity() {
     private var auraColorState by mutableStateOf(DEFAULT_AURA)
     private var isStealthModeState by mutableStateOf(false)
     private var statusMessage by mutableStateOf<String?>(null)
+    private var isPermanentLockout by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -104,7 +106,9 @@ class LockScreenActivity : FragmentActivity() {
                         onUnlockClicked = ::showPrompt,
                         onCancelClicked = ::goHomeAndFinish,
                         isBioKeyLock = isSelfProtection,
-                        statusMessage = statusMessage
+                        statusMessage = statusMessage,
+                        isPermanentLockout = isPermanentLockout,
+                        onLockDeviceClicked = ::lockDeviceOrHome
                     )
                 }
             }
@@ -127,6 +131,7 @@ class LockScreenActivity : FragmentActivity() {
         isStealthModeState = !selfProtection &&
             (intent.getBooleanExtra(EXTRA_STEALTH_MODE, false) || vault.isStealthCrash(pkg))
         statusMessage = null
+        isPermanentLockout = false
         loadPackageInfo()
         return true
     }
@@ -241,14 +246,33 @@ class LockScreenActivity : FragmentActivity() {
             },
             onError = { code, message ->
                 if (processDeferredIntent()) return@showBiometricPrompt
-                statusMessage = when (code) {
-                    BiometricPrompt.ERROR_USER_CANCELED,
-                    BiometricPrompt.ERROR_CANCELED,
-                    BiometricPrompt.ERROR_NEGATIVE_BUTTON -> null
-                    else -> message.toString()
+                if (code == BiometricPrompt.ERROR_LOCKOUT_PERMANENT) {
+                    isPermanentLockout = true
+                    statusMessage = "Biometric sensor locked by Titan M2 hardware policy. Please lock your device screen and unlock with PIN to reset."
+                } else {
+                    statusMessage = when (code) {
+                        BiometricPrompt.ERROR_USER_CANCELED,
+                        BiometricPrompt.ERROR_CANCELED,
+                        BiometricPrompt.ERROR_NEGATIVE_BUTTON -> null
+                        else -> message.toString()
+                    }
                 }
             }
         )
+    }
+
+    private fun lockDeviceOrHome() {
+        val dpm = getSystemService(DevicePolicyManager::class.java)
+        if (DeviceAdminHelper.isAdminActive(this)) {
+            try {
+                dpm?.lockNow()
+                finishSilently()
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "DevicePolicyManager lockNow failed: ${e.message}")
+            }
+        }
+        goHomeAndFinish()
     }
 
     private fun processDeferredIntent(): Boolean {

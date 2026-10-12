@@ -16,5 +16,6 @@ data class AppItem(
     val label: String,
     val iconBitmap: ImageBitmap?,
     val category: AppCategory,
-    val isRecommended: Boolean
+    val isRecommended: Boolean,
+    val isWorkProfile: Boolean = false
 )

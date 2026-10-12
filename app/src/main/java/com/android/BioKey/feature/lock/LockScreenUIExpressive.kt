@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -19,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -68,7 +70,9 @@ fun LockScreenUIExpressive(
     onUnlockClicked: () -> Unit,
     onCancelClicked: () -> Unit,
     isBioKeyLock: Boolean = false,
-    statusMessage: String? = null
+    statusMessage: String? = null,
+    isPermanentLockout: Boolean = false,
+    onLockDeviceClicked: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val vault = remember { SecurityVault.getInstance(context) }
@@ -84,6 +88,56 @@ fun LockScreenUIExpressive(
         contentAlignment = Alignment.Center
     ) {
         val isFoldableWide = maxWidth >= 600.dp
+
+        // Hardware Lockout Alert Card - guides the user when Titan M2 biometric hardware locks out
+        val lockoutCard: @Composable () -> Unit = {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.errorContainer
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.size(36.dp)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Hardware Sensor Locked",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Android security locked biometrics after multiple failed attempts. Turn your screen off and unlock your phone with your PIN or pattern to reset the sensor.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+                    FilledTonalButton(
+                        onClick = onLockDeviceClicked,
+                        shape = RoundedCornerShape(20.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        ),
+                        modifier = Modifier.height(48.dp)
+                    ) {
+                        Text("Lock Phone Screen", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
 
         // Expressive Unlock Pill Button - clean, borderless native M3 pill
         val unlockButton: @Composable () -> Unit = {
@@ -231,8 +285,12 @@ fun LockScreenUIExpressive(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    unlockButton()
-                    StatusMessage(statusMessage)
+                    if (isPermanentLockout) {
+                        lockoutCard()
+                    } else {
+                        unlockButton()
+                        StatusMessage(statusMessage)
+                    }
                     Spacer(modifier = Modifier.height(24.dp))
                     FilledTonalButton(
                         onClick = onCancelClicked,
@@ -261,9 +319,13 @@ fun LockScreenUIExpressive(
                 verticalArrangement = Arrangement.Center
             ) {
                 appIdentityHeader()
-                Spacer(modifier = Modifier.height(56.dp))
-                unlockButton()
-                StatusMessage(statusMessage)
+                Spacer(modifier = Modifier.height(if (isPermanentLockout) 32.dp else 56.dp))
+                if (isPermanentLockout) {
+                    lockoutCard()
+                } else {
+                    unlockButton()
+                    StatusMessage(statusMessage)
+                }
                 Spacer(modifier = Modifier.height(24.dp))
                 FilledTonalButton(
                     onClick = onCancelClicked,

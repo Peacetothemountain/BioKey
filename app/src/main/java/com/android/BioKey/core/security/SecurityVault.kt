@@ -53,6 +53,7 @@ class SecurityVault private constructor(private val context: Context) {
         private const val KEY_AUTO_SORT = "auto_sort_profiles_enabled"
         private const val KEY_SETUP_COMPLETED = "setup_completed"
         private const val KEY_NOTIFICATION_SHIELD = "notification_shield_enabled"
+        private const val KEY_RECENTS_SHIELD = "recents_shield_enabled"
         private const val KEY_IDENTITY_CHECK = "identity_check_enabled"
         private const val KEY_TAMPER_PENDING = "tamper_pending"
         private const val KEY_ID_HOLD_BOOT = "identity_hold_boot"
@@ -174,6 +175,9 @@ class SecurityVault private constructor(private val context: Context) {
     private val _notificationShieldFlow = MutableStateFlow(true)
     val notificationShieldFlow: StateFlow<Boolean> = _notificationShieldFlow.asStateFlow()
 
+    private val _recentsShieldFlow = MutableStateFlow(true)
+    val recentsShieldFlow: StateFlow<Boolean> = _recentsShieldFlow.asStateFlow()
+
     private val _identityCheckFlow = MutableStateFlow(false)
     val identityCheckFlow: StateFlow<Boolean> = _identityCheckFlow.asStateFlow()
 
@@ -204,6 +208,7 @@ class SecurityVault private constructor(private val context: Context) {
         _selfProtectionFlow.value = sharedPrefs.getBoolean(KEY_SELF_PROTECT, true)
         _autoSortProfilesFlow.value = sharedPrefs.getBoolean(KEY_AUTO_SORT, false)
         _notificationShieldFlow.value = sharedPrefs.getBoolean(KEY_NOTIFICATION_SHIELD, true)
+        _recentsShieldFlow.value = sharedPrefs.getBoolean(KEY_RECENTS_SHIELD, true)
         _identityCheckFlow.value = sharedPrefs.getBoolean(KEY_IDENTITY_CHECK, false)
         _tamperDetectedFlow.value = sharedPrefs.getBoolean(KEY_TAMPER_PENDING, false)
         identityHoldBoot = sharedPrefs.getInt(KEY_ID_HOLD_BOOT, NO_HOLD)
@@ -232,7 +237,7 @@ class SecurityVault private constructor(private val context: Context) {
     // ---------------------------------------------------------------------------------------
 
     /** Canonical, order-independent serialization of every security-relevant setting. */
-    private fun canonicalState(): String = buildString {
+    private fun canonicalState(includeRecents: Boolean = true): String = buildString {
         appendLine("locked=${lockedAppsSet.sorted().joinToString(",")}")
         appendLine("stealthApps=${stealthAppsSet.sorted().joinToString(",")}")
         appendLine("global=${_globalLockEnabledFlow.value}")
@@ -243,6 +248,7 @@ class SecurityVault private constructor(private val context: Context) {
         appendLine("overlay=${_overlayShieldFlow.value}")
         appendLine("selfProtect=${_selfProtectionFlow.value}")
         appendLine("notifShield=${_notificationShieldFlow.value}")
+        if (includeRecents) appendLine("recentsShield=${_recentsShieldFlow.value}")
         appendLine("identity=${_identityCheckFlow.value}")
         appendLine("profiles=${profilesJson()}")
         appendLine("activeProfile=${_activeProfileIdFlow.value}")
@@ -264,8 +270,14 @@ class SecurityVault private constructor(private val context: Context) {
             return
         }
         if (stored != null) {
-            val expected = seal(canonicalState()) ?: return // Keystore unavailable: can't judge either way.
+            val expected = seal(canonicalState(includeRecents = true)) ?: return // Keystore unavailable: can't judge either way.
             if (MessageDigest.isEqual(expected.toByteArray(), stored.toByteArray())) return
+            // Backwards compatibility with previous seal without recentsShield line:
+            val legacyExpected = seal(canonicalState(includeRecents = false))
+            if (legacyExpected != null && MessageDigest.isEqual(legacyExpected.toByteArray(), stored.toByteArray())) {
+                writeAll()
+                return
+            }
         }
 
         // A mismatch, or a seal deleted after one was written (the integrity key outlives it).
@@ -279,6 +291,7 @@ class SecurityVault private constructor(private val context: Context) {
         _selfProtectionFlow.value = true
         _overlayShieldFlow.value = true
         _notificationShieldFlow.value = true
+        _recentsShieldFlow.value = true
         _intruderDetectionFlow.value = true
         // Clearing the setup flag would switch off self-protection and BioKey's own lock gate.
         _setupCompletedFlow.value = true
@@ -297,9 +310,7 @@ class SecurityVault private constructor(private val context: Context) {
         val currentLocked = lockedAppsSet.toSet()
         val currentStealth = stealthAppsSet.toSet()
         val currentProfiles = _profilesFlow.value
-        val currentProfilesJson = JSONArray().apply {
-            currentProfiles.sortedBy { it.id }.forEach { put(it.toJson()) }
-        }.toString()
+        val currentProfilesJson = profilesJson()
         val activeProfileId = _activeProfileIdFlow.value
         val globalLock = _globalLockEnabledFlow.value
         val pausedUntil = _pausedUntilFlow.value
@@ -310,31 +321,14 @@ class SecurityVault private constructor(private val context: Context) {
         val selfProtect = _selfProtectionFlow.value
         val autoSort = _autoSortProfilesFlow.value
         val notifShield = _notificationShieldFlow.value
+        val recentsShield = _recentsShieldFlow.value
         val identity = _identityCheckFlow.value
         val setupCompleted = _setupCompletedFlow.value
         val tamperPending = _tamperDetectedFlow.value
         val holdBoot = identityHoldBoot
         val holdStart = identityHoldStart
 
-        val canonical = buildString {
-            appendLine("locked=${currentLocked.sorted().joinToString(",")}")
-            appendLine("stealthApps=${currentStealth.sorted().joinToString(",")}")
-            appendLine("global=$globalLock")
-            appendLine("pausedUntil=$pausedUntil")
-            appendLine("timeout=${timeoutMode.name}")
-            appendLine("stealthGlobal=$stealthGlobal")
-            appendLine("intruder=$intruder")
-            appendLine("overlay=$overlay")
-            appendLine("selfProtect=$selfProtect")
-            appendLine("notifShield=$notifShield")
-            appendLine("identity=$identity")
-            appendLine("profiles=$currentProfilesJson")
-            appendLine("activeProfile=$activeProfileId")
-            appendLine("setup=$setupCompleted")
-            appendLine("tamper=$tamperPending")
-            if (holdBoot != NO_HOLD) appendLine("identityHold=$holdBoot@$holdStart")
-        }
-
+        val canonical = canonicalState(includeRecents = true)
         val mac = seal(canonical)
         val editor = sharedPrefs.edit()
             .putStringSet(KEY_LOCKED, currentLocked)
@@ -348,6 +342,7 @@ class SecurityVault private constructor(private val context: Context) {
             .putBoolean(KEY_SELF_PROTECT, selfProtect)
             .putBoolean(KEY_AUTO_SORT, autoSort)
             .putBoolean(KEY_NOTIFICATION_SHIELD, notifShield)
+            .putBoolean(KEY_RECENTS_SHIELD, recentsShield)
             .putBoolean(KEY_IDENTITY_CHECK, identity)
             .putString(KEY_PROFILES_JSON, currentProfilesJson)
             .putString(KEY_ACTIVE_PROFILE_ID, activeProfileId)
@@ -438,6 +433,7 @@ class SecurityVault private constructor(private val context: Context) {
     fun isSelfProtectionEnabled(): Boolean = _selfProtectionFlow.value
     fun isIntruderDetectionEnabled(): Boolean = _intruderDetectionFlow.value
     fun isNotificationShieldEnabled(): Boolean = _notificationShieldFlow.value
+    fun isRecentsShieldEnabled(): Boolean = _recentsShieldFlow.value
     fun isIdentityCheckEnabled(): Boolean = _identityCheckFlow.value
     fun isAutoSortProfilesEnabled(): Boolean = _autoSortProfilesFlow.value
     fun isSetupCompleted(): Boolean = _setupCompletedFlow.value
@@ -576,6 +572,14 @@ class SecurityVault private constructor(private val context: Context) {
         if (!enabled && !authorizedForDowngrade("disable notification shield")) return false
         _notificationShieldFlow.value = enabled
         SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_MODIFIED, "Notification shield ${if (enabled) "enabled" else "disabled"}")
+        persist()
+        return true
+    }
+
+    fun setRecentsShield(enabled: Boolean): Boolean {
+        if (!enabled && !authorizedForDowngrade("disable recents shield")) return false
+        _recentsShieldFlow.value = enabled
+        SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_MODIFIED, "Recents shield ${if (enabled) "enabled" else "disabled"}")
         persist()
         return true
     }

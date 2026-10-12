@@ -120,6 +120,7 @@ fun SettingsScreenExpressive(
     val selfProtection by vault.selfProtectionFlow.collectAsStateWithLifecycle()
     val autoSortProfiles by vault.autoSortProfilesFlow.collectAsStateWithLifecycle()
     val notificationShield by vault.notificationShieldFlow.collectAsStateWithLifecycle()
+    val recentsShield by vault.recentsShieldFlow.collectAsStateWithLifecycle()
     val identityCheck by vault.identityCheckFlow.collectAsStateWithLifecycle()
     val eventLogVersion by SecurityEventLog.version.collectAsStateWithLifecycle()
 
@@ -379,6 +380,17 @@ fun SettingsScreenExpressive(
                         description = "Shows a fake \"app keeps stopping\" dialog instead of the lock screen. Double-tap it to unlock.",
                         checked = stealthMode,
                         onCheckedChange = { vault.setStealthCrashMode(it) }
+                    )
+                    GroupDivider()
+                    DynamicSettingRowExpressive(
+                        icon = Icons.Default.Layers,
+                        title = "Recents Overview shield",
+                        description = "Routes directly to Home when exiting a locked app to prevent task preview snapshots from appearing in Recents",
+                        checked = recentsShield,
+                        onCheckedChange = { checked ->
+                            if (checked) vault.setRecentsShield(true)
+                            else weaken("Turn off Recents shield") { vault.setRecentsShield(false) }
+                        }
                     )
                 }
             }

@@ -206,24 +206,59 @@ fun MainScreenExpressive() {
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             val pm = context.packageManager
-            val mainIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-            val activities = pm.queryIntentActivities(mainIntent, 0)
-            val items = activities.mapNotNull { resolveInfo ->
-                val pkg = resolveInfo.activityInfo.packageName
-                if (pkg == context.packageName) return@mapNotNull null
-                if (pkg == BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER) return@mapNotNull null
-                val label = resolveInfo.loadLabel(pm).toString()
-                val drawable = resolveInfo.loadIcon(pm)
-                val bitmap = drawableToBitmap(drawable, iconPx)
-                val category = categorizeApp(label, pkg)
-                val isRec = category in setOf(
-                    AppCategory.FINANCE,
-                    AppCategory.AUTH,
-                    AppCategory.PRIVACY,
-                    AppCategory.SOCIAL
-                )
-                AppItem(pkg, label, bitmap.asImageBitmap(), category, isRec)
-            }.toMutableList()
+            val launcherApps = context.getSystemService(android.content.pm.LauncherApps::class.java)
+            val userManager = context.getSystemService(android.os.UserManager::class.java)
+            val userProfiles = userManager?.userProfiles ?: emptyList()
+            val myUser = android.os.Process.myUserHandle()
+
+            val items = mutableListOf<AppItem>()
+            val seenKeys = mutableSetOf<String>()
+
+            if (launcherApps != null && userProfiles.isNotEmpty()) {
+                for (user in userProfiles) {
+                    val isWork = (user != myUser)
+                    val activities = runCatching { launcherApps.getActivityList(null, user) }.getOrNull().orEmpty()
+                    for (activity in activities) {
+                        val pkg = activity.applicationInfo.packageName
+                        if (pkg == context.packageName) continue
+                        if (pkg == BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER) continue
+                        val key = "$pkg:${user.hashCode()}"
+                        if (!seenKeys.add(key)) continue
+                        val label = activity.label.toString()
+                        val drawable = activity.getBadgedIcon(iconPx)
+                        val bitmap = drawableToBitmap(drawable, iconPx)
+                        val category = categorizeApp(label, pkg)
+                        val isRec = category in setOf(
+                            AppCategory.FINANCE,
+                            AppCategory.AUTH,
+                            AppCategory.PRIVACY,
+                            AppCategory.SOCIAL
+                        )
+                        items.add(AppItem(pkg, label, bitmap.asImageBitmap(), category, isRec, isWorkProfile = isWork))
+                    }
+                }
+            }
+
+            if (items.isEmpty()) {
+                val mainIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                val activities = pm.queryIntentActivities(mainIntent, 0)
+                items.addAll(activities.mapNotNull { resolveInfo ->
+                    val pkg = resolveInfo.activityInfo.packageName
+                    if (pkg == context.packageName) return@mapNotNull null
+                    if (pkg == BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER) return@mapNotNull null
+                    val label = resolveInfo.loadLabel(pm).toString()
+                    val drawable = resolveInfo.loadIcon(pm)
+                    val bitmap = drawableToBitmap(drawable, iconPx)
+                    val category = categorizeApp(label, pkg)
+                    val isRec = category in setOf(
+                        AppCategory.FINANCE,
+                        AppCategory.AUTH,
+                        AppCategory.PRIVACY,
+                        AppCategory.SOCIAL
+                    )
+                    AppItem(pkg, label, bitmap.asImageBitmap(), category, isRec, isWorkProfile = false)
+                })
+            }
 
             // Synthesize Google Password Manager if present on device
             val hasGooglePasswords = try {
@@ -600,7 +635,7 @@ fun MainScreenExpressive() {
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(top = 4.dp, bottom = 32.dp)
                 ) {
-                    items(filteredApps, key = { it.packageName }) { app ->
+                    items(filteredApps, key = { "${it.packageName}_${it.isWorkProfile}" }) { app ->
                         val isLocked = if (isViewingAll || currentProfile == null) {
                             lockedApps.contains(app.packageName)
                         } else {
@@ -1228,14 +1263,33 @@ private fun ExpressiveAppRow(
 
             // Label & Subtitle
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = app.label,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = app.label,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (app.isWorkProfile) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "Work",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (isLocked) {

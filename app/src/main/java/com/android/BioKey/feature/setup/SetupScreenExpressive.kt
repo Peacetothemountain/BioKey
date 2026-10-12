@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -32,6 +33,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AdminPanelSettings
+import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Lock
@@ -84,7 +86,8 @@ private data class SetupState(
     val admin: Boolean,
     val notifications: Boolean,
     val camera: Boolean,
-    val notificationAccess: Boolean
+    val notificationAccess: Boolean,
+    val batteryOptimizationIgnored: Boolean
 ) {
     val requiredCount get() = listOf(screenLock, accessibility).count { it }
     val requiredReady get() = screenLock && accessibility
@@ -92,15 +95,19 @@ private data class SetupState(
     companion object {
         const val REQUIRED_TOTAL = 2
 
-        fun read(context: Context) = SetupState(
-            screenLock = context.getSystemService(KeyguardManager::class.java)?.isDeviceSecure == true,
-            accessibility = BioKeyAccessibilityService.isServiceEnabled(context),
-            admin = DeviceAdminHelper.isAdminActive(context),
-            notifications = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                context.granted(Manifest.permission.POST_NOTIFICATIONS),
-            camera = context.granted(Manifest.permission.CAMERA),
-            notificationAccess = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
-        )
+        fun read(context: Context): SetupState {
+            val pm = context.getSystemService(PowerManager::class.java)
+            return SetupState(
+                screenLock = context.getSystemService(KeyguardManager::class.java)?.isDeviceSecure == true,
+                accessibility = BioKeyAccessibilityService.isServiceEnabled(context),
+                admin = DeviceAdminHelper.isAdminActive(context),
+                notifications = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                    context.granted(Manifest.permission.POST_NOTIFICATIONS),
+                camera = context.granted(Manifest.permission.CAMERA),
+                notificationAccess = BioKeyNotificationShieldService.isNotificationAccessGranted(context),
+                batteryOptimizationIgnored = pm?.isIgnoringBatteryOptimizations(context.packageName) == true
+            )
+        }
 
         private fun Context.granted(permission: String) =
             ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
@@ -268,6 +275,26 @@ fun SetupScreenExpressive(
                         }
                     )
                 }
+            }
+
+            item {
+                SetupPermissionCardExpressive(
+                    icon = Icons.Default.BatteryChargingFull,
+                    title = "Background reliability",
+                    subtitle = "Exempts BioKey from aggressive OEM battery restrictions so app locking never sleeps or delays.",
+                    isActive = state.batteryOptimizationIgnored,
+                    badgeText = "RECOMMENDED",
+                    isMandatory = false,
+                    actionText = if (state.batteryOptimizationIgnored) "Exempt" else "Allow",
+                    onAction = {
+                        if (!state.batteryOptimizationIgnored) {
+                            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            }
+                            context.openSystemSettings(intent)
+                        }
+                    }
+                )
             }
 
             item {
