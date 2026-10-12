@@ -1,0 +1,4 @@
+storeFile=/path/to/your/release-key.keystore
+storePassword=yourStorePassword
+keyAlias=yourKeyAlias
+keyPassword=yourKeyPassword
