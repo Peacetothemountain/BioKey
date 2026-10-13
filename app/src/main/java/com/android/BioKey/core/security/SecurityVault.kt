@@ -43,8 +43,6 @@ class SecurityVault private constructor(private val context: Context) {
         private const val KEY_GLOBAL = "global_lock_enabled"
         private const val KEY_PAUSED_UNTIL = "global_lock_paused_until"
         private const val KEY_TIMEOUT = "timeout_mode"
-        private const val KEY_STEALTH_GLOBAL = "stealth_global"
-        private const val KEY_STEALTH_APPS = "stealth_apps_set"
         private const val KEY_INTRUDER = "intruder_detection"
         private const val KEY_OVERLAY = "overlay_shield"
         private const val KEY_SELF_PROTECT = "self_protection"
@@ -131,13 +129,9 @@ class SecurityVault private constructor(private val context: Context) {
     private val profileLock = Any()
 
     private val lockedAppsSet = ConcurrentHashMap.newKeySet<String>()
-    private val stealthAppsSet = ConcurrentHashMap.newKeySet<String>()
 
     private val _lockedAppsFlow = MutableStateFlow<Set<String>>(emptySet())
     val lockedAppsFlow: StateFlow<Set<String>> = _lockedAppsFlow.asStateFlow()
-
-    private val _stealthAppsFlow = MutableStateFlow<Set<String>>(emptySet())
-    val stealthAppsFlow: StateFlow<Set<String>> = _stealthAppsFlow.asStateFlow()
 
     private val _globalLockEnabledFlow = MutableStateFlow(true)
     val globalLockEnabledFlow: StateFlow<Boolean> = _globalLockEnabledFlow.asStateFlow()
@@ -148,9 +142,6 @@ class SecurityVault private constructor(private val context: Context) {
 
     private val _timeoutModeFlow = MutableStateFlow(LockTimeoutMode.IMMEDIATE)
     val timeoutModeFlow: StateFlow<LockTimeoutMode> = _timeoutModeFlow.asStateFlow()
-
-    private val _stealthModeGlobalFlow = MutableStateFlow(false)
-    val stealthModeGlobalFlow: StateFlow<Boolean> = _stealthModeGlobalFlow.asStateFlow()
 
     private val _intruderDetectionFlow = MutableStateFlow(true)
     val intruderDetectionFlow: StateFlow<Boolean> = _intruderDetectionFlow.asStateFlow()
@@ -201,20 +192,15 @@ class SecurityVault private constructor(private val context: Context) {
         lockedAppsSet.addAll(savedLocked)
         _lockedAppsFlow.value = savedLocked.toSet()
 
-        val savedStealth = sharedPrefs.getStringSet(KEY_STEALTH_APPS, emptySet()).orEmpty()
-        stealthAppsSet.addAll(savedStealth)
-        _stealthAppsFlow.value = savedStealth.toSet()
-
         _globalLockEnabledFlow.value = sharedPrefs.getBoolean(KEY_GLOBAL, true)
         _pausedUntilFlow.value = sharedPrefs.getLong(KEY_PAUSED_UNTIL, 0L)
         _timeoutModeFlow.value = LockTimeoutMode.fromName(sharedPrefs.getString(KEY_TIMEOUT, null))
-        _stealthModeGlobalFlow.value = sharedPrefs.getBoolean(KEY_STEALTH_GLOBAL, false)
         _intruderDetectionFlow.value = sharedPrefs.getBoolean(KEY_INTRUDER, true)
-        _overlayShieldFlow.value = sharedPrefs.getBoolean(KEY_OVERLAY, true)
-        _selfProtectionFlow.value = sharedPrefs.getBoolean(KEY_SELF_PROTECT, true)
+        _overlayShieldFlow.value = true
+        _selfProtectionFlow.value = true
         _autoSortProfilesFlow.value = sharedPrefs.getBoolean(KEY_AUTO_SORT, false)
         _notificationShieldFlow.value = sharedPrefs.getBoolean(KEY_NOTIFICATION_SHIELD, true)
-        _recentsShieldFlow.value = sharedPrefs.getBoolean(KEY_RECENTS_SHIELD, true)
+        _recentsShieldFlow.value = true
         _identityCheckFlow.value = sharedPrefs.getBoolean(KEY_IDENTITY_CHECK, false)
         _tamperDetectedFlow.value = sharedPrefs.getBoolean(KEY_TAMPER_PENDING, false)
         identityHoldBoot = sharedPrefs.getInt(KEY_ID_HOLD_BOOT, NO_HOLD)
@@ -245,22 +231,40 @@ class SecurityVault private constructor(private val context: Context) {
     /** Canonical, order-independent serialization of every security-relevant setting. */
     private fun canonicalState(includeRecents: Boolean = true): String = buildString {
         appendLine("locked=${lockedAppsSet.sorted().joinToString(",")}")
-        appendLine("stealthApps=${stealthAppsSet.sorted().joinToString(",")}")
         appendLine("global=${_globalLockEnabledFlow.value}")
         appendLine("pausedUntil=${_pausedUntilFlow.value}")
         appendLine("timeout=${_timeoutModeFlow.value.name}")
-        appendLine("stealthGlobal=${_stealthModeGlobalFlow.value}")
         appendLine("intruder=${_intruderDetectionFlow.value}")
-        appendLine("overlay=${_overlayShieldFlow.value}")
-        appendLine("selfProtect=${_selfProtectionFlow.value}")
+        appendLine("overlay=true")
+        appendLine("selfProtect=true")
         appendLine("notifShield=${_notificationShieldFlow.value}")
-        if (includeRecents) appendLine("recentsShield=${_recentsShieldFlow.value}")
+        if (includeRecents) appendLine("recentsShield=true")
         appendLine("identity=${_identityCheckFlow.value}")
         appendLine("profiles=${profilesJson()}")
         appendLine("activeProfile=${_activeProfileIdFlow.value}")
         appendLine("setup=${_setupCompletedFlow.value}")
         appendLine("tamper=${_tamperDetectedFlow.value}")
         // Only while a delay exists, so seals written before this field existed still verify.
+        if (identityHoldBoot != NO_HOLD) appendLine("identityHold=$identityHoldBoot@$identityHoldStart")
+    }
+
+    private fun legacyCanonicalState(): String = buildString {
+        appendLine("locked=${lockedAppsSet.sorted().joinToString(",")}")
+        appendLine("stealthApps=")
+        appendLine("global=${_globalLockEnabledFlow.value}")
+        appendLine("pausedUntil=${_pausedUntilFlow.value}")
+        appendLine("timeout=${_timeoutModeFlow.value.name}")
+        appendLine("stealthGlobal=false")
+        appendLine("intruder=${_intruderDetectionFlow.value}")
+        appendLine("overlay=true")
+        appendLine("selfProtect=true")
+        appendLine("notifShield=${_notificationShieldFlow.value}")
+        appendLine("recentsShield=true")
+        appendLine("identity=${_identityCheckFlow.value}")
+        appendLine("profiles=${profilesJson()}")
+        appendLine("activeProfile=${_activeProfileIdFlow.value}")
+        appendLine("setup=${_setupCompletedFlow.value}")
+        appendLine("tamper=${_tamperDetectedFlow.value}")
         if (identityHoldBoot != NO_HOLD) appendLine("identityHold=$identityHoldBoot@$identityHoldStart")
     }
 
@@ -285,9 +289,13 @@ class SecurityVault private constructor(private val context: Context) {
                 return
             }
             if (MessageDigest.isEqual(expected.toByteArray(), stored.toByteArray())) return
-            // Backwards compatibility with previous seal without recentsShield line:
-            val legacyExpected = seal(canonicalState(includeRecents = false))
-            if (legacyExpected != null && MessageDigest.isEqual(legacyExpected.toByteArray(), stored.toByteArray())) {
+
+            // Backwards compatibility with previous seals (stealth lines or without recentsShield line):
+            val legacyExpected1 = seal(legacyCanonicalState())
+            val legacyExpected2 = seal(canonicalState(includeRecents = false))
+            if ((legacyExpected1 != null && MessageDigest.isEqual(legacyExpected1.toByteArray(), stored.toByteArray())) ||
+                (legacyExpected2 != null && MessageDigest.isEqual(legacyExpected2.toByteArray(), stored.toByteArray()))
+            ) {
                 writeAll()
                 return
             }
@@ -323,20 +331,15 @@ class SecurityVault private constructor(private val context: Context) {
 
     private fun writeAll() = synchronized(writeLock) {
         val currentLocked = lockedAppsSet.toSet()
-        val currentStealth = stealthAppsSet.toSet()
         val currentProfiles = _profilesFlow.value
         val currentProfilesJson = profilesJson()
         val activeProfileId = _activeProfileIdFlow.value
         val globalLock = _globalLockEnabledFlow.value
         val pausedUntil = _pausedUntilFlow.value
         val timeoutMode = _timeoutModeFlow.value
-        val stealthGlobal = _stealthModeGlobalFlow.value
         val intruder = _intruderDetectionFlow.value
-        val overlay = _overlayShieldFlow.value
-        val selfProtect = _selfProtectionFlow.value
         val autoSort = _autoSortProfilesFlow.value
         val notifShield = _notificationShieldFlow.value
-        val recentsShield = _recentsShieldFlow.value
         val identity = _identityCheckFlow.value
         val setupCompleted = _setupCompletedFlow.value
         val tamperPending = _tamperDetectedFlow.value
@@ -347,17 +350,15 @@ class SecurityVault private constructor(private val context: Context) {
         val mac = seal(canonical)
         val editor = sharedPrefs.edit()
             .putStringSet(KEY_LOCKED, currentLocked)
-            .putStringSet(KEY_STEALTH_APPS, currentStealth)
             .putBoolean(KEY_GLOBAL, globalLock)
             .putLong(KEY_PAUSED_UNTIL, pausedUntil)
             .putString(KEY_TIMEOUT, timeoutMode.name)
-            .putBoolean(KEY_STEALTH_GLOBAL, stealthGlobal)
             .putBoolean(KEY_INTRUDER, intruder)
-            .putBoolean(KEY_OVERLAY, overlay)
-            .putBoolean(KEY_SELF_PROTECT, selfProtect)
+            .putBoolean(KEY_OVERLAY, true)
+            .putBoolean(KEY_SELF_PROTECT, true)
             .putBoolean(KEY_AUTO_SORT, autoSort)
             .putBoolean(KEY_NOTIFICATION_SHIELD, notifShield)
-            .putBoolean(KEY_RECENTS_SHIELD, recentsShield)
+            .putBoolean(KEY_RECENTS_SHIELD, true)
             .putBoolean(KEY_IDENTITY_CHECK, identity)
             .putString(KEY_PROFILES_JSON, currentProfilesJson)
             .putString(KEY_ACTIVE_PROFILE_ID, activeProfileId)
@@ -424,16 +425,6 @@ class SecurityVault private constructor(private val context: Context) {
         }
     }
 
-    fun isStealthCrash(packageName: String): Boolean {
-        if (_stealthModeGlobalFlow.value) return true
-        val aliases = aliasesOf(packageName)
-        if (aliases.any { it in stealthAppsSet }) return true
-        val profile = activeProfile() ?: return false
-        return profile.isStealth && aliases.any { it in lockedAppsSet || it in profile.packages }
-    }
-
-    fun isStealthModeGlobal(): Boolean = _stealthModeGlobalFlow.value
-
     /** False while protection is paused. Auto-resumes once a timed pause expires. */
     fun isGlobalLockEnabled(): Boolean {
         if (_globalLockEnabledFlow.value) return true
@@ -449,11 +440,11 @@ class SecurityVault private constructor(private val context: Context) {
     }
 
     fun getTimeoutMode(): LockTimeoutMode = _timeoutModeFlow.value
-    fun isOverlayShieldEnabled(): Boolean = _overlayShieldFlow.value
-    fun isSelfProtectionEnabled(): Boolean = _selfProtectionFlow.value
+    fun isOverlayShieldEnabled(): Boolean = true
+    fun isSelfProtectionEnabled(): Boolean = true
     fun isIntruderDetectionEnabled(): Boolean = _intruderDetectionFlow.value
     fun isNotificationShieldEnabled(): Boolean = _notificationShieldFlow.value
-    fun isRecentsShieldEnabled(): Boolean = _recentsShieldFlow.value
+    fun isRecentsShieldEnabled(): Boolean = true
     fun isIdentityCheckEnabled(): Boolean = _identityCheckFlow.value
     fun isAutoSortProfilesEnabled(): Boolean = _autoSortProfilesFlow.value
     fun isSetupCompleted(): Boolean = _setupCompletedFlow.value
@@ -494,12 +485,6 @@ class SecurityVault private constructor(private val context: Context) {
         return true
     }
 
-    fun setAppStealthCrash(packageName: String, enabled: Boolean) {
-        val targets = aliasesOf(packageName)
-        if (enabled) stealthAppsSet.addAll(targets) else stealthAppsSet.removeAll(targets)
-        _stealthAppsFlow.value = stealthAppsSet.toSet()
-        persist()
-    }
 
     // ---------------------------------------------------------------------------------------
     // Global protection
@@ -556,14 +541,6 @@ class SecurityVault private constructor(private val context: Context) {
         return true
     }
 
-    fun setStealthCrashMode(enabled: Boolean): Boolean {
-        if (!enabled && !authorizedForDowngrade("disable stealth crash mode")) return false
-        _stealthModeGlobalFlow.value = enabled
-        SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_MODIFIED, "Stealth crash mode ${if (enabled) "enabled" else "disabled"}")
-        persist()
-        return true
-    }
-
     fun setIntruderDetection(enabled: Boolean): Boolean {
         if (!enabled && !authorizedForDowngrade("disable intruder detection")) return false
         _intruderDetectionFlow.value = enabled
@@ -572,34 +549,10 @@ class SecurityVault private constructor(private val context: Context) {
         return true
     }
 
-    fun setSelfProtection(enabled: Boolean): Boolean {
-        if (!enabled && !authorizedForDowngrade("disable self-protection")) return false
-        _selfProtectionFlow.value = enabled
-        SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_MODIFIED, "Self-protection ${if (enabled) "enabled" else "disabled"}")
-        persist()
-        return true
-    }
-
-    fun setOverlayShield(enabled: Boolean): Boolean {
-        if (!enabled && !authorizedForDowngrade("disable instant shield")) return false
-        _overlayShieldFlow.value = enabled
-        SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_MODIFIED, "Instant shield ${if (enabled) "enabled" else "disabled"}")
-        persist()
-        return true
-    }
-
     fun setNotificationShield(enabled: Boolean): Boolean {
         if (!enabled && !authorizedForDowngrade("disable notification shield")) return false
         _notificationShieldFlow.value = enabled
         SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_MODIFIED, "Notification shield ${if (enabled) "enabled" else "disabled"}")
-        persist()
-        return true
-    }
-
-    fun setRecentsShield(enabled: Boolean): Boolean {
-        if (!enabled && !authorizedForDowngrade("disable recents shield")) return false
-        _recentsShieldFlow.value = enabled
-        SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_MODIFIED, "Recents shield ${if (enabled) "enabled" else "disabled"}")
         persist()
         return true
     }
@@ -703,7 +656,7 @@ class SecurityVault private constructor(private val context: Context) {
         SecurityProfile(id = "profile_social", name = "Social", iconKey = "social", isPreset = true),
         SecurityProfile(id = "profile_work", name = "Work", iconKey = "work", isPreset = true, timeoutMode = LockTimeoutMode.GRACE_5_MINUTES),
         SecurityProfile(id = "profile_home", name = "Home", iconKey = "shield", isPreset = true, timeoutMode = LockTimeoutMode.GRACE_15_MINUTES),
-        SecurityProfile(id = "profile_night", name = "Night", iconKey = "privacy", isPreset = true, isStealth = true, timeoutMode = LockTimeoutMode.IMMEDIATE)
+        SecurityProfile(id = "profile_night", name = "Night", iconKey = "privacy", isPreset = true, timeoutMode = LockTimeoutMode.IMMEDIATE)
     )
 
     /**
@@ -752,7 +705,7 @@ class SecurityVault private constructor(private val context: Context) {
     }
 
     /**
-     * Applies a profile: locks its apps and applies its stealth/timeout settings. Switching to a
+     * Applies a profile: locks its apps and applies its timeout settings. Switching to a
      * profile with a more lenient timeout requires recent authentication.
      */
     fun activateProfile(profileId: String?): Boolean {
@@ -771,11 +724,9 @@ class SecurityVault private constructor(private val context: Context) {
         LockStateTracker.lockAll(includeOwnApp = false)
 
         if (profile != null) {
-            _stealthModeGlobalFlow.value = profile.isStealth
             _timeoutModeFlow.value = profile.timeoutMode
         } else {
             // Restore global preferences when returning to "All Apps"
-            _stealthModeGlobalFlow.value = sharedPrefs.getBoolean(KEY_STEALTH_GLOBAL, false)
             _timeoutModeFlow.value = LockTimeoutMode.fromName(sharedPrefs.getString(KEY_TIMEOUT, null))
         }
         persist()

@@ -9,7 +9,6 @@ data class SecurityProfile(
     val iconKey: String = "shield", // "shield", "finance", "social", "lock", "work", "privacy"
     val packages: Set<String> = emptySet(),
     val isPreset: Boolean = false,
-    val isStealth: Boolean = false,
     val timeoutMode: LockTimeoutMode = LockTimeoutMode.IMMEDIATE
 ) {
     fun toJson(): JSONObject {
@@ -18,7 +17,6 @@ data class SecurityProfile(
             put("name", name)
             put("iconKey", iconKey)
             put("isPreset", isPreset)
-            put("isStealth", isStealth)
             put("timeoutMode", timeoutMode.name)
             val pkgArray = JSONArray()
             // Deterministic sorting guarantees identical HMAC-SHA256 integrity seal calculation
@@ -33,7 +31,6 @@ data class SecurityProfile(
             val name = json.optString("name", "Custom Profile")
             val iconKey = json.optString("iconKey", "shield")
             val isPreset = json.optBoolean("isPreset", false)
-            val isStealth = json.optBoolean("isStealth", false)
             val timeoutModeStr = json.optString("timeoutMode", LockTimeoutMode.IMMEDIATE.name)
             val timeoutMode = LockTimeoutMode.fromName(timeoutModeStr)
 
@@ -51,7 +48,6 @@ data class SecurityProfile(
                 iconKey = iconKey,
                 packages = packages,
                 isPreset = isPreset,
-                isStealth = isStealth,
                 timeoutMode = timeoutMode
             )
         }

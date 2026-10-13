@@ -33,6 +33,7 @@ enum class LockTimeoutMode(val title: String, val description: String, val durat
     );
 
     val label: String get() = title
+    val isGracePeriod: Boolean get() = durationMillis > 0L
 
     companion object {
         fun fromName(name: String?): LockTimeoutMode = entries.find { it.name == name } ?: IMMEDIATE

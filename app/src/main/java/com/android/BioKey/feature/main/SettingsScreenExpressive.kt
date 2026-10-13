@@ -114,13 +114,9 @@ fun SettingsScreenExpressive(
 
     val globalLockEnabled by vault.globalLockEnabledFlow.collectAsStateWithLifecycle()
     val timeoutMode by vault.timeoutModeFlow.collectAsStateWithLifecycle()
-    val stealthMode by vault.stealthModeGlobalFlow.collectAsStateWithLifecycle()
     val intruderDetection by vault.intruderDetectionFlow.collectAsStateWithLifecycle()
-    val overlayShield by vault.overlayShieldFlow.collectAsStateWithLifecycle()
-    val selfProtection by vault.selfProtectionFlow.collectAsStateWithLifecycle()
     val autoSortProfiles by vault.autoSortProfilesFlow.collectAsStateWithLifecycle()
     val notificationShield by vault.notificationShieldFlow.collectAsStateWithLifecycle()
-    val recentsShield by vault.recentsShieldFlow.collectAsStateWithLifecycle()
     val identityCheck by vault.identityCheckFlow.collectAsStateWithLifecycle()
     val eventLogVersion by SecurityEventLog.version.collectAsStateWithLifecycle()
 
@@ -282,37 +278,21 @@ fun SettingsScreenExpressive(
                         }
                     )
                     GroupDivider()
-                    DynamicSettingRowExpressive(
-                        icon = Icons.Default.Layers,
-                        title = "Instant cover",
-                        description = "Covers a locked app the moment it opens, before the unlock screen appears",
-                        checked = overlayShield,
-                        onCheckedChange = { checked ->
-                            if (checked) vault.setOverlayShield(true)
-                            else weaken("Turn off instant cover") { vault.setOverlayShield(false) }
-                        }
-                    )
-                    GroupDivider()
-                    DynamicSettingRowExpressive(
-                        icon = Icons.Default.AdminPanelSettings,
-                        title = "Self-protection",
-                        description = if (adminActive) {
-                            "Requires authentication on BioKey's App info, accessibility, and uninstall screens"
-                        } else {
-                            "Uninstall protection (device admin) is off. Tap to turn it on."
-                        },
-                        checked = selfProtection && adminActive,
-                        onCheckedChange = { checked ->
-                            when {
-                                checked && !adminActive -> {
-                                    vault.setSelfProtection(true)
-                                    DeviceAdminHelper.launchActivation(context)
-                                }
-                                checked -> vault.setSelfProtection(true)
-                                else -> weaken("Turn off self-protection") { vault.setSelfProtection(false) }
-                            }
-                        }
-                    )
+                    if (adminActive) {
+                        NavigationRow(
+                            icon = Icons.Default.AdminPanelSettings,
+                            title = "Self-protection active",
+                            description = "Guarding BioKey against uninstallation with Device Admin and Accessibility",
+                            onClick = { DeviceAdminHelper.launchActivation(context) }
+                        )
+                    } else {
+                        NavigationRow(
+                            icon = Icons.Default.AdminPanelSettings,
+                            title = "Activate uninstall protection",
+                            description = "Device admin is currently disabled. Tap to activate Device Admin protection.",
+                            onClick = { DeviceAdminHelper.launchActivation(context) }
+                        )
+                    }
                     GroupDivider()
                     NavigationRow(
                         icon = Icons.Default.LockClock,
@@ -343,7 +323,7 @@ fun SettingsScreenExpressive(
                                     !canPostNotifications && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
                                         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                                     !notificationAccess ->
-                                        context.openSystemSettings(BioKeyNotificationShieldService.getNotificationSettingsIntent())
+                                        context.openSystemSettings(BioKeyNotificationShieldService.getNotificationSettingsIntent(context))
                                 }
                             } else {
                                 weaken("Turn off notification shield") { vault.setNotificationShield(false) }
@@ -373,25 +353,6 @@ fun SettingsScreenExpressive(
                             onClick = onOpenIntruderVault
                         )
                     }
-                    GroupDivider()
-                    DynamicSettingRowExpressive(
-                        icon = Icons.Default.VisibilityOff,
-                        title = "Crash disguise",
-                        description = "Shows a fake \"app keeps stopping\" dialog instead of the lock screen. Double-tap it to unlock.",
-                        checked = stealthMode,
-                        onCheckedChange = { vault.setStealthCrashMode(it) }
-                    )
-                    GroupDivider()
-                    DynamicSettingRowExpressive(
-                        icon = Icons.Default.Layers,
-                        title = "Recents Overview shield",
-                        description = "Routes directly to Home when exiting a locked app to prevent task preview snapshots from appearing in Recents",
-                        checked = recentsShield,
-                        onCheckedChange = { checked ->
-                            if (checked) vault.setRecentsShield(true)
-                            else weaken("Turn off Recents shield") { vault.setRecentsShield(false) }
-                        }
-                    )
                 }
             }
 
@@ -401,8 +362,8 @@ fun SettingsScreenExpressive(
                 SettingsGroup {
                     DynamicSettingRowExpressive(
                         icon = Icons.Default.Tune,
-                        title = "Suggest profile members",
-                        description = "Adds installed apps to matching profiles by name. Never unlocks anything.",
+                        title = "Profile Presorted Applications",
+                        description = "Automatically presorts installed applications into finance, social, and work profiles.",
                         checked = autoSortProfiles,
                         onCheckedChange = { checked ->
                             vault.setAutoSortProfilesEnabled(checked)

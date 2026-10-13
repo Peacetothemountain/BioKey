@@ -103,7 +103,7 @@ object IntruderManager {
     fun captureIntruderPhoto(context: Context, packageName: String) = scheduleCapture(context, packageName, 500L)
 
     /** Capture right away; for when the biometric prompt has already been dismissed. */
-    fun captureIntruderPhotoNow(context: Context, packageName: String) = scheduleCapture(context, packageName, 150L)
+    fun captureIntruderPhotoNow(context: Context, packageName: String) = scheduleCapture(context, packageName, 0L)
 
     private fun scheduleCapture(context: Context, packageName: String, delayMs: Long) {
         val appContext = context.applicationContext
@@ -114,11 +114,11 @@ object IntruderManager {
         val now = SystemClock.elapsedRealtime()
         val previous = lastCapture[packageName]
         if (previous != null && now - previous < CAPTURE_COOLDOWN_MS) return
-        lastCapture[packageName] = now
 
         scope.launch {
-            delay(delayMs)
+            if (delayMs > 0L) delay(delayMs)
             if (captureInFlight.compareAndSet(false, true)) {
+                lastCapture[packageName] = SystemClock.elapsedRealtime()
                 takeSilentFrontPhoto(appContext, packageName, attempt = 0)
             }
         }

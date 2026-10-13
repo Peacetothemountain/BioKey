@@ -166,7 +166,6 @@ fun MainScreenExpressive() {
     val vault = remember { SecurityVault.getInstance(context) }
 
     val lockedApps by vault.lockedAppsFlow.collectAsStateWithLifecycle()
-    val stealthApps by vault.stealthAppsFlow.collectAsStateWithLifecycle()
     val globalLockEnabled by vault.globalLockEnabledFlow.collectAsStateWithLifecycle()
     val profiles by vault.profilesFlow.collectAsStateWithLifecycle()
     val activeProfileId by vault.activeProfileIdFlow.collectAsStateWithLifecycle()
@@ -497,21 +496,6 @@ fun MainScreenExpressive() {
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
-                                if (currentProfile.isStealth) {
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Surface(
-                                        shape = CircleShape,
-                                        color = MaterialTheme.colorScheme.tertiaryContainer
-                                    ) {
-                                        Text(
-                                            text = "STEALTH",
-                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                }
                             }
                             Text(
                                 text = "${currentProfile.packages.size} apps inside this profile",
@@ -641,12 +625,9 @@ fun MainScreenExpressive() {
                         } else {
                             currentProfile.packages.contains(app.packageName)
                         }
-                        val isStealth = stealthApps.contains(app.packageName) || (currentProfile?.isStealth == true && isLocked)
-
                         ExpressiveAppRow(
                             app = app,
                             isLocked = isLocked,
-                            isStealth = isStealth,
                             onToggleLock = { lock ->
                                 setLocked(app, lock, if (isViewingAll) null else currentProfile)
                             },
@@ -664,18 +645,12 @@ fun MainScreenExpressive() {
     // Per-App Modal Sheet
     selectedAppForDetails?.let { app ->
         val isLocked = lockedApps.contains(app.packageName)
-        val isStealth = stealthApps.contains(app.packageName)
 
         AppSecurityBottomSheetExpressive(
             app = app,
             isLocked = isLocked,
-            isStealth = isStealth,
             onDismiss = { selectedAppForDetails = null },
             onToggleLock = { lock -> setLocked(app, lock, profile = null) },
-            onToggleStealth = { stealth ->
-                ExpressiveTokens.triggerHaptic(context, ExpressiveTokens.HapticFeedbackStyle.CONFIRM_SUCCESS)
-                vault.setAppStealthCrash(app.packageName, stealth)
-            },
             onTestLaunch = {
                 val launchIntent = context.packageManager.getLaunchIntentForPackage(app.packageName)
                 if (launchIntent != null) {
@@ -1209,12 +1184,11 @@ private fun ExpressiveSearchBar(
 private fun ExpressiveAppRow(
     app: AppItem,
     isLocked: Boolean,
-    isStealth: Boolean,
     onToggleLock: (Boolean) -> Unit,
     onOpenOptions: () -> Unit
 ) {
     val cardContainerColor by animateColorAsState(
-        targetValue = if (isLocked) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.surfaceContainerLowest,
+        targetValue = if (isLocked) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainer,
         animationSpec = ExpressiveTokens.Springs.fast(),
         label = "app_row_bg"
     )
@@ -1300,7 +1274,7 @@ private fun ExpressiveAppRow(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (isStealth) "Protected • Stealth Crash Disguise" else "Biometrics Enabled",
+                            text = "Biometrics Enabled",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Medium
@@ -1360,10 +1334,8 @@ private fun ExpressiveAppRow(
 private fun AppSecurityBottomSheetExpressive(
     app: AppItem,
     isLocked: Boolean,
-    isStealth: Boolean,
     onDismiss: () -> Unit,
     onToggleLock: (Boolean) -> Unit,
-    onToggleStealth: (Boolean) -> Unit,
     onTestLaunch: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1439,43 +1411,6 @@ private fun AppSecurityBottomSheetExpressive(
                     Switch(
                         checked = isLocked,
                         onCheckedChange = onToggleLock,
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                            checkedTrackColor = MaterialTheme.colorScheme.primary
-                        )
-                    )
-                }
-            }
-
-            Surface(
-                shape = ExpressiveTokens.Shapes.BentoCardMedium,
-                color = MaterialTheme.colorScheme.surfaceContainer,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Stealth Crash Disguise",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "Disguises as '${app.label} keeps stopping'. Secret double-tap unlocks.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = isStealth,
-                        onCheckedChange = onToggleStealth,
-                        enabled = isLocked,
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
                             checkedTrackColor = MaterialTheme.colorScheme.primary
@@ -1756,7 +1691,6 @@ private fun ProfileEditorModalSheetExpressive(
 
     var profileName by remember(profileToEdit) { mutableStateOf(profileToEdit?.name ?: "") }
     var selectedIcon by remember(profileToEdit) { mutableStateOf(profileToEdit?.iconKey ?: "shield") }
-    var isStealth by remember(profileToEdit) { mutableStateOf(profileToEdit?.isStealth ?: false) }
     var selectedPackages by remember(profileToEdit) { mutableStateOf(profileToEdit?.packages ?: emptySet()) }
     var searchQuery by remember { mutableStateOf("") }
 
@@ -1863,39 +1797,6 @@ private fun ProfileEditorModalSheetExpressive(
                     }
                 }
 
-                item {
-                    Surface(
-                        shape = ExpressiveTokens.Shapes.BentoCardMedium,
-                        color = MaterialTheme.colorScheme.surfaceContainer,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Stealth Crash Disguise",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = "Fake crash screen when opening locked apps in this profile",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = isStealth,
-                                onCheckedChange = { isStealth = it }
-                            )
-                        }
-                    }
-                }
 
                 item {
                     Column {
@@ -2043,7 +1944,6 @@ private fun ProfileEditorModalSheetExpressive(
                         iconKey = selectedIcon,
                         packages = selectedPackages,
                         isPreset = false,
-                        isStealth = isStealth,
                         timeoutMode = profileToEdit?.timeoutMode ?: LockTimeoutMode.IMMEDIATE
                     )
                     onSaveProfile(profile)

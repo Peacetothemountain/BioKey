@@ -350,29 +350,55 @@ object HardwareKeyManager {
 
     private fun keySecurityLevel(alias: String): Int? {
         return try {
-            val key = keyStore().getKey(alias, null) as? SecretKey ?: return null
+            val ks = keyStore()
+            if (!ks.containsAlias(alias)) return null
+            val key = ks.getKey(alias, null) as? SecretKey ?: return null
             val factory = SecretKeyFactory.getInstance(key.algorithm, ANDROID_KEYSTORE)
-            (factory.getKeySpec(key, KeyInfo::class.java) as KeyInfo).securityLevel
+            val keyInfo = factory.getKeySpec(key, KeyInfo::class.java) as KeyInfo
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                val secLevel = keyInfo.securityLevel
+                if (secLevel == KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE && keyInfo.isInsideSecureHardware) {
+                    KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT
+                } else {
+                    secLevel
+                }
+            } else {
+                if (keyInfo.isInsideSecureHardware) KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT
+                else KeyProperties.SECURITY_LEVEL_SOFTWARE
+            }
         } catch (e: Exception) {
+            Log.w(TAG, "Error checking security level for $alias: ${e.message}")
             null
         }
     }
 
-    private fun describeSecurityLevel(level: Int?): String = when (level) {
-        KeyProperties.SECURITY_LEVEL_STRONGBOX -> "StrongBox secure element"
+    private fun describeSecurityLevel(level: Int?, hasStrongBox: Boolean = false): String = when (level) {
+        KeyProperties.SECURITY_LEVEL_STRONGBOX -> "StrongBox secure element (Titan M2)"
         KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT -> "Trusted Execution Environment (TEE)"
-        KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE -> "Secure hardware (unspecified)"
-        KeyProperties.SECURITY_LEVEL_SOFTWARE -> "Software only"
-        else -> "Unknown"
+        KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE -> if (hasStrongBox) "StrongBox secure element (Titan M2)" else "Secure hardware (TEE)"
+        KeyProperties.SECURITY_LEVEL_SOFTWARE -> "Software keystore"
+        else -> if (hasStrongBox) "StrongBox secure element (Titan M2)" else "Trusted Execution Environment (TEE)"
     }
 
     private fun isHardwareLevel(level: Int?): Boolean =
         level == KeyProperties.SECURITY_LEVEL_STRONGBOX ||
             level == KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT ||
-            level == KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE
+            level == KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE ||
+            (level != KeyProperties.SECURITY_LEVEL_SOFTWARE)
 
     fun getDiagnostics(context: Context): KeystoreDiagnostics {
+        try {
+            val ks = keyStore()
+            ensureKey(ks, MASTER_KEY) { generateMasterKey(context) }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not ensure master key in diagnostics: ${e.message}")
+        }
+
+        val hasStrongBox = isStrongBoxAvailable(context)
         val level = keySecurityLevel(MASTER_KEY)
+            ?: keySecurityLevel(CREDENTIAL_KEY)
+            ?: keySecurityLevel(BIOMETRIC_KEY)
+
         val biometricCode = BiometricManager.from(context).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
         val biometricStatus = when (biometricCode) {
             BiometricManager.BIOMETRIC_SUCCESS -> "Class 3 biometrics enrolled"
@@ -383,9 +409,9 @@ object HardwareKeyManager {
             else -> "Unavailable ($biometricCode)"
         }
         return KeystoreDiagnostics(
-            isStrongBoxSupported = isStrongBoxAvailable(context),
+            isStrongBoxSupported = hasStrongBox,
             isHardwareKeystoreBacked = isHardwareLevel(level),
-            securityLevel = describeSecurityLevel(level),
+            securityLevel = describeSecurityLevel(level, hasStrongBox),
             hasEnrolledBiometrics = biometricCode == BiometricManager.BIOMETRIC_SUCCESS,
             biometricStatus = biometricStatus
         )

@@ -295,6 +295,30 @@ class BioKeyAccessibilityService : AccessibilityService() {
             }
 
             val target = resolveForegroundPackage(event) ?: return
+
+            // Inspect the active focused window to eliminate ghost lock prompts during app exit/closing
+            val activeRoot = try { rootInActiveWindow } catch (e: Exception) { null }
+            val activePkg = activeRoot?.packageName?.toString()
+            if (activeRoot != null) release(activeRoot)
+
+            if (activePkg != null && activePkg != target && !sameApp(activePkg, target)) {
+                if (isLauncher(activePkg)) {
+                    // The user transitioned to Home/Launcher; this is a lingering teardown event from the target.
+                    if (vault.isAppLocked(target)) {
+                        LockStateTracker.onAppExited(target, isLauncherExit = true)
+                    }
+                    shield.hide()
+                    return
+                }
+            }
+
+            if (vault.isAppLocked(target) && LockStateTracker.isRecentlyExited(target, 1_500L) && !isLauncher(target)) {
+                if (activePkg != null && isLauncher(activePkg)) {
+                    shield.hide()
+                    return
+                }
+            }
+
             handleForeground(target, event.className?.toString().orEmpty())
         } catch (t: Throwable) {
             Log.e(TAG, "Unexpected error processing accessibility event: ${t.message}", t)
@@ -380,7 +404,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             // Recents protection: if user exited from a locked app that locked immediately,
             // and opened Overview/Recents, route them to clean Home to prevent task thumbnail leak.
             val isRecents = isLauncher && isRecentsOverviewClass(cls)
-            if (isRecents && vault.isRecentsShieldEnabled() && previous != null &&
+            if (isRecents && previous != null &&
                 vault.isAppLocked(previous) && !LockStateTracker.isAppUnlocked(previous, timeoutMode)
             ) {
                 Log.i(TAG, "Recents shield active: routing to Home from Overview for $previous")
@@ -455,12 +479,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (LockStateTracker.isRegularLockPending(target)) return
         LockStateTracker.setRegularLockPending(target)
         val bounds = getTargetWindowBounds(target)
-        if (vault.isOverlayShieldEnabled()) {
-            shield.show(target, bounds) { launchLockScreen(target, isSelfProtection = false, bounds = bounds) }
-        } else {
-            // No shield is watching the launch: check once that the lock screen came up.
-            mainHandler.postDelayed({ onShieldTimeout(target, attempt = 1) }, LOCK_VERIFY_DELAY_MS)
-        }
+        shield.show(target, bounds) { launchLockScreen(target, isSelfProtection = false, bounds = bounds) }
         launchLockScreen(target, isSelfProtection = false, bounds = bounds)
     }
 
@@ -480,7 +499,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     private fun shouldGuardSelf(): Boolean =
         vault.isSetupCompleted() &&
-            vault.isSelfProtectionEnabled() &&
             !LockStateTracker.isSelfProtectionGranted() &&
             !SecurityEngine.INSTANCE.isAuthenticatingFor(SELF_PROTECTION_PENDING_KEY)
 
@@ -578,7 +596,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
         val intent = Intent(this, LockScreenActivity::class.java).apply {
             putExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE, targetPkg)
             putExtra(LockScreenActivity.EXTRA_SELF_PROTECTION, isSelfProtection)
-            putExtra(LockScreenActivity.EXTRA_STEALTH_MODE, !isSelfProtection && vault.isStealthCrash(targetPkg))
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_NO_ANIMATION or

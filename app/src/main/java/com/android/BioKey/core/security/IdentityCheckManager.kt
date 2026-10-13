@@ -74,6 +74,8 @@ object IdentityCheckManager {
                     allowsDeviceCredential = false,
                     biometricsEnrolled = false
                 )
+            BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED ->
+                IdentityCheckPolicy(true, "Identity Check: biometric security update required.", allowsDeviceCredential = false)
             else ->
                 IdentityCheckPolicy(false, "Identity Check is on but this device can't use a strong biometric.", allowsDeviceCredential = true)
         }

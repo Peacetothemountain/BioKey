@@ -43,7 +43,17 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         fun isNotificationAccessGranted(context: Context): Boolean =
             NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
 
-        fun getNotificationSettingsIntent(): Intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+        fun getNotificationSettingsIntent(context: Context? = null): Intent =
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && context != null) {
+                Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).apply {
+                    putExtra(
+                        Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
+                        android.content.ComponentName(context, BioKeyNotificationShieldService::class.java).flattenToString()
+                    )
+                }
+            } else {
+                Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+            }
     }
 
     private val vault by lazy { SecurityVault.getInstance(applicationContext) }

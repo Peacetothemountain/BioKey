@@ -323,7 +323,7 @@ fun SetupScreenExpressive(
                     actionText = if (state.notificationAccess) "On" else "Allow",
                     onAction = {
                         if (!state.notificationAccess) {
-                            context.openSystemSettings(BioKeyNotificationShieldService.getNotificationSettingsIntent())
+                            context.openSystemSettings(BioKeyNotificationShieldService.getNotificationSettingsIntent(context))
                         }
                     }
                 )

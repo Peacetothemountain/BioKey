@@ -50,7 +50,6 @@ class LockScreenActivity : FragmentActivity() {
         private const val TAG = "LockScreenActivity"
         const val EXTRA_LOCKED_PACKAGE = "extra_locked_package"
         const val EXTRA_SELF_PROTECTION = "extra_self_protection"
-        const val EXTRA_STEALTH_MODE = "extra_stealth_mode"
         /** Launch the locked app after a successful unlock (used by redacted notifications). */
         const val EXTRA_LAUNCH_AFTER_UNLOCK = "extra_launch_after_unlock"
         private const val DEFAULT_AURA_ARGB = 0xFF3865BA.toInt()
@@ -68,7 +67,6 @@ class LockScreenActivity : FragmentActivity() {
     private var appLabelState by mutableStateOf("")
     private var appIconState by mutableStateOf<ImageBitmap?>(null)
     private var auraColorState by mutableStateOf(DEFAULT_AURA)
-    private var isStealthModeState by mutableStateOf(false)
     private var statusMessage by mutableStateOf<String?>(null)
     private var isPermanentLockout by mutableStateOf(false)
 
@@ -93,25 +91,17 @@ class LockScreenActivity : FragmentActivity() {
         setContent {
             val colorScheme = remember { dynamicDarkColorScheme(this) }
             MaterialTheme(colorScheme = colorScheme) {
-                if (isStealthModeState) {
-                    StealthCrashDialog(
-                        appName = appLabelState,
-                        onSecretUnlockTrigger = ::showPrompt,
-                        onCloseApp = ::goHomeAndFinish
-                    )
-                } else {
-                    LockScreenUIExpressive(
-                        appName = appLabelState,
-                        appIcon = appIconState,
-                        auraColor = auraColorState,
-                        onUnlockClicked = ::showPrompt,
-                        onCancelClicked = ::goHomeAndFinish,
-                        isBioKeyLock = isSelfProtection,
-                        statusMessage = statusMessage,
-                        isPermanentLockout = isPermanentLockout,
-                        onLockDeviceClicked = ::lockDeviceOrHome
-                    )
-                }
+                LockScreenUIExpressive(
+                    appName = appLabelState,
+                    appIcon = appIconState,
+                    auraColor = auraColorState,
+                    onUnlockClicked = ::showPrompt,
+                    onCancelClicked = ::goHomeAndFinish,
+                    isBioKeyLock = isSelfProtection,
+                    statusMessage = statusMessage,
+                    isPermanentLockout = isPermanentLockout,
+                    onLockDeviceClicked = ::lockDeviceOrHome
+                )
             }
         }
     }
@@ -129,8 +119,6 @@ class LockScreenActivity : FragmentActivity() {
         lockedPackage = pkg
         isSelfProtection = selfProtection
         launchAfterUnlock = intent.getBooleanExtra(EXTRA_LAUNCH_AFTER_UNLOCK, false)
-        isStealthModeState = !selfProtection &&
-            (intent.getBooleanExtra(EXTRA_STEALTH_MODE, false) || vault.isStealthCrash(pkg))
         statusMessage = null
         isPermanentLockout = false
         loadPackageInfo()
@@ -210,10 +198,10 @@ class LockScreenActivity : FragmentActivity() {
     }
 
     private fun schedulePrompt() {
-        if (isStealthModeState || isPermanentLockout || SecurityEngine.INSTANCE.isAuthenticating()) return
+        if (isPermanentLockout || SecurityEngine.INSTANCE.isAuthenticating()) return
         lifecycleScope.launch {
             delay(150)
-            if (!isFinishing && !isDestroyed && !isStealthModeState && !isPermanentLockout && !SecurityEngine.INSTANCE.isAuthenticating()) {
+            if (!isFinishing && !isDestroyed && !isPermanentLockout && !SecurityEngine.INSTANCE.isAuthenticating()) {
                 showPrompt()
             }
         }

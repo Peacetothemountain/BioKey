@@ -158,6 +158,12 @@ object LockStateTracker {
         }
     }
 
+    fun isRecentlyExited(packageName: String, thresholdMs: Long = 1_500L): Boolean {
+        val key = sessionKey(packageName)
+        val exit = exitedAt[key] ?: return false
+        return (now() - exit) < thresholdMs
+    }
+
     fun isAppUnlocked(packageName: String, timeoutMode: LockTimeoutMode): Boolean {
         val key = sessionKey(packageName)
         val unlockTime = unlockedAt[key] ?: return false
@@ -172,8 +178,12 @@ object LockStateTracker {
         // Must NEVER bypass IMMEDIATE mode once an app has exited to an external non-auth window.
         // Must NEVER exceed the configured timeout duration for shorter grace periods.
         if (!wasLauncher && timeoutMode != LockTimeoutMode.IMMEDIATE) {
-            val effectiveImmunity = minOf(HANDSHAKE_IMMUNITY_DURATION_MS, timeoutMode.durationMillis)
-            if ((now() - unlockTime < effectiveImmunity) && (sinceExit < timeoutMode.durationMillis)) {
+            val effectiveImmunity = if (timeoutMode.durationMillis > 0L) {
+                minOf(HANDSHAKE_IMMUNITY_DURATION_MS, timeoutMode.durationMillis)
+            } else {
+                HANDSHAKE_IMMUNITY_DURATION_MS
+            }
+            if ((now() - unlockTime < effectiveImmunity) && (timeoutMode.durationMillis <= 0L || sinceExit < timeoutMode.durationMillis)) {
                 return true
             }
         }
