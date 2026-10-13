@@ -182,48 +182,48 @@ class SecurityEngine private constructor() {
         private fun label() = if (packageName == activity.packageName) "BioKey" else appName
 
         fun promptBiometric(crypto: HardwareKeyManager.CryptoResult.Ready) {
-            val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    if (HardwareKeyManager.verify(result, crypto.challenge)) {
-                        succeed()
-                    } else {
-                        Log.e(TAG, "Biometric success without a valid hardware auth token for $packageName")
-                        fail(BiometricPrompt.ERROR_VENDOR, "Hardware verification failed. Try again.")
-                    }
-                }
-
-                override fun onAuthenticationFailed() {
-                    activePrompt?.let { onBiometricMismatch(it) }
-                }
-
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    HardwareKeyManager.abortCipher(crypto.cryptoObject.cipher)
-                    if (finished.get()) return
-                    val wantsFallback = errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
-                        errorCode == BiometricPrompt.ERROR_LOCKOUT ||
-                        errorCode == BiometricPrompt.ERROR_LOCKOUT_PERMANENT ||
-                        errorCode == BiometricPrompt.ERROR_NO_BIOMETRICS ||
-                        errorCode == BiometricPrompt.ERROR_HW_UNAVAILABLE ||
-                        errorCode == BiometricPrompt.ERROR_HW_NOT_PRESENT
-
-                    if (wantsFallback && !strict) {
-                        promptCredential()
-                    } else {
-                        fail(errorCode, errString)
-                    }
-                }
-            })
-            activePrompt = prompt
-
-            val info = BiometricPrompt.PromptInfo.Builder()
-                .setTitle(title)
-                .setSubtitle(if (strict) "Identity Check: biometric required" else "Verify it's you")
-                .setAllowedAuthenticators(BIOMETRIC_STRONG)
-                .setNegativeButtonText(if (strict) "Cancel" else "Use PIN or pattern")
-                .setConfirmationRequired(false)
-                .build()
-
             try {
+                val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                        if (HardwareKeyManager.verify(result, crypto.challenge)) {
+                            succeed()
+                        } else {
+                            Log.e(TAG, "Biometric success without a valid hardware auth token for $packageName")
+                            fail(BiometricPrompt.ERROR_VENDOR, "Hardware verification failed. Try again.")
+                        }
+                    }
+
+                    override fun onAuthenticationFailed() {
+                        activePrompt?.let { onBiometricMismatch(it) }
+                    }
+
+                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                        HardwareKeyManager.abortCipher(crypto.cryptoObject.cipher)
+                        if (finished.get()) return
+                        val wantsFallback = errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
+                            errorCode == BiometricPrompt.ERROR_LOCKOUT ||
+                            errorCode == BiometricPrompt.ERROR_LOCKOUT_PERMANENT ||
+                            errorCode == BiometricPrompt.ERROR_NO_BIOMETRICS ||
+                            errorCode == BiometricPrompt.ERROR_HW_UNAVAILABLE ||
+                            errorCode == BiometricPrompt.ERROR_HW_NOT_PRESENT
+
+                        if (wantsFallback && !strict) {
+                            promptCredential()
+                        } else {
+                            fail(errorCode, errString)
+                        }
+                    }
+                })
+                activePrompt = prompt
+
+                val info = BiometricPrompt.PromptInfo.Builder()
+                    .setTitle(title)
+                    .setSubtitle(if (strict) "Identity Check: biometric required" else "Verify it's you")
+                    .setAllowedAuthenticators(BIOMETRIC_STRONG)
+                    .setNegativeButtonText(if (strict) "Cancel" else "Use PIN or pattern")
+                    .setConfirmationRequired(false)
+                    .build()
+
                 prompt.authenticate(info, crypto.cryptoObject)
             } catch (e: Exception) {
                 Log.w(TAG, "Biometric prompt failed to start: ${e.message}")

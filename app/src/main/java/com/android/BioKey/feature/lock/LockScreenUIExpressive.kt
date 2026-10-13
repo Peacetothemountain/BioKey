@@ -143,7 +143,6 @@ fun LockScreenUIExpressive(
         val unlockButton: @Composable () -> Unit = {
             Surface(
                 modifier = Modifier
-                    .springPress(pressScale = 0.965f, releasePopScale = 1.02f)
                     .expressiveClickable(
                         hapticStyle = ExpressiveTokens.HapticFeedbackStyle.CONFIRM_SUCCESS,
                         onClick = onUnlockClicked

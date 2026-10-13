@@ -168,7 +168,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         // Cache deep link intent: child notifications take precedence over group summaries
         sbn.notification.contentIntent?.let { intent ->
             val pkgIntents = cachedPendingIntents.computeIfAbsent(pkg) { ConcurrentHashMap() }
-            if (!isSummary || !pkgIntents.containsKey(sbn.key)) {
+            if (!isSummary || pkgIntents.isEmpty()) {
                 pkgIntents[sbn.key] = intent
             }
         }

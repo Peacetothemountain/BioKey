@@ -45,6 +45,7 @@ object IdentityCheckManager {
      * at the system level (e.g. outside trusted places on supported platform versions).
      */
     fun isPlatformIdentityCheckEnforced(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < 35) return false
         return try {
             val bm = BiometricManager.from(context)
             bm.canAuthenticate(AUTHENTICATOR_IDENTITY_CHECK) == BiometricManager.BIOMETRIC_SUCCESS

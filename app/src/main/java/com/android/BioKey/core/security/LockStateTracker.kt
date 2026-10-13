@@ -195,16 +195,18 @@ object LockStateTracker {
             }
         }
 
-        if (timeoutMode != null) {
-            if (isLauncherExit && timeoutMode == LockTimeoutMode.IMMEDIATE) {
-                lockPackage(packageName)
-            } else if (timeoutMode == LockTimeoutMode.IMMEDIATE) {
-                scheduleGraceTimeout(packageName, IMMEDIATE_GRACE_MS)
-            } else if (timeoutMode.durationMillis > 0L) {
-                scheduleGraceTimeout(packageName, timeoutMode.durationMillis)
+        if (unlockedAt.containsKey(key)) {
+            if (timeoutMode != null) {
+                if (isLauncherExit && timeoutMode == LockTimeoutMode.IMMEDIATE) {
+                    lockPackage(packageName)
+                } else if (timeoutMode == LockTimeoutMode.IMMEDIATE) {
+                    scheduleGraceTimeout(packageName, IMMEDIATE_GRACE_MS)
+                } else if (timeoutMode.durationMillis > 0L) {
+                    scheduleGraceTimeout(packageName, timeoutMode.durationMillis)
+                }
+            } else if (isLauncherExit) {
+                appLockListeners.forEach { runCatching { it(packageName) } }
             }
-        } else if (isLauncherExit && unlockedAt.containsKey(key)) {
-            appLockListeners.forEach { runCatching { it(packageName) } }
         }
     }
 

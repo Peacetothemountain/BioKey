@@ -59,6 +59,9 @@ class SecurityVault private constructor(private val context: Context) {
         private const val KEY_SEAL = "integrity_seal_v1"
         private const val KEY_TAMPER_LOCKDOWN = "tamper_lockdown"
         private const val KEY_STATE_VERSION = "state_version"
+        private const val KEY_PAUSED_BOOT = "paused_boot_count"
+        private const val KEY_PAUSED_DURATION = "paused_duration_ms"
+        private const val KEY_PAUSED_AT_WALL = "paused_at_wall"
         private const val VERSION_ANCHOR_FILE = "vault_version_anchor.bin"
 
         /** Identity Check's security delay after a biometric change. */
@@ -202,6 +205,9 @@ class SecurityVault private constructor(private val context: Context) {
 
         _globalLockEnabledFlow.value = sharedPrefs.getBoolean(KEY_GLOBAL, true)
         _pausedUntilFlow.value = sharedPrefs.getLong(KEY_PAUSED_UNTIL, 0L)
+        pausedBootCount = sharedPrefs.getInt(KEY_PAUSED_BOOT, -1)
+        pausedDurationMs = sharedPrefs.getLong(KEY_PAUSED_DURATION, 0L)
+        pausedAtWall = sharedPrefs.getLong(KEY_PAUSED_AT_WALL, 0L)
         _timeoutModeFlow.value = LockTimeoutMode.fromName(sharedPrefs.getString(KEY_TIMEOUT, null))
         _intruderDetectionFlow.value = sharedPrefs.getBoolean(KEY_INTRUDER, true)
         _overlayShieldFlow.value = true
@@ -245,7 +251,9 @@ class SecurityVault private constructor(private val context: Context) {
     private fun writeAnchoredVersion(version: Long) {
         runCatching {
             val file = java.io.File(context.noBackupFilesDir, VERSION_ANCHOR_FILE)
-            file.writeText(version.toString())
+            val temp = java.io.File(context.noBackupFilesDir, "$VERSION_ANCHOR_FILE.tmp")
+            temp.writeText(version.toString())
+            temp.renameTo(file)
         }
     }
 
@@ -392,6 +400,9 @@ class SecurityVault private constructor(private val context: Context) {
             .putStringSet(KEY_LOCKED, currentLocked)
             .putBoolean(KEY_GLOBAL, globalLock)
             .putLong(KEY_PAUSED_UNTIL, pausedUntil)
+            .putInt(KEY_PAUSED_BOOT, pausedBootCount)
+            .putLong(KEY_PAUSED_DURATION, pausedDurationMs)
+            .putLong(KEY_PAUSED_AT_WALL, pausedAtWall)
             .putString(KEY_TIMEOUT, timeoutMode.name)
             .putBoolean(KEY_INTRUDER, intruder)
             .putBoolean(KEY_OVERLAY, true)
@@ -507,6 +518,12 @@ class SecurityVault private constructor(private val context: Context) {
             return true
         }
 
+        // 5. Inconsistent pause state fail-closed: If paused in prefs but boot tracking is lost
+        if (pausedBootCount == -1) {
+            resumeProtection(reason = "Protection re-armed due to unmonitored process restart")
+            return true
+        }
+
         return false
     }
 
@@ -591,6 +608,10 @@ class SecurityVault private constructor(private val context: Context) {
         val wasPaused = !_globalLockEnabledFlow.value
         _globalLockEnabledFlow.value = true
         _pausedUntilFlow.value = 0L
+        pausedUntilElapsed = 0L
+        pausedBootCount = -1
+        pausedDurationMs = 0L
+        pausedAtWall = 0L
         // Ends every app session, but not BioKey's own: resuming only strengthens protection, and
         // the owner may still be in BioKey (where a lost session would silently break step-up).
         LockStateTracker.lockAll(includeOwnApp = false)

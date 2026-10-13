@@ -111,12 +111,16 @@ class InstantShieldOverlay(
         }
     }
 
+    private var isDestroyed = false
+    private val preWarmRunnable = Runnable { preWarm() }
+
     init {
         // Pre-warm overlay attachment on main thread
-        mainHandler.post { preWarm() }
+        mainHandler.post(preWarmRunnable)
     }
 
     private fun preWarm() {
+        if (isDestroyed) return
         if (!frame.isAttachedToWindow) {
             try {
                 windowManager.addView(frame, layoutParams)
@@ -159,7 +163,7 @@ class InstantShieldOverlay(
             mainHandler.post { show(targetPackage, bounds, onTapped) }
             return
         }
-        if (isShowing && this.targetPackage == targetPackage) return
+        if (isShowing && this.targetPackage == targetPackage && this.currentBounds == bounds) return
         if (isShowing) hide()
 
         this.targetPackage = targetPackage
@@ -252,6 +256,8 @@ class InstantShieldOverlay(
             mainHandler.post { destroy() }
             return
         }
+        isDestroyed = true
+        mainHandler.removeCallbacks(preWarmRunnable)
         hide()
         if (frame.isAttachedToWindow) {
             runCatching { windowManager.removeViewImmediate(frame) }

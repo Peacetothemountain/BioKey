@@ -268,7 +268,7 @@ object HardwareKeyManager {
         if (cipher == null) return
         try {
             cipher.doFinal()
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             // Expected: UserNotAuthenticatedException, AEADBadTagException, or IllegalBlockSizeException.
             // Throwing/catching here is intentional: it guarantees the KeyMint hardware handle
             // is terminated and discarded by AndroidKeyStoreCipherSpi.
@@ -284,7 +284,7 @@ object HardwareKeyManager {
      * If authentication was mocked, hooked, or timed out, Keystore throws [UserNotAuthenticatedException].
      */
     fun verifyCredentialKeyAuth(context: Context): Boolean {
-        return try {
+        fun attemptOp(): Boolean {
             val ks = keyStore()
             ensureKey(ks, CREDENTIAL_KEY) { generateAuthKey(context, CREDENTIAL_KEY, biometricOnly = false) }
             val key = ks.getKey(CREDENTIAL_KEY, null) as? SecretKey ?: return false
@@ -292,14 +292,18 @@ object HardwareKeyManager {
                 init(Cipher.ENCRYPT_MODE, key)
             }
             val dummyChallenge = ByteArray(16).also(secureRandom::nextBytes)
-            cipher.doFinal(dummyChallenge).isNotEmpty()
+            return cipher.doFinal(dummyChallenge).isNotEmpty()
+        }
+
+        return try {
+            attemptOp()
         } catch (e: android.security.keystore.UserNotAuthenticatedException) {
             Log.e(TAG, "Hardware credential verification failed: user not authenticated: ${e.message}")
             false
         } catch (e: KeyPermanentlyInvalidatedException) {
-            Log.w(TAG, "Credential key invalidated: ${e.message}")
+            Log.w(TAG, "Credential key invalidated: ${e.message}; regenerating in-flight")
             runCatching { keyStore().deleteEntry(CREDENTIAL_KEY) }
-            false
+            runCatching { attemptOp() }.getOrDefault(false)
         } catch (e: Exception) {
             Log.e(TAG, "Credential verification failed: ${e.message}")
             false
