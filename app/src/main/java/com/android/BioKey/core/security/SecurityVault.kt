@@ -742,6 +742,17 @@ class SecurityVault private constructor(private val context: Context) {
         persist()
     }
 
+    /**
+     * Synchronously completes setup and commits SharedPreferences, HMAC signature seal,
+     * and anchored rollback version immediately on the calling thread.
+     * Prevents process-death and false-tamper race conditions upon setup completion.
+     */
+    fun setSetupCompletedSync(completed: Boolean) {
+        if (!completed && !authorized("reset setup")) return
+        _setupCompletedFlow.value = completed
+        writeAll()
+    }
+
     // ---------------------------------------------------------------------------------------
     // Profiles
     // ---------------------------------------------------------------------------------------

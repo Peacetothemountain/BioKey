@@ -24,8 +24,10 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.BorderStroke
@@ -158,7 +160,9 @@ import java.util.UUID
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreenExpressive() {
+fun MainScreenExpressive(
+    a11yActive: Boolean = com.android.BioKey.feature.lock.BioKeyAccessibilityService.isServiceEnabled(LocalContext.current)
+) {
     val context = LocalContext.current
     // Icons are drawn at up to 54dp; rendering them at their intrinsic size (adaptive icons are
     // 108dp) costs ~4x the memory, which adds up to an OOM with a few hundred apps.
@@ -383,6 +387,65 @@ fun MainScreenExpressive() {
 
             // Centered BioKey Dual-Layer Logo with Breathing Neural Aura
             CenteredBioKeyLogoExpressive()
+
+            // Protection Degraded banner: when the core accessibility service has been revoked/disabled
+            AnimatedVisibility(
+                visible = !a11yActive,
+                enter = expandVertically(animationSpec = ExpressiveTokens.Springs.fast()) + fadeIn(),
+                exit = shrinkVertically(animationSpec = ExpressiveTokens.Springs.fast()) + fadeOut()
+            ) {
+                Surface(
+                    shape = ExpressiveTokens.Shapes.BentoCardMedium,
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Protection Degraded",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Text(
+                                text = "App lock service is turned off. Locked apps cannot be covered until re-enabled.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                ExpressiveTokens.triggerHaptic(context, ExpressiveTokens.HapticFeedbackStyle.CONFIRM_SUCCESS)
+                                IntentNavigationHelper.openAccessibilitySettings(context)
+                            },
+                            shape = CircleShape,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error,
+                                contentColor = MaterialTheme.colorScheme.onError
+                            ),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                        ) {
+                            Text("Re-enable", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
 
             // Paused-protection banner: the state an attacker would most like to leave unnoticed.
             if (!globalLockEnabled) {

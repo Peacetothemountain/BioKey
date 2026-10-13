@@ -87,6 +87,8 @@ class MainActivity : FragmentActivity() {
     private var a11yActive by mutableStateOf(false)
     private var adminActive by mutableStateOf(false)
     private var pauseRequested by mutableStateOf(false)
+    private var isSetupAuthenticating by mutableStateOf(false)
+    private var setupAuthError by mutableStateOf<String?>(null)
 
     /** Gate for protection-reducing changes; see [StepUpAuth]. */
     private val stepUpAuth = StepUpAuth { reason, onAuthorized ->
@@ -133,15 +135,10 @@ class MainActivity : FragmentActivity() {
                 }
             }
 
-            // Poll permissions continuously while BioKey is resumed in foreground
-            val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-            LaunchedEffect(lifecycleOwner) {
-                lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-                    while (true) {
-                        refreshPermissions()
-                        delay(1000L)
-                    }
-                }
+            // Re-check permissions when returning from system settings or on resume
+            androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+                refreshPermissions()
+                onPauseOrDispose { }
             }
 
             // Ends the session once BioKey has sat idle on screen past the limit.
@@ -162,6 +159,8 @@ class MainActivity : FragmentActivity() {
                     when {
                         !setupCompleted -> SetupScreenExpressive(
                             repairMode = false,
+                            isAuthenticating = isSetupAuthenticating,
+                            authError = setupAuthError,
                             onSetupComplete = ::completeSetup
                         )
                         !isAuthenticated -> BioKeyLockGate(
@@ -169,11 +168,9 @@ class MainActivity : FragmentActivity() {
                             onAuthenticate = { authenticate() },
                             onExit = { finishAffinity() }
                         )
-                        !a11yActive -> SetupScreenExpressive(
-                            repairMode = true,
-                            onSetupComplete = { refreshPermissions() }
+                        else -> MainScreenExpressive(
+                            a11yActive = a11yActive
                         )
-                        else -> MainScreenExpressive()
                     }
 
                     if (setupCompleted && isAuthenticated) {
@@ -264,14 +261,37 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun completeSetup() {
+        if (engine.isAuthenticating()) return
         refreshPermissions()
-        authenticate {
-            refreshPermissions()
-            vault.setSetupCompleted(true)
-            // Setup always ends with protection on (resumeProtection() also ends any app sessions).
-            vault.resumeProtection("Setup completed")
-            LockStateTracker.onOwnAppUnlocked()
-        }
+        isSetupAuthenticating = true
+        setupAuthError = null
+
+        engine.showBiometricPrompt(
+            activity = this,
+            appName = "BioKey",
+            packageName = packageName,
+            promptTitle = "Confirm identity to finish setup",
+            onSuccess = {
+                isSetupAuthenticating = false
+                setupAuthError = null
+                refreshPermissions()
+                com.android.BioKey.ui.theme.BioKeyHaptics.onUnlockSuccess(this@MainActivity)
+                vault.setSetupCompletedSync(true)
+                // Setup always ends with protection on (resumeProtection() also ends any app sessions).
+                vault.resumeProtection("Setup completed")
+                LockStateTracker.onOwnAppUnlocked()
+                isAuthenticated = true
+            },
+            onError = { code, message ->
+                isSetupAuthenticating = false
+                setupAuthError = when {
+                    isUserCancel(code) -> "Biometric confirmation was cancelled. Tap to retry."
+                    code == androidx.biometric.BiometricPrompt.ERROR_NO_DEVICE_CREDENTIAL ->
+                        "Set a screen lock (PIN, pattern, or password) in system settings first."
+                    else -> message.toString()
+                }
+            }
+        )
     }
 
     private fun authenticate(onAuthenticated: () -> Unit = {}) {

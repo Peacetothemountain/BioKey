@@ -12,6 +12,7 @@ import androidx.activity.result.ActivityResultLauncher
 import com.android.BioKey.R
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.feature.main.openSystemSettings
+import kotlinx.coroutines.delay
 
 /**
  * Device administrator activation. BioKey holds no admin policies; the admin only exists so that
@@ -28,6 +29,26 @@ object DeviceAdminHelper {
         return dpm?.isAdminActive(getAdminComponent(context)) == true
     }
 
+    /**
+     * Retries checking isAdminActive with incremental delays to defeat OEM RESULT_CANCELED
+     * bugs and asynchronous DevicePolicyManagerService IPC commit latency.
+     */
+    suspend fun verifyAdminActiveWithRetry(
+        context: Context,
+        initialDelayMs: Long = 350L,
+        maxRetries: Int = 2,
+        retryDelayMs: Long = 500L
+    ): Boolean {
+        if (isAdminActive(context)) return true
+        delay(initialDelayMs)
+        if (isAdminActive(context)) return true
+        repeat(maxRetries) {
+            delay(retryDelayMs)
+            if (isAdminActive(context)) return true
+        }
+        return false
+    }
+
     private fun getAddDeviceAdminIntent(context: Context): Intent =
         Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
             putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, getAdminComponent(context))
@@ -38,12 +59,12 @@ object DeviceAdminHelper {
 
     fun launchActivation(context: Context, launcher: ActivityResultLauncher<Intent>? = null) {
         val intent = getAddDeviceAdminIntent(context)
-        // Activating an admin isn't a guarded page, so nothing needs pre-authorising.
+        // Pre-authorize self-protection lease so the admin activation flow isn't interrupted by self-protection.
+        LockStateTracker.beginExternalNavigation(preAuthorizeSelfProtection = true)
 
         if (launcher != null) {
             try {
                 launcher.launch(intent)
-                LockStateTracker.beginExternalNavigation(preAuthorizeSelfProtection = true)
                 return
             } catch (e: Exception) {
                 Log.w(TAG, "Activation via launcher failed: ${e.message}")
@@ -54,7 +75,6 @@ object DeviceAdminHelper {
         if (activity != null) {
             try {
                 activity.startActivity(intent)
-                LockStateTracker.beginExternalNavigation(preAuthorizeSelfProtection = true)
                 return
             } catch (e: Exception) {
                 Log.w(TAG, "Activation via activity failed: ${e.message}")
