@@ -10,6 +10,7 @@ import android.os.Looper
 import android.util.Log
 import android.util.LruCache
 import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -59,7 +60,8 @@ class InstantShieldOverlay(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val windowManager = service.getSystemService(WindowManager::class.java)
     private var isShowing = false
-    private var targetPackage: String? = null
+    var targetPackage: String? = null
+        private set
     private var currentBounds: Rect? = null
     private var attempt = 0
 
@@ -84,7 +86,8 @@ class InstantShieldOverlay(
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
             WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
         PixelFormat.OPAQUE
     ).apply {
         gravity = Gravity.CENTER
@@ -102,25 +105,52 @@ class InstantShieldOverlay(
             isClickable = true
             isFocusable = false
             filterTouchesWhenObscured = true
+            visibility = View.GONE
             // Centered adaptive icon matching native Android splash window
             addView(iconView, FrameLayout.LayoutParams(iconSize, iconSize, Gravity.CENTER))
         }
     }
 
-    fun onConfigurationChanged() {
-        if (isShowing && frame.isAttachedToWindow) {
+    init {
+        // Pre-warm overlay attachment on main thread
+        mainHandler.post { preWarm() }
+    }
+
+    private fun preWarm() {
+        if (!frame.isAttachedToWindow) {
             try {
-                if (currentBounds != null) {
-                    layoutParams.gravity = Gravity.CENTER
-                    layoutParams.x = 0
-                    layoutParams.y = 0
-                    layoutParams.width = WindowManager.LayoutParams.MATCH_PARENT
-                    layoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
-                }
-                windowManager.updateViewLayout(frame, layoutParams)
+                windowManager.addView(frame, layoutParams)
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to update shield layout on configuration change: ${e.message}")
+                Log.w(TAG, "Failed to pre-warm shield overlay: ${e.message}")
             }
+        }
+    }
+
+    fun onConfigurationChanged(newBounds: Rect? = null) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { onConfigurationChanged(newBounds) }
+            return
+        }
+        if (!isShowing || !frame.isAttachedToWindow) return
+
+        try {
+            if (newBounds != null && !newBounds.isEmpty) {
+                currentBounds = newBounds
+                layoutParams.gravity = Gravity.TOP or Gravity.START
+                layoutParams.x = newBounds.left
+                layoutParams.y = newBounds.top
+                layoutParams.width = newBounds.width()
+                layoutParams.height = newBounds.height()
+            } else if (currentBounds == null) {
+                layoutParams.gravity = Gravity.CENTER
+                layoutParams.x = 0
+                layoutParams.y = 0
+                layoutParams.width = WindowManager.LayoutParams.MATCH_PARENT
+                layoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
+            }
+            windowManager.updateViewLayout(frame, layoutParams)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to update shield layout on configuration change: ${e.message}")
         }
     }
 
@@ -135,6 +165,9 @@ class InstantShieldOverlay(
         this.targetPackage = targetPackage
         this.currentBounds = bounds
         attempt = 0
+
+        // Clear NOT_TOUCHABLE so shield consumes all touches
+        layoutParams.flags = layoutParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
 
         if (bounds != null && !bounds.isEmpty) {
             layoutParams.gravity = Gravity.TOP or Gravity.START
@@ -153,10 +186,14 @@ class InstantShieldOverlay(
         try {
             frame.setOnClickListener { onTapped() }
             iconView.setImageDrawable(loadIcon(targetPackage))
-            if (frame.isAttachedToWindow) {
-                runCatching { windowManager.removeViewImmediate(frame) }
+
+            if (!frame.isAttachedToWindow) {
+                windowManager.addView(frame, layoutParams)
+            } else {
+                windowManager.updateViewLayout(frame, layoutParams)
             }
-            windowManager.addView(frame, layoutParams)
+            frame.visibility = View.VISIBLE
+
             isShowing = true
             activeInstance = this
             armTimeout()
@@ -192,16 +229,32 @@ class InstantShieldOverlay(
         }
         mainHandler.removeCallbacks(timeoutRunnable)
         if (!isShowing) return
+
         try {
-            windowManager.removeViewImmediate(frame)
+            frame.visibility = View.GONE
+            layoutParams.flags = layoutParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            if (frame.isAttachedToWindow) {
+                windowManager.updateViewLayout(frame, layoutParams)
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "Shield removal failed: ${e.message}")
+            Log.w(TAG, "Shield warm hide failed: ${e.message}")
         } finally {
             iconView.setImageDrawable(null)
             isShowing = false
             targetPackage = null
             currentBounds = null
             if (activeInstance === this) activeInstance = null
+        }
+    }
+
+    fun destroy() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { destroy() }
+            return
+        }
+        hide()
+        if (frame.isAttachedToWindow) {
+            runCatching { windowManager.removeViewImmediate(frame) }
         }
     }
 }

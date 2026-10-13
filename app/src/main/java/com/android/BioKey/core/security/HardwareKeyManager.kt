@@ -256,6 +256,57 @@ object HardwareKeyManager {
     }
 
     /**
+     * Aborts an active [Cipher] operation to release the underlying KeyMint/Keymaster
+     * operation slot in Titan M2 (StrongBox) or TEE.
+     *
+     * Titan M2 supports a very limited number of concurrent operations (typically 4).
+     * If an operation is initiated via [prepareBiometricCrypto] but authentication is
+     * cancelled or fails, invoking [doFinal] forces the Keystore SPI to finish or abort
+     * the pending operation handle and release the slot, preventing KM_ERROR_TOO_MANY_OPERATIONS.
+     */
+    fun abortCipher(cipher: Cipher?) {
+        if (cipher == null) return
+        try {
+            cipher.doFinal()
+        } catch (_: Exception) {
+            // Expected: UserNotAuthenticatedException, AEADBadTagException, or IllegalBlockSizeException.
+            // Throwing/catching here is intentional: it guarantees the KeyMint hardware handle
+            // is terminated and discarded by AndroidKeyStoreCipherSpi.
+        }
+    }
+
+    /**
+     * Proves that the device credential (PIN/pattern/password) or strong biometric was actually
+     * authenticated by the hardware within the 5-second window.
+     *
+     * Attempting to initialize and complete an operation with [CREDENTIAL_KEY] succeeds only
+     * if Keystore / Gatekeeper received a valid hardware authentication token (HAT).
+     * If authentication was mocked, hooked, or timed out, Keystore throws [UserNotAuthenticatedException].
+     */
+    fun verifyCredentialKeyAuth(context: Context): Boolean {
+        return try {
+            val ks = keyStore()
+            ensureKey(ks, CREDENTIAL_KEY) { generateAuthKey(context, CREDENTIAL_KEY, biometricOnly = false) }
+            val key = ks.getKey(CREDENTIAL_KEY, null) as? SecretKey ?: return false
+            val cipher = Cipher.getInstance(AES_GCM).apply {
+                init(Cipher.ENCRYPT_MODE, key)
+            }
+            val dummyChallenge = ByteArray(16).also(secureRandom::nextBytes)
+            cipher.doFinal(dummyChallenge).isNotEmpty()
+        } catch (e: android.security.keystore.UserNotAuthenticatedException) {
+            Log.e(TAG, "Hardware credential verification failed: user not authenticated: ${e.message}")
+            false
+        } catch (e: KeyPermanentlyInvalidatedException) {
+            Log.w(TAG, "Credential key invalidated: ${e.message}")
+            runCatching { keyStore().deleteEntry(CREDENTIAL_KEY) }
+            false
+        } catch (e: Exception) {
+            Log.e(TAG, "Credential verification failed: ${e.message}")
+            false
+        }
+    }
+
+    /**
      * Replaces the biometric key after the owner has re-proven their identity (device
      * credential) following a biometric enrollment change.
      */

@@ -37,8 +37,8 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
 
         private val IGNORED_PACKAGES = setOf("android", "com.android.systemui")
 
-        /** Deep-link intents cached per locked package to preserve notification routing. */
-        val cachedPendingIntents = ConcurrentHashMap<String, PendingIntent>()
+        /** Deep-link intents cached per locked package and notification key to preserve notification routing. */
+        val cachedPendingIntents = ConcurrentHashMap<String, ConcurrentHashMap<String, PendingIntent>>()
 
         fun isNotificationAccessGranted(context: Context): Boolean =
             NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
@@ -102,13 +102,31 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
-        // Our replacement entry was tapped or swiped away
-        if (sbn.packageName == packageName) {
-            sbn.tag?.takeIf { it.startsWith(TAG_PREFIX) }?.let {
-                val pkg = it.removePrefix(TAG_PREFIX)
+        val pkg = sbn.packageName ?: return
+        if (pkg == packageName) {
+            // Our replacement entry was tapped or swiped away.
+            // DO NOT clear hiddenNotificationKeys or hiddenSummaryKeys here!
+            // Doing so strands snoozed notifications in Android's 24-hour snooze queue.
+            // Keys must be retained until restoreNotificationsForPackage(targetPkg) un-snoozes them upon unlock.
+            return
+        }
+
+        // An underlying notification from a locked app was dismissed or revoked by the app itself:
+        val removedFromChildren = hiddenNotificationKeys[pkg]?.remove(sbn.key) == true
+        val removedFromSummaries = hiddenSummaryKeys[pkg]?.remove(sbn.key) == true
+        cachedPendingIntents[pkg]?.remove(sbn.key)
+
+        if (removedFromChildren || removedFromSummaries) {
+            val remainingCount = hiddenNotificationKeys[pkg]?.size ?: 0
+            if (remainingCount == 0) {
+                // No hidden notifications remain; dismiss the stand-in and clean maps
+                NotificationManagerCompat.from(this).cancel(TAG_PREFIX + pkg, SUMMARY_ID)
+                cachedPendingIntents.remove(pkg)
                 hiddenNotificationKeys.remove(pkg)
                 hiddenSummaryKeys.remove(pkg)
-                // Retain cachedPendingIntents so LockScreenActivity can consume it via .remove(pkg) upon unlock
+            } else {
+                // Update stand-in notification with the remaining count
+                postReplacement(pkg, remainingCount)
             }
         }
     }
@@ -146,10 +164,15 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             return
         }
 
-        // Cache deep link intent for navigation after unlock
-        sbn.notification.contentIntent?.let { cachedPendingIntents[pkg] = it }
-
         val isSummary = sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0
+        // Cache deep link intent: child notifications take precedence over group summaries
+        sbn.notification.contentIntent?.let { intent ->
+            val pkgIntents = cachedPendingIntents.computeIfAbsent(pkg) { ConcurrentHashMap() }
+            if (!isSummary || !pkgIntents.containsKey(sbn.key)) {
+                pkgIntents[sbn.key] = intent
+            }
+        }
+
         if (isSummary) {
             hiddenSummaryKeys.computeIfAbsent(pkg) { ConcurrentHashMap.newKeySet() }.add(sbn.key)
         } else {

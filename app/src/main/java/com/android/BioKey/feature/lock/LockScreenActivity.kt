@@ -90,18 +90,24 @@ class LockScreenActivity : FragmentActivity() {
 
         setContent {
             val colorScheme = remember { dynamicDarkColorScheme(this) }
-            MaterialTheme(colorScheme = colorScheme) {
-                LockScreenUIExpressive(
-                    appName = appLabelState,
-                    appIcon = appIconState,
-                    auraColor = auraColorState,
-                    onUnlockClicked = ::showPrompt,
-                    onCancelClicked = ::goHomeAndFinish,
-                    isBioKeyLock = isSelfProtection,
-                    statusMessage = statusMessage,
-                    isPermanentLockout = isPermanentLockout,
-                    onLockDeviceClicked = ::lockDeviceOrHome
-                )
+            MaterialTheme(
+                colorScheme = colorScheme,
+                shapes = com.android.BioKey.ui.theme.M3XShapes.toMaterial3Shapes(),
+                typography = com.android.BioKey.ui.theme.M3XDefaultTypography.toMaterial3Typography()
+            ) {
+                com.android.BioKey.ui.theme.ProvideExpressiveHaptics {
+                    LockScreenUIExpressive(
+                        appName = appLabelState,
+                        appIcon = appIconState,
+                        auraColor = auraColorState,
+                        onUnlockClicked = ::showPrompt,
+                        onCancelClicked = ::goHomeAndFinish,
+                        isBioKeyLock = isSelfProtection,
+                        statusMessage = statusMessage,
+                        isPermanentLockout = isPermanentLockout,
+                        onLockDeviceClicked = ::lockDeviceOrHome
+                    )
+                }
             }
         }
     }
@@ -282,7 +288,8 @@ class LockScreenActivity : FragmentActivity() {
     }
 
     private fun sendPendingDeepLink(pkg: String) {
-        val pending = com.android.BioKey.feature.notification.BioKeyNotificationShieldService.cachedPendingIntents.remove(pkg)
+        val intentsMap = com.android.BioKey.feature.notification.BioKeyNotificationShieldService.cachedPendingIntents.remove(pkg)
+        val pending = intentsMap?.values?.lastOrNull()
         if (pending != null) {
             val fillInIntent = Intent().apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

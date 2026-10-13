@@ -58,6 +58,8 @@ class SecurityVault private constructor(private val context: Context) {
         private const val KEY_ID_HOLD_START = "identity_hold_start_elapsed"
         private const val KEY_SEAL = "integrity_seal_v1"
         private const val KEY_TAMPER_LOCKDOWN = "tamper_lockdown"
+        private const val KEY_STATE_VERSION = "state_version"
+        private const val VERSION_ANCHOR_FILE = "vault_version_anchor.bin"
 
         /** Identity Check's security delay after a biometric change. */
         private const val IDENTITY_HOLD_MS = 30 * 60_000L
@@ -182,6 +184,12 @@ class SecurityVault private constructor(private val context: Context) {
     @Volatile private var identityHoldBoot = NO_HOLD
     @Volatile private var identityHoldStart = 0L
 
+    @Volatile private var stateVersion: Long = 0L
+    @Volatile private var pausedUntilElapsed: Long = 0L
+    @Volatile private var pausedBootCount: Int = -1
+    @Volatile private var pausedDurationMs: Long = 0L
+    @Volatile private var pausedAtWall: Long = 0L
+
     @Volatile private var isTamperLockdown = false
     fun isTamperLockdown(): Boolean = isTamperLockdown
 
@@ -228,8 +236,22 @@ class SecurityVault private constructor(private val context: Context) {
     // Persistence and integrity
     // ---------------------------------------------------------------------------------------
 
+    private fun readAnchoredVersion(): Long {
+        val file = java.io.File(context.noBackupFilesDir, VERSION_ANCHOR_FILE)
+        if (!file.exists()) return 0L
+        return runCatching { file.readText().trim().toLong() }.getOrDefault(0L)
+    }
+
+    private fun writeAnchoredVersion(version: Long) {
+        runCatching {
+            val file = java.io.File(context.noBackupFilesDir, VERSION_ANCHOR_FILE)
+            file.writeText(version.toString())
+        }
+    }
+
     /** Canonical, order-independent serialization of every security-relevant setting. */
-    private fun canonicalState(includeRecents: Boolean = true): String = buildString {
+    private fun canonicalState(includeRecents: Boolean = true, includeVersion: Boolean = true): String = buildString {
+        if (includeVersion && stateVersion > 0L) appendLine("version=$stateVersion")
         appendLine("locked=${lockedAppsSet.sorted().joinToString(",")}")
         appendLine("global=${_globalLockEnabledFlow.value}")
         appendLine("pausedUntil=${_pausedUntilFlow.value}")
@@ -274,13 +296,24 @@ class SecurityVault private constructor(private val context: Context) {
 
     private fun verifyIntegrity() {
         val stored = sharedPrefs.getString(KEY_SEAL, null)
+        stateVersion = sharedPrefs.getLong(KEY_STATE_VERSION, 0L)
+        val anchoredVersion = readAnchoredVersion()
+
+        // Anti-Rollback Check: Stored version cannot regress below anchored high-water mark
+        if (stateVersion < anchoredVersion) {
+            Log.e(TAG, "State rollback detected! Stored version ($stateVersion) < Anchored ($anchoredVersion)")
+            SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_TAMPERED, "State rollback detected: version regressed")
+            enterTamperLockdown()
+            return
+        }
+
         if (stored == null && !HardwareKeyManager.hasIntegrityKey()) {
             // First run, or upgrade from a build without sealing: establish the seal.
             writeAll()
             return
         }
         if (stored != null) {
-            val expected = seal(canonicalState(includeRecents = true))
+            val expected = seal(canonicalState(includeRecents = true, includeVersion = true))
             if (expected == null) {
                 // Keystore unavailable when seal exists: MUST FAIL CLOSED!
                 Log.e(TAG, "Keystore unavailable to verify settings seal: entering tamper lockdown")
@@ -288,13 +321,18 @@ class SecurityVault private constructor(private val context: Context) {
                 enterTamperLockdown()
                 return
             }
-            if (MessageDigest.isEqual(expected.toByteArray(), stored.toByteArray())) return
+            if (MessageDigest.isEqual(expected.toByteArray(), stored.toByteArray())) {
+                writeAnchoredVersion(stateVersion)
+                return
+            }
 
-            // Backwards compatibility with previous seals (stealth lines or without recentsShield line):
+            // Backwards compatibility with previous seals (stealth lines or without recentsShield line or without version line):
             val legacyExpected1 = seal(legacyCanonicalState())
-            val legacyExpected2 = seal(canonicalState(includeRecents = false))
+            val legacyExpected2 = seal(canonicalState(includeRecents = false, includeVersion = false))
+            val legacyExpected3 = seal(canonicalState(includeRecents = true, includeVersion = false))
             if ((legacyExpected1 != null && MessageDigest.isEqual(legacyExpected1.toByteArray(), stored.toByteArray())) ||
-                (legacyExpected2 != null && MessageDigest.isEqual(legacyExpected2.toByteArray(), stored.toByteArray()))
+                (legacyExpected2 != null && MessageDigest.isEqual(legacyExpected2.toByteArray(), stored.toByteArray())) ||
+                (legacyExpected3 != null && MessageDigest.isEqual(legacyExpected3.toByteArray(), stored.toByteArray()))
             ) {
                 writeAll()
                 return
@@ -330,6 +368,7 @@ class SecurityVault private constructor(private val context: Context) {
     private val writeLock = Any()
 
     private fun writeAll() = synchronized(writeLock) {
+        stateVersion++
         val currentLocked = lockedAppsSet.toSet()
         val currentProfiles = _profilesFlow.value
         val currentProfilesJson = profilesJson()
@@ -346,9 +385,10 @@ class SecurityVault private constructor(private val context: Context) {
         val holdBoot = identityHoldBoot
         val holdStart = identityHoldStart
 
-        val canonical = canonicalState(includeRecents = true)
+        val canonical = canonicalState(includeRecents = true, includeVersion = true)
         val mac = seal(canonical)
         val editor = sharedPrefs.edit()
+            .putLong(KEY_STATE_VERSION, stateVersion)
             .putStringSet(KEY_LOCKED, currentLocked)
             .putBoolean(KEY_GLOBAL, globalLock)
             .putLong(KEY_PAUSED_UNTIL, pausedUntil)
@@ -369,6 +409,7 @@ class SecurityVault private constructor(private val context: Context) {
 
         if (mac != null) editor.putString(KEY_SEAL, mac)
         editor.commit()
+        writeAnchoredVersion(stateVersion)
     }
 
     private fun profilesJson(): String =
@@ -428,14 +469,44 @@ class SecurityVault private constructor(private val context: Context) {
     /** False while protection is paused. Auto-resumes once a timed pause expires. */
     fun isGlobalLockEnabled(): Boolean {
         if (_globalLockEnabledFlow.value) return true
-        val until = _pausedUntilFlow.value
-        val now = System.currentTimeMillis()
-        // The deadline is wall-clock time (it must survive a reboot), so also end the pause if the
-        // clock was set back far enough that more time remains than the longest timed pause.
-        if (until > 0L && (now >= until || until - now > MAX_TIMED_PAUSE_MS)) {
-            resumeProtection(reason = "Timed pause ended")
+        val untilWall = _pausedUntilFlow.value
+        if (untilWall == 0L) return false
+
+        val nowWall = System.currentTimeMillis()
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val currentBoot = Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, -1)
+
+        // 1. Same-boot monotonic check: Immune to wall-clock manipulation
+        if (currentBoot != -1 && pausedBootCount == currentBoot && pausedUntilElapsed > 0L) {
+            if (nowElapsed >= pausedUntilElapsed) {
+                resumeProtection(reason = "Timed pause ended (monotonic)")
+                return true
+            }
+        }
+
+        // 2. Backward clock tampering check:
+        // If wall clock moved backwards before pause start, or remaining duration exceeds initial duration
+        if (pausedDurationMs > 0L) {
+            val remainingWall = untilWall - nowWall
+            if (nowWall < pausedAtWall || remainingWall > pausedDurationMs) {
+                Log.w(TAG, "Clock rollback detected during pause! Re-arming protection immediately.")
+                resumeProtection(reason = "Clock rollback detected")
+                return true
+            }
+        }
+
+        // 3. Wall-clock deadline check
+        if (nowWall >= untilWall || untilWall - nowWall > MAX_TIMED_PAUSE_MS) {
+            resumeProtection(reason = "Timed pause ended (wall-clock)")
             return true
         }
+
+        // 4. Fail-closed across reboots: A reboot re-arms protection immediately
+        if (currentBoot != -1 && pausedBootCount != -1 && currentBoot != pausedBootCount) {
+            resumeProtection(reason = "Protection re-armed after device reboot")
+            return true
+        }
+
         return false
     }
 
@@ -497,7 +568,17 @@ class SecurityVault private constructor(private val context: Context) {
     fun pauseProtection(durationMillis: Long?): Boolean {
         if (!authorizedForDowngrade("pause protection")) return false
         _globalLockEnabledFlow.value = false
-        _pausedUntilFlow.value = durationMillis?.let { System.currentTimeMillis() + it } ?: 0L
+
+        val nowWall = System.currentTimeMillis()
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val currentBoot = Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, -1)
+
+        pausedDurationMs = durationMillis ?: 0L
+        pausedAtWall = nowWall
+        pausedBootCount = currentBoot
+        pausedUntilElapsed = if (durationMillis != null) nowElapsed + durationMillis else 0L
+        _pausedUntilFlow.value = durationMillis?.let { nowWall + it } ?: 0L
+
         InstantShieldOverlay.dismiss()
         val detail = durationMillis?.let { "For ${it / 60_000} min" } ?: "Until resumed manually"
         SecurityEventLog.record(context, SecurityEventLog.Type.PROTECTION_PAUSED, detail)

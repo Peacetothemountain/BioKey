@@ -197,6 +197,7 @@ class SecurityEngine private constructor() {
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    HardwareKeyManager.abortCipher(crypto.cryptoObject.cipher)
                     if (finished.get()) return
                     val wantsFallback = errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
                         errorCode == BiometricPrompt.ERROR_LOCKOUT ||
@@ -226,6 +227,7 @@ class SecurityEngine private constructor() {
                 prompt.authenticate(info, crypto.cryptoObject)
             } catch (e: Exception) {
                 Log.w(TAG, "Biometric prompt failed to start: ${e.message}")
+                HardwareKeyManager.abortCipher(crypto.cryptoObject.cipher)
                 if (strict) fail(BiometricPrompt.ERROR_HW_UNAVAILABLE, "Biometric prompt unavailable") else promptCredential()
             }
         }
@@ -242,7 +244,12 @@ class SecurityEngine private constructor() {
         ) {
             val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    onVerified()
+                    if (HardwareKeyManager.verifyCredentialKeyAuth(appContext)) {
+                        onVerified()
+                    } else {
+                        Log.e(TAG, "Credential auth succeeded without a valid hardware auth token for $packageName")
+                        fail(BiometricPrompt.ERROR_VENDOR, "Hardware credential verification failed. Try again.")
+                    }
                 }
 
                 override fun onAuthenticationFailed() {

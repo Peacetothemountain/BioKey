@@ -83,7 +83,7 @@ fun LockScreenUIExpressive(
         modifier = Modifier
             .fillMaxSize()
             .rejectObscuredTouches()
-            .background(MaterialTheme.colorScheme.surface)
+            .background(MaterialTheme.colorScheme.surfaceContainerLowest)
             .systemBarsPadding(),
         contentAlignment = Alignment.Center
     ) {
@@ -95,7 +95,7 @@ fun LockScreenUIExpressive(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp),
-                shape = RoundedCornerShape(28.dp),
+                shape = ExpressiveTokens.Shapes.BentoCardExtraLarge,
                 color = MaterialTheme.colorScheme.errorContainer
             ) {
                 Column(
@@ -234,7 +234,7 @@ fun LockScreenUIExpressive(
                         contentDescription = null,
                         modifier = Modifier
                             .size(if (isFoldableWide) 104.dp else 92.dp)
-                            .clip(RoundedCornerShape(24.dp)),
+                            .clip(ExpressiveTokens.Shapes.BentoCardLarge),
                         filterQuality = FilterQuality.High
                     )
                 }
@@ -294,7 +294,7 @@ fun LockScreenUIExpressive(
                     Spacer(modifier = Modifier.height(24.dp))
                     FilledTonalButton(
                         onClick = onCancelClicked,
-                        shape = RoundedCornerShape(24.dp),
+                        shape = ExpressiveTokens.Shapes.BentoCardLarge,
                         colors = ButtonDefaults.filledTonalButtonColors(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                             contentColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -329,7 +329,7 @@ fun LockScreenUIExpressive(
                 Spacer(modifier = Modifier.height(24.dp))
                 FilledTonalButton(
                     onClick = onCancelClicked,
-                    shape = RoundedCornerShape(24.dp),
+                    shape = ExpressiveTokens.Shapes.BentoCardLarge,
                     colors = ButtonDefaults.filledTonalButtonColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant

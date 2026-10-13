@@ -19,6 +19,12 @@ object IdentityCheckManager {
 
     private const val TAG = "IdentityCheckManager"
 
+    /**
+     * Platform authenticator constant for Identity Check (Mandatory Biometrics),
+     * introduced in Android 15 QPR / Android 16 (API 36).
+     */
+    const val AUTHENTICATOR_IDENTITY_CHECK = 0x10000
+
     data class BiometricStrongStatus(
         val isAvailable: Boolean,
         val statusCode: Int,
@@ -33,6 +39,19 @@ object IdentityCheckManager {
         /** False when Identity Check is on but every fingerprint and face was removed. */
         val biometricsEnrolled: Boolean = true
     )
+
+    /**
+     * Dynamically checks whether the Android OS is currently enforcing Identity Check
+     * at the system level (e.g. outside trusted places on supported platform versions).
+     */
+    fun isPlatformIdentityCheckEnforced(context: Context): Boolean {
+        return try {
+            val bm = BiometricManager.from(context)
+            bm.canAuthenticate(AUTHENTICATOR_IDENTITY_CHECK) == BiometricManager.BIOMETRIC_SUCCESS
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     fun checkBiometricStrongStatus(context: Context): BiometricStrongStatus {
         val code = BiometricManager.from(context).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
@@ -60,22 +79,29 @@ object IdentityCheckManager {
      * falls back to the PIN. Only devices that can't use a strong biometric at all are downgraded.
      */
     fun getIdentityCheckPolicy(context: Context): IdentityCheckPolicy {
-        if (!SecurityVault.getInstance(context).isIdentityCheckEnabled()) {
+        val platformEnforced = isPlatformIdentityCheckEnforced(context)
+        val appEnforced = SecurityVault.getInstance(context).isIdentityCheckEnabled()
+
+        if (!appEnforced && !platformEnforced) {
             return IdentityCheckPolicy(false, "Standard protection: biometric or device credential.", allowsDeviceCredential = true)
         }
-        return when (BiometricManager.from(context).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
+
+        val bmStatus = BiometricManager.from(context).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+        val reasonPrefix = if (platformEnforced) "Identity Check (Mandatory Biometrics): " else "Identity Check: "
+
+        return when (bmStatus) {
             BiometricManager.BIOMETRIC_SUCCESS,
             BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE ->
-                IdentityCheckPolicy(true, "Identity Check: Class 3 biometric required.", allowsDeviceCredential = false)
+                IdentityCheckPolicy(true, "${reasonPrefix}Class 3 biometric required.", allowsDeviceCredential = false)
             BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED ->
                 IdentityCheckPolicy(
                     true,
-                    "Identity Check: biometrics were removed; the security delay applies.",
+                    "${reasonPrefix}biometrics were removed; the security delay applies.",
                     allowsDeviceCredential = false,
                     biometricsEnrolled = false
                 )
             BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED ->
-                IdentityCheckPolicy(true, "Identity Check: biometric security update required.", allowsDeviceCredential = false)
+                IdentityCheckPolicy(true, "${reasonPrefix}biometric security update required.", allowsDeviceCredential = false)
             else ->
                 IdentityCheckPolicy(false, "Identity Check is on but this device can't use a strong biometric.", allowsDeviceCredential = true)
         }

@@ -18,6 +18,7 @@ import android.os.SystemClock
 import android.os.UserManager
 import android.provider.Settings
 import android.util.Log
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -305,7 +306,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 if (isLauncher(activePkg)) {
                     // The user transitioned to Home/Launcher; this is a lingering teardown event from the target.
                     if (vault.isAppLocked(target)) {
-                        LockStateTracker.onAppExited(target, isLauncherExit = true)
+                        LockStateTracker.onAppExited(target, isLauncherExit = true, timeoutMode = vault.getTimeoutMode())
                     }
                     shield.hide()
                     return
@@ -361,7 +362,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             // through Settings that self-protection allowed is over.
             if (cls == MainActivity::class.java.name) {
                 lastFocusedPackage?.let { previous ->
-                    if (vault.isAppLocked(previous)) LockStateTracker.onAppExited(previous)
+                    if (vault.isAppLocked(previous)) LockStateTracker.onAppExited(previous, timeoutMode = vault.getTimeoutMode())
                     if (selfProtection.isHost(previous)) LockStateTracker.clearSelfProtection()
                 }
                 lastFocusedPackage = target
@@ -395,21 +396,21 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 LockStateTracker.enterAuthSubFlow(previous)
                 authHelperPackage = target
             }
-            if (vault.isAppLocked(previous)) LockStateTracker.onAppExited(previous, isLauncherExit = isLauncher)
+            if (vault.isAppLocked(previous)) LockStateTracker.onAppExited(previous, isLauncherExit = isLauncher, timeoutMode = timeoutMode)
             if (selfProtection.isHost(previous) && !selfProtection.isHost(target)) LockStateTracker.clearSelfProtection()
         }
         lastFocusedPackage = target
 
         if (isLauncher || !vault.isAppLocked(target)) {
-            // Recents protection: if user exited from a locked app that locked immediately,
-            // and opened Overview/Recents, route them to clean Home to prevent task thumbnail leak.
+            // Recents protection: if user enabled recents shielding and entered Overview directly from a locked app,
+            // route them to clean Home to prevent task thumbnail leak.
             val isRecents = isLauncher && isRecentsOverviewClass(cls)
-            if (isRecents && previous != null &&
+            if (vault.isRecentsShieldEnabled() && isRecents && previous != null &&
                 vault.isAppLocked(previous) && !LockStateTracker.isAppUnlocked(previous, timeoutMode)
             ) {
                 Log.i(TAG, "Recents shield active: routing to Home from Overview for $previous")
                 performGlobalAction(GLOBAL_ACTION_HOME)
-                mainHandler.postDelayed({ shield.hide() }, 150)
+                shield.hide()
                 return
             }
 
@@ -447,9 +448,18 @@ class BioKeyAccessibilityService : AccessibilityService() {
         try {
             val currentWindows = windows
             if (!currentWindows.isNullOrEmpty()) {
-                val displayMetrics = resources.displayMetrics
-                val screenWidth = displayMetrics.widthPixels
-                val screenHeight = displayMetrics.heightPixels
+                val (screenWidth, screenHeight) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val wm = getSystemService(WindowManager::class.java)
+                    val windowBounds = wm?.currentWindowMetrics?.bounds ?: Rect()
+                    Pair(windowBounds.width(), windowBounds.height())
+                } else {
+                    @Suppress("DEPRECATION")
+                    val displayMetrics = resources.displayMetrics
+                    Pair(displayMetrics.widthPixels, displayMetrics.heightPixels)
+                }
+
+                if (screenWidth <= 0 || screenHeight <= 0) return null
+
                 for (win in currentWindows) {
                     if (win.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
                     val root = win.root ?: continue
@@ -652,7 +662,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
         if (::shield.isInitialized) {
-            shield.onConfigurationChanged()
+            val currentTarget = shield.targetPackage
+            val newBounds = currentTarget?.let { getTargetWindowBounds(it) }
+            shield.onConfigurationChanged(newBounds)
         }
     }
 
@@ -681,7 +693,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         LockStateTracker.removeLockAllListener(onLockAll)
         // Nothing enforces sessions while the service is gone, so none may outlive it.
         LockStateTracker.lockAll()
-        if (::shield.isInitialized) shield.hide()
+        if (::shield.isInitialized) shield.destroy()
         if (::vault.isInitialized && vault.isSetupCompleted()) {
             SecurityEventLog.record(this, SecurityEventLog.Type.ACCESSIBILITY_STOPPED)
             ProtectionAlerts.serviceStopped(this)

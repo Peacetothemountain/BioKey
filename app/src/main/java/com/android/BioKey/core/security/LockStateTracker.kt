@@ -5,6 +5,12 @@ import android.util.Log
 import com.android.BioKey.core.data.LockTimeoutMode
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * In-memory lock session state.
@@ -112,8 +118,38 @@ object LockStateTracker {
     // Locked-app sessions
     // ---------------------------------------------------------------------------------------
 
+    private val lockScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val activeGraceJobs = ConcurrentHashMap<String, Job>()
+
+    /**
+     * Schedules an active background timer to enforce [lockPackage] when a grace period expires,
+     * immediately notifying [appLockListeners] so notifications re-shield without waiting for app re-entry.
+     */
+    fun scheduleGraceTimeout(packageName: String, delayMs: Long) {
+        cancelGraceTimeout(packageName)
+        if (delayMs <= 0L) {
+            lockPackage(packageName)
+            return
+        }
+        val job = lockScope.launch {
+            delay(delayMs)
+            Log.i(TAG, "Grace period expired for $packageName ($delayMs ms); actively locking package")
+            lockPackage(packageName)
+        }
+        for (pkg in aliasesOf(packageName)) {
+            activeGraceJobs[pkg] = job
+        }
+    }
+
+    fun cancelGraceTimeout(packageName: String) {
+        for (pkg in aliasesOf(packageName)) {
+            activeGraceJobs.remove(pkg)?.cancel()
+        }
+    }
+
     fun onAppUnlocked(packageName: String) {
         val t = now()
+        cancelGraceTimeout(packageName)
         for (pkg in aliasesOf(packageName)) {
             unlockedAt[pkg] = t
             exitedAt.remove(pkg)
@@ -127,6 +163,7 @@ object LockStateTracker {
 
     /** The app is in the foreground again within its session: cancel any pending exit timer. */
     fun onAppResumed(packageName: String) {
+        cancelGraceTimeout(packageName)
         for (pkg in aliasesOf(packageName)) {
             exitedAt.remove(pkg)
             pendingLocks.remove(pkg)
@@ -140,7 +177,12 @@ object LockStateTracker {
      * If [isLauncherExit] is true (Home gesture / back to launcher), the exit is recorded
      * as an explicit launcher exit so returning to the app requires authentication.
      */
-    fun onAppExited(packageName: String, isLauncherExit: Boolean = false, at: Long = now()) {
+    fun onAppExited(
+        packageName: String,
+        isLauncherExit: Boolean = false,
+        at: Long = now(),
+        timeoutMode: LockTimeoutMode? = null
+    ) {
         val key = sessionKey(packageName)
         if (isAuthSubFlowActive(key)) return
 
@@ -152,7 +194,16 @@ object LockStateTracker {
                 launcherExited.remove(pkg)
             }
         }
-        if (isLauncherExit && unlockedAt.containsKey(key)) {
+
+        if (timeoutMode != null) {
+            if (isLauncherExit && timeoutMode == LockTimeoutMode.IMMEDIATE) {
+                lockPackage(packageName)
+            } else if (timeoutMode == LockTimeoutMode.IMMEDIATE) {
+                scheduleGraceTimeout(packageName, IMMEDIATE_GRACE_MS)
+            } else if (timeoutMode.durationMillis > 0L) {
+                scheduleGraceTimeout(packageName, timeoutMode.durationMillis)
+            }
+        } else if (isLauncherExit && unlockedAt.containsKey(key)) {
             appLockListeners.forEach { runCatching { it(packageName) } }
         }
     }
@@ -201,6 +252,7 @@ object LockStateTracker {
     }
 
     fun lockPackage(packageName: String) {
+        cancelGraceTimeout(packageName)
         for (pkg in aliasesOf(packageName)) {
             unlockedAt.remove(pkg)
             exitedAt.remove(pkg)
@@ -217,6 +269,8 @@ object LockStateTracker {
      * Failed-attempt counters deliberately survive so pressing power can't reset them.
      */
     fun lockAll(includeOwnApp: Boolean = true) {
+        activeGraceJobs.values.forEach { it.cancel() }
+        activeGraceJobs.clear()
         unlockedAt.clear()
         exitedAt.clear()
         pendingLocks.clear()
