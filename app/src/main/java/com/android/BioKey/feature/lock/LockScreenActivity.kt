@@ -179,7 +179,7 @@ class LockScreenActivity : FragmentActivity() {
 
     override fun onDestroy() {
         if (!isChangingConfigurations) {
-            InstantShieldOverlay.dismiss()
+            InstantShieldOverlay.dismiss(lockedPackage)
             if (SecurityEngine.INSTANCE.isAuthenticatingFor(lockedPackage)) {
                 SecurityEngine.INSTANCE.resetAuthenticatingState()
             }
@@ -191,7 +191,7 @@ class LockScreenActivity : FragmentActivity() {
     private fun dismissShieldAfterFirstFrame() {
         val decor = window.decorView
         if (decor.isAttachedToWindow && decor.width > 0 && decor.height > 0) {
-            decor.postOnAnimation { InstantShieldOverlay.dismiss() }
+            decor.postOnAnimation { InstantShieldOverlay.dismiss(lockedPackage) }
             return
         }
         val listener = object : ViewTreeObserver.OnDrawListener {
@@ -200,7 +200,7 @@ class LockScreenActivity : FragmentActivity() {
                 if (done) return
                 done = true
                 decor.postOnAnimation {
-                    InstantShieldOverlay.dismiss()
+                    InstantShieldOverlay.dismiss(lockedPackage)
                     decor.viewTreeObserver.removeOnDrawListener(this)
                 }
             }
@@ -210,10 +210,10 @@ class LockScreenActivity : FragmentActivity() {
     }
 
     private fun schedulePrompt() {
-        if (isStealthModeState || SecurityEngine.INSTANCE.isAuthenticating()) return
+        if (isStealthModeState || isPermanentLockout || SecurityEngine.INSTANCE.isAuthenticating()) return
         lifecycleScope.launch {
             delay(150)
-            if (!isFinishing && !isDestroyed && !isStealthModeState && !SecurityEngine.INSTANCE.isAuthenticating()) {
+            if (!isFinishing && !isDestroyed && !isStealthModeState && !isPermanentLockout && !SecurityEngine.INSTANCE.isAuthenticating()) {
                 showPrompt()
             }
         }
@@ -242,9 +242,14 @@ class LockScreenActivity : FragmentActivity() {
             },
             onError = { code, message ->
                 if (processDeferredIntent()) return@showBiometricPrompt
-                if (code == BiometricPrompt.ERROR_LOCKOUT_PERMANENT) {
+                if (code == BiometricPrompt.ERROR_LOCKOUT_PERMANENT || code == BiometricPrompt.ERROR_LOCKOUT) {
                     isPermanentLockout = true
-                    statusMessage = "Biometric sensor locked by Titan M2 hardware policy. Please lock your device screen and unlock with PIN to reset."
+                    statusMessage = if (code == BiometricPrompt.ERROR_LOCKOUT_PERMANENT) {
+                        "Biometric sensor locked by Titan M2 hardware policy. Please lock your device screen and unlock with PIN to reset."
+                    } else {
+                        message.takeIf { it.isNotBlank() }?.toString()
+                            ?: "Biometric sensor temporarily locked by Titan M2 hardware policy. Please lock device screen or wait to reset."
+                    }
                 } else {
                     statusMessage = when (code) {
                         BiometricPrompt.ERROR_USER_CANCELED,
@@ -258,6 +263,7 @@ class LockScreenActivity : FragmentActivity() {
     }
 
     private fun lockDeviceOrHome() {
+        abandon()
         val dpm = getSystemService(DevicePolicyManager::class.java)
         if (DeviceAdminHelper.isAdminActive(this)) {
             try {
@@ -290,14 +296,20 @@ class LockScreenActivity : FragmentActivity() {
     private fun sendPendingDeepLink(pkg: String) {
         val pending = com.android.BioKey.feature.notification.BioKeyNotificationShieldService.cachedPendingIntents.remove(pkg)
         if (pending != null) {
+            val fillInIntent = Intent().apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
             val options = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 ActivityOptions.makeBasic().apply {
                     pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
                 }.toBundle()
             } else null
             runCatching {
-                if (options != null) pending.send(this, 0, null, null, null, null, options)
-                else pending.send()
+                if (options != null) {
+                    pending.send(this, 0, fillInIntent, null, null, null, options)
+                } else {
+                    pending.send(this, 0, fillInIntent)
+                }
             }.onFailure {
                 Log.w(TAG, "Failed sending deep link PendingIntent for $pkg, falling back to launch: ${it.message}")
                 launchApp(pkg)
@@ -326,7 +338,7 @@ class LockScreenActivity : FragmentActivity() {
     }
 
     private fun finishSilently() {
-        InstantShieldOverlay.dismiss()
+        InstantShieldOverlay.dismiss(lockedPackage)
         finish()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)

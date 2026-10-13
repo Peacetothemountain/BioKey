@@ -75,7 +75,8 @@ class SecurityEngine private constructor() {
 
     /** Whether authentication is possible under the current policy (a [BiometricManager] status code). */
     fun canAuthenticate(context: Context): Int {
-        val strict = SecurityVault.getInstance(context).isIdentityCheckEnabled()
+        val policy = IdentityCheckManager.getIdentityCheckPolicy(context)
+        val strict = !policy.allowsDeviceCredential
         return BiometricManager.from(context).canAuthenticate(
             if (strict) BIOMETRIC_STRONG else BIOMETRIC_STRONG or DEVICE_CREDENTIAL
         )

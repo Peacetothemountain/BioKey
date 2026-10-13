@@ -50,6 +50,8 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
 
     /** Set of active snoozed notification keys per package to prevent count ballooning. */
     private val hiddenNotificationKeys = ConcurrentHashMap<String, MutableSet<String>>()
+    /** Set of active snoozed group summary keys per package so summaries are properly restored. */
+    private val hiddenSummaryKeys = ConcurrentHashMap<String, MutableSet<String>>()
 
     @Volatile private var connected = false
 
@@ -95,7 +97,8 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             sbn.tag?.takeIf { it.startsWith(TAG_PREFIX) }?.let {
                 val pkg = it.removePrefix(TAG_PREFIX)
                 hiddenNotificationKeys.remove(pkg)
-                cachedPendingIntents.remove(pkg)
+                hiddenSummaryKeys.remove(pkg)
+                // Retain cachedPendingIntents so LockScreenActivity can consume it via .remove(pkg) upon unlock
             }
         }
     }
@@ -103,8 +106,8 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     private fun sweepActiveNotifications() {
         val active = try {
             activeNotifications
-        } catch (e: SecurityException) {
-            Log.w(TAG, "Listener not bound: ${e.message}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Listener not bound or active notifications unavailable: ${e.message}")
             return
         } ?: return
         active.filter(::shouldHide).forEach(::hide)
@@ -137,19 +140,24 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         sbn.notification.contentIntent?.let { cachedPendingIntents[pkg] = it }
 
         val isSummary = sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0
-        val keys = hiddenNotificationKeys.computeIfAbsent(pkg) { ConcurrentHashMap.newKeySet() }
-        if (!isSummary) {
-            keys.add(sbn.key)
+        if (isSummary) {
+            hiddenSummaryKeys.computeIfAbsent(pkg) { ConcurrentHashMap.newKeySet() }.add(sbn.key)
+        } else {
+            hiddenNotificationKeys.computeIfAbsent(pkg) { ConcurrentHashMap.newKeySet() }.add(sbn.key)
         }
-        val count = keys.size.coerceAtLeast(1)
+        val childCount = hiddenNotificationKeys[pkg]?.size ?: 0
+        val count = if (childCount > 0) childCount else 1
         postReplacement(pkg, count)
     }
 
     private fun restoreNotificationsForPackage(pkg: String) {
         // Dismiss stand-in notification immediately
         NotificationManagerCompat.from(this).cancel(TAG_PREFIX + pkg, SUMMARY_ID)
-        val keys = hiddenNotificationKeys.remove(pkg) ?: return
-        for (key in keys) {
+        val childKeys = hiddenNotificationKeys.remove(pkg).orEmpty()
+        val summaryKeys = hiddenSummaryKeys.remove(pkg).orEmpty()
+        val allKeys = childKeys + summaryKeys
+        if (allKeys.isEmpty()) return
+        for (key in allKeys) {
             runCatching {
                 // Re-awaken snoozed notification
                 snoozeNotification(key, 50L)

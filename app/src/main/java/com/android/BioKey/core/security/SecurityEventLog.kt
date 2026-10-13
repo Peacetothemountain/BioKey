@@ -93,8 +93,8 @@ object SecurityEventLog {
      * Preserves a LOG_CLEARED tombstone record proving the reset was authorized.
      */
     fun clear(context: Context): Boolean {
-        if (!LockStateTracker.hasActiveOwnerSession()) {
-            Log.w(TAG, "Refused to clear event log: no active owner session")
+        if (!LockStateTracker.hasActiveStepUpLease()) {
+            Log.w(TAG, "Refused to clear event log: active step-up lease required")
             return false
         }
         val appContext = context.applicationContext
@@ -122,6 +122,12 @@ object SecurityEventLog {
                 ProtectionAlerts.logTamperDetected(context)
             }
             return emptyList()
+        }
+
+        if (expectedSeal == null && HardwareKeyManager.hasIntegrityKey()) {
+            Log.e(TAG, "Security log seal missing but integrity key and log exist: seal deletion detected!")
+            ProtectionAlerts.logTamperDetected(context)
+            return listOf(Event(Type.LOG_TAMPERED, System.currentTimeMillis(), "Log seal was deleted or wiped"))
         }
 
         return try {
@@ -182,7 +188,7 @@ object SecurityEventLog {
             prefs(context).edit()
                 .putString(KEY_SEAL, mac)
                 .putInt(KEY_SEALED_COUNT, events.size)
-                .apply()
+                .commit()
         }
     }
 

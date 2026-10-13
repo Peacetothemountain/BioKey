@@ -195,7 +195,8 @@ class SecurityVault private constructor(private val context: Context) {
     fun isTamperLockdown(): Boolean = isTamperLockdown
 
     init {
-        isTamperLockdown = sharedPrefs.getBoolean(KEY_TAMPER_LOCKDOWN, false)
+        isTamperLockdown = sharedPrefs.getBoolean(KEY_TAMPER_LOCKDOWN, false) ||
+            (HardwareKeyManager.hasIntegrityKey() && !sharedPrefs.contains(KEY_SEAL))
         val savedLocked = sharedPrefs.getStringSet(KEY_LOCKED, emptySet()).orEmpty()
         lockedAppsSet.addAll(savedLocked)
         _lockedAppsFlow.value = savedLocked.toSet()
@@ -275,7 +276,14 @@ class SecurityVault private constructor(private val context: Context) {
             return
         }
         if (stored != null) {
-            val expected = seal(canonicalState(includeRecents = true)) ?: return // Keystore unavailable: can't judge either way.
+            val expected = seal(canonicalState(includeRecents = true))
+            if (expected == null) {
+                // Keystore unavailable when seal exists: MUST FAIL CLOSED!
+                Log.e(TAG, "Keystore unavailable to verify settings seal: entering tamper lockdown")
+                SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_TAMPERED, "Keystore unavailable during integrity check")
+                enterTamperLockdown()
+                return
+            }
             if (MessageDigest.isEqual(expected.toByteArray(), stored.toByteArray())) return
             // Backwards compatibility with previous seal without recentsShield line:
             val legacyExpected = seal(canonicalState(includeRecents = false))
@@ -288,8 +296,10 @@ class SecurityVault private constructor(private val context: Context) {
         // A mismatch, or a seal deleted after one was written (the integrity key outlives it).
         Log.e(TAG, "Settings integrity check failed: configuration was modified outside BioKey")
         SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_TAMPERED, "Protection re-armed automatically")
-        // Fail closed: the seal can't say what changed, so every setting that can reduce protection
-        // goes back to its protective value. (Apps removed from the lock list can't be recovered.)
+        enterTamperLockdown()
+    }
+
+    private fun enterTamperLockdown() {
         _globalLockEnabledFlow.value = true
         _pausedUntilFlow.value = 0L
         _timeoutModeFlow.value = LockTimeoutMode.IMMEDIATE
@@ -298,16 +308,10 @@ class SecurityVault private constructor(private val context: Context) {
         _notificationShieldFlow.value = true
         _recentsShieldFlow.value = true
         _intruderDetectionFlow.value = true
-        // Clearing the setup flag would switch off self-protection and BioKey's own lock gate.
         _setupCompletedFlow.value = true
         _tamperDetectedFlow.value = true
-        if (lockedAppsSet.isEmpty() && (stored != null || HardwareKeyManager.hasIntegrityKey())) {
-            Log.w(TAG, "Integrity check failed with wiped/empty lock list: entering tamper lockdown mode")
-            isTamperLockdown = true
-            sharedPrefs.edit().putBoolean(KEY_TAMPER_LOCKDOWN, true).apply()
-        } else {
-            writeAll()
-        }
+        isTamperLockdown = true
+        sharedPrefs.edit().putBoolean(KEY_TAMPER_LOCKDOWN, true).commit()
         ProtectionAlerts.tamperDetected(context)
     }
 

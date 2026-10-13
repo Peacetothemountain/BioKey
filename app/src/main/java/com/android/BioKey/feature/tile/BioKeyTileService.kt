@@ -33,6 +33,7 @@ class BioKeyTileService : TileService() {
     }
 
     private var listeningScope: CoroutineScope? = null
+    private var pauseTimerJob: kotlinx.coroutines.Job? = null
 
     override fun onStartListening() {
         super.onStartListening()
@@ -50,10 +51,11 @@ class BioKeyTileService : TileService() {
                 Triple(setupCompleted, enabled, pausedUntil)
             }.collect { (setupCompleted, _, pausedUntil) ->
                 updateTile()
+                pauseTimerJob?.cancel()
                 if (setupCompleted && pausedUntil > 0L) {
                     val remaining = pausedUntil - System.currentTimeMillis()
                     if (remaining > 0L) {
-                        launch {
+                        pauseTimerJob = launch {
                             delay(remaining)
                             vault.isGlobalLockEnabled()
                             updateTile()
@@ -65,6 +67,8 @@ class BioKeyTileService : TileService() {
     }
 
     override fun onStopListening() {
+        pauseTimerJob?.cancel()
+        pauseTimerJob = null
         listeningScope?.cancel()
         listeningScope = null
         super.onStopListening()

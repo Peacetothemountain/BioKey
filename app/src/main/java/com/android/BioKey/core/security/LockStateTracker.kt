@@ -170,8 +170,12 @@ object LockStateTracker {
         // Handshake Immunity:
         // Protects brief internal transitions (splash-to-main, 2FA, OAuth).
         // Must NEVER bypass IMMEDIATE mode once an app has exited to an external non-auth window.
-        if (!wasLauncher && timeoutMode != LockTimeoutMode.IMMEDIATE && (now() - unlockTime < HANDSHAKE_IMMUNITY_DURATION_MS)) {
-            return true
+        // Must NEVER exceed the configured timeout duration for shorter grace periods.
+        if (!wasLauncher && timeoutMode != LockTimeoutMode.IMMEDIATE) {
+            val effectiveImmunity = minOf(HANDSHAKE_IMMUNITY_DURATION_MS, timeoutMode.durationMillis)
+            if ((now() - unlockTime < effectiveImmunity) && (sinceExit < timeoutMode.durationMillis)) {
+                return true
+            }
         }
 
         val stillUnlocked = when (timeoutMode) {

@@ -42,9 +42,17 @@ class InstantShieldOverlay(
 
         private val iconCache = LruCache<String, Drawable>(48)
 
-        /** Called by the lock screen (after its first frame) and when protection is paused. */
-        fun dismiss() {
-            activeInstance?.hide()
+        /**
+         * Dismiss the active shield. If [targetPackage] is specified, only dismisses if the active
+         * shield actually belongs to that package, eliminating the cross-app dismissal race condition.
+         */
+        fun dismiss(targetPackage: String? = null) {
+            val current = activeInstance ?: return
+            if (targetPackage == null || current.targetPackage == targetPackage) {
+                current.hide()
+            } else {
+                Log.d(TAG, "Ignoring dismiss for $targetPackage; active shield is for ${current.targetPackage}")
+            }
         }
     }
 
@@ -93,8 +101,7 @@ class InstantShieldOverlay(
             setBackgroundColor(0xFF121316.toInt())
             isClickable = true
             isFocusable = false
-            filterTouchesWhenObscured = false
-            setOnTouchListener { _, _ -> true }
+            filterTouchesWhenObscured = true
             // Centered adaptive icon matching native Android splash window
             addView(iconView, FrameLayout.LayoutParams(iconSize, iconSize, Gravity.CENTER))
         }
@@ -103,6 +110,13 @@ class InstantShieldOverlay(
     fun onConfigurationChanged() {
         if (isShowing && frame.isAttachedToWindow) {
             try {
+                if (currentBounds != null) {
+                    layoutParams.gravity = Gravity.CENTER
+                    layoutParams.x = 0
+                    layoutParams.y = 0
+                    layoutParams.width = WindowManager.LayoutParams.MATCH_PARENT
+                    layoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
+                }
                 windowManager.updateViewLayout(frame, layoutParams)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to update shield layout on configuration change: ${e.message}")
@@ -139,6 +153,9 @@ class InstantShieldOverlay(
         try {
             frame.setOnClickListener { onTapped() }
             iconView.setImageDrawable(loadIcon(targetPackage))
+            if (frame.isAttachedToWindow) {
+                runCatching { windowManager.removeViewImmediate(frame) }
+            }
             windowManager.addView(frame, layoutParams)
             isShowing = true
             activeInstance = this

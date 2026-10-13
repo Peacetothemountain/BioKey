@@ -201,22 +201,27 @@ class BioKeyAccessibilityService : AccessibilityService() {
         }
     }
 
+    private var userUnlockedReceiver: BroadcastReceiver? = null
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         isRunning = true
         val userManager = getSystemService(UserManager::class.java)
         if (userManager?.isUserUnlocked == false) {
             Log.w(TAG, "Device in Direct Boot (before first unlock): deferring initialization")
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    if (intent?.action == Intent.ACTION_USER_UNLOCKED) {
+                        runCatching { this@BioKeyAccessibilityService.unregisterReceiver(this) }
+                        userUnlockedReceiver = null
+                        initServiceComponents()
+                    }
+                }
+            }
+            userUnlockedReceiver = receiver
             ContextCompat.registerReceiver(
                 this,
-                object : BroadcastReceiver() {
-                    override fun onReceive(context: Context?, intent: Intent?) {
-                        if (intent?.action == Intent.ACTION_USER_UNLOCKED) {
-                            runCatching { this@BioKeyAccessibilityService.unregisterReceiver(this) }
-                            initServiceComponents()
-                        }
-                    }
-                },
+                receiver,
                 IntentFilter(Intent.ACTION_USER_UNLOCKED),
                 ContextCompat.RECEIVER_NOT_EXPORTED
             )
@@ -372,16 +377,19 @@ class BioKeyAccessibilityService : AccessibilityService() {
         lastFocusedPackage = target
 
         if (isLauncher || !vault.isAppLocked(target)) {
-            shield.hide()
             // Recents protection: if user exited from a locked app that locked immediately,
             // and opened Overview/Recents, route them to clean Home to prevent task thumbnail leak.
-            if (isLauncher && vault.isRecentsShieldEnabled() && previous != null && vault.isAppLocked(previous) &&
-                !LockStateTracker.isAppUnlocked(previous, timeoutMode) &&
-                isRecentsOverviewClass(cls)
+            val isRecents = isLauncher && isRecentsOverviewClass(cls)
+            if (isRecents && vault.isRecentsShieldEnabled() && previous != null &&
+                vault.isAppLocked(previous) && !LockStateTracker.isAppUnlocked(previous, timeoutMode)
             ) {
                 Log.i(TAG, "Recents shield active: routing to Home from Overview for $previous")
                 performGlobalAction(GLOBAL_ACTION_HOME)
+                mainHandler.postDelayed({ shield.hide() }, 150)
+                return
             }
+
+            shield.hide()
             return
         }
         if (SecurityEngine.INSTANCE.isAuthenticatingFor(target)) return
@@ -394,12 +402,21 @@ class BioKeyAccessibilityService : AccessibilityService() {
     }
 
     private fun isRecentsOverviewClass(cls: String): Boolean {
+        if (cls.isBlank()) return false
         val lower = cls.lowercase()
-        return lower.contains("quickstep") ||
-            lower.contains("overview") ||
+        // Primary Home activities must NEVER be classified as Overview/Recents:
+        if (lower.endsWith("nexuslauncheractivity") ||
+            lower.endsWith("launcheractivity") ||
+            lower.endsWith("quicksteplauncher") ||
+            lower.endsWith(".launcher")
+        ) {
+            return false
+        }
+        // Match dedicated Recents/Overview UI components:
+        return lower.contains("overview") ||
             lower.contains("recents") ||
-            lower.contains("nexuslauncher") || // Google Pixel Launcher
-            lower.contains("launcheractivity") // Samsung One UI Launcher
+            lower.contains("taskstack") ||
+            (lower.contains("quickstep") && !lower.contains("launcher"))
     }
 
     private fun getTargetWindowBounds(target: String): Rect? {
@@ -437,14 +454,14 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun lock(target: String) {
         if (LockStateTracker.isRegularLockPending(target)) return
         LockStateTracker.setRegularLockPending(target)
+        val bounds = getTargetWindowBounds(target)
         if (vault.isOverlayShieldEnabled()) {
-            val bounds = getTargetWindowBounds(target)
-            shield.show(target, bounds) { launchLockScreen(target, isSelfProtection = false) }
+            shield.show(target, bounds) { launchLockScreen(target, isSelfProtection = false, bounds = bounds) }
         } else {
             // No shield is watching the launch: check once that the lock screen came up.
             mainHandler.postDelayed({ onShieldTimeout(target, attempt = 1) }, LOCK_VERIFY_DELAY_MS)
         }
-        launchLockScreen(target, isSelfProtection = false)
+        launchLockScreen(target, isSelfProtection = false, bounds = bounds)
     }
 
     private fun reevaluateForeground() {
@@ -552,11 +569,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
         Log.w(TAG, "Lock screen missing after shield timeout (attempt $attempt); relaunching")
         LockStateTracker.clearRegularLockPending(target)
         LockStateTracker.setRegularLockPending(target)
-        launchLockScreen(target, isSelfProtection = false)
+        val bounds = getTargetWindowBounds(target)
+        launchLockScreen(target, isSelfProtection = false, bounds = bounds)
         return true
     }
 
-    private fun launchLockScreen(targetPkg: String, isSelfProtection: Boolean) {
+    private fun launchLockScreen(targetPkg: String, isSelfProtection: Boolean, bounds: Rect? = null) {
         val intent = Intent(this, LockScreenActivity::class.java).apply {
             putExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE, targetPkg)
             putExtra(LockScreenActivity.EXTRA_SELF_PROTECTION, isSelfProtection)
@@ -572,6 +590,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
         try {
             val creatorOptions = ActivityOptions.makeBasic()
             val sendOptions = ActivityOptions.makeBasic()
+            if (bounds != null && !bounds.isEmpty) {
+                creatorOptions.setLaunchBounds(bounds)
+                sendOptions.setLaunchBounds(bounds)
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 @Suppress("DEPRECATION")
                 creatorOptions.setPendingIntentCreatorBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
@@ -591,7 +613,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
         }
 
         try {
-            startActivity(intent)
+            val options = if (bounds != null && !bounds.isEmpty) {
+                ActivityOptions.makeBasic().setLaunchBounds(bounds).toBundle()
+            } else null
+            startActivity(intent, options)
         } catch (e: Exception) {
             // Could not cover the app: fail closed by leaving it.
             Log.e(TAG, "Lock screen launch failed; sending user home", e)
@@ -622,6 +647,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         onStopped()
+        userUnlockedReceiver?.let {
+            runCatching { unregisterReceiver(it) }
+            userUnlockedReceiver = null
+        }
         runCatching { unregisterReceiver(deviceStateReceiver) }
         super.onDestroy()
     }
