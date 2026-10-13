@@ -377,14 +377,16 @@ object HardwareKeyManager {
         KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT -> "Trusted Execution Environment (TEE)"
         KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE -> if (hasStrongBox) "StrongBox secure element (Titan M2)" else "Secure hardware (TEE)"
         KeyProperties.SECURITY_LEVEL_SOFTWARE -> "Software keystore"
+        null -> "Keystore uninitialized or unavailable"
         else -> if (hasStrongBox) "StrongBox secure element (Titan M2)" else "Trusted Execution Environment (TEE)"
     }
 
     private fun isHardwareLevel(level: Int?): Boolean =
-        level == KeyProperties.SECURITY_LEVEL_STRONGBOX ||
-            level == KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT ||
-            level == KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE ||
-            (level != KeyProperties.SECURITY_LEVEL_SOFTWARE)
+        level != null && (
+            level == KeyProperties.SECURITY_LEVEL_STRONGBOX ||
+                level == KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT ||
+                level == KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE
+        )
 
     fun getDiagnostics(context: Context): KeystoreDiagnostics {
         try {

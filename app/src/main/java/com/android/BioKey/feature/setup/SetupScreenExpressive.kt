@@ -89,11 +89,11 @@ private data class SetupState(
     val notificationAccess: Boolean,
     val batteryOptimizationIgnored: Boolean
 ) {
-    val requiredCount get() = listOf(screenLock, accessibility).count { it }
-    val requiredReady get() = screenLock && accessibility
+    val requiredCount get() = listOf(screenLock, accessibility, admin).count { it }
+    val requiredReady get() = screenLock && accessibility && admin
 
     companion object {
-        const val REQUIRED_TOTAL = 2
+        const val REQUIRED_TOTAL = 3
 
         fun read(context: Context): SetupState {
             val pm = context.getSystemService(PowerManager::class.java)
@@ -242,16 +242,14 @@ fun SetupScreenExpressive(
                 )
             }
 
-            item { SectionLabel("RECOMMENDED", MaterialTheme.colorScheme.onSurfaceVariant) }
-
             item {
                 SetupPermissionCardExpressive(
                     icon = Icons.Default.AdminPanelSettings,
                     title = "Uninstall protection",
                     subtitle = "Device admin with no policies. BioKey must be deactivated (behind a biometric check) before it can be uninstalled.",
                     isActive = state.admin,
-                    badgeText = "RECOMMENDED",
-                    isMandatory = false,
+                    badgeText = "REQUIRED",
+                    isMandatory = true,
                     actionText = if (state.admin) "On" else "Turn on",
                     onAction = {
                         ExpressiveTokens.triggerHaptic(context, ExpressiveTokens.HapticFeedbackStyle.CONFIRM_SUCCESS)
@@ -259,6 +257,8 @@ fun SetupScreenExpressive(
                     }
                 )
             }
+
+            item { SectionLabel("RECOMMENDED", MaterialTheme.colorScheme.onSurfaceVariant) }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 item {

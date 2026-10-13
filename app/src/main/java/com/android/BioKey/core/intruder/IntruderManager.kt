@@ -358,7 +358,11 @@ object IntruderManager {
                 out.writeByte(photoIv.size); out.write(photoIv)
                 out.write(photoCt)
             }
-            tmp.renameTo(file)
+            if (!tmp.renameTo(file)) {
+                Log.e(TAG, "Failed to commit encrypted intruder photo")
+                tmp.delete()
+                return false
+            }
             pruneOldest(context)
             return true
         } catch (e: Exception) {

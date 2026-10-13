@@ -313,7 +313,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             }
 
             if (vault.isAppLocked(target) && LockStateTracker.isRecentlyExited(target, 1_500L) && !isLauncher(target)) {
-                if (activePkg != null && isLauncher(activePkg)) {
+                if (activePkg == null || isLauncher(activePkg)) {
                     shield.hide()
                     return
                 }
@@ -506,6 +506,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (LockStateTracker.isRegularLockPending(SELF_PROTECTION_PENDING_KEY)) return
         LockStateTracker.setRegularLockPending(SELF_PROTECTION_PENDING_KEY)
         Log.i(TAG, "Guarding a BioKey system settings screen")
+        shield.show(SELF_PROTECTION_PENDING_KEY) {
+            launchLockScreen(SELF_PROTECTION_PENDING_KEY, isSelfProtection = true)
+        }
         launchLockScreen(SELF_PROTECTION_PENDING_KEY, isSelfProtection = true)
     }
 

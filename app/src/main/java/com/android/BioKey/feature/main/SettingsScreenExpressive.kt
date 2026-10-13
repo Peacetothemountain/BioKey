@@ -1,8 +1,10 @@
 package com.android.BioKey.feature.main
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.text.format.DateUtils
@@ -32,7 +34,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import android.os.PowerManager
 import androidx.compose.material.icons.filled.AdminPanelSettings
+import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.History
@@ -132,6 +136,12 @@ fun SettingsScreenExpressive(
     var hasCamera by remember { mutableStateOf(false) }
     var notificationAccess by remember { mutableStateOf(false) }
     var canPostNotifications by remember { mutableStateOf(false) }
+    var isIgnoringBattery by remember {
+        mutableStateOf(
+            (context.getSystemService(Context.POWER_SERVICE) as? PowerManager)
+                ?.isIgnoringBatteryOptimizations(context.packageName) == true
+        )
+    }
     LifecycleResumeEffect(Unit) {
         a11yActive = BioKeyAccessibilityService.isServiceEnabled(context)
         adminActive = DeviceAdminHelper.isAdminActive(context)
@@ -139,6 +149,8 @@ fun SettingsScreenExpressive(
         notificationAccess = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
         canPostNotifications = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        isIgnoringBattery = (context.getSystemService(Context.POWER_SERVICE) as? PowerManager)
+            ?.isIgnoringBatteryOptimizations(context.packageName) == true
         onPauseOrDispose { }
     }
 
@@ -162,7 +174,7 @@ fun SettingsScreenExpressive(
     val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         canPostNotifications = granted
         if (granted && !notificationAccess) {
-            context.openSystemSettings(BioKeyNotificationShieldService.getNotificationSettingsIntent())
+            context.openSystemSettings(BioKeyNotificationShieldService.getNotificationSettingsIntent(context))
         }
     }
 
@@ -299,6 +311,22 @@ fun SettingsScreenExpressive(
                         title = "Re-lock",
                         description = timeoutMode.title,
                         onClick = { showTimeoutSheet = true }
+                    )
+                    GroupDivider()
+                    NavigationRow(
+                        icon = Icons.Default.BatteryChargingFull,
+                        title = if (isIgnoringBattery) "Background reliability active" else "Allow background activity",
+                        description = if (isIgnoringBattery) {
+                            "Unrestricted battery usage enabled for real-time background protection"
+                        } else {
+                            "Tap to exempt BioKey from battery restrictions so protection never sleeps"
+                        },
+                        onClick = {
+                            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            }
+                            context.openSystemSettings(intent)
+                        }
                     )
                 }
             }

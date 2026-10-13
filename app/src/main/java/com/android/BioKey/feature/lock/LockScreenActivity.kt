@@ -307,10 +307,14 @@ class LockScreenActivity : FragmentActivity() {
         }
     }
 
+    fun onTriggerIntruderPhoto() {
+        IntruderManager.captureIntruderPhotoNow(applicationContext, lockedPackage)
+    }
+
     /** Bookkeeping when the user walks away from the lock without authenticating. */
     private fun abandon() {
         if (LockStateTracker.getFailedAttempts(lockedPackage) > 0) {
-            IntruderManager.captureIntruderPhotoNow(applicationContext, lockedPackage)
+            onTriggerIntruderPhoto()
         }
         LockStateTracker.clearRegularLockPending(lockedPackage)
         if (isSelfProtection) {

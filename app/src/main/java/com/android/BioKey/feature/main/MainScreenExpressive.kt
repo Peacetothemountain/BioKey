@@ -1200,7 +1200,8 @@ private fun ExpressiveAppRow(
             .clip(ExpressiveTokens.Shapes.BentoCardMedium)
             .springPress(pressScale = 0.98f),
         shape = ExpressiveTokens.Shapes.BentoCardMedium,
-        color = cardContainerColor
+        color = cardContainerColor,
+        border = if (isLocked) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)) else null
     ) {
         Row(
             modifier = Modifier
@@ -2018,11 +2019,19 @@ private fun SecurityPermissionsModalSheetExpressive(
     var hasNotificationAccess by remember {
         mutableStateOf(BioKeyNotificationShieldService.isNotificationAccessGranted(context))
     }
+    var isIgnoringBattery by remember {
+        mutableStateOf(
+            (context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager)
+                ?.isIgnoringBatteryOptimizations(context.packageName) == true
+        )
+    }
 
     LifecycleResumeEffect(Unit) {
         hasCamera = granted(android.Manifest.permission.CAMERA)
         hasNotifications = notificationsAllowed()
         hasNotificationAccess = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
+        isIgnoringBattery = (context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager)
+            ?.isIgnoringBatteryOptimizations(context.packageName) == true
         onPauseOrDispose { }
     }
 
@@ -2106,7 +2115,23 @@ private fun SecurityPermissionsModalSheetExpressive(
                     isRequired = false,
                     actionText = if (hasNotificationAccess) "On" else "Allow",
                     onAction = {
-                        context.openSystemSettings(BioKeyNotificationShieldService.getNotificationSettingsIntent())
+                        context.openSystemSettings(BioKeyNotificationShieldService.getNotificationSettingsIntent(context))
+                    }
+                )
+            }
+
+            item {
+                PermissionCardExpressive(
+                    title = "Background reliability",
+                    subtitle = "Exempts BioKey from battery restrictions so background protection never sleeps",
+                    isActive = isIgnoringBattery,
+                    isRequired = false,
+                    actionText = if (isIgnoringBattery) "On" else "Allow",
+                    onAction = {
+                        val intent = android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                            data = android.net.Uri.parse("package:${context.packageName}")
+                        }
+                        context.openSystemSettings(intent)
                     }
                 )
             }

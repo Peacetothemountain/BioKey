@@ -143,7 +143,6 @@ object LockStateTracker {
     fun onAppExited(packageName: String, isLauncherExit: Boolean = false, at: Long = now()) {
         val key = sessionKey(packageName)
         if (isAuthSubFlowActive(key)) return
-        if (!unlockedAt.containsKey(key)) return
 
         for (pkg in aliasesOf(packageName)) {
             exitedAt[pkg] = at
@@ -153,7 +152,7 @@ object LockStateTracker {
                 launcherExited.remove(pkg)
             }
         }
-        if (isLauncherExit) {
+        if (isLauncherExit && unlockedAt.containsKey(key)) {
             appLockListeners.forEach { runCatching { it(packageName) } }
         }
     }
