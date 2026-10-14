@@ -1,338 +1,309 @@
 package com.android.BioKey.feature.main
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
+import android.content.Intent
 import android.os.Bundle
-import android.view.WindowManager
-import androidx.activity.compose.rememberLauncherForActivityResult
+import android.view.MotionEvent
+import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.LaunchedEffect
-import androidx.core.content.ContextCompat
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
+import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Face
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
-import android.provider.Settings
-import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.android.BioKey.R
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.android.BioKey.core.security.IdentityCheckManager
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
-import com.android.BioKey.feature.lock.DeviceAdminHelper
+import com.android.BioKey.feature.lock.LockScreenUIExpressive
 import com.android.BioKey.feature.setup.SetupScreenExpressive
-import com.android.BioKey.ui.theme.ExpressiveTokens
-import com.android.BioKey.ui.theme.springPress
+import kotlinx.coroutines.delay
 
+/**
+ * BioKey's main UI. Requires authentication before showing locked apps or settings.
+ */
 class MainActivity : FragmentActivity() {
 
+    companion object {
+        const val ACTION_PAUSE_PROTECTION = "com.android.BioKey.action.PAUSE_PROTECTION"
+        private const val IDLE_CHECK_INTERVAL_MS = 5_000L
+    }
+
+    private val vault by lazy { SecurityVault.getInstance(this) }
+    private val engine get() = SecurityEngine.INSTANCE
+
     private var isAuthenticated by mutableStateOf(false)
-    private var hasPromptedOnce = false
+    private var promptAutoLaunched = false
+    private var lockMessage by mutableStateOf<String?>(null)
+    private var isPermanentLockout by mutableStateOf(false)
+    private var a11yActive by mutableStateOf(false)
+    private var pauseRequested by mutableStateOf(false)
+    private var isSetupAuthenticating by mutableStateOf(false)
+    private var setupAuthError by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Hardware window protection: prevent screenshots, screen recording, and recents thumbnail leaks
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            setRecentsScreenshotEnabled(false)
-        }
+        IdentityCheckManager.applyWindowProtections(this)
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) pauseRequested = intent?.action == ACTION_PAUSE_PROTECTION
 
         setContent {
             val darkTheme = isSystemInDarkTheme()
-            val colorScheme = when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-                    if (darkTheme) dynamicDarkColorScheme(this) else dynamicLightColorScheme(this)
+            val colorScheme = remember(darkTheme) {
+                if (darkTheme) dynamicDarkColorScheme(this) else dynamicLightColorScheme(this)
+            }
+            val setupCompleted by vault.setupCompletedFlow.collectAsStateWithLifecycle()
+            val pausedUntil by vault.pausedUntilFlow.collectAsStateWithLifecycle()
+
+            LaunchedEffect(pausedUntil) {
+                if (pausedUntil > 0L) {
+                    val remaining = maxOf(0L, pausedUntil - System.currentTimeMillis())
+                    delay(remaining)
+                    vault.isGlobalLockEnabled()
                 }
-                darkTheme -> darkColorScheme()
-                else -> lightColorScheme()
             }
 
-            val vault = remember { SecurityVault.getInstance(this) }
-            val setupCompleted by vault.setupCompletedFlow.collectAsState()
+            androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+                refreshPermissions()
+                onPauseOrDispose { }
+            }
 
-            var a11yActive by remember { mutableStateOf(BioKeyAccessibilityService.isServiceEnabled(this)) }
-            var isAdminActive by remember { mutableStateOf(DeviceAdminHelper.isAdminActive(this)) }
+            LaunchedEffect(isAuthenticated) {
+                while (isAuthenticated) {
+                    delay(IDLE_CHECK_INTERVAL_MS)
+                    if (!LockStateTracker.isOwnAppUnlocked()) lockForInactivity()
+                }
+            }
 
-            val lifecycleOwner = LocalLifecycleOwner.current
-            DisposableEffect(lifecycleOwner) {
-                val observer = LifecycleEventObserver { _, event ->
-                    if (event == Lifecycle.Event.ON_RESUME) {
-                        a11yActive = BioKeyAccessibilityService.isServiceEnabled(this@MainActivity)
-                        isAdminActive = DeviceAdminHelper.isAdminActive(this@MainActivity)
+            MaterialTheme(
+                colorScheme = colorScheme,
+                shapes = com.android.BioKey.ui.theme.M3XShapes.toMaterial3Shapes(),
+                typography = com.android.BioKey.ui.theme.M3XDefaultTypography.toMaterial3Typography()
+            ) {
+                com.android.BioKey.ui.theme.ProvideExpressiveHaptics {
+                    when {
+                        !setupCompleted -> SetupScreenExpressive(
+                            isAuthenticating = isSetupAuthenticating,
+                            authError = setupAuthError,
+                            onSetupComplete = ::completeSetup
+                        )
+                        !isAuthenticated -> LockScreenUIExpressive(
+                            appName = "BioKey",
+                            appIcon = null,
+                            onUnlockClicked = { authenticate() },
+                            onCancelClicked = { finishAffinity() },
+                            isBioKeyLock = true,
+                            statusMessage = lockMessage,
+                            isPermanentLockout = isPermanentLockout,
+                            onLockDeviceClicked = {
+                                if (!BioKeyAccessibilityService.lockDevice()) finishAffinity()
+                            }
+                        )
+                        else -> MainScreenExpressive(
+                            a11yActive = a11yActive
+                        )
                     }
-                }
-                lifecycleOwner.lifecycle.addObserver(observer)
-                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-            }
 
-            LaunchedEffect(setupCompleted) {
-                if (!setupCompleted) {
-                    while (true) {
-                        kotlinx.coroutines.delay(1000)
-                        a11yActive = BioKeyAccessibilityService.isServiceEnabled(this@MainActivity)
-                        isAdminActive = DeviceAdminHelper.isAdminActive(this@MainActivity)
-                    }
-                }
-            }
-
-            val allRequiredPermissionsGranted = a11yActive && isAdminActive
-
-            MaterialTheme(colorScheme = colorScheme) {
-                if (!setupCompleted || !allRequiredPermissionsGranted) {
-                    SetupScreenExpressive(
-                        onSetupComplete = {
-                            vault.setSetupCompleted(true)
-                            authenticateBioKey(
-                                onSuccess = {
-                                    LockStateTracker.onAppUnlocked(packageName)
+                    if (setupCompleted && isAuthenticated && pauseRequested) {
+                        PauseProtectionDialog(
+                            onPause = { duration ->
+                                pauseRequested = false
+                                if (vault.pauseProtection(duration)) {
+                                    Toast.makeText(this, "Protection paused", Toast.LENGTH_SHORT).show()
                                 }
-                            )
-                        }
-                    )
-                } else if (isAuthenticated) {
-                    MainScreenExpressive()
-                } else {
-                    BioKeyLockGate(
-                        onAuthenticate = { authenticateBioKey() },
-                        onExit = { finishAffinity() }
-                    )
+                            },
+                            onDismiss = { pauseRequested = false }
+                        )
+                    }
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pauseRequested = intent.action == ACTION_PAUSE_PROTECTION
+        if (pauseRequested && !LockStateTracker.hasActiveOwnerSession()) {
+            LockStateTracker.lockOwnApp()
+            isAuthenticated = false
         }
     }
 
     override fun onResume() {
         super.onResume()
-        val vault = SecurityVault.getInstance(this)
+        refreshPermissions()
 
-        val a11yActive = BioKeyAccessibilityService.isServiceEnabled(this)
-        val isAdminActive = DeviceAdminHelper.isAdminActive(this)
-        val allRequiredGranted = a11yActive && isAdminActive
+        if (!vault.isSetupCompleted()) return
 
-        // During setup phase or if required permissions missing: DO NOT prompt or require authentication!
-        if (!vault.isSetupCompleted() || !allRequiredGranted) {
+        if (LockStateTracker.isOwnAppUnlocked()) {
+            LockStateTracker.onOwnAppResumed()
             isAuthenticated = true
+            promptAutoLaunched = true
             return
         }
-
-        if (!vault.isGlobalLockEnabled()) {
-            isAuthenticated = true
-            return
-        }
-
-        // Check if unlocked according to timeout mode
-        if (LockStateTracker.isAppUnlocked(packageName, vault.getTimeoutMode())) {
-            isAuthenticated = true
-            LockStateTracker.onAppResumed(packageName)
-            return
-        }
-
-        // Lock expired or app was exited: require authentication
         isAuthenticated = false
-        hasPromptedOnce = false
-
-        if (!SecurityEngine.INSTANCE.isAuthenticating()) {
-            window.decorView.postDelayed({
-                if (!isFinishing && !isDestroyed && !isAuthenticated && !SecurityEngine.INSTANCE.isAuthenticating()) {
-                    authenticateBioKey(
-                        onSuccess = {
-                            LockStateTracker.onAppUnlocked(packageName)
-                        }
-                    )
+        if (!promptAutoLaunched && !isPermanentLockout && !engine.isAuthenticatingFor(packageName)) {
+            promptAutoLaunched = true
+            window.decorView.post {
+                if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) && !isAuthenticated && !isPermanentLockout) {
+                    authenticate()
                 }
-            }, 200)
-        }
-    }
-
-    override fun onPause() {
-        super.onPause()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            setRecentsScreenshotEnabled(false)
+            }
         }
     }
 
     override fun onStop() {
         super.onStop()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            setRecentsScreenshotEnabled(false)
-        }
-        val vault = SecurityVault.getInstance(this)
-        if (!vault.isSetupCompleted()) {
-            // During setup phase: keep unblocked so switching to Settings doesn't trigger lock
-            return
-        }
-        if (vault.isGlobalLockEnabled()) {
-            LockStateTracker.onAppExited(packageName, vault.getTimeoutMode())
+        if (isChangingConfigurations || BioKeyAccessibilityService.isConfirmingDeviceCredential) return
+        engine.resetAuthenticatingState(packageName)
+        promptAutoLaunched = false
+        if (LockStateTracker.isExternalNavigationActive()) {
+            LockStateTracker.onOwnAppStopped()
+        } else {
+            LockStateTracker.lockOwnApp()
+            isAuthenticated = false
         }
     }
 
     override fun onDestroy() {
-        SecurityEngine.INSTANCE.resetAuthenticatingState()
+        if (isFinishing) LockStateTracker.lockOwnApp()
         super.onDestroy()
     }
 
-    private fun authenticateBioKey(onSuccess: (() -> Unit)? = null) {
-        if (SecurityEngine.INSTANCE.isAuthenticating()) return
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (IdentityCheckManager.isMotionEventObscured(ev)) {
+            return true
+        }
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN && isAuthenticated && !LockStateTracker.onOwnAppInteraction()) {
+            lockForInactivity()
+            return true
+        }
+        return super.dispatchTouchEvent(ev)
+    }
 
-        SecurityEngine.INSTANCE.showBiometricPrompt(
+    private fun lockForInactivity() {
+        if (!isAuthenticated) return
+        LockStateTracker.lockOwnApp()
+        isAuthenticated = false
+        lockMessage = "Locked after ${LockStateTracker.OWN_APP_IDLE_MS / 60_000} minutes without activity"
+    }
+
+    private fun refreshPermissions() {
+        a11yActive = BioKeyAccessibilityService.isServiceEnabled(this)
+    }
+
+    private fun completeSetup() {
+        if (engine.isAuthenticating()) return
+        refreshPermissions()
+        isSetupAuthenticating = true
+        setupAuthError = null
+
+        engine.showBiometricPrompt(
+            activity = this,
+            appName = "BioKey",
+            packageName = packageName,
+            promptTitle = "Confirm identity to finish setup",
+            onSuccess = {
+                isSetupAuthenticating = false
+                setupAuthError = null
+                refreshPermissions()
+                com.android.BioKey.ui.theme.BioKeyHaptics.onUnlockSuccess(this@MainActivity)
+                vault.setSetupCompletedSync(true)
+                vault.resumeProtection("Setup completed")
+                LockStateTracker.onOwnAppUnlocked()
+                isAuthenticated = true
+            },
+            onError = { code, message ->
+                isSetupAuthenticating = false
+                setupAuthError = when {
+                    isUserCancel(code) -> "Biometric confirmation was cancelled. Tap to retry."
+                    code == BiometricPrompt.ERROR_NO_DEVICE_CREDENTIAL || code == BiometricPrompt.ERROR_NO_BIOMETRICS ->
+                        "Set a screen lock (PIN, pattern, or password) in system settings first."
+                    else -> message.toString()
+                }
+            }
+        )
+    }
+
+    private fun authenticate(onAuthenticated: () -> Unit = {}) {
+        if (engine.isAuthenticating()) return
+        lockMessage = null
+        isPermanentLockout = false
+        engine.showBiometricPrompt(
             activity = this,
             appName = "BioKey",
             packageName = packageName,
             onSuccess = {
+                LockStateTracker.onOwnAppUnlocked()
                 isAuthenticated = true
-                hasPromptedOnce = true
-                onSuccess?.invoke()
+                onAuthenticated()
             },
-            onFailure = {
-                // Keep gate locked
-            },
-            onError = { _, _ ->
-                // Leave BioKeyLockGate accessible so the user can tap "Unlock BioKey" or "Exit"
+            onError = { code, message ->
+                if (code == BiometricPrompt.ERROR_LOCKOUT_PERMANENT) {
+                    isPermanentLockout = true
+                    lockMessage = "Biometric sensor locked by Titan M2 hardware policy. Please lock your device screen and unlock with PIN to reset."
+                } else {
+                    isPermanentLockout = false
+                    lockMessage = when {
+                        isUserCancel(code) -> null
+                        code == BiometricPrompt.ERROR_NO_DEVICE_CREDENTIAL || code == BiometricPrompt.ERROR_NO_BIOMETRICS ->
+                            "Set a screen lock (PIN, pattern, or password) in system settings to use BioKey."
+                        else -> message.toString()
+                    }
+                }
             }
         )
     }
+
+    private fun isUserCancel(code: Int) = code == BiometricPrompt.ERROR_USER_CANCELED ||
+        code == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
+        code == BiometricPrompt.ERROR_CANCELED
 }
 
 @Composable
-private fun BioKeyLockGate(
-    onAuthenticate: () -> Unit,
-    onExit: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surfaceContainerLowest),
-        contentAlignment = Alignment.Center
-    ) {
-        androidx.compose.material3.Surface(
-            shape = ExpressiveTokens.Shapes.BentoCardLarge,
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            modifier = Modifier
-                .padding(28.dp)
-                .fillMaxWidth()
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 36.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .height(96.dp)
-                        .padding(bottom = 16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Image(
-                        painter = painterResource(R.drawable.ic_title_logo_letters),
-                        contentDescription = "Bio Key Logo Letters",
-                        modifier = Modifier.fillMaxHeight(),
-                        contentScale = ContentScale.Fit,
-                        colorFilter = ColorFilter.tint(
-                            MaterialTheme.colorScheme.primary,
-                            BlendMode.Modulate
-                        )
-                    )
-                    Image(
-                        painter = painterResource(R.drawable.ic_title_logo_tentacles),
-                        contentDescription = "Bio Key Logo Tentacles",
-                        modifier = Modifier.fillMaxHeight(),
-                        contentScale = ContentScale.Fit,
-                        colorFilter = ColorFilter.tint(
-                            MaterialTheme.colorScheme.tertiary,
-                            BlendMode.Modulate
-                        )
-                    )
-                }
-
-
+internal fun PauseProtectionDialog(onPause: (Long?) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Pause protection?") },
+        text = {
+            Column {
                 Text(
-                    text = "Hardware Authentication Required",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    "Locked apps open without authentication while protection is paused. Timed pauses resume automatically.",
+                    style = MaterialTheme.typography.bodyMedium
                 )
-
-                Spacer(modifier = Modifier.height(36.dp))
-
-                Button(
-                    onClick = onAuthenticate,
-                    shape = ExpressiveTokens.Shapes.Pill,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .springPress()
-                ) {
-                    Icon(Icons.Default.Face, contentDescription = null, modifier = Modifier.size(22.dp))
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = "Unlock BioKey",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                TextButton(
-                    onClick = onExit,
-                    modifier = Modifier.springPress()
-                ) {
-                    Text(
-                        text = "Exit",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Spacer(Modifier.height(16.dp))
+                listOf(
+                    "For 15 minutes" to 15 * 60_000L,
+                    "For 1 hour" to 60 * 60_000L,
+                    "Until I turn it back on" to null
+                ).forEach { (label, duration) ->
+                    TextButton(onClick = { onPause(duration) }, modifier = Modifier.fillMaxWidth()) {
+                        Text(label, modifier = Modifier.fillMaxWidth())
+                    }
                 }
             }
-        }
-    }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }

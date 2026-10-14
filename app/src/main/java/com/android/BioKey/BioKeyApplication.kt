@@ -1,150 +1,121 @@
 package com.android.BioKey
 
-import android.app.Activity
 import android.app.Application
-import android.content.ComponentCallbacks2
-import android.os.Build
-import android.os.Bundle
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.UserManager
 import android.util.Log
-import android.view.WindowManager
-import com.android.BioKey.core.security.LockStateTracker
-import com.android.BioKey.core.security.TitanM3SecurityManager
-import com.android.BioKey.core.security.ZeroKnowledgeMemorySanitizer
+import androidx.core.content.ContextCompat
+import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.ScreenReceiver
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.Executors
 
-/**
- * BioKey Hardened Application Architecture
- *
- * Implements platform-level defense-in-depth:
- * 1. Global Zero-Leak Recents Protection via ActivityLifecycleCallbacks:
- *    - Unconditionally binds `FLAG_SECURE`
- *    - Unconditionally calls `setRecentsScreenshotEnabled(false)` (Android 13+)
- * 2. Component Isolation & Memory Hygiene:
- *    - ComponentCallbacks2 integration: purges cryptographic tokens on TRIM_MEMORY_UI_HIDDEN
- *    - Hardened ScreenReceiver registration strictly using `RECEIVER_NOT_EXPORTED`
- */
-class BioKeyApplication : Application(), ComponentCallbacks2 {
+class BioKeyApplication : Application() {
 
     companion object {
-        private const val TAG = "BioKeyApp"
-        lateinit var instance: BioKeyApplication
-            private set
+        private const val TAG = "BioKeyApplication"
+        private val initExecutor = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "biokey-async-init").apply { isDaemon = true }
+        }
+        private val _packageChangeVersion = MutableStateFlow(0)
+        val packageChangeVersion: StateFlow<Int> = _packageChangeVersion.asStateFlow()
     }
-
-    private var screenReceiver: ScreenReceiver? = null
 
     override fun onCreate() {
         super.onCreate()
-        instance = this
+        ScreenReceiver.register(this)
 
-        Log.i(TAG, "Initializing BioKey v4.5 with Hardware Platform Hardening & Titan M3 StrongBox...")
+        val userManager = getSystemService(UserManager::class.java)
+        val isUnlocked = userManager?.isUserUnlocked ?: true
 
-        // 1. Hardware Security & Keystore initialization
-        TitanM3SecurityManager.INSTANCE.initializeTitanM3Protocols(this)
-        com.android.BioKey.core.security.SecurityVault.getInstance(this)
-
-        // 2. Register Global Zero-Leak Activity Protection
-        registerGlobalWindowProtection()
-
-        // 3. Register hardened dynamic screen receiver with strict non-exported isolation
-        registerScreenReceiver()
+        if (isUnlocked) {
+            initCredentialProtectedComponents()
+        } else {
+            val filter = IntentFilter(Intent.ACTION_USER_UNLOCKED)
+            ContextCompat.registerReceiver(
+                this,
+                object : BroadcastReceiver() {
+                    override fun onReceive(context: Context?, intent: Intent?) {
+                        if (intent?.action == Intent.ACTION_USER_UNLOCKED) {
+                            runCatching { this@BioKeyApplication.unregisterReceiver(this) }
+                            initCredentialProtectedComponents()
+                        }
+                    }
+                },
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+        }
     }
 
-    /**
-     * Enforces dual-layer snapshot and recents protection globally across every activity.
-     */
-    private fun registerGlobalWindowProtection() {
-        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
-            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
-                applyDualLayerWindowProtection(activity)
+    private fun initCredentialProtectedComponents() {
+        val app = this
+        initExecutor.execute {
+            try {
+                // Pre-warm SecurityVault so UI threads find it ready in memory
+                SecurityVault.getInstance(app)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error initializing credential-protected components", e)
             }
+        }
+        registerPackageChangeReceiver()
+    }
 
-            override fun onActivityStarted(activity: Activity) {}
-
-            override fun onActivityResumed(activity: Activity) {
-                applyDualLayerWindowProtection(activity)
-            }
-
-            override fun onActivityPaused(activity: Activity) {
-                // Ensure recents snapshot remains disabled
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    activity.setRecentsScreenshotEnabled(false)
+    private fun registerPackageChangeReceiver() {
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addDataScheme("package")
+        }
+        ContextCompat.registerReceiver(
+            this,
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    val pkg = intent?.data?.schemeSpecificPart ?: return
+                    val replacing = intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)
+                    initExecutor.execute {
+                        try {
+                            com.android.BioKey.feature.lock.AppInfoCache.invalidate(pkg)
+                            val vault = SecurityVault.getInstance(this@BioKeyApplication)
+                            when (intent.action) {
+                                Intent.ACTION_PACKAGE_ADDED -> {
+                                    if (!replacing && vault.isAutoSortProfilesEnabled()) {
+                                        val pm = packageManager
+                                        val label = runCatching {
+                                            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+                                        }.getOrDefault(pkg)
+                                        vault.autoSortSinglePackage(pkg, label, pm)
+                                    }
+                                    if (pkg in vault.getLockedPackages()) {
+                                        com.android.BioKey.feature.lock.AppInfoCache.preWarm(this@BioKeyApplication, listOf(pkg))
+                                    }
+                                }
+                                Intent.ACTION_PACKAGE_REPLACED -> {
+                                    if (pkg in vault.getLockedPackages()) {
+                                        com.android.BioKey.feature.lock.AppInfoCache.preWarm(this@BioKeyApplication, listOf(pkg))
+                                    }
+                                }
+                                Intent.ACTION_PACKAGE_REMOVED -> {
+                                    if (!replacing) {
+                                        vault.onPackageUninstalled(pkg)
+                                    }
+                                }
+                            }
+                            _packageChangeVersion.value = _packageChangeVersion.value + 1
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Error handling package change for $pkg: ${e.message}")
+                        }
+                    }
                 }
-            }
-
-            override fun onActivityStopped(activity: Activity) {
-                // Invalidate decorView to prevent dirty surface retention
-                activity.window?.decorView?.invalidate()
-            }
-
-            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
-
-            override fun onActivityDestroyed(activity: Activity) {}
-        })
-    }
-
-    private fun applyDualLayerWindowProtection(activity: Activity) {
-        try {
-            // Layer 1: Hardware-backed DRM surface protection (SurfaceFlinger)
-            activity.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-
-            // Layer 2: Android 13+ / 16 / 17 / 18 System Overview/Recents Snapshot Disabler
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                activity.setRecentsScreenshotEnabled(false)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed applying dual-layer window protection: ${e.message}")
-        }
-    }
-
-    private fun registerScreenReceiver() {
-        screenReceiver = ScreenReceiver.registerHardened(
-            context = this,
-            onScreenOff = {
-                Log.d(TAG, "Screen off / sleep transition: zero-knowledge session purge initiated.")
-                LockStateTracker.onScreenTurnedOff()
             },
-            onUserPresent = {
-                Log.d(TAG, "User present broadcast received.")
-            }
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
         )
-    }
-
-    /**
-     * ComponentCallbacks2: Sanitizes in-memory secrets when the OS reclaims resources
-     * or when BioKey moves completely into the background.
-     */
-    @Suppress("DEPRECATION")
-    override fun onTrimMemory(level: Int) {
-        super.onTrimMemory(level)
-        Log.i(TAG, "onTrimMemory called with level: $level")
-
-        when {
-            // Severe memory pressure on device: full zero-knowledge purge
-            level >= ComponentCallbacks2.TRIM_MEMORY_COMPLETE ||
-            level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> {
-                Log.w(TAG, "Critical memory warning ($level): performing full zero-knowledge purge.")
-                ZeroKnowledgeMemorySanitizer.evictAllSessionsAndScrubMemory()
-                System.gc()
-            }
-
-            // BioKey UI is completely hidden (user pressed Home or switched apps): scrub ephemeral UI buffers
-            level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN -> {
-                Log.i(TAG, "UI Hidden ($level): Scrubbing ephemeral UI memory buffers.")
-                ZeroKnowledgeMemorySanitizer.trimUiMemory()
-            }
-        }
-    }
-
-    override fun onLowMemory() {
-        super.onLowMemory()
-        Log.w(TAG, "System low memory: Purging all session tokens and scrubbing memory.")
-        ZeroKnowledgeMemorySanitizer.evictAllSessionsAndScrubMemory()
-    }
-
-    override fun onTerminate() {
-        screenReceiver?.unregister(this)
-        ZeroKnowledgeMemorySanitizer.evictAllSessionsAndScrubMemory()
-        super.onTerminate()
     }
 }
