@@ -8,10 +8,11 @@ import android.content.IntentFilter
 import android.os.UserManager
 import android.util.Log
 import androidx.core.content.ContextCompat
-import com.android.BioKey.core.intruder.IntruderManager
-import com.android.BioKey.core.security.HardwareKeyManager
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.ScreenReceiver
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.Executors
 
 class BioKeyApplication : Application() {
@@ -21,6 +22,8 @@ class BioKeyApplication : Application() {
         private val initExecutor = Executors.newSingleThreadExecutor { r ->
             Thread(r, "biokey-async-init").apply { isDaemon = true }
         }
+        private val _packageChangeVersion = MutableStateFlow(0)
+        val packageChangeVersion: StateFlow<Int> = _packageChangeVersion.asStateFlow()
     }
 
     override fun onCreate() {
@@ -54,15 +57,65 @@ class BioKeyApplication : Application() {
         val app = this
         initExecutor.execute {
             try {
-                // Pre-warm SecurityVault first so UI threads find it ready in memory
+                // Pre-warm SecurityVault so UI threads find it ready in memory
                 SecurityVault.getInstance(app)
-                // Initialize and verify Keystore keys
-                HardwareKeyManager.initialize(app)
-                // Migrate legacy intruder captures in background
-                IntruderManager.migrateLegacyPhotos(app)
             } catch (e: Exception) {
                 Log.e(TAG, "Error initializing credential-protected components", e)
             }
         }
+        registerPackageChangeReceiver()
+    }
+
+    private fun registerPackageChangeReceiver() {
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addDataScheme("package")
+        }
+        ContextCompat.registerReceiver(
+            this,
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    val pkg = intent?.data?.schemeSpecificPart ?: return
+                    val replacing = intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)
+                    initExecutor.execute {
+                        try {
+                            com.android.BioKey.feature.lock.AppInfoCache.invalidate(pkg)
+                            val vault = SecurityVault.getInstance(this@BioKeyApplication)
+                            when (intent.action) {
+                                Intent.ACTION_PACKAGE_ADDED -> {
+                                    if (!replacing && vault.isAutoSortProfilesEnabled()) {
+                                        val pm = packageManager
+                                        val label = runCatching {
+                                            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+                                        }.getOrDefault(pkg)
+                                        vault.autoSortSinglePackage(pkg, label, pm)
+                                    }
+                                    if (pkg in vault.getLockedPackages()) {
+                                        com.android.BioKey.feature.lock.AppInfoCache.preWarm(this@BioKeyApplication, listOf(pkg))
+                                    }
+                                }
+                                Intent.ACTION_PACKAGE_REPLACED -> {
+                                    if (pkg in vault.getLockedPackages()) {
+                                        com.android.BioKey.feature.lock.AppInfoCache.preWarm(this@BioKeyApplication, listOf(pkg))
+                                    }
+                                }
+                                Intent.ACTION_PACKAGE_REMOVED -> {
+                                    if (!replacing) {
+                                        vault.onPackageUninstalled(pkg)
+                                    }
+                                }
+                            }
+                            _packageChangeVersion.value = _packageChangeVersion.value + 1
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Error handling package change for $pkg: ${e.message}")
+                        }
+                    }
+                }
+            },
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
     }
 }

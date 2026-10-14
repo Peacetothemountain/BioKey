@@ -12,24 +12,14 @@
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
 
-# 1. Enums used in JSON serialization, SharedPreferences, and reflection.
-# Prevents R8 from mangling enum names (LockTimeoutMode, Type, AppCategory, HapticFeedbackStyle)
--keepclassmembers enum com.android.BioKey.** {
+# 1. Enum persisted by name in SharedPreferences / JSON
+-keepclassmembers enum com.android.BioKey.core.data.LockTimeoutMode {
     public static **[] values();
     public static ** valueOf(java.lang.String);
     public *;
 }
 
-# 2. Cryptographic models, Keystore payloads, and Data classes
--keep class com.android.BioKey.core.security.HardwareKeyManager$EncryptedPayload { *; }
--keep class com.android.BioKey.core.security.HardwareKeyManager$ReKeyProof { *; }
--keep class com.android.BioKey.core.security.SecurityEventLog$Event { *; }
+# 2. Data classes used in persistence
 -keep class com.android.BioKey.core.data.** { *; }
 
-# 3. AndroidX BiometricPrompt and Crypto
--keep class androidx.biometric.** { *; }
--dontwarn androidx.biometric.**
 
-# 4. CameraX subsystem
--keep class androidx.camera.** { *; }
--dontwarn androidx.camera.**

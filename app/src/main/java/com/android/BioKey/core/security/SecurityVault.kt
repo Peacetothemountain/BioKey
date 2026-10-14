@@ -3,75 +3,47 @@ package com.android.BioKey.core.security
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.os.SystemClock
-import android.provider.Settings
-import android.text.format.DateFormat
-import android.util.Base64
-import android.util.Log
-import androidx.biometric.BiometricManager
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.SecurityProfile
 import com.android.BioKey.feature.lock.InstantShieldOverlay
+import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import org.json.JSONArray
-import java.security.MessageDigest
-import java.util.Date
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 /**
- * BioKey's configuration: which apps are locked and how.
- *
- * Reads are synchronous and served from memory so the accessibility service can decide in
- * microseconds. Every change is persisted atomically (all keys in one commit) together with an
- * HMAC-SHA256 seal computed by a hardware-backed Keystore key. If the stored settings are edited
- * outside BioKey (root, backup restore, file tampering) the seal no longer matches: BioKey
- * records the event, re-arms protection, and warns the owner.
- *
- * Changes that reduce protection require an active, authenticated BioKey session in the
- * foreground ([LockStateTracker.hasActiveOwnerSession]); those setters return `false` and do
- * nothing otherwise.
+ * Lean, high-performance SecurityVault for BioKey.
+ * Stores locked packages, profiles, timeouts, and protection states directly in SharedPreferences.
  */
 class SecurityVault private constructor(private val context: Context) {
 
     companion object {
-        private const val TAG = "SecurityVault"
-        private const val PREF_NAME = "biokey_vault_sync"
+        private const val PREF_NAME = "biokey_vault"
         private const val KEY_LOCKED = "locked_apps_set"
         private const val KEY_GLOBAL = "global_lock_enabled"
-        private const val KEY_PAUSED_UNTIL = "global_lock_paused_until"
         private const val KEY_TIMEOUT = "timeout_mode"
-        private const val KEY_INTRUDER = "intruder_detection"
-        private const val KEY_OVERLAY = "overlay_shield"
-        private const val KEY_SELF_PROTECT = "self_protection"
+        private const val KEY_NOTIFICATION_SHIELD = "notification_shield_enabled"
+        private const val KEY_SETUP_COMPLETED = "setup_completed"
+        private const val KEY_PAUSED_UNTIL = "paused_until_wall"
+        private const val KEY_PAUSED_ELAPSED = "paused_until_elapsed"
+        const val PROFILE_ALL = "all"
         private const val KEY_PROFILES_JSON = "security_profiles_json"
         private const val KEY_ACTIVE_PROFILE_ID = "active_profile_id"
         private const val KEY_AUTO_SORT = "auto_sort_profiles_enabled"
-        private const val KEY_SETUP_COMPLETED = "setup_completed"
-        private const val KEY_NOTIFICATION_SHIELD = "notification_shield_enabled"
-        private const val KEY_RECENTS_SHIELD = "recents_shield_enabled"
-        private const val KEY_IDENTITY_CHECK = "identity_check_enabled"
-        private const val KEY_TAMPER_PENDING = "tamper_pending"
-        private const val KEY_ID_HOLD_BOOT = "identity_hold_boot"
-        private const val KEY_ID_HOLD_START = "identity_hold_start_elapsed"
-        private const val KEY_SEAL = "integrity_seal_v1"
-        private const val KEY_TAMPER_LOCKDOWN = "tamper_lockdown"
-        private const val KEY_STATE_VERSION = "state_version"
-        private const val KEY_PAUSED_BOOT = "paused_boot_count"
-        private const val KEY_PAUSED_DURATION = "paused_duration_ms"
-        private const val KEY_PAUSED_AT_WALL = "paused_at_wall"
-        private const val VERSION_ANCHOR_FILE = "vault_version_anchor.bin"
-
-        /** Identity Check's security delay after a biometric change. */
-        private const val IDENTITY_HOLD_MS = 30 * 60_000L
-        private const val NO_HOLD = Int.MIN_VALUE
-
-        const val PROFILE_ALL = "all"
-
-        /** Longest timed pause offered (1 hour), plus a minute of slack. */
-        private const val MAX_TIMED_PAUSE_MS = 61 * 60_000L
+        private const val KEY_AUTO_SORT_EXCLUDED = "auto_sort_excluded_packages"
+        private const val KEY_SELF_PROTECTION = "accessibility_self_protection_enabled"
+        private const val MAX_RESTORED_PAUSE_MS = 60 * 60_000L
 
         private const val PKG_GMS_PASSWORDS = "com.google.android.gms.passwordmanager"
         private const val PKG_CREDENTIAL_MANAGER = "com.google.android.apps.credentialmanager"
@@ -85,55 +57,15 @@ class SecurityVault private constructor(private val context: Context) {
                 INSTANCE ?: SecurityVault(context.applicationContext).also { INSTANCE = it }
             }
         }
-
-        private val EXCLUDED_CATEGORIES = setOf(
-            ApplicationInfo.CATEGORY_GAME,
-            ApplicationInfo.CATEGORY_AUDIO,
-            ApplicationInfo.CATEGORY_MAPS,
-            ApplicationInfo.CATEGORY_NEWS
-        )
-
-        private val EXCLUDED_KEYWORDS = listOf(
-            // Games
-            "2048", "game", "puzzle", "arcade", "unity3d", "roblox", "supercell", "sudoku", "chess",
-            "solitaire", "candycrush", "minecraft", "pokemon", "epicgames", "playrix", "king.com",
-            "riotgames", "gameloft", "blizzard", "mojang", "brawlstars", "genshin", "angrybirds",
-            "templerun", "tetris", "mahjong", "crossword", "wordle",
-            // Media and benign utilities
-            "spotify", "podcast", "music", "radio", "pandora", "deezer", "soundcloud", "shazam",
-            "tidal", "tunein", "audible", "netflix", "hulu", "disney", "primevideo", "twitch",
-            "crunchyroll", "youtube", "plex", "peacock", "wallpaper", "weather", "flashlight",
-            "compass", "benchmark", "speedtest"
-        )
-
-        /**
-         * Apps that auto-sort should not *suggest* locking (games, media, utilities).
-         *
-         * This is only a heuristic for suggestions: it never overrides a lock the user chose.
-         */
-        fun isExcludedFromSecurity(pkg: String, label: String = "", category: Int = -1): Boolean {
-            if (category in EXCLUDED_CATEGORIES) return true
-            val p = pkg.lowercase()
-            val l = label.lowercase()
-            return EXCLUDED_KEYWORDS.any { p.contains(it) || l.contains(it) }
-        }
-
-        /** Strictness rank of a timeout mode; higher = stays unlocked longer. */
-        private fun LockTimeoutMode.leniency(): Int = when (this) {
-            LockTimeoutMode.IMMEDIATE -> 0
-            LockTimeoutMode.GRACE_30_SECONDS -> 1
-            LockTimeoutMode.GRACE_1_MINUTE -> 2
-            LockTimeoutMode.GRACE_5_MINUTES -> 3
-            LockTimeoutMode.GRACE_15_MINUTES -> 4
-            LockTimeoutMode.ON_SCREEN_OFF -> 5
-        }
     }
 
     private val sharedPrefs: SharedPreferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
     private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "BioKeyVault") }
-    private val profileLock = Any()
+    private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var pauseExpiryJob: Job? = null
 
     private val lockedAppsSet = ConcurrentHashMap.newKeySet<String>()
+    private val autoSortExcludedSet = ConcurrentHashMap.newKeySet<String>()
 
     private val _lockedAppsFlow = MutableStateFlow<Set<String>>(emptySet())
     val lockedAppsFlow: StateFlow<Set<String>> = _lockedAppsFlow.asStateFlow()
@@ -142,772 +74,710 @@ class SecurityVault private constructor(private val context: Context) {
     val globalLockEnabledFlow: StateFlow<Boolean> = _globalLockEnabledFlow.asStateFlow()
 
     private val _pausedUntilFlow = MutableStateFlow(0L)
-    /** Wall-clock time protection auto-resumes, or 0 if not on a timer. */
     val pausedUntilFlow: StateFlow<Long> = _pausedUntilFlow.asStateFlow()
 
     private val _timeoutModeFlow = MutableStateFlow(LockTimeoutMode.IMMEDIATE)
     val timeoutModeFlow: StateFlow<LockTimeoutMode> = _timeoutModeFlow.asStateFlow()
 
-    private val _intruderDetectionFlow = MutableStateFlow(true)
-    val intruderDetectionFlow: StateFlow<Boolean> = _intruderDetectionFlow.asStateFlow()
-
-    private val _overlayShieldFlow = MutableStateFlow(true)
-    val overlayShieldFlow: StateFlow<Boolean> = _overlayShieldFlow.asStateFlow()
-
-    private val _selfProtectionFlow = MutableStateFlow(true)
-    val selfProtectionFlow: StateFlow<Boolean> = _selfProtectionFlow.asStateFlow()
-
-    private val _profilesFlow = MutableStateFlow<List<SecurityProfile>>(emptyList())
-    val profilesFlow: StateFlow<List<SecurityProfile>> = _profilesFlow.asStateFlow()
-
-    private val _activeProfileIdFlow = MutableStateFlow<String?>(PROFILE_ALL)
-    val activeProfileIdFlow: StateFlow<String?> = _activeProfileIdFlow.asStateFlow()
-
-    private val _autoSortProfilesFlow = MutableStateFlow(false)
-    val autoSortProfilesFlow: StateFlow<Boolean> = _autoSortProfilesFlow.asStateFlow()
+    private val _notificationShieldFlow = MutableStateFlow(true)
+    val notificationShieldFlow: StateFlow<Boolean> = _notificationShieldFlow.asStateFlow()
 
     private val _setupCompletedFlow = MutableStateFlow(false)
     val setupCompletedFlow: StateFlow<Boolean> = _setupCompletedFlow.asStateFlow()
 
-    private val _notificationShieldFlow = MutableStateFlow(true)
-    val notificationShieldFlow: StateFlow<Boolean> = _notificationShieldFlow.asStateFlow()
+    private val _profilesFlow = MutableStateFlow<List<SecurityProfile>>(emptyList())
+    val profilesFlow: StateFlow<List<SecurityProfile>> = _profilesFlow.asStateFlow()
 
-    private val _recentsShieldFlow = MutableStateFlow(true)
-    val recentsShieldFlow: StateFlow<Boolean> = _recentsShieldFlow.asStateFlow()
+    private val _activeProfileIdFlow = MutableStateFlow(PROFILE_ALL)
+    val activeProfileIdFlow: StateFlow<String> = _activeProfileIdFlow.asStateFlow()
 
-    private val _identityCheckFlow = MutableStateFlow(false)
-    val identityCheckFlow: StateFlow<Boolean> = _identityCheckFlow.asStateFlow()
+    private val _autoSortProfilesFlow = MutableStateFlow(true)
+    val autoSortProfilesFlow: StateFlow<Boolean> = _autoSortProfilesFlow.asStateFlow()
 
-    private val _tamperDetectedFlow = MutableStateFlow(false)
-    /** True after the settings seal failed to verify, until the owner acknowledges it. */
-    val tamperDetectedFlow: StateFlow<Boolean> = _tamperDetectedFlow.asStateFlow()
+    private val _accessibilitySelfProtectionFlow = MutableStateFlow(true)
+    val accessibilitySelfProtectionFlow: StateFlow<Boolean> = _accessibilitySelfProtectionFlow.asStateFlow()
 
-    // Identity Check security delay (see [identityHoldRemaining]): the boot it started in and its
-    // start on the elapsed-realtime clock, or NO_HOLD.
-    @Volatile private var identityHoldBoot = NO_HOLD
-    @Volatile private var identityHoldStart = 0L
-
-    @Volatile private var stateVersion: Long = 0L
     @Volatile private var pausedUntilElapsed: Long = 0L
-    @Volatile private var pausedBootCount: Int = -1
-    @Volatile private var pausedDurationMs: Long = 0L
-    @Volatile private var pausedAtWall: Long = 0L
+    private val stateLock = Any()
 
-    @Volatile private var isTamperLockdown = false
-    fun isTamperLockdown(): Boolean = isTamperLockdown
+    private data class LookupSnapshot(
+        val effectiveLockedPackages: Set<String> = emptySet(),
+        val effectiveTimeoutByPackage: Map<String, LockTimeoutMode> = emptyMap(),
+        val defaultTimeoutMode: LockTimeoutMode = LockTimeoutMode.IMMEDIATE
+    )
+
+    @Volatile private var snapshot = LookupSnapshot()
 
     init {
-        isTamperLockdown = sharedPrefs.getBoolean(KEY_TAMPER_LOCKDOWN, false) ||
-            (HardwareKeyManager.hasIntegrityKey() && !sharedPrefs.contains(KEY_SEAL))
         val savedLocked = sharedPrefs.getStringSet(KEY_LOCKED, emptySet()).orEmpty()
         lockedAppsSet.addAll(savedLocked)
-        _lockedAppsFlow.value = savedLocked.toSet()
 
-        _globalLockEnabledFlow.value = sharedPrefs.getBoolean(KEY_GLOBAL, true)
-        _pausedUntilFlow.value = sharedPrefs.getLong(KEY_PAUSED_UNTIL, 0L)
-        pausedBootCount = sharedPrefs.getInt(KEY_PAUSED_BOOT, -1)
-        pausedDurationMs = sharedPrefs.getLong(KEY_PAUSED_DURATION, 0L)
-        pausedAtWall = sharedPrefs.getLong(KEY_PAUSED_AT_WALL, 0L)
+        val savedExcluded = sharedPrefs.getStringSet(KEY_AUTO_SORT_EXCLUDED, emptySet()).orEmpty()
+        autoSortExcludedSet.addAll(savedExcluded)
+
+        val global = sharedPrefs.getBoolean(KEY_GLOBAL, true)
+        val pausedWall = sharedPrefs.getLong(KEY_PAUSED_UNTIL, 0L)
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val nowWall = System.currentTimeMillis()
+        val rawRemainingWall = pausedWall - nowWall
+
+        if (!global && pausedWall > 0L && rawRemainingWall <= 0L) {
+            // Expired while phone was asleep or rebooted
+            _globalLockEnabledFlow.value = true
+            _pausedUntilFlow.value = 0L
+            pausedUntilElapsed = 0L
+            sharedPrefs.edit().putBoolean(KEY_GLOBAL, true).putLong(KEY_PAUSED_UNTIL, 0L).apply()
+        } else if (!global && pausedWall > 0L && rawRemainingWall > 0L) {
+            // Still within timed pause after reboot (capped at MAX_RESTORED_PAUSE_MS against clock tampering)
+            val remainingWall = minOf(rawRemainingWall, MAX_RESTORED_PAUSE_MS)
+            _globalLockEnabledFlow.value = false
+            _pausedUntilFlow.value = nowWall + remainingWall
+            pausedUntilElapsed = nowElapsed + remainingWall
+            schedulePauseExpiry(remainingWall)
+        } else {
+            _globalLockEnabledFlow.value = global
+            _pausedUntilFlow.value = pausedWall
+            pausedUntilElapsed = 0L
+        }
+
         _timeoutModeFlow.value = LockTimeoutMode.fromName(sharedPrefs.getString(KEY_TIMEOUT, null))
-        _intruderDetectionFlow.value = sharedPrefs.getBoolean(KEY_INTRUDER, true)
-        _overlayShieldFlow.value = true
-        _selfProtectionFlow.value = true
-        _autoSortProfilesFlow.value = sharedPrefs.getBoolean(KEY_AUTO_SORT, false)
         _notificationShieldFlow.value = sharedPrefs.getBoolean(KEY_NOTIFICATION_SHIELD, true)
-        _recentsShieldFlow.value = true
-        _identityCheckFlow.value = sharedPrefs.getBoolean(KEY_IDENTITY_CHECK, false)
-        _tamperDetectedFlow.value = sharedPrefs.getBoolean(KEY_TAMPER_PENDING, false)
-        identityHoldBoot = sharedPrefs.getInt(KEY_ID_HOLD_BOOT, NO_HOLD)
-        identityHoldStart = sharedPrefs.getLong(KEY_ID_HOLD_START, 0L)
+        _setupCompletedFlow.value = sharedPrefs.getBoolean(KEY_SETUP_COMPLETED, false)
+        _accessibilitySelfProtectionFlow.value = sharedPrefs.getBoolean(KEY_SELF_PROTECTION, true)
 
-        // Older builds wrote the setup flag under several names.
-        _setupCompletedFlow.value = sharedPrefs.getBoolean(KEY_SETUP_COMPLETED, false) ||
-            sharedPrefs.getBoolean("setup_complete", false) ||
-            context.getSharedPreferences("biokey_prefs", Context.MODE_PRIVATE).getBoolean("setup_complete", false)
-
-        _profilesFlow.value = sharedPrefs.getString(KEY_PROFILES_JSON, null)
-            ?.let { json ->
-                runCatching {
-                    val array = JSONArray(json)
-                    (0 until array.length()).map { SecurityProfile.fromJson(array.getJSONObject(it)) }
-                }.onFailure { Log.w(TAG, "Profiles unreadable; keeping defaults: ${it.message}") }.getOrNull()
-            }
-            ?: defaultProfiles()
-        _activeProfileIdFlow.value = sharedPrefs.getString(KEY_ACTIVE_PROFILE_ID, PROFILE_ALL) ?: PROFILE_ALL
-
-        io.execute(::verifyIntegrity)
-    }
-
-    // ---------------------------------------------------------------------------------------
-    // Persistence and integrity
-    // ---------------------------------------------------------------------------------------
-
-    private fun readAnchoredVersion(): Long {
-        val file = java.io.File(context.noBackupFilesDir, VERSION_ANCHOR_FILE)
-        if (!file.exists()) return 0L
-        return runCatching { file.readText().trim().toLong() }.getOrDefault(0L)
-    }
-
-    private fun writeAnchoredVersion(version: Long) {
-        runCatching {
-            val file = java.io.File(context.noBackupFilesDir, VERSION_ANCHOR_FILE)
-            val temp = java.io.File(context.noBackupFilesDir, "$VERSION_ANCHOR_FILE.tmp")
-            temp.writeText(version.toString())
-            temp.renameTo(file)
+        val profilesJson = sharedPrefs.getString(KEY_PROFILES_JSON, null)
+        var profileParseFailed = false
+        val loadedProfiles = if (!profilesJson.isNullOrBlank()) {
+            runCatching {
+                val array = JSONArray(profilesJson)
+                (0 until array.length()).map { SecurityProfile.fromJson(array.getJSONObject(it)) }
+            }.onFailure { profileParseFailed = true }.getOrDefault(defaultProfiles())
+        } else {
+            defaultProfiles()
         }
+        // Ensure each package belongs to at most one profile and sync with lockedAppsSet
+        val seenInProfile = HashSet<String>()
+        val dedupedProfiles = loadedProfiles.map { profile ->
+            val uniquePkgs = profile.packages.filter { pkg -> seenInProfile.add(pkg) }.toSet()
+            profile.copy(packages = uniquePkgs)
+        }
+        _profilesFlow.value = dedupedProfiles
+        for (profile in dedupedProfiles) {
+            for (pkg in profile.packages) {
+                lockedAppsSet.addAll(aliasesOf(pkg))
+            }
+        }
+        _lockedAppsFlow.value = lockedAppsSet.toSet()
+
+        val savedActiveId = sharedPrefs.getString(KEY_ACTIVE_PROFILE_ID, PROFILE_ALL) ?: PROFILE_ALL
+        _activeProfileIdFlow.value = if (
+            profileParseFailed ||
+            (savedActiveId != PROFILE_ALL && _profilesFlow.value.none { it.id == savedActiveId })
+        ) {
+            PROFILE_ALL
+        } else {
+            savedActiveId
+        }
+        _autoSortProfilesFlow.value = sharedPrefs.getBoolean(KEY_AUTO_SORT, true)
+        rebuildSnapshot()
+        com.android.BioKey.feature.lock.AppInfoCache.preWarm(context, getLockedPackages())
     }
 
-    /** Canonical, order-independent serialization of every security-relevant setting. */
-    private fun canonicalState(includeRecents: Boolean = true, includeVersion: Boolean = true): String = buildString {
-        if (includeVersion && stateVersion > 0L) appendLine("version=$stateVersion")
-        appendLine("locked=${lockedAppsSet.sorted().joinToString(",")}")
-        appendLine("global=${_globalLockEnabledFlow.value}")
-        appendLine("pausedUntil=${_pausedUntilFlow.value}")
-        appendLine("timeout=${_timeoutModeFlow.value.name}")
-        appendLine("intruder=${_intruderDetectionFlow.value}")
-        appendLine("overlay=true")
-        appendLine("selfProtect=true")
-        appendLine("notifShield=${_notificationShieldFlow.value}")
-        if (includeRecents) appendLine("recentsShield=true")
-        appendLine("identity=${_identityCheckFlow.value}")
-        appendLine("profiles=${profilesJson()}")
-        appendLine("activeProfile=${_activeProfileIdFlow.value}")
-        appendLine("setup=${_setupCompletedFlow.value}")
-        appendLine("tamper=${_tamperDetectedFlow.value}")
-        // Only while a delay exists, so seals written before this field existed still verify.
-        if (identityHoldBoot != NO_HOLD) appendLine("identityHold=$identityHoldBoot@$identityHoldStart")
-    }
-
-    private fun legacyCanonicalState(): String = buildString {
-        appendLine("locked=${lockedAppsSet.sorted().joinToString(",")}")
-        appendLine("stealthApps=")
-        appendLine("global=${_globalLockEnabledFlow.value}")
-        appendLine("pausedUntil=${_pausedUntilFlow.value}")
-        appendLine("timeout=${_timeoutModeFlow.value.name}")
-        appendLine("stealthGlobal=false")
-        appendLine("intruder=${_intruderDetectionFlow.value}")
-        appendLine("overlay=true")
-        appendLine("selfProtect=true")
-        appendLine("notifShield=${_notificationShieldFlow.value}")
-        appendLine("recentsShield=true")
-        appendLine("identity=${_identityCheckFlow.value}")
-        appendLine("profiles=${profilesJson()}")
-        appendLine("activeProfile=${_activeProfileIdFlow.value}")
-        appendLine("setup=${_setupCompletedFlow.value}")
-        appendLine("tamper=${_tamperDetectedFlow.value}")
-        if (identityHoldBoot != NO_HOLD) appendLine("identityHold=$identityHoldBoot@$identityHoldStart")
-    }
-
-    private fun seal(state: String): String? =
-        HardwareKeyManager.integrityMac(context, state.toByteArray(Charsets.UTF_8))
-            ?.let { Base64.encodeToString(it, Base64.NO_WRAP) }
-
-    private fun verifyIntegrity() {
-        val stored = sharedPrefs.getString(KEY_SEAL, null)
-        stateVersion = sharedPrefs.getLong(KEY_STATE_VERSION, 0L)
-        val anchoredVersion = readAnchoredVersion()
-
-        // Anti-Rollback Check: Stored version cannot regress below anchored high-water mark
-        if (stateVersion < anchoredVersion) {
-            Log.e(TAG, "State rollback detected! Stored version ($stateVersion) < Anchored ($anchoredVersion)")
-            SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_TAMPERED, "State rollback detected: version regressed")
-            enterTamperLockdown()
+    private fun schedulePauseExpiry(durationMillis: Long) {
+        pauseExpiryJob?.cancel()
+        if (durationMillis <= 0L) {
+            pauseExpiryJob = null
             return
         }
-
-        if (stored == null && !HardwareKeyManager.hasIntegrityKey()) {
-            // First run, or upgrade from a build without sealing: establish the seal.
-            writeAll()
-            return
-        }
-        if (stored != null) {
-            val expected = seal(canonicalState(includeRecents = true, includeVersion = true))
-            if (expected == null) {
-                // Keystore unavailable when seal exists: MUST FAIL CLOSED!
-                Log.e(TAG, "Keystore unavailable to verify settings seal: entering tamper lockdown")
-                SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_TAMPERED, "Keystore unavailable during integrity check")
-                enterTamperLockdown()
-                return
-            }
-            if (MessageDigest.isEqual(expected.toByteArray(), stored.toByteArray())) {
-                writeAnchoredVersion(stateVersion)
-                return
-            }
-
-            // Backwards compatibility with previous seals (stealth lines or without recentsShield line or without version line):
-            val legacyExpected1 = seal(legacyCanonicalState())
-            val legacyExpected2 = seal(canonicalState(includeRecents = false, includeVersion = false))
-            val legacyExpected3 = seal(canonicalState(includeRecents = true, includeVersion = false))
-            if ((legacyExpected1 != null && MessageDigest.isEqual(legacyExpected1.toByteArray(), stored.toByteArray())) ||
-                (legacyExpected2 != null && MessageDigest.isEqual(legacyExpected2.toByteArray(), stored.toByteArray())) ||
-                (legacyExpected3 != null && MessageDigest.isEqual(legacyExpected3.toByteArray(), stored.toByteArray()))
-            ) {
-                writeAll()
-                return
+        pauseExpiryJob = mainScope.launch {
+            delay(durationMillis + 50L)
+            if (!_globalLockEnabledFlow.value && pausedUntilElapsed > 0L && SystemClock.elapsedRealtime() >= pausedUntilElapsed) {
+                resumeProtection("Pause expired")
             }
         }
-
-        // A mismatch, or a seal deleted after one was written (the integrity key outlives it).
-        Log.e(TAG, "Settings integrity check failed: configuration was modified outside BioKey")
-        SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_TAMPERED, "Protection re-armed automatically")
-        enterTamperLockdown()
     }
 
-    private fun enterTamperLockdown() {
-        _globalLockEnabledFlow.value = true
-        _pausedUntilFlow.value = 0L
-        _timeoutModeFlow.value = LockTimeoutMode.IMMEDIATE
-        _selfProtectionFlow.value = true
-        _overlayShieldFlow.value = true
-        _notificationShieldFlow.value = true
-        _recentsShieldFlow.value = true
-        _intruderDetectionFlow.value = true
-        _setupCompletedFlow.value = true
-        _tamperDetectedFlow.value = true
-        isTamperLockdown = true
-        sharedPrefs.edit().putBoolean(KEY_TAMPER_LOCKDOWN, true).commit()
-        ProtectionAlerts.tamperDetected(context)
+    private fun defaultProfiles(): List<SecurityProfile> = listOf(
+        SecurityProfile(id = "profile_personal", name = "Personal", iconKey = "shield", isPreset = true),
+        SecurityProfile(id = "profile_finance", name = "Finance", iconKey = "finance", isPreset = true, timeoutMode = LockTimeoutMode.IMMEDIATE),
+        SecurityProfile(id = "profile_social", name = "Social", iconKey = "social", isPreset = true),
+        SecurityProfile(id = "profile_work", name = "Work", iconKey = "work", isPreset = true, timeoutMode = LockTimeoutMode.GRACE_5_MINUTES)
+    )
+
+    private fun aliasesOf(pkg: String): Set<String> =
+        if (pkg in PASSWORD_MANAGER_ALIASES) PASSWORD_MANAGER_ALIASES else setOf(pkg)
+
+    private fun rebuildSnapshot() {
+        val activeId = _activeProfileIdFlow.value
+        val profiles = _profilesFlow.value
+        val globalDefaultTimeout = _timeoutModeFlow.value
+        val active = if (activeId == PROFILE_ALL) null else profiles.firstOrNull { it.id == activeId }
+
+        val lockedSet = HashSet<String>()
+        val timeoutMap = HashMap<String, LockTimeoutMode>()
+
+        for (pkg in lockedAppsSet) {
+            lockedSet.addAll(aliasesOf(pkg))
+        }
+        for (profile in profiles) {
+            for (pkg in profile.packages) {
+                for (alias in aliasesOf(pkg)) {
+                    lockedSet.add(alias)
+                    timeoutMap[alias] = profile.timeoutMode
+                }
+            }
+        }
+        if (active != null) {
+            for (pkg in active.packages) {
+                for (alias in aliasesOf(pkg)) {
+                    timeoutMap[alias] = active.timeoutMode
+                }
+            }
+        }
+
+        snapshot = LookupSnapshot(
+            effectiveLockedPackages = lockedSet,
+            effectiveTimeoutByPackage = timeoutMap,
+            defaultTimeoutMode = globalDefaultTimeout
+        )
     }
 
-    private fun persist() {
-        io.execute(::writeAll)
-    }
-
-    private val writeLock = Any()
-
-    private fun writeAll() = synchronized(writeLock) {
-        stateVersion++
-        val currentLocked = lockedAppsSet.toSet()
-        val currentProfiles = _profilesFlow.value
-        val currentProfilesJson = profilesJson()
-        val activeProfileId = _activeProfileIdFlow.value
-        val globalLock = _globalLockEnabledFlow.value
-        val pausedUntil = _pausedUntilFlow.value
-        val timeoutMode = _timeoutModeFlow.value
-        val intruder = _intruderDetectionFlow.value
-        val autoSort = _autoSortProfilesFlow.value
-        val notifShield = _notificationShieldFlow.value
-        val identity = _identityCheckFlow.value
-        val setupCompleted = _setupCompletedFlow.value
-        val tamperPending = _tamperDetectedFlow.value
-        val holdBoot = identityHoldBoot
-        val holdStart = identityHoldStart
-
-        val canonical = canonicalState(includeRecents = true, includeVersion = true)
-        val mac = seal(canonical)
-        val editor = sharedPrefs.edit()
-            .putLong(KEY_STATE_VERSION, stateVersion)
-            .putStringSet(KEY_LOCKED, currentLocked)
-            .putBoolean(KEY_GLOBAL, globalLock)
-            .putLong(KEY_PAUSED_UNTIL, pausedUntil)
-            .putInt(KEY_PAUSED_BOOT, pausedBootCount)
-            .putLong(KEY_PAUSED_DURATION, pausedDurationMs)
-            .putLong(KEY_PAUSED_AT_WALL, pausedAtWall)
-            .putString(KEY_TIMEOUT, timeoutMode.name)
-            .putBoolean(KEY_INTRUDER, intruder)
-            .putBoolean(KEY_OVERLAY, true)
-            .putBoolean(KEY_SELF_PROTECT, true)
-            .putBoolean(KEY_AUTO_SORT, autoSort)
-            .putBoolean(KEY_NOTIFICATION_SHIELD, notifShield)
-            .putBoolean(KEY_RECENTS_SHIELD, true)
-            .putBoolean(KEY_IDENTITY_CHECK, identity)
-            .putString(KEY_PROFILES_JSON, currentProfilesJson)
-            .putString(KEY_ACTIVE_PROFILE_ID, activeProfileId)
-            .putBoolean(KEY_SETUP_COMPLETED, setupCompleted)
-            .putBoolean(KEY_TAMPER_PENDING, tamperPending)
-            .putInt(KEY_ID_HOLD_BOOT, holdBoot)
-            .putLong(KEY_ID_HOLD_START, holdStart)
-
-        if (mac != null) editor.putString(KEY_SEAL, mac)
-        editor.commit()
-        writeAnchoredVersion(stateVersion)
-    }
-
-    private fun profilesJson(): String =
-        JSONArray().apply {
-            _profilesFlow.value.sortedBy { it.id }.forEach { put(it.toJson()) }
-        }.toString()
-
-    /** Gate for ambient owner sessions. */
-    private fun authorized(action: String): Boolean {
-        if (LockStateTracker.hasActiveOwnerSession()) return true
-        Log.w(TAG, "Refused '$action': no active owner session")
-        return false
-    }
-
-    /** Gate for security downgrades requiring explicit Step-Up auth rather than ambient session. */
-    private fun authorizedForDowngrade(action: String): Boolean {
-        if (LockStateTracker.hasActiveStepUpLease()) return true
-        Log.w(TAG, "Refused dangerous downgrade '$action': no active step-up lease")
-        return false
-    }
-
-    fun acknowledgeTamper() {
-        if (!_tamperDetectedFlow.value && !isTamperLockdown) return
-        _tamperDetectedFlow.value = false
-        isTamperLockdown = false
-        sharedPrefs.edit().putBoolean(KEY_TAMPER_LOCKDOWN, false).apply()
-        persist()
-    }
-
-    // ---------------------------------------------------------------------------------------
-    // Enforcement reads (hot path)
-    // ---------------------------------------------------------------------------------------
-
-    private fun aliasesOf(pkg: String): Set<String> = if (pkg in PASSWORD_MANAGER_ALIASES) PASSWORD_MANAGER_ALIASES else setOf(pkg)
-
-    private fun activeProfile(): SecurityProfile? {
-        val id = _activeProfileIdFlow.value ?: return null
+    fun activeProfile(): SecurityProfile? {
+        val id = _activeProfileIdFlow.value
         if (id == PROFILE_ALL) return null
         return _profilesFlow.value.firstOrNull { it.id == id }
     }
 
-    /** Whether [packageName] is protected right now. When a profile is active, its packages govern. */
-    fun isAppLocked(packageName: String): Boolean {
-        if (isTamperLockdown) {
-            return packageName != context.packageName
-        }
-        if (!isGlobalLockEnabled()) return false
-        val aliases = aliasesOf(packageName)
-        val profile = activeProfile()
-        return if (profile != null) {
-            aliases.any { it in profile.packages }
-        } else {
-            aliases.any { it in lockedAppsSet }
+    /**
+     * Checks whether [packageName] (or any of its credential aliases) is assigned to ANY profile.
+     */
+    fun isAppInAnyProfile(packageName: String): Boolean {
+        val targets = aliasesOf(packageName)
+        return _profilesFlow.value.any { profile ->
+            profile.packages.any { it in targets }
         }
     }
 
-    /** False while protection is paused. Auto-resumes once a timed pause expires. */
-    fun isGlobalLockEnabled(): Boolean {
+    /**
+     * Returns all [SecurityProfile] instances that contain [packageName] or its aliases.
+     */
+    fun getProfilesForApp(packageName: String): List<SecurityProfile> {
+        val targets = aliasesOf(packageName)
+        return _profilesFlow.value.filter { profile ->
+            profile.packages.any { it in targets }
+        }
+    }
+
+    /**
+     * Returns all locked packages across the master locked set and all profiles.
+     */
+    fun getLockedPackages(): Set<String> {
+        val result = HashSet<String>(lockedAppsSet)
+        for (profile in _profilesFlow.value) {
+            result.addAll(profile.packages)
+        }
+        return result
+    }
+
+    /**
+     * Atomically purges [packageName] and its aliases from all profiles.
+     * Returns true if any profile was mutated.
+     */
+    fun removeAppFromAllProfiles(packageName: String): Boolean = synchronized(stateLock) {
+        val targets = aliasesOf(packageName)
+        val prevEffective = snapshot.effectiveLockedPackages
+        var modified = false
+        val current = _profilesFlow.value
+        val updated = current.map { profile ->
+            val remaining = profile.packages.filterNot { it in targets }.toSet()
+            if (remaining.size != profile.packages.size) {
+                modified = true
+                profile.copy(packages = remaining)
+            } else {
+                profile
+            }
+        }
+        if (modified) {
+            _profilesFlow.value = updated
+            autoSortExcludedSet.addAll(targets)
+            rebuildSnapshot()
+            val newlyUnlocked = prevEffective - snapshot.effectiveLockedPackages
+            if (newlyUnlocked.isNotEmpty()) {
+                BioKeyNotificationShieldService.restoreNotificationsForPackages(newlyUnlocked)
+            }
+            persist()
+        }
+        modified
+    }
+
+    /**
+     * Removes an uninstalled package from the master lock set and all profiles.
+     */
+    fun onPackageUninstalled(packageName: String) = synchronized(stateLock) {
+        val targets = aliasesOf(packageName)
+        val removedFromMaster = lockedAppsSet.removeAll(targets)
+        autoSortExcludedSet.removeAll(targets)
+        var profilesModified = false
+        val updatedProfiles = _profilesFlow.value.map { profile ->
+            val remaining = profile.packages.filterNot { it in targets }.toSet()
+            if (remaining.size != profile.packages.size) {
+                profilesModified = true
+                profile.copy(packages = remaining)
+            } else {
+                profile
+            }
+        }
+        if (removedFromMaster || profilesModified) {
+            if (removedFromMaster) _lockedAppsFlow.value = lockedAppsSet.toSet()
+            if (profilesModified) _profilesFlow.value = updatedProfiles
+            rebuildSnapshot()
+            targets.forEach(LockStateTracker::lockPackage)
+            BioKeyNotificationShieldService.restoreNotificationsForPackages(targets)
+            persist()
+        }
+    }
+
+    fun isAppLocked(packageName: String): Boolean {
+        if (!isProtectionActive()) return false
+        return snapshot.effectiveLockedPackages.contains(packageName)
+    }
+
+    fun isGlobalLockEnabled(): Boolean = isProtectionActive()
+
+    fun isProtectionActive(): Boolean {
         if (_globalLockEnabledFlow.value) return true
-        val untilWall = _pausedUntilFlow.value
-        if (untilWall == 0L) return false
-
-        val nowWall = System.currentTimeMillis()
-        val nowElapsed = SystemClock.elapsedRealtime()
-        val currentBoot = Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, -1)
-
-        // 1. Same-boot monotonic check: Immune to wall-clock manipulation
-        if (currentBoot != -1 && pausedBootCount == currentBoot && pausedUntilElapsed > 0L) {
-            if (nowElapsed >= pausedUntilElapsed) {
-                resumeProtection(reason = "Timed pause ended (monotonic)")
-                return true
-            }
-        }
-
-        // 2. Backward clock tampering check:
-        // If wall clock moved backwards before pause start, or remaining duration exceeds initial duration
-        if (pausedDurationMs > 0L) {
-            val remainingWall = untilWall - nowWall
-            if (nowWall < pausedAtWall || remainingWall > pausedDurationMs) {
-                Log.w(TAG, "Clock rollback detected during pause! Re-arming protection immediately.")
-                resumeProtection(reason = "Clock rollback detected")
-                return true
-            }
-        }
-
-        // 3. Wall-clock deadline check
-        if (nowWall >= untilWall || untilWall - nowWall > MAX_TIMED_PAUSE_MS) {
-            resumeProtection(reason = "Timed pause ended (wall-clock)")
+        // Check if pause expired
+        if (pausedUntilElapsed > 0L && SystemClock.elapsedRealtime() >= pausedUntilElapsed) {
+            resumeProtection("Pause expired")
             return true
         }
-
-        // 4. Fail-closed across reboots: A reboot re-arms protection immediately
-        if (currentBoot != -1 && pausedBootCount != -1 && currentBoot != pausedBootCount) {
-            resumeProtection(reason = "Protection re-armed after device reboot")
-            return true
-        }
-
-        // 5. Inconsistent pause state fail-closed: If paused in prefs but boot tracking is lost
-        if (pausedBootCount == -1) {
-            resumeProtection(reason = "Protection re-armed due to unmonitored process restart")
-            return true
-        }
-
         return false
     }
 
-    fun getTimeoutMode(): LockTimeoutMode = _timeoutModeFlow.value
-    fun isOverlayShieldEnabled(): Boolean = true
-    fun isSelfProtectionEnabled(): Boolean = true
-    fun isIntruderDetectionEnabled(): Boolean = _intruderDetectionFlow.value
+    fun getTimeoutMode(packageName: String? = null): LockTimeoutMode {
+        val s = snapshot
+        if (packageName != null) {
+            return s.effectiveTimeoutByPackage[packageName] ?: s.defaultTimeoutMode
+        }
+        return s.defaultTimeoutMode
+    }
+
     fun isNotificationShieldEnabled(): Boolean = _notificationShieldFlow.value
-    fun isRecentsShieldEnabled(): Boolean = true
-    fun isIdentityCheckEnabled(): Boolean = _identityCheckFlow.value
-    fun isAutoSortProfilesEnabled(): Boolean = _autoSortProfilesFlow.value
-    fun isSetupCompleted(): Boolean = _setupCompletedFlow.value
 
-    // ---------------------------------------------------------------------------------------
-    // Locked apps
-    // ---------------------------------------------------------------------------------------
+    fun isAccessibilitySelfProtectionEnabled(): Boolean = _accessibilitySelfProtectionFlow.value
 
-    /** Locking is always allowed. Unlocking requires recent authentication. */
-    fun setAppLock(packageName: String, locked: Boolean): Boolean {
-        if (!locked && !authorized("unlock $packageName")) return false
-        val targets = aliasesOf(packageName)
-        if (locked) lockedAppsSet.addAll(targets) else lockedAppsSet.removeAll(targets)
-        // Either way, no stale session may survive a change to the lock list.
-        targets.forEach(LockStateTracker::lockPackage)
-        _lockedAppsFlow.value = lockedAppsSet.toSet()
-
-        // While a profile is active, the per-app toggle edits that profile too.
-        val activeId = _activeProfileIdFlow.value
-        if (activeId != null && activeId != PROFILE_ALL) {
-            updateProfiles { profiles ->
-                profiles.map { p ->
-                    if (p.id == activeId) p.copy(packages = if (locked) p.packages + targets else p.packages - targets) else p
-                }
-            }
+    fun setAccessibilitySelfProtectionEnabled(enabled: Boolean): Boolean = synchronized(stateLock) {
+        _accessibilitySelfProtectionFlow.value = enabled
+        if (!enabled) {
+            LockStateTracker.clearSelfProtection()
         }
         persist()
-        return true
+        true
     }
 
-    fun setMultipleAppLocks(packages: Collection<String>, locked: Boolean): Boolean {
-        if (!locked && !authorized("bulk unlock")) return false
-        val targets = packages.flatMap(::aliasesOf).toSet()
-        if (locked) lockedAppsSet.addAll(targets) else lockedAppsSet.removeAll(targets)
-        targets.forEach(LockStateTracker::lockPackage)
-        _lockedAppsFlow.value = lockedAppsSet.toSet()
-        persist()
-        return true
-    }
+    fun isSetupCompleted(): Boolean = _setupCompletedFlow.value
 
+    fun getPausedUntil(): Long = _pausedUntilFlow.value
 
-    // ---------------------------------------------------------------------------------------
-    // Global protection
-    // ---------------------------------------------------------------------------------------
-
-    /**
-     * Pauses protection. [durationMillis] = null pauses until the owner resumes it manually.
-     * Requires recent authentication.
-     */
-    fun pauseProtection(durationMillis: Long?): Boolean {
-        if (!authorizedForDowngrade("pause protection")) return false
+    fun pauseProtection(durationMillis: Long?): Boolean = synchronized(stateLock) {
         _globalLockEnabledFlow.value = false
-
         val nowWall = System.currentTimeMillis()
         val nowElapsed = SystemClock.elapsedRealtime()
-        val currentBoot = Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, -1)
 
-        pausedDurationMs = durationMillis ?: 0L
-        pausedAtWall = nowWall
-        pausedBootCount = currentBoot
-        pausedUntilElapsed = if (durationMillis != null) nowElapsed + durationMillis else 0L
-        _pausedUntilFlow.value = durationMillis?.let { nowWall + it } ?: 0L
+        val pausedWall = durationMillis?.let { nowWall + it } ?: 0L
+        pausedUntilElapsed = durationMillis?.let { nowElapsed + it } ?: 0L
+        _pausedUntilFlow.value = pausedWall
+        schedulePauseExpiry(durationMillis ?: 0L)
 
         InstantShieldOverlay.dismiss()
-        val detail = durationMillis?.let { "For ${it / 60_000} min" } ?: "Until resumed manually"
-        SecurityEventLog.record(context, SecurityEventLog.Type.PROTECTION_PAUSED, detail)
+        BioKeyNotificationShieldService.restoreAllSnoozedNotifications()
         persist()
         com.android.BioKey.feature.tile.BioKeyTileService.requestTileUpdate(context)
-        return true
+        true
     }
 
-    fun resumeProtection(reason: String = "Resumed by owner") {
-        val wasPaused = !_globalLockEnabledFlow.value
+    fun resumeProtection(reason: String = "Resumed by owner") = synchronized(stateLock) {
+        pauseExpiryJob?.cancel()
+        pauseExpiryJob = null
         _globalLockEnabledFlow.value = true
         _pausedUntilFlow.value = 0L
         pausedUntilElapsed = 0L
-        pausedBootCount = -1
-        pausedDurationMs = 0L
-        pausedAtWall = 0L
-        // Ends every app session, but not BioKey's own: resuming only strengthens protection, and
-        // the owner may still be in BioKey (where a lost session would silently break step-up).
         LockStateTracker.lockAll(includeOwnApp = false)
-        if (wasPaused) SecurityEventLog.record(context, SecurityEventLog.Type.PROTECTION_RESUMED, reason)
         persist()
         com.android.BioKey.feature.tile.BioKeyTileService.requestTileUpdate(context)
     }
 
-    /** Compatibility wrapper: enabling always works, disabling pauses indefinitely (needs auth). */
-    fun setGlobalLockEnabled(enabled: Boolean): Boolean {
-        if (enabled) {
-            resumeProtection()
-            return true
-        }
-        return pauseProtection(null)
-    }
-
-    // ---------------------------------------------------------------------------------------
-    // Settings
-    // ---------------------------------------------------------------------------------------
-
-    /** Shortening the timeout is always allowed; lengthening it requires recent authentication. */
-    fun setTimeoutMode(mode: LockTimeoutMode): Boolean {
-        if (mode.leniency() > _timeoutModeFlow.value.leniency() && !authorizedForDowngrade("lengthen timeout")) return false
-        val old = _timeoutModeFlow.value
-        _timeoutModeFlow.value = mode
-        SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_MODIFIED, "Timeout changed from ${old.name} to ${mode.name}")
-        persist()
-        return true
-    }
-
-    fun setIntruderDetection(enabled: Boolean): Boolean {
-        if (!enabled && !authorizedForDowngrade("disable intruder detection")) return false
-        _intruderDetectionFlow.value = enabled
-        SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_MODIFIED, "Intruder detection ${if (enabled) "enabled" else "disabled"}")
-        persist()
-        return true
-    }
-
-    fun setNotificationShield(enabled: Boolean): Boolean {
-        if (!enabled && !authorizedForDowngrade("disable notification shield")) return false
-        _notificationShieldFlow.value = enabled
-        SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_MODIFIED, "Notification shield ${if (enabled) "enabled" else "disabled"}")
-        persist()
-        return true
-    }
-
-    /**
-     * Identity Check can only be turned on while a Class 3 biometric is enrolled (otherwise the
-     * owner would lock themselves out); turning it off requires recent authentication.
-     */
-    fun setIdentityCheckEnabled(enabled: Boolean): Boolean {
-        if (enabled) {
-            val status = BiometricManager.from(context).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-            if (status != BiometricManager.BIOMETRIC_SUCCESS) return false
-        } else if (!authorizedForDowngrade("disable Identity Check")) {
-            return false
-        }
-        _identityCheckFlow.value = enabled
-        identityHoldBoot = NO_HOLD
-        identityHoldStart = 0L
-        SecurityEventLog.record(context, SecurityEventLog.Type.SETTINGS_MODIFIED, "Identity Check ${if (enabled) "enabled" else "disabled"}")
-        persist()
-        return true
-    }
-
-    /**
-     * Identity Check's security delay after a biometric change: milliseconds until protected apps
-     * may be unlocked again (0 = over). Starts the delay, logging it and alerting the owner, if
-     * none is running. Measured on the elapsed-realtime clock so changing the time can't shorten
-     * it; a reboot restarts it.
-     */
-    @Synchronized
-    fun identityHoldRemaining(): Long {
-        val now = SystemClock.elapsedRealtime()
-        val boot = Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, -1)
-        if (identityHoldBoot != boot || identityHoldStart > now) {
-            val restarted = identityHoldBoot != NO_HOLD
-            identityHoldBoot = boot
-            identityHoldStart = now
-            persist()
-            SecurityEventLog.record(
-                context,
-                SecurityEventLog.Type.BIOMETRICS_CHANGED,
-                if (restarted) "Identity Check delay restarted after a reboot" else "Identity Check security delay started (30 min)"
-            )
-            val until = DateFormat.getTimeFormat(context).format(Date(System.currentTimeMillis() + IDENTITY_HOLD_MS))
-            ProtectionAlerts.identityCheckDelayStarted(context, until)
-        }
-        return (identityHoldStart + IDENTITY_HOLD_MS - now).coerceAtLeast(0L)
-    }
-
-    /** The owner confirmed the biometric change after the delay. */
-    fun clearIdentityHold() {
-        if (identityHoldBoot == NO_HOLD) return
-        identityHoldBoot = NO_HOLD
-        identityHoldStart = 0L
-        persist()
-    }
-
-    /**
-     * Identity Check can't work with no biometric enrolled. Once the security delay is over and the
-     * owner has confirmed with the device credential, it is turned off (no step-up possible: there
-     * is no biometric left to step up with).
-     */
-    fun endIdentityCheckAfterHold() {
-        if (identityHoldBoot == NO_HOLD || identityHoldRemaining() > 0L) return
-        _identityCheckFlow.value = false
-        identityHoldBoot = NO_HOLD
-        identityHoldStart = 0L
-        SecurityEventLog.record(
-            context,
-            SecurityEventLog.Type.BIOMETRICS_CHANGED,
-            "Identity Check turned off: no biometrics left after the security delay"
-        )
-        persist()
-    }
-
-    fun setAutoSortProfilesEnabled(enabled: Boolean) {
-        _autoSortProfilesFlow.value = enabled
-        persist()
-    }
-
-    /** Setup can only be completed; reopening it would skip BioKey's own lock. */
-    fun setSetupCompleted(completed: Boolean) {
-        if (!completed && !authorized("reset setup")) return
-        _setupCompletedFlow.value = completed
-        persist()
-    }
-
-    /**
-     * Synchronously completes setup and commits SharedPreferences, HMAC signature seal,
-     * and anchored rollback version immediately on the calling thread.
-     * Prevents process-death and false-tamper race conditions upon setup completion.
-     */
-    fun setSetupCompletedSync(completed: Boolean) {
-        if (!completed && !authorized("reset setup")) return
-        _setupCompletedFlow.value = completed
-        writeAll()
-    }
-
-    // ---------------------------------------------------------------------------------------
-    // Profiles
-    // ---------------------------------------------------------------------------------------
-
-    private inline fun updateProfiles(transform: (List<SecurityProfile>) -> List<SecurityProfile>) {
-        synchronized(profileLock) {
-            _profilesFlow.value = transform(_profilesFlow.value)
-        }
-    }
-
-    private fun defaultProfiles() = listOf(
-        SecurityProfile(id = "profile_personal", name = "Personal", iconKey = "shield", isPreset = true),
-        SecurityProfile(id = "profile_finance", name = "Finance", iconKey = "finance", isPreset = true, timeoutMode = LockTimeoutMode.IMMEDIATE),
-        SecurityProfile(id = "profile_social", name = "Social", iconKey = "social", isPreset = true),
-        SecurityProfile(id = "profile_work", name = "Work", iconKey = "work", isPreset = true, timeoutMode = LockTimeoutMode.GRACE_5_MINUTES),
-        SecurityProfile(id = "profile_home", name = "Home", iconKey = "shield", isPreset = true, timeoutMode = LockTimeoutMode.GRACE_15_MINUTES),
-        SecurityProfile(id = "profile_night", name = "Night", iconKey = "privacy", isPreset = true, timeoutMode = LockTimeoutMode.IMMEDIATE)
-    )
-
-    /**
-     * Creates or updates a profile. Apps removed from the *active* profile are unlocked (needs
-     * auth); removing apps from an inactive profile never changes what is locked right now.
-     */
-    fun saveProfile(profile: SecurityProfile): Boolean {
-        val existing = _profilesFlow.value.firstOrNull { it.id == profile.id }
-        val removed = existing?.packages.orEmpty() - profile.packages
-        val isActive = _activeProfileIdFlow.value == profile.id
-        if (isActive && removed.isNotEmpty() && !authorized("remove apps from active profile")) return false
-
-        updateProfiles { profiles ->
-            if (existing == null) profiles + profile else profiles.map { if (it.id == profile.id) profile else it }
-        }
-        if (isActive) {
-            val stillProfiled = _profilesFlow.value.filter { it.id != profile.id }.flatMap { it.packages }.toSet()
-            val toUnlock = removed - stillProfiled
-            if (toUnlock.isNotEmpty()) {
-                lockedAppsSet.removeAll(toUnlock)
-                _lockedAppsFlow.value = lockedAppsSet.toSet()
-            }
-            activateProfile(profile.id)
-        }
-        persist()
-        return true
-    }
-
-    /** Deleting a profile never unlocks anything; unlock apps individually if wanted. */
-    fun deleteProfile(profileId: String) {
-        updateProfiles { profiles -> profiles.filterNot { it.id == profileId } }
-        if (_activeProfileIdFlow.value == profileId) _activeProfileIdFlow.value = PROFILE_ALL
-        persist()
-    }
-
-    fun addAppToProfile(profileId: String, packageName: String) {
-        updateProfiles { profiles ->
-            profiles.map { if (it.id == profileId) it.copy(packages = it.packages + packageName) else it }
-        }
-        setAppLock(packageName, true)
-    }
-
-    fun removeAppFromProfile(profileId: String, packageName: String): Boolean {
-        val profile = _profilesFlow.value.firstOrNull { it.id == profileId } ?: return false
-        return saveProfile(profile.copy(packages = profile.packages - packageName))
-    }
-
-    /**
-     * Applies a profile: locks its apps and applies its timeout settings. Switching to a
-     * profile with a more lenient timeout requires recent authentication.
-     */
-    fun activateProfile(profileId: String?): Boolean {
-        val targetId = profileId ?: PROFILE_ALL
-        val profile = _profilesFlow.value.firstOrNull { it.id == targetId }
-        val targetTimeout = profile?.timeoutMode ?: LockTimeoutMode.fromName(sharedPrefs.getString(KEY_TIMEOUT, null))
-
-        if (targetTimeout.leniency() > _timeoutModeFlow.value.leniency() &&
-            !authorizedForDowngrade("activate lenient profile")
-        ) {
-            return false
-        }
-        _activeProfileIdFlow.value = targetId
-
-        // Wipe lingering sessions so switching profiles never leaks unlock status
-        LockStateTracker.lockAll(includeOwnApp = false)
-
-        if (profile != null) {
-            _timeoutModeFlow.value = profile.timeoutMode
+    fun setAppLock(packageName: String, locked: Boolean): Boolean = synchronized(stateLock) {
+        val targets = aliasesOf(packageName)
+        if (locked) {
+            lockedAppsSet.addAll(targets)
+            autoSortExcludedSet.removeAll(targets)
+            com.android.BioKey.feature.lock.AppInfoCache.preWarm(context, targets)
         } else {
-            // Restore global preferences when returning to "All Apps"
-            _timeoutModeFlow.value = LockTimeoutMode.fromName(sharedPrefs.getString(KEY_TIMEOUT, null))
-        }
-        persist()
-        return true
-    }
-
-    /**
-     * Suggests profile membership for installed apps by name. Only adds apps to profiles; it
-     * never unlocks anything and skips games/media.
-     */
-    fun autoSortAppsIntoProfiles(appList: List<Pair<String, String>>, pm: android.content.pm.PackageManager? = null) {
-        if (!_autoSortProfilesFlow.value || appList.isEmpty() || _profilesFlow.value.isEmpty()) return
-
-        val buckets = mapOf(
-            "finance" to mutableSetOf<String>(),
-            "social" to mutableSetOf(),
-            "work" to mutableSetOf(),
-            "shield" to mutableSetOf()
-        )
-        val financeWords = listOf("bank", "crypto", "wallet", "pay", "cash", "binance", "coinbase", "robinhood", "revolut",
-            "chase", "wellsfargo", "citi", "fidelity", "schwab", "vanguard", "sofi", "metamask", "kraken", "venmo", "paypal",
-            "finance", "invest", "money", "credit")
-        val socialWords = listOf("whatsapp", "telegram", "signal", "instagram", "facebook", "messenger", "twitter", "tiktok",
-            "snapchat", "discord", "reddit", "threads", "bluesky", "wechat", "viber", "jp.naver.line", "tinder", "bumble", "hinge",
-            "messages", "chat", "social")
-        val workWords = listOf("gmail", "outlook", "mail", "slack", "teams", "zoom", "drive", "docs", "sheets", "slides",
-            "notion", "trello", "asana", "jira", "office", "dropbox", "onedrive", "authenticator", "duosecurity", "bitwarden",
-            "1password", "onepassword", "lastpass", "dashlane", "password")
-        val personalWords = listOf("photo", "gallery", "camera", "files", "filemanager", "vault", "notes")
-
-        for ((pkg, label) in appList) {
-            val category = runCatching { pm?.getApplicationInfo(pkg, 0)?.category }.getOrNull() ?: -1
-            if (isExcludedFromSecurity(pkg, label, category)) continue
-            val haystack = "${pkg.lowercase()} ${label.lowercase()}"
-            when {
-                financeWords.any(haystack::contains) -> buckets.getValue("finance") += pkg
-                category == ApplicationInfo.CATEGORY_SOCIAL || socialWords.any(haystack::contains) -> buckets.getValue("social") += pkg
-                category == ApplicationInfo.CATEGORY_PRODUCTIVITY || workWords.any(haystack::contains) -> buckets.getValue("work") += pkg
-                category == ApplicationInfo.CATEGORY_IMAGE || personalWords.any(haystack::contains) -> buckets.getValue("shield") += pkg
-            }
-        }
-
-        var modified = false
-        updateProfiles { profiles ->
-            profiles.map { profile ->
-                val key = when {
-                    profile.id == "profile_finance" || profile.iconKey == "finance" -> "finance"
-                    profile.id == "profile_social" || profile.iconKey == "social" -> "social"
-                    profile.id == "profile_work" || profile.iconKey == "work" -> "work"
-                    profile.id == "profile_personal" || profile.iconKey == "shield" -> "shield"
-                    else -> null
-                }
-                val additions = key?.let { buckets.getValue(it) }.orEmpty()
-                val union = profile.packages + additions
-                if (union != profile.packages) {
-                    modified = true
-                    profile.copy(packages = union)
+            lockedAppsSet.removeAll(targets)
+            autoSortExcludedSet.addAll(targets)
+            // Master revocation: toggling OFF purges app from all profiles
+            val currentProfiles = _profilesFlow.value
+            var profilesModified = false
+            val updatedProfiles = currentProfiles.map { profile ->
+                val remaining = profile.packages.filterNot { it in targets }.toSet()
+                if (remaining.size != profile.packages.size) {
+                    profilesModified = true
+                    profile.copy(packages = remaining)
                 } else {
                     profile
                 }
             }
+            if (profilesModified) {
+                _profilesFlow.value = updatedProfiles
+            }
         }
-        if (!modified) return
-        Log.i(TAG, "Auto-sorted installed apps into profiles")
-        activeProfile()?.let { active ->
-            lockedAppsSet.addAll(active.packages)
-            _lockedAppsFlow.value = lockedAppsSet.toSet()
+        _lockedAppsFlow.value = lockedAppsSet.toSet()
+        rebuildSnapshot()
+        targets.forEach(LockStateTracker::lockPackage)
+        if (!locked) {
+            BioKeyNotificationShieldService.restoreNotificationsForPackages(targets)
         }
         persist()
+        true
+    }
+
+    fun setMultipleAppLocks(packages: Collection<String>, locked: Boolean): Boolean = synchronized(stateLock) {
+        val targets = packages.flatMap(::aliasesOf).toSet()
+        if (locked) {
+            lockedAppsSet.addAll(targets)
+            autoSortExcludedSet.removeAll(targets)
+            com.android.BioKey.feature.lock.AppInfoCache.preWarm(context, targets)
+        } else {
+            lockedAppsSet.removeAll(targets)
+            autoSortExcludedSet.addAll(targets)
+            val currentProfiles = _profilesFlow.value
+            var profilesModified = false
+            val updatedProfiles = currentProfiles.map { profile ->
+                val remaining = profile.packages.filterNot { it in targets }.toSet()
+                if (remaining.size != profile.packages.size) {
+                    profilesModified = true
+                    profile.copy(packages = remaining)
+                } else {
+                    profile
+                }
+            }
+            if (profilesModified) {
+                _profilesFlow.value = updatedProfiles
+            }
+        }
+        _lockedAppsFlow.value = lockedAppsSet.toSet()
+        rebuildSnapshot()
+        targets.forEach(LockStateTracker::lockPackage)
+        if (!locked) {
+            BioKeyNotificationShieldService.restoreNotificationsForPackages(targets)
+        }
+        persist()
+        true
+    }
+
+    fun setGlobalLockEnabled(enabled: Boolean): Boolean {
+        if (enabled) resumeProtection() else pauseProtection(null)
+        return true
+    }
+
+    fun setTimeoutMode(mode: LockTimeoutMode): Boolean = synchronized(stateLock) {
+        _timeoutModeFlow.value = mode
+        rebuildSnapshot()
+        persist()
+        true
+    }
+
+    fun setNotificationShield(enabled: Boolean): Boolean = synchronized(stateLock) {
+        _notificationShieldFlow.value = enabled
+        if (!enabled) {
+            BioKeyNotificationShieldService.restoreAllSnoozedNotifications()
+        }
+        persist()
+        true
+    }
+
+    fun setSetupCompleted(completed: Boolean) = synchronized(stateLock) {
+        _setupCompletedFlow.value = completed
+        persist()
+    }
+
+    fun setSetupCompletedSync(completed: Boolean) = synchronized(stateLock) {
+        _setupCompletedFlow.value = completed
+        sharedPrefs.edit().putBoolean(KEY_SETUP_COMPLETED, completed).commit()
+    }
+
+    fun activateProfile(profileId: String?): Boolean = synchronized(stateLock) {
+        val targetId = profileId ?: PROFILE_ALL
+        if (_activeProfileIdFlow.value == targetId) return@synchronized true
+        _activeProfileIdFlow.value = targetId
+        rebuildSnapshot()
+        persist()
+        true
+    }
+
+    fun saveProfile(profile: SecurityProfile): Boolean = synchronized(stateLock) {
+        val prevEffective = snapshot.effectiveLockedPackages
+        val current = _profilesFlow.value
+        val existingProfile = current.firstOrNull { it.id == profile.id }
+        val expandedPackages = profile.packages.flatMap(::aliasesOf).toSet()
+        val normalizedProfile = profile.copy(packages = expandedPackages)
+
+        val removedFromThisProfile = existingProfile?.packages.orEmpty() - expandedPackages
+        // Ensure packages added to this profile are removed from any other profile
+        val updated = if (existingProfile != null) {
+            current.map { p ->
+                if (p.id == normalizedProfile.id) {
+                    normalizedProfile
+                } else {
+                    val cleaned = p.packages - expandedPackages
+                    if (cleaned.size != p.packages.size) p.copy(packages = cleaned) else p
+                }
+            }
+        } else {
+            current.map { p ->
+                val cleaned = p.packages - expandedPackages
+                if (cleaned.size != p.packages.size) p.copy(packages = cleaned) else p
+            } + normalizedProfile
+        }
+
+        _profilesFlow.value = updated
+        if (expandedPackages.isNotEmpty()) {
+            lockedAppsSet.addAll(expandedPackages)
+            autoSortExcludedSet.removeAll(expandedPackages)
+        }
+        if (removedFromThisProfile.isNotEmpty()) {
+            val stillInOtherProfiles = updated.any { p -> p.packages.any { it in removedFromThisProfile } }
+            if (!stillInOtherProfiles) {
+                lockedAppsSet.removeAll(removedFromThisProfile)
+            }
+            autoSortExcludedSet.addAll(removedFromThisProfile)
+        }
+        _lockedAppsFlow.value = lockedAppsSet.toSet()
+
+        rebuildSnapshot()
+        val nowEffective = snapshot.effectiveLockedPackages
+        val newlyUnlocked = prevEffective - nowEffective
+        val newlyLocked = nowEffective - prevEffective
+        if (newlyLocked.isNotEmpty()) {
+            newlyLocked.forEach(LockStateTracker::lockPackage)
+        }
+        if (newlyUnlocked.isNotEmpty()) {
+            BioKeyNotificationShieldService.restoreNotificationsForPackages(newlyUnlocked)
+        }
+        if (expandedPackages.isNotEmpty()) {
+            com.android.BioKey.feature.lock.AppInfoCache.preWarm(context, expandedPackages)
+        }
+        persist()
+        true
+    }
+
+    fun deleteProfile(profileId: String) = synchronized(stateLock) {
+        val prevEffective = snapshot.effectiveLockedPackages
+        val deletedProfile = _profilesFlow.value.firstOrNull { it.id == profileId }
+        val remainingProfiles = _profilesFlow.value.filterNot { it.id == profileId }
+        _profilesFlow.value = remainingProfiles
+        if (deletedProfile != null) {
+            val removedPkgs = deletedProfile.packages.filter { pkg ->
+                remainingProfiles.none { it.packages.contains(pkg) }
+            }
+            lockedAppsSet.removeAll(removedPkgs.toSet())
+            _lockedAppsFlow.value = lockedAppsSet.toSet()
+        }
+        val wasActive = _activeProfileIdFlow.value == profileId
+        if (wasActive) {
+            _activeProfileIdFlow.value = PROFILE_ALL
+        }
+        rebuildSnapshot()
+        val newlyUnlocked = prevEffective - snapshot.effectiveLockedPackages
+        if (newlyUnlocked.isNotEmpty()) {
+            BioKeyNotificationShieldService.restoreNotificationsForPackages(newlyUnlocked)
+        }
+        persist()
+    }
+
+    fun addAppToProfile(profileId: String, packageName: String) = synchronized(stateLock) {
+        val current = _profilesFlow.value
+        val profile = current.firstOrNull { it.id == profileId } ?: return@synchronized
+        val updatedProfile = profile.copy(packages = profile.packages + aliasesOf(packageName))
+        saveProfile(updatedProfile)
+    }
+
+    fun removeAppFromProfile(profileId: String, packageName: String) = synchronized(stateLock) {
+        val current = _profilesFlow.value
+        val profile = current.firstOrNull { it.id == profileId } ?: return@synchronized
+        val updatedProfile = profile.copy(packages = profile.packages - aliasesOf(packageName))
+        saveProfile(updatedProfile)
+    }
+
+    fun isAutoSortProfilesEnabled(): Boolean = _autoSortProfilesFlow.value
+
+    fun setAutoSortProfilesEnabled(enabled: Boolean) = synchronized(stateLock) {
+        _autoSortProfilesFlow.value = enabled
+        if (enabled) {
+            autoSortExcludedSet.clear()
+        }
+        persist()
+    }
+
+    fun autoSortSinglePackage(pkg: String, label: String, pm: PackageManager? = null) {
+        if (!_autoSortProfilesFlow.value) return
+        autoSortAppsIntoProfiles(listOf(pkg to label), pm, force = false)
+    }
+
+    fun autoSortAppsIntoProfiles(
+        appList: List<Pair<String, String>>,
+        pm: PackageManager? = null,
+        force: Boolean = false
+    ) = synchronized(stateLock) {
+        if (!_autoSortProfilesFlow.value || appList.isEmpty() || _profilesFlow.value.isEmpty()) return@synchronized
+
+        val financeWords = listOf(
+            "bank", "crypto", "wallet", "pay", "cash", "venmo", "paypal", "zelle", "chime", "wise",
+            "revolut", "robinhood", "coinbase", "binance", "kraken", "metamask", "trustwallet",
+            "phantom", "ledger", "fidelity", "vanguard", "schwab", "etrade", "webull", "acorns",
+            "stash", "mint", "ynab", "credit", "karma", "experian", "equifax", "transunion",
+            "amex", "chase", "wellsfargo", "citi", "capitalone", "discover", "barclays", "hsbc",
+            "santander", "ally", "sofi", "affirm", "klarna", "afterpay", "stripe", "square",
+            "turbotax", "irs", "finance", "invest", "trading", "stock", "money"
+        )
+        val socialWords = listOf(
+            "whatsapp", "telegram", "signal", "messenger", "instagram", "facebook", "threads",
+            "twitter", "x.android", "snapchat", "tiktok", "musically", "discord", "reddit",
+            "pinterest", "tumblr", "linkedin", "mastodon", "bluesky", "wechat", "line", "viber",
+            "kakaotalk", "hinge", "tinder", "bumble", "grindr", "badoo", "okcupid", "match",
+            "messages", "messaging", "chat"
+        )
+        val workWords = listOf(
+            "authenticator", "authy", "2fas", "totp", "bitwarden", "1password", "dashlane",
+            "lastpass", "keepass", "enpass", "nordpass", "protonpass", "roboform", "keeper",
+            "yubico", "okta", "duo", "passwordmanager", "credentialmanager",
+            "slack", "teams", "zoom", "webex", "meet", "gmail", "outlook", "protonmail",
+            "fastmail", "spark", "superhuman", "thunderbird", "mail", "email", "calendar",
+            "drive", "docs", "sheets", "slides", "onedrive", "dropbox", "notion", "obsidian",
+            "evernote", "onenote", "trello", "asana", "jira", "confluence", "linear", "monday",
+            "clickup", "basecamp", "github", "gitlab", "bitbucket", "salesforce", "hubspot",
+            "zendesk", "workday", "adp", "gusto", "quickbooks", "xero", "freshbooks",
+            "docusign", "acrobat", "camscanner", "office", "word", "excel", "powerpoint"
+        )
+        val personalWords = listOf(
+            "photo", "gallery", "camera", "album", "files", "filemanager", "documents",
+            "downloads", "explorer", "solidexplorer", "mixplorer", "vault", "private", "secret",
+            "locker", "notes", "keep", "diary", "journal", "dayone", "health", "garmin", "strava",
+            "flo", "clue", "myfitnesspal", "medical", "patient", "mychart", "pharmacy",
+            "walgreens", "cvs", "chrome", "firefox", "brave", "duckduckgo", "opera", "vivaldi",
+            "edge", "tor", "vpn", "protonvpn", "nordvpn", "expressvpn", "mullvad", "tailscale", "wireguard"
+        )
+
+        val currentProfiles = _profilesFlow.value
+        val alreadyAssigned = HashSet<String>()
+        for (p in currentProfiles) {
+            alreadyAssigned.addAll(p.packages)
+        }
+
+        val buckets = mapOf(
+            "finance" to mutableSetOf<String>(),
+            "social" to mutableSetOf<String>(),
+            "work" to mutableSetOf<String>(),
+            "shield" to mutableSetOf<String>()
+        )
+
+        val uniqueApps = appList.distinctBy { it.first }
+        for ((pkg, label) in uniqueApps) {
+            if (pkg == context.packageName) continue
+            val aliases = aliasesOf(pkg)
+            if (!force && aliases.any { it in autoSortExcludedSet }) continue
+            if (aliases.any { it in alreadyAssigned }) continue
+
+            val category = runCatching { pm?.getApplicationInfo(pkg, 0)?.category }.getOrNull() ?: -1
+            val haystack = "${pkg.lowercase()} ${label.lowercase()}"
+            val targetBucket = when {
+                financeWords.any(haystack::contains) -> "finance"
+                category == ApplicationInfo.CATEGORY_SOCIAL || socialWords.any(haystack::contains) -> "social"
+                category == ApplicationInfo.CATEGORY_PRODUCTIVITY || workWords.any(haystack::contains) -> "work"
+                category == ApplicationInfo.CATEGORY_IMAGE || personalWords.any(haystack::contains) -> "shield"
+                else -> null
+            }
+            if (targetBucket != null) {
+                buckets.getValue(targetBucket).addAll(aliases)
+                alreadyAssigned.addAll(aliases)
+            }
+        }
+
+        var modified = false
+        val seenAcrossProfiles = HashSet<String>()
+        val updated = currentProfiles.map { profile ->
+            val key = if (profile.isPreset) {
+                when (profile.id) {
+                    "profile_finance" -> "finance"
+                    "profile_social" -> "social"
+                    "profile_work" -> "work"
+                    "profile_personal" -> "shield"
+                    else -> null
+                }
+            } else null
+            val additions = key?.let { buckets[it] }.orEmpty()
+            val combined = (profile.packages + additions)
+                .flatMap(::aliasesOf)
+                .filter { seenAcrossProfiles.add(it) }
+                .toSet()
+            if (combined != profile.packages) {
+                modified = true
+                profile.copy(packages = combined)
+            } else {
+                profile
+            }
+        }
+
+        var lockedChanged = false
+        for (profile in updated) {
+            for (pkg in profile.packages) {
+                if (lockedAppsSet.addAll(aliasesOf(pkg))) {
+                    lockedChanged = true
+                }
+            }
+        }
+
+        if (modified || lockedChanged) {
+            if (modified) _profilesFlow.value = updated
+            if (lockedChanged) _lockedAppsFlow.value = lockedAppsSet.toSet()
+            rebuildSnapshot()
+            com.android.BioKey.feature.lock.AppInfoCache.preWarm(context, getLockedPackages())
+            persist()
+        }
+    }
+
+    private fun persist() {
+        io.execute {
+            synchronized(stateLock) {
+                val currentLocked = lockedAppsSet.toSet()
+                val currentExcluded = autoSortExcludedSet.toSet()
+                val global = _globalLockEnabledFlow.value
+                val pausedWall = _pausedUntilFlow.value
+                val timeout = _timeoutModeFlow.value.name
+                val notif = _notificationShieldFlow.value
+                val selfProt = _accessibilitySelfProtectionFlow.value
+                val setup = _setupCompletedFlow.value
+                val profilesJson = JSONArray().apply {
+                    _profilesFlow.value.forEach { put(it.toJson()) }
+                }.toString()
+                val activeProfileId = _activeProfileIdFlow.value
+                val autoSort = _autoSortProfilesFlow.value
+
+                sharedPrefs.edit()
+                    .putStringSet(KEY_LOCKED, currentLocked)
+                    .putStringSet(KEY_AUTO_SORT_EXCLUDED, currentExcluded)
+                    .putBoolean(KEY_GLOBAL, global)
+                    .putLong(KEY_PAUSED_UNTIL, pausedWall)
+                    .putString(KEY_TIMEOUT, timeout)
+                    .putBoolean(KEY_NOTIFICATION_SHIELD, notif)
+                    .putBoolean(KEY_SELF_PROTECTION, selfProt)
+                    .putBoolean(KEY_SETUP_COMPLETED, setup)
+                    .putString(KEY_PROFILES_JSON, profilesJson)
+                    .putString(KEY_ACTIVE_PROFILE_ID, activeProfileId)
+                    .putBoolean(KEY_AUTO_SORT, autoSort)
+                    .apply()
+            }
+        }
     }
 }

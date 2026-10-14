@@ -1,77 +1,54 @@
 package com.android.BioKey.feature.main
 
-import android.Manifest
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.os.Build
-import android.provider.Settings
-import android.text.format.DateUtils
+import android.os.PowerManager
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.biometric.BiometricManager
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.BorderStroke
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import android.os.PowerManager
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.LockClock
-import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.NotificationsOff
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -79,922 +56,426 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.BioKey.core.data.LockTimeoutMode
-import com.android.BioKey.core.security.HardwareKeyManager
-import com.android.BioKey.core.security.SecurityEventLog
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
-import com.android.BioKey.feature.lock.DeviceAdminHelper
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 import com.android.BioKey.ui.theme.ExpressiveTokens
 import com.android.BioKey.ui.theme.springPress
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
- * BioKey settings. Turning anything *on* takes effect immediately; anything that weakens
- * protection is attempted first and, when [SecurityVault] refuses it for lack of a recent
- * authentication, retried after a step-up prompt (see [StepUpAuth]).
+ * Pure Google Native Settings for BioKey.
+ * Clean, seamless flat rows without squircle container boxes.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreenExpressive(
-    onBack: (() -> Unit)? = null,
-    onOpenIntruderVault: (() -> Unit)? = null,
-    onOpenPermissions: (() -> Unit)? = null
+    onNavigateBack: () -> Unit
 ) {
+    BackHandler(onBack = onNavigateBack)
+
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val vault = remember { SecurityVault.getInstance(context) }
-    val stepUp = LocalStepUpAuth.current
 
     val globalLockEnabled by vault.globalLockEnabledFlow.collectAsStateWithLifecycle()
+    val pausedUntil by vault.pausedUntilFlow.collectAsStateWithLifecycle()
     val timeoutMode by vault.timeoutModeFlow.collectAsStateWithLifecycle()
-    val intruderDetection by vault.intruderDetectionFlow.collectAsStateWithLifecycle()
+    val selfProtectionEnabled by vault.accessibilitySelfProtectionFlow.collectAsStateWithLifecycle()
+    val notificationShieldEnabled by vault.notificationShieldFlow.collectAsStateWithLifecycle()
     val autoSortProfiles by vault.autoSortProfilesFlow.collectAsStateWithLifecycle()
-    val notificationShield by vault.notificationShieldFlow.collectAsStateWithLifecycle()
-    val identityCheck by vault.identityCheckFlow.collectAsStateWithLifecycle()
-    val eventLogVersion by SecurityEventLog.version.collectAsStateWithLifecycle()
+
+    var a11yActive by remember { mutableStateOf(BioKeyAccessibilityService.isServiceEnabled(context)) }
+    var notifListenerActive by remember { mutableStateOf(BioKeyNotificationShieldService.isNotificationAccessGranted(context)) }
+    var isBatteryExempt by remember {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        mutableStateOf(pm?.isIgnoringBatteryOptimizations(context.packageName) ?: false)
+    }
 
     var showTimeoutSheet by remember { mutableStateOf(false) }
-    var showPauseDialog by remember { mutableStateOf(false) }
-    var showEventLog by remember { mutableStateOf(false) }
-    var confirmRotate by remember { mutableStateOf(false) }
-    var reKeyProof by remember { mutableStateOf<HardwareKeyManager.ReKeyProof?>(null) }
 
-    // Permission-dependent state, refreshed whenever the user returns from system settings.
-    var a11yActive by remember { mutableStateOf(BioKeyAccessibilityService.isServiceEnabled(context)) }
-    var adminActive by remember { mutableStateOf(DeviceAdminHelper.isAdminActive(context)) }
-    var hasCamera by remember { mutableStateOf(false) }
-    var notificationAccess by remember { mutableStateOf(false) }
-    var canPostNotifications by remember { mutableStateOf(false) }
-    var isIgnoringBattery by remember {
-        mutableStateOf(
-            (context.getSystemService(Context.POWER_SERVICE) as? PowerManager)
-                ?.isIgnoringBatteryOptimizations(context.packageName) == true
-        )
-    }
     LifecycleResumeEffect(Unit) {
         a11yActive = BioKeyAccessibilityService.isServiceEnabled(context)
-        adminActive = DeviceAdminHelper.isAdminActive(context)
-        hasCamera = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-        notificationAccess = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
-        canPostNotifications = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-        isIgnoringBattery = (context.getSystemService(Context.POWER_SERVICE) as? PowerManager)
-            ?.isIgnoringBatteryOptimizations(context.packageName) == true
+        notifListenerActive = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        isBatteryExempt = pm?.isIgnoringBatteryOptimizations(context.packageName) ?: false
         onPauseOrDispose { }
     }
 
-    val diagnostics by produceState<HardwareKeyManager.KeystoreDiagnostics?>(null, reKeyProof) {
-        value = withContext(Dispatchers.IO) { HardwareKeyManager.getDiagnostics(context) }
-    }
-
-    /** Try the change; if the vault refuses it (protection-reducing), authenticate and retry. */
-    fun weaken(reason: String, change: () -> Boolean) {
-        if (!change()) stepUp.require(reason) { change() }
-    }
-
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        hasCamera = granted
-        if (granted) {
-            vault.setIntruderDetection(true)
-        } else {
-            Toast.makeText(context, "Intruder photos need camera access", Toast.LENGTH_SHORT).show()
-        }
-    }
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        canPostNotifications = granted
-        if (granted && !notificationAccess) {
-            context.openSystemSettings(BioKeyNotificationShieldService.getNotificationSettingsIntent(context))
-        }
-    }
+    val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .rejectObscuredTouches()
             .background(MaterialTheme.colorScheme.surface)
+            .statusBarsPadding()
     ) {
-        if (onBack != null) {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Settings",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+        TopAppBar(
+            title = {
+                Text(
+                    text = "Settings",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+            },
+            navigationIcon = {
+                IconButton(onClick = onNavigateBack, modifier = Modifier.springPress()) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back"
                     )
-                },
-                navigationIcon = {
-                    Surface(
-                        onClick = onBack,
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        modifier = Modifier
-                            .padding(start = 12.dp)
-                            .size(40.dp)
-                            .springPress()
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
-                                tint = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.surface,
+                titleContentColor = MaterialTheme.colorScheme.onSurface,
+                navigationIconContentColor = MaterialTheme.colorScheme.onSurface
             )
-        }
+        )
 
         LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 8.dp, bottom = 36.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 32.dp + navBottom)
         ) {
+            // Section 1: APP LOCK
             item {
-                StatusHero(
-                    protecting = globalLockEnabled && a11yActive,
-                    title = when {
-                        !a11yActive -> "App lock service is off"
-                        !globalLockEnabled -> "Protection paused"
-                        else -> "Protection active"
-                    },
-                    subtitle = when {
-                        !a11yActive -> "Locked apps open without a check until the service is turned back on"
-                        !globalLockEnabled -> "Locked apps open without authentication"
-                        else -> "Locked apps require your fingerprint, face, or screen lock"
-                    },
-                    actionText = when {
-                        !a11yActive -> "Turn on"
-                        !globalLockEnabled -> "Resume"
-                        else -> null
-                    },
-                    onAction = {
-                        if (!a11yActive) {
-                            context.openSystemSettings(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                SettingsSectionHeader("APP LOCK")
+                val appLockSubtitle = when {
+                    !a11yActive -> "Requires Accessibility service • Tap to enable"
+                    globalLockEnabled -> "Require biometric or screen lock to open protected apps"
+                    pausedUntil > System.currentTimeMillis() -> {
+                        val timeText = android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil))
+                        "Protection paused until $timeText • Tap to resume"
+                    }
+                    else -> "Protection is currently paused • Tap to resume"
+                }
+                SettingSwitchRow(
+                    icon = Icons.Default.Shield,
+                    title = "App lock",
+                    subtitle = appLockSubtitle,
+                    checked = globalLockEnabled && a11yActive,
+                    onCheckedChange = { enabled ->
+                        if (enabled && !a11yActive) {
+                            vault.setGlobalLockEnabled(true)
+                            IntentNavigationHelper.openAccessibilitySettings(context)
                         } else {
-                            vault.resumeProtection()
+                            vault.setGlobalLockEnabled(enabled)
                         }
                     }
                 )
-            }
-
-            item { SectionHeaderExpressive("PROTECTION") }
-
-            item {
-                IdentityCheckCardExpressive(
-                    checked = identityCheck,
-                    keyStorage = diagnostics?.securityLevel,
-                    onCheckedChange = { checked ->
-                        ExpressiveTokens.triggerHaptic(context, ExpressiveTokens.HapticFeedbackStyle.TOGGLE_ON)
-                        if (checked) {
-                            val status = BiometricManager.from(context).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-                            if (status != BiometricManager.BIOMETRIC_SUCCESS) {
-                                Toast.makeText(
-                                    context,
-                                    "Enroll a fingerprint or face (Class 3) in system settings first",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            } else {
-                                vault.setIdentityCheckEnabled(true)
-                            }
-                        } else {
-                            weaken("Turn off Identity Check") { vault.setIdentityCheckEnabled(false) }
-                        }
-                    }
+                HorizontalDivider(
+                    modifier = Modifier.padding(start = 56.dp, end = 16.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
                 )
-            }
-
-            item {
-                SettingsGroup {
-                    DynamicSettingRowExpressive(
-                        icon = Icons.Default.Shield,
-                        title = "Protection",
-                        description = "Require authentication to open locked apps",
-                        checked = globalLockEnabled,
-                        onCheckedChange = { enabled ->
-                            if (enabled) vault.resumeProtection() else showPauseDialog = true
-                        }
-                    )
-                    GroupDivider()
-                    if (adminActive) {
-                        NavigationRow(
-                            icon = Icons.Default.AdminPanelSettings,
-                            title = "Self-protection active",
-                            description = "Guarding BioKey against uninstallation with Device Admin and Accessibility",
-                            onClick = { DeviceAdminHelper.launchActivation(context) }
-                        )
+                SettingClickableRow(
+                    icon = Icons.Default.LockClock,
+                    title = "Re-lock delay",
+                    subtitle = when (timeoutMode) {
+                        LockTimeoutMode.IMMEDIATE -> "Immediately upon leaving"
+                        LockTimeoutMode.ON_SCREEN_OFF -> "When screen turns off"
+                        LockTimeoutMode.GRACE_30_SECONDS -> "30 seconds"
+                        LockTimeoutMode.GRACE_1_MINUTE -> "1 minute"
+                        LockTimeoutMode.GRACE_5_MINUTES -> "5 minutes"
+                        LockTimeoutMode.GRACE_15_MINUTES -> "15 minutes"
+                    },
+                    onClick = { showTimeoutSheet = true }
+                )
+                HorizontalDivider(
+                    modifier = Modifier.padding(start = 56.dp, end = 16.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
+                )
+                SettingSwitchRow(
+                    icon = Icons.Default.AdminPanelSettings,
+                    title = "Accessibility self-protection",
+                    subtitle = if (!a11yActive) {
+                        "Requires Accessibility service • Tap to enable"
+                    } else if (selfProtectionEnabled) {
+                        "Guarding BioKey against uninstallation or tampering in system settings"
                     } else {
-                        NavigationRow(
-                            icon = Icons.Default.AdminPanelSettings,
-                            title = "Activate uninstall protection",
-                            description = "Device admin is currently disabled. Tap to activate Device Admin protection.",
-                            onClick = { DeviceAdminHelper.launchActivation(context) }
-                        )
-                    }
-                    GroupDivider()
-                    NavigationRow(
-                        icon = Icons.Default.LockClock,
-                        title = "Re-lock",
-                        description = timeoutMode.title,
-                        onClick = { showTimeoutSheet = true }
-                    )
-                    GroupDivider()
-                    NavigationRow(
-                        icon = Icons.Default.BatteryChargingFull,
-                        title = if (isIgnoringBattery) "Background reliability active" else "Allow background activity",
-                        description = if (isIgnoringBattery) {
-                            "Unrestricted battery usage enabled for real-time background protection"
+                        "Self-protection in system settings is disabled"
+                    },
+                    checked = selfProtectionEnabled && a11yActive,
+                    onCheckedChange = { enabled ->
+                        if (enabled && !a11yActive) {
+                            vault.setAccessibilitySelfProtectionEnabled(true)
+                            IntentNavigationHelper.openAccessibilitySettings(context)
                         } else {
-                            "Tap to exempt BioKey from battery restrictions so protection never sleeps"
-                        },
-                        onClick = {
-                            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                data = Uri.parse("package:${context.packageName}")
-                            }
-                            context.openSystemSettings(intent)
+                            vault.setAccessibilitySelfProtectionEnabled(enabled)
                         }
-                    )
-                }
+                    }
+                )
+                Spacer(modifier = Modifier.height(20.dp))
             }
 
-            item { SectionHeaderExpressive("PRIVACY") }
-
+            // Section 2: PRIVACY
             item {
-                SettingsGroup {
-                    DynamicSettingRowExpressive(
-                        icon = Icons.Default.NotificationsOff,
-                        title = "Notification shield",
-                        description = if (notificationAccess) {
-                            "Hides notifications from locked apps until you unlock them"
+                SettingsSectionHeader("PRIVACY")
+                SettingSwitchRow(
+                    icon = Icons.Default.NotificationsOff,
+                    title = "Notification shield",
+                    subtitle = if (!notifListenerActive) {
+                        "Requires Notification access • Tap to grant permission"
+                    } else if (notificationShieldEnabled) {
+                        "Hide notification content for locked apps until unlocked"
+                    } else {
+                        "Notification content is shown normally"
+                    },
+                    checked = notificationShieldEnabled && notifListenerActive,
+                    onCheckedChange = { enabled ->
+                        if (enabled && !notifListenerActive) {
+                            vault.setNotificationShield(true)
+                            IntentNavigationHelper.openNotificationListenerSettings(context)
+                            Toast.makeText(context, "Turn on notification access for BioKey", Toast.LENGTH_SHORT).show()
                         } else {
-                            "Needs notification access"
-                        },
-                        checked = notificationShield && notificationAccess,
-                        onCheckedChange = { checked ->
-                            if (checked) {
-                                vault.setNotificationShield(true)
-                                when {
-                                    !canPostNotifications && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
-                                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                    !notificationAccess ->
-                                        context.openSystemSettings(BioKeyNotificationShieldService.getNotificationSettingsIntent(context))
-                                }
-                            } else {
-                                weaken("Turn off notification shield") { vault.setNotificationShield(false) }
-                            }
+                            vault.setNotificationShield(enabled)
                         }
-                    )
-                    GroupDivider()
-                    DynamicSettingRowExpressive(
-                        icon = Icons.Default.RemoveRedEye,
-                        title = "Intruder photos",
-                        description = "Takes an encrypted front-camera photo after two failed unlocks",
-                        checked = intruderDetection && hasCamera,
-                        onCheckedChange = { checked ->
-                            when {
-                                checked && !hasCamera -> cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                                checked -> vault.setIntruderDetection(true)
-                                else -> weaken("Turn off intruder photos") { vault.setIntruderDetection(false) }
-                            }
-                        }
-                    )
-                    if (onOpenIntruderVault != null) {
-                        GroupDivider()
-                        NavigationRow(
-                            icon = Icons.Default.Shield,
-                            title = "View intruder photos",
-                            description = "Decrypted on demand, only inside BioKey",
-                            onClick = onOpenIntruderVault
-                        )
                     }
-                }
+                )
+                Spacer(modifier = Modifier.height(20.dp))
             }
 
-            item { SectionHeaderExpressive("ORGANIZATION") }
-
+            // Section 3: SYSTEM & PREFERENCES
             item {
-                SettingsGroup {
-                    DynamicSettingRowExpressive(
-                        icon = Icons.Default.Tune,
-                        title = "Profile Presorted Applications",
-                        description = "Automatically presorts installed applications into finance, social, and work profiles.",
-                        checked = autoSortProfiles,
-                        onCheckedChange = { checked ->
-                            vault.setAutoSortProfilesEnabled(checked)
-                            if (checked) {
-                                scope.launch(Dispatchers.IO) {
-                                    val pm = context.packageManager
-                                    val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-                                    val apps = pm.queryIntentActivities(launcher, 0)
-                                        .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
-                                        .filter { it.first != context.packageName }
-                                        .distinctBy { it.first }
-                                    vault.autoSortAppsIntoProfiles(apps, pm)
-                                }
-                            }
-                        }
-                    )
-                }
-            }
-
-            item { SectionHeaderExpressive("SECURITY") }
-
-            item {
-                SettingsGroup {
-                    NavigationRow(
-                        icon = Icons.Default.History,
-                        title = "Security log",
-                        description = "Pauses, tampering, failed unlocks, and blocked attempts to switch BioKey off",
-                        onClick = { showEventLog = true }
-                    )
-                    if (onOpenPermissions != null) {
-                        GroupDivider()
-                        NavigationRow(
-                            icon = Icons.Default.AdminPanelSettings,
-                            title = "Permissions",
-                            description = "Protection alerts, camera, notification access",
-                            onClick = onOpenPermissions
-                        )
+                SettingsSectionHeader("SYSTEM & PREFERENCES")
+                SettingClickableRow(
+                    icon = Icons.Default.Security,
+                    title = "App lock service",
+                    subtitle = if (a11yActive) "Active" else "Disabled • Tap to enable in Accessibility",
+                    onClick = {
+                        IntentNavigationHelper.openAccessibilitySettings(context)
                     }
-                }
-            }
-
-            item {
-                KeyStorageCard(
-                    diagnostics = diagnostics,
-                    onRotate = { confirmRotate = true }
+                )
+                HorizontalDivider(
+                    modifier = Modifier.padding(start = 56.dp, end = 16.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
+                )
+                SettingClickableRow(
+                    icon = Icons.Default.BatteryChargingFull,
+                    title = "Background reliability",
+                    subtitle = if (isBatteryExempt) "Unrestricted background usage enabled" else "Optimized • Tap to allow unrestricted background execution",
+                    onClick = {
+                        IntentNavigationHelper.openBatteryOptimization(context)
+                    }
+                )
+                HorizontalDivider(
+                    modifier = Modifier.padding(start = 56.dp, end = 16.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
+                )
+                SettingSwitchRow(
+                    icon = Icons.Default.Tune,
+                    title = "Profile Presorted Applications",
+                    subtitle = "Automatically presorts installed applications into finance, social, and work profiles",
+                    checked = autoSortProfiles,
+                    onCheckedChange = { enabled ->
+                        vault.setAutoSortProfilesEnabled(enabled)
+                    }
                 )
             }
         }
-    }
-
-    if (showPauseDialog) {
-        PauseProtectionDialog(
-            onPause = { duration ->
-                showPauseDialog = false
-                stepUp.require("Pause protection") { vault.pauseProtection(duration) }
-            },
-            onDismiss = { showPauseDialog = false }
-        )
     }
 
     if (showTimeoutSheet) {
         TimeoutSheet(
-            current = timeoutMode,
-            onSelect = { mode ->
+            currentMode = timeoutMode,
+            onSelectMode = { mode ->
+                vault.setTimeoutMode(mode)
                 showTimeoutSheet = false
-                weaken("Lengthen re-lock delay") { vault.setTimeoutMode(mode) }
             },
             onDismiss = { showTimeoutSheet = false }
         )
     }
-
-    if (showEventLog) {
-        EventLogSheet(
-            version = eventLogVersion,
-            onClear = {
-                stepUp.require("Clear security log") { SecurityEventLog.clear(context) }
-            },
-            onDismiss = { showEventLog = false }
-        )
-    }
-
-    if (confirmRotate) {
-        AlertDialog(
-            onDismissRequest = { confirmRotate = false },
-            title = { Text("Rotate authentication keys?") },
-            text = {
-                Text(
-                    "BioKey deletes its unlock keys and creates new ones in the Android Keystore. " +
-                        "Intruder photos and the security log stay readable. Use this if you think " +
-                        "someone else enrolled a fingerprint or face on this device."
-                )
-            },
-            confirmButton = {
-                Button(onClick = {
-                    confirmRotate = false
-                    stepUp.require("Rotate keys") {
-                        scope.launch {
-                            reKeyProof = withContext(Dispatchers.IO) { HardwareKeyManager.performReKeyWithProof(context) }
-                        }
-                    }
-                }) { Text("Rotate") }
-            },
-            dismissButton = { TextButton(onClick = { confirmRotate = false }) { Text("Cancel") } },
-            shape = ExpressiveTokens.Shapes.BentoCardLarge
-        )
-    }
-
-    reKeyProof?.let { proof ->
-        AlertDialog(
-            onDismissRequest = { reKeyProof = null },
-            icon = { Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-            title = { Text("Keys rotated") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Stored in: ${proof.securityLevel}", style = MaterialTheme.typography.bodyMedium)
-                    Text("Created: ${proof.creationTimestamp}", style = MaterialTheme.typography.bodySmall)
-                    Text(
-                        text = "Fingerprint: ${proof.verificationHash}",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            },
-            confirmButton = { Button(onClick = { reKeyProof = null }) { Text("Done") } },
-            shape = ExpressiveTokens.Shapes.BentoCardLarge
-        )
-    }
 }
 
 @Composable
-private fun StatusHero(
-    protecting: Boolean,
-    title: String,
-    subtitle: String,
-    actionText: String?,
-    onAction: () -> Unit
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = ExpressiveTokens.Shapes.BentoCardLarge,
-        color = if (protecting) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(18.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = if (protecting) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,
-                modifier = Modifier.size(46.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = if (protecting) Icons.Default.CheckCircle else Icons.Default.Warning,
-                        contentDescription = null,
-                        tint = if (protecting) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
-                        modifier = Modifier.size(26.dp)
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if (actionText != null) {
-                Spacer(modifier = Modifier.width(8.dp))
-                Button(
-                    onClick = onAction,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                        contentColor = MaterialTheme.colorScheme.onError
-                    ),
-                    shape = CircleShape,
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                ) { Text(actionText, fontWeight = FontWeight.Bold) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SettingsGroup(content: @Composable () -> Unit) {
-    Surface(
-        shape = ExpressiveTokens.Shapes.BentoCardLarge,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column { content() }
-    }
-}
-
-@Composable
-private fun GroupDivider() {
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
-}
-
-@Composable
-private fun SectionHeaderExpressive(text: String) {
+private fun SettingsSectionHeader(text: String) {
     Text(
         text = text,
-        style = MaterialTheme.typography.labelSmall.copy(
-            letterSpacing = 1.2.sp,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.ExtraBold
-        ),
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.Bold,
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+        modifier = Modifier.padding(start = 20.dp, top = 8.dp, bottom = 6.dp)
     )
 }
 
 @Composable
-private fun RowIcon(icon: ImageVector, highlighted: Boolean) {
-    Surface(
-        shape = CircleShape,
-        color = if (highlighted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
-        modifier = Modifier.size(40.dp)
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = if (highlighted) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun DynamicSettingRowExpressive(
+private fun SettingSwitchRow(
     icon: ImageVector,
     title: String,
-    description: String,
+    subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
-    val toggle = { value: Boolean ->
-        ExpressiveTokens.triggerHaptic(
-            context,
-            if (value) ExpressiveTokens.HapticFeedbackStyle.TOGGLE_ON else ExpressiveTokens.HapticFeedbackStyle.TOGGLE_OFF
-        )
-        onCheckedChange(value)
-    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { toggle(!checked) }
-            .padding(16.dp),
+            .toggleable(
+                value = checked,
+                role = Role.Switch,
+                onValueChange = { next ->
+                    ExpressiveTokens.triggerHaptic(
+                        context,
+                        if (next) ExpressiveTokens.HapticFeedbackStyle.TOGGLE_ON
+                        else ExpressiveTokens.HapticFeedbackStyle.TOGGLE_OFF
+                    )
+                    onCheckedChange(next)
+                }
+            )
+            .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        RowIcon(icon, highlighted = checked)
-        Spacer(modifier = Modifier.width(14.dp))
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
             Spacer(modifier = Modifier.height(2.dp))
-            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
-        Spacer(modifier = Modifier.width(8.dp))
+        Spacer(modifier = Modifier.width(12.dp))
         Switch(
             checked = checked,
-            onCheckedChange = toggle,
+            onCheckedChange = null,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                uncheckedThumbColor = MaterialTheme.colorScheme.outline,
-                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                checkedTrackColor = MaterialTheme.colorScheme.primary
             )
         )
     }
 }
 
 @Composable
-private fun NavigationRow(icon: ImageVector, title: String, description: String, onClick: () -> Unit) {
-    val context = LocalContext.current
+private fun SettingClickableRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable {
-                ExpressiveTokens.triggerHaptic(context, ExpressiveTokens.HapticFeedbackStyle.CLICK_SUBTLE)
-                onClick()
-            }
-            .padding(16.dp),
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        RowIcon(icon, highlighted = true)
-        Spacer(modifier = Modifier.width(14.dp))
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
+        Spacer(modifier = Modifier.width(8.dp))
         Icon(
             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(16.dp)
+            modifier = Modifier.size(18.dp)
         )
     }
 }
 
-@Composable
-private fun KeyStorageCard(diagnostics: HardwareKeyManager.KeystoreDiagnostics?, onRotate: () -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = ExpressiveTokens.Shapes.BentoCardLarge,
-        color = MaterialTheme.colorScheme.surfaceContainerLow
-    ) {
-        Column(modifier = Modifier.padding(18.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RowIcon(Icons.Default.Memory, highlighted = diagnostics?.isHardwareKeystoreBacked == true)
-                Spacer(modifier = Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Key storage", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    if (diagnostics == null) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    } else {
-                        Text(
-                            text = diagnostics.securityLevel,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = "BioKey's keys live in the Android Keystore and can't be exported. Unlock keys only " +
-                    "work right after a successful biometric or screen-lock check, and stop working if " +
-                    "enrolled biometrics change.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(14.dp))
-            Button(
-                onClick = onRotate,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                ),
-                shape = CircleShape
-            ) {
-                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Rotate keys", fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TimeoutSheet(current: LockTimeoutMode, onSelect: (LockTimeoutMode) -> Unit, onDismiss: () -> Unit) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+private fun TimeoutSheet(
+    currentMode: LockTimeoutMode,
+    onSelectMode: (LockTimeoutMode) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState()
+    val scope = rememberCoroutineScope()
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        modifier = Modifier.reportsInteraction(),
-        shape = ExpressiveTokens.Shapes.BentoCardLarge,
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        sheetState = sheetState
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .rejectObscuredTouches()
                 .padding(horizontal = 24.dp)
-                .padding(bottom = 36.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(bottom = 32.dp)
         ) {
-            Text("Re-lock apps", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text(
-                "How long an unlocked app stays unlocked after you leave it. Turning the screen off always locks everything.",
-                style = MaterialTheme.typography.bodySmall,
+                text = "Re-lock delay",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Choose how quickly apps lock again after leaving them.",
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            LockTimeoutMode.entries.forEach { mode ->
-                val selected = mode == current
-                Surface(
-                    onClick = { onSelect(mode) },
-                    shape = ExpressiveTokens.Shapes.BentoCardMedium,
-                    color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = mode.title,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-                            )
-                            Text(mode.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        if (selected) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(20.dp))
-                    }
-                }
-            }
-        }
-    }
-}
+            Spacer(modifier = Modifier.height(20.dp))
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun EventLogSheet(version: Int, onClear: () -> Unit, onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val events by produceState<List<SecurityEventLog.Event>?>(null, version) {
-        value = withContext(Dispatchers.IO) { SecurityEventLog.events(context) }
-    }
+            val options: List<Pair<LockTimeoutMode, String>> = listOf(
+                LockTimeoutMode.IMMEDIATE to "Immediately",
+                LockTimeoutMode.ON_SCREEN_OFF to "When screen turns off",
+                LockTimeoutMode.GRACE_30_SECONDS to "30 seconds",
+                LockTimeoutMode.GRACE_1_MINUTE to "1 minute",
+                LockTimeoutMode.GRACE_5_MINUTES to "5 minutes",
+                LockTimeoutMode.GRACE_15_MINUTES to "15 minutes"
+            )
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        modifier = Modifier.reportsInteraction(),
-        shape = ExpressiveTokens.Shapes.BentoCardLarge,
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Security log", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text(
-                        "Encrypted on this device. Newest first.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                if (!events.isNullOrEmpty()) {
-                    TextButton(onClick = {
-                        val uri = SecurityEventLog.exportAuditLog(context)
-                        if (uri != null) {
-                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "application/json"
-                                putExtra(Intent.EXTRA_STREAM, uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            context.startActivity(Intent.createChooser(shareIntent, "Export Security Audit Log"))
-                        } else {
-                            Toast.makeText(context, "Could not export audit log", Toast.LENGTH_SHORT).show()
-                        }
-                    }) {
-                        Text("Export")
-                    }
-                    TextButton(onClick = onClear) { Text("Clear", color = MaterialTheme.colorScheme.error) }
-                }
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            val list = events
-            when {
-                list == null -> Box(
+            options.forEach { (mode, label) ->
+                val selected = mode == currentMode
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) { CircularProgressIndicator() }
-                list.isEmpty() -> Text(
-                    text = "Nothing recorded yet.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 24.dp)
-                )
-                else -> LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(bottom = 36.dp)
+                        .clickable {
+                            scope.launch { sheetState.hide() }.invokeOnCompletion { onSelectMode(mode) }
+                        }
+                        .padding(vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    items(list) { event -> EventRow(event) }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EventRow(event: SecurityEventLog.Event) {
-    val alarming = event.type in setOf(
-        SecurityEventLog.Type.SETTINGS_TAMPERED,
-        SecurityEventLog.Type.BIOMETRICS_CHANGED,
-        SecurityEventLog.Type.ACCESSIBILITY_STOPPED,
-        SecurityEventLog.Type.ADMIN_REMOVED,
-        SecurityEventLog.Type.UNLOCK_FAILED
-    )
-    Surface(
-        shape = ExpressiveTokens.Shapes.BentoCardSmall,
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        border = if (alarming) BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)) else null,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = if (alarming) Icons.Default.Warning else Icons.Default.Security,
-                contentDescription = null,
-                tint = if (alarming) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(event.type.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                if (event.detail.isNotBlank()) {
-                    Text(event.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = DateUtils.getRelativeTimeSpanString(event.timestamp).toString(),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun IdentityCheckCardExpressive(
-    checked: Boolean,
-    keyStorage: String?,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    val containerColor by animateColorAsState(
-        targetValue = if (checked) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surfaceContainerLow,
-        animationSpec = ExpressiveTokens.Springs.fast(),
-        label = "identity_check_bg"
-    )
-    val borderColor by animateColorAsState(
-        targetValue = if (checked) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
-        animationSpec = ExpressiveTokens.Springs.fast(),
-        label = "identity_check_border"
-    )
-
-    Surface(
-        shape = ExpressiveTokens.Shapes.BentoCardLarge,
-        color = containerColor,
-        border = BorderStroke(1.5.dp, borderColor),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(18.dp)
-        ) {
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                RowIcon(Icons.Default.Security, highlighted = checked)
-                Spacer(modifier = Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Identity Check", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text(
-                        text = "Biometrics only, no PIN fallback",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary
+                        text = label,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
                     )
-                }
-                Switch(
-                    checked = checked,
-                    onCheckedChange = onCheckedChange,
-                    thumbContent = if (checked) {
-                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
-                    } else null,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                        checkedTrackColor = MaterialTheme.colorScheme.primary,
-                        uncheckedThumbColor = MaterialTheme.colorScheme.outline,
-                        uncheckedTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest
-                    )
-                )
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Text(
-                text = "Protects against someone who has seen or forced your PIN: locked apps (and BioKey " +
-                    "itself) only accept a Class 3 fingerprint or face. If a fingerprint or face is added or " +
-                    "removed, they stay locked for 30 minutes and you're alerted; then your screen lock " +
-                    "confirms the change. If none are left, that also turns Identity Check off.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                lineHeight = 18.sp
-            )
-
-            if (keyStorage != null) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.Memory, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Keys: $keyStorage",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
+                    if (selected) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "Selected",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }

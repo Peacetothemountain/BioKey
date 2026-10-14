@@ -11,23 +11,14 @@ import com.android.BioKey.R
 import com.android.BioKey.feature.main.MainActivity
 
 /**
- * High-priority alerts for when BioKey's protection stops working, so a disabled service or a
- * removed device admin doesn't go unnoticed.
+ * High-priority alerts for when BioKey's protection stops working.
  */
 object ProtectionAlerts {
 
     private const val CHANNEL_ID = "biokey_protection_alerts"
     private const val ID_SERVICE_STOPPED = 1001
-    private const val ID_ADMIN_REMOVED = 1002
-    private const val ID_TAMPER = 1003
-    private const val ID_IDENTITY_DELAY = 1004
-    private const val ID_LOG_TAMPER = 1005
 
     fun ensureChannels(context: Context) {
-        ensureChannel(context)
-    }
-
-    private fun ensureChannel(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL_ID) != null) return
         nm.createNotificationChannel(
@@ -40,11 +31,17 @@ object ProtectionAlerts {
     private fun post(context: Context, id: Int, title: String, text: String, ongoing: Boolean = false) {
         val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return
-        ensureChannel(context)
+        ensureChannels(context)
         val open = PendingIntent.getActivity(
             context,
             id,
             Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val turnOnIntent = PendingIntent.getActivity(
+            context,
+            id + 1,
+            Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -55,6 +52,7 @@ object ProtectionAlerts {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_ERROR)
             .setContentIntent(open)
+            .addAction(R.drawable.ic_lock_key, "Turn on", turnOnIntent)
             .setOngoing(ongoing)
             .setAutoCancel(!ongoing)
             .build()
@@ -69,41 +67,9 @@ object ProtectionAlerts {
         context,
         ID_SERVICE_STOPPED,
         "App lock is off",
-        "BioKey's app lock service stopped, so locked apps are not protected. Open BioKey to turn it back on.",
+        "BioKey's app lock service stopped, so locked apps are not protected. Tap to turn it back on.",
         ongoing = true
     )
 
     fun serviceRestored(context: Context) = NotificationManagerCompat.from(context).cancel(ID_SERVICE_STOPPED)
-
-    fun adminRemoved(context: Context) = post(
-        context,
-        ID_ADMIN_REMOVED,
-        "BioKey device admin removed",
-        "BioKey can now be uninstalled without warning. If this wasn't you, open BioKey and re-enable it.",
-        ongoing = true
-    )
-
-    fun adminRestored(context: Context) = NotificationManagerCompat.from(context).cancel(ID_ADMIN_REMOVED)
-
-    fun identityCheckDelayStarted(context: Context, until: String) = post(
-        context,
-        ID_IDENTITY_DELAY,
-        "Biometrics changed on this device",
-        "A fingerprint or face was added or removed. Identity Check keeps your locked apps closed until $until. " +
-            "If this wasn't you, someone may know your screen lock: change it now."
-    )
-
-    fun tamperDetected(context: Context) = post(
-        context,
-        ID_TAMPER,
-        "BioKey settings were modified",
-        "BioKey's settings changed outside the app. Protection has been re-armed; review your locked apps."
-    )
-
-    fun logTamperDetected(context: Context) = post(
-        context,
-        ID_LOG_TAMPER,
-        "Security log integrity alert",
-        "BioKey's security event log failed integrity checks or was modified externally. Review settings immediately."
-    )
 }

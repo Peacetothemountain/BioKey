@@ -19,7 +19,6 @@ data class SecurityProfile(
             put("isPreset", isPreset)
             put("timeoutMode", timeoutMode.name)
             val pkgArray = JSONArray()
-            // Deterministic sorting guarantees identical HMAC-SHA256 integrity seal calculation
             packages.sorted().forEach { pkgArray.put(it) }
             put("packages", pkgArray)
         }

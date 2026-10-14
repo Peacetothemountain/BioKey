@@ -99,6 +99,10 @@ fun HeaderMatrixDotsExpressive(
         if (clock[0] == 0L) {
             clock[0] = now
             clock[1] = now
+            for (p in particles) {
+                p.x = Random.nextFloat() * w
+                p.y = Random.nextFloat() * h
+            }
         }
         val dt = ((now - clock[1]) / 1_000_000_000f).coerceIn(0f, MAX_STEP_SECONDS)
         clock[1] = now

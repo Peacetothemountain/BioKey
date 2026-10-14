@@ -2,40 +2,35 @@ package com.android.BioKey.feature.lock
 
 import android.app.ActivityOptions
 import android.content.Intent
-import android.app.admin.DevicePolicyManager
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.drawable.BitmapDrawable
-import android.graphics.drawable.Drawable
+import android.content.res.Configuration
+import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
-import android.view.ViewTreeObserver
+import android.view.MotionEvent
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.biometric.BiometricPrompt
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
-import androidx.palette.graphics.Palette
-import com.android.BioKey.core.intruder.IntruderManager
 import com.android.BioKey.core.security.IdentityCheckManager
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
-import com.android.BioKey.core.security.SecurityEventLog
 import com.android.BioKey.core.security.SecurityVault
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -52,8 +47,14 @@ class LockScreenActivity : FragmentActivity() {
         const val EXTRA_SELF_PROTECTION = "extra_self_protection"
         /** Launch the locked app after a successful unlock (used by redacted notifications). */
         const val EXTRA_LAUNCH_AFTER_UNLOCK = "extra_launch_after_unlock"
-        private const val DEFAULT_AURA_ARGB = 0xFF3865BA.toInt()
-        private val DEFAULT_AURA = Color(DEFAULT_AURA_ARGB)
+
+        @Volatile
+        var isLockScreenResumed: Boolean = false
+            private set
+
+        @Volatile
+        var activeLockedTarget: String? = null
+            private set
     }
 
     private lateinit var vault: SecurityVault
@@ -61,20 +62,47 @@ class LockScreenActivity : FragmentActivity() {
     private var lockedPackage: String = ""
     private var isSelfProtection = false
     private var launchAfterUnlock = false
-    private var deferredIntent: Intent? = null
+    private var promptAutoLaunched = false
+    private var shieldDismissTrigger by mutableStateOf(0)
     private var packageInfoJob: Job? = null
 
     private var appLabelState by mutableStateOf("")
     private var appIconState by mutableStateOf<ImageBitmap?>(null)
-    private var auraColorState by mutableStateOf(DEFAULT_AURA)
     private var statusMessage by mutableStateOf<String?>(null)
     private var isPermanentLockout by mutableStateOf(false)
 
+    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
+        if (ev != null && IdentityCheckManager.isMotionEventObscured(ev)) {
+            Log.w(TAG, "Blocked obscured touch event on LockScreenActivity")
+            return true
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    private fun resolveDynamicScheme() =
+        if ((resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES)
+            dynamicDarkColorScheme(this)
+        else
+            dynamicLightColorScheme(this)
+
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
-        super.onCreate(savedInstanceState)
         IdentityCheckManager.applyWindowProtections(this)
+        enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
+            overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
+        } else {
+            @Suppress("DEPRECATION")
+            overridePendingTransition(0, 0)
+        }
+        super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            splashScreen.setOnExitAnimationListener { splashScreenView ->
+                splashScreenView.remove()
+            }
+        }
         setShowWhenLocked(true)
+        window.setBackgroundDrawable(ColorDrawable(resolveDynamicScheme().surface.toArgb()))
         vault = SecurityVault.getInstance(this)
 
         if (!readIntent(intent)) {
@@ -86,10 +114,15 @@ class LockScreenActivity : FragmentActivity() {
             override fun handleOnBackPressed() = goHomeAndFinish()
         })
 
-        dismissShieldAfterFirstFrame()
-
         setContent {
-            val colorScheme = remember { dynamicDarkColorScheme(this) }
+            val isDark = isSystemInDarkTheme()
+            val colorScheme = if (isDark) dynamicDarkColorScheme(this) else dynamicLightColorScheme(this)
+            LaunchedEffect(lockedPackage, shieldDismissTrigger) {
+                withFrameNanos { }
+                window.decorView.post {
+                    InstantShieldOverlay.dismiss(lockedPackage)
+                }
+            }
             MaterialTheme(
                 colorScheme = colorScheme,
                 shapes = com.android.BioKey.ui.theme.M3XShapes.toMaterial3Shapes(),
@@ -99,7 +132,6 @@ class LockScreenActivity : FragmentActivity() {
                     LockScreenUIExpressive(
                         appName = appLabelState,
                         appIcon = appIconState,
-                        auraColor = auraColorState,
                         onUnlockClicked = ::showPrompt,
                         onCancelClicked = ::goHomeAndFinish,
                         isBioKeyLock = isSelfProtection,
@@ -117,97 +149,123 @@ class LockScreenActivity : FragmentActivity() {
         val pkg = intent.getStringExtra(EXTRA_LOCKED_PACKAGE).orEmpty()
         val selfProtection = intent.getBooleanExtra(EXTRA_SELF_PROTECTION, false)
         if (pkg.isBlank()) return false
-        if (!selfProtection && (!vault.isGlobalLockEnabled() || LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode()))) {
+        if (!selfProtection && (!vault.isGlobalLockEnabled() || LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg)))) {
             // Nothing to unlock; still honour a tap on a hidden-notification stand-in.
             if (intent.getBooleanExtra(EXTRA_LAUNCH_AFTER_UNLOCK, false)) sendPendingDeepLink(pkg)
             return false
         }
         lockedPackage = pkg
+        activeLockedTarget = pkg
         isSelfProtection = selfProtection
         launchAfterUnlock = intent.getBooleanExtra(EXTRA_LAUNCH_AFTER_UNLOCK, false)
+        promptAutoLaunched = false
         statusMessage = null
         isPermanentLockout = false
-        loadPackageInfo()
+        shieldDismissTrigger++
+
+        if (isSelfProtection) {
+            appLabelState = "BioKey"
+            appIconState = null
+        } else {
+            val cached = AppInfoCache.get(pkg) ?: AppInfoCache.loadAndCache(this, packageManager, pkg)
+            if (cached != null) {
+                appLabelState = cached.label
+                appIconState = cached.iconBitmap
+            } else {
+                loadPackageInfo()
+            }
+        }
         return true
     }
 
     override fun onResume() {
         super.onResume()
-        if (!isSelfProtection && (!vault.isGlobalLockEnabled() || LockStateTracker.isAppUnlocked(lockedPackage, vault.getTimeoutMode()))) {
+        isLockScreenResumed = true
+        activeLockedTarget = lockedPackage
+        if (!isSelfProtection && (!vault.isGlobalLockEnabled() || LockStateTracker.isAppUnlocked(lockedPackage, vault.getTimeoutMode(lockedPackage)))) {
             finishSilently()
             return
         }
-        schedulePrompt()
+        if (!promptAutoLaunched && !isPermanentLockout && !SecurityEngine.INSTANCE.isAuthenticatingFor(lockedPackage)) {
+            promptAutoLaunched = true
+            schedulePrompt()
+        }
+    }
+
+    override fun onPause() {
+        isLockScreenResumed = false
+        super.onPause()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && !promptAutoLaunched && !isPermanentLockout && !SecurityEngine.INSTANCE.isAuthenticatingFor(lockedPackage)) {
+            promptAutoLaunched = true
+            schedulePrompt()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         val newPkg = intent.getStringExtra(EXTRA_LOCKED_PACKAGE).orEmpty()
-        // Never retarget a prompt that's already showing: a success for one app must not unlock another.
-        if (SecurityEngine.INSTANCE.isAuthenticating()) {
-            if (newPkg != lockedPackage) deferredIntent = intent
+        val newSelfProt = intent.getBooleanExtra(EXTRA_SELF_PROTECTION, false)
+        if (newPkg == lockedPackage && newSelfProt == isSelfProtection) {
+            // Same target re-ordered to front (e.g., over a trampoline activity): keep active prompt alive
+            launchAfterUnlock = launchAfterUnlock || intent.getBooleanExtra(EXTRA_LAUNCH_AFTER_UNLOCK, false)
+            shieldDismissTrigger++
+            window.decorView.post { InstantShieldOverlay.dismiss(lockedPackage) }
+            if (!SecurityEngine.INSTANCE.isAuthenticatingFor(lockedPackage) && !promptAutoLaunched && !isPermanentLockout) {
+                promptAutoLaunched = true
+                schedulePrompt()
+            }
             return
         }
+        // Switched to a different locked target: cancel previous prompt and retarget cleanly
+        SecurityEngine.INSTANCE.resetAuthenticatingState(lockedPackage)
         setIntent(intent)
         if (!readIntent(intent)) {
             finishSilently()
             return
         }
-        dismissShieldAfterFirstFrame()
+        promptAutoLaunched = true
         schedulePrompt()
     }
 
     override fun onStop() {
+        isLockScreenResumed = false
         super.onStop()
         if (isFinishing || isChangingConfigurations) return
+        // Do not destroy the lock screen while system ConfirmDeviceCredentialActivity (PIN/Pattern fallback) is in front
+        if (BioKeyAccessibilityService.isConfirmingDeviceCredential) return
+        // Keep LockScreenActivity alive on top when the screen turns off so zero frames of the locked target are exposed on wake
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        if (pm?.isInteractive == false) {
+            SecurityEngine.INSTANCE.resetAuthenticatingState(lockedPackage)
+            promptAutoLaunched = false
+            return
+        }
+        SecurityEngine.INSTANCE.resetAuthenticatingState(lockedPackage)
         val unlocked = if (isSelfProtection) LockStateTracker.isSelfProtectionGranted()
-        else LockStateTracker.isAppUnlocked(lockedPackage, vault.getTimeoutMode())
+        else LockStateTracker.isAppUnlocked(lockedPackage, vault.getTimeoutMode(lockedPackage))
         if (!unlocked) {
-            if (SecurityEngine.INSTANCE.isAuthenticatingFor(lockedPackage)) {
-                SecurityEngine.INSTANCE.resetAuthenticatingState()
-            }
             abandon()
             finishSilently()
         }
     }
 
     override fun onDestroy() {
+        isLockScreenResumed = false
+        if (activeLockedTarget == lockedPackage) activeLockedTarget = null
         if (!isChangingConfigurations) {
             InstantShieldOverlay.dismiss(lockedPackage)
-            if (SecurityEngine.INSTANCE.isAuthenticatingFor(lockedPackage)) {
-                SecurityEngine.INSTANCE.resetAuthenticatingState()
-            }
         }
+        SecurityEngine.INSTANCE.resetAuthenticatingState(lockedPackage)
         super.onDestroy()
     }
 
-    /** Remove the shield only once this window has actually drawn, so nothing leaks in between. */
-    private fun dismissShieldAfterFirstFrame() {
-        val decor = window.decorView
-        if (decor.isAttachedToWindow && decor.width > 0 && decor.height > 0) {
-            decor.postOnAnimation { InstantShieldOverlay.dismiss(lockedPackage) }
-            return
-        }
-        val listener = object : ViewTreeObserver.OnDrawListener {
-            private var done = false
-            override fun onDraw() {
-                if (done) return
-                done = true
-                decor.postOnAnimation {
-                    InstantShieldOverlay.dismiss(lockedPackage)
-                    decor.viewTreeObserver.removeOnDrawListener(this)
-                }
-            }
-        }
-        decor.viewTreeObserver.addOnDrawListener(listener)
-        decor.invalidate()
-    }
-
     private fun schedulePrompt() {
-        if (isPermanentLockout || SecurityEngine.INSTANCE.isAuthenticating()) return
-        lifecycleScope.launch {
-            delay(150)
-            if (!isFinishing && !isDestroyed && !isPermanentLockout && !SecurityEngine.INSTANCE.isAuthenticating()) {
+        window.decorView.post {
+            if (!isFinishing && !isDestroyed && !isPermanentLockout && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
                 showPrompt()
             }
         }
@@ -224,26 +282,27 @@ class LockScreenActivity : FragmentActivity() {
             packageName = pkg,
             onSuccess = {
                 if (selfProtection) {
-                    LockStateTracker.setSelfProtectionGranted(true)
+                    LockStateTracker.setSelfProtectionGranted(granted = true, visitedGuardedScreen = true)
                 } else {
+                    val deepLinkTarget = if (launchAfter) {
+                        com.android.BioKey.feature.notification.BioKeyNotificationShieldService.cachedPendingIntents.remove(pkg)
+                    } else null
                     LockStateTracker.onAppUnlocked(pkg)
                     if (launchAfter) {
-                        sendPendingDeepLink(pkg)
+                        sendPendingDeepLink(pkg, deepLinkTarget)
                     }
                 }
                 LockStateTracker.clearRegularLockPending(pkg)
-                if (!processDeferredIntent()) finishSilently()
+                finishSilently()
             },
             onError = { code, message ->
-                if (processDeferredIntent()) return@showBiometricPrompt
-                if (code == BiometricPrompt.ERROR_LOCKOUT_PERMANENT || code == BiometricPrompt.ERROR_LOCKOUT) {
+                if (code == BiometricPrompt.ERROR_LOCKOUT_PERMANENT) {
                     isPermanentLockout = true
-                    statusMessage = if (code == BiometricPrompt.ERROR_LOCKOUT_PERMANENT) {
-                        "Biometric sensor locked by Titan M2 hardware policy. Please lock your device screen and unlock with PIN to reset."
-                    } else {
-                        message.takeIf { it.isNotBlank() }?.toString()
-                            ?: "Biometric sensor temporarily locked by Titan M2 hardware policy. Please lock device screen or wait to reset."
-                    }
+                    statusMessage = "Biometric sensor locked by Titan M2 hardware policy. Please lock your device screen and unlock with PIN to reset."
+                } else if (code == BiometricPrompt.ERROR_LOCKOUT) {
+                    isPermanentLockout = false
+                    statusMessage = message.takeIf { it.isNotBlank() }?.toString()
+                        ?: "Too many attempts. Sensor temporarily locked for 30 seconds. Tap Unlock to try again or use PIN."
                 } else {
                     statusMessage = when (code) {
                         BiometricPrompt.ERROR_USER_CANCELED,
@@ -256,28 +315,18 @@ class LockScreenActivity : FragmentActivity() {
         )
     }
 
-    private fun lockDeviceOrHome() {
-        abandon()
-        val dpm = getSystemService(DevicePolicyManager::class.java)
-        if (DeviceAdminHelper.isAdminActive(this)) {
-            try {
-                dpm?.lockNow()
-                finishSilently()
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "DevicePolicyManager lockNow failed: ${e.message}")
-            }
-        }
-        goHomeAndFinish()
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        window.setBackgroundDrawable(ColorDrawable(resolveDynamicScheme().surface.toArgb()))
     }
 
-    private fun processDeferredIntent(): Boolean {
-        val next = deferredIntent ?: return false
-        deferredIntent = null
-        setIntent(next)
-        if (!readIntent(next)) return false
-        schedulePrompt()
-        return true
+    private fun lockDeviceOrHome() {
+        abandon()
+        val locked = BioKeyAccessibilityService.lockDevice()
+        if (!locked) {
+            startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+        finishSilently()
     }
 
     private fun launchApp(pkg: String) {
@@ -287,23 +336,38 @@ class LockScreenActivity : FragmentActivity() {
         }
     }
 
-    private fun sendPendingDeepLink(pkg: String) {
-        val intentsMap = com.android.BioKey.feature.notification.BioKeyNotificationShieldService.cachedPendingIntents.remove(pkg)
-        val pending = intentsMap?.values?.lastOrNull()
-        if (pending != null) {
-            val fillInIntent = Intent().apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            val options = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+    private fun sendPendingDeepLink(
+        pkg: String,
+        preExtractedMap: Map<String, com.android.BioKey.feature.notification.BioKeyNotificationShieldService.CachedPendingIntent>? = null
+    ) {
+        val intentsMap = preExtractedMap
+            ?: com.android.BioKey.feature.notification.BioKeyNotificationShieldService.cachedPendingIntents.remove(pkg)
+        val target = intentsMap?.values
+            ?.filter { !it.isSummary }
+            ?.maxByOrNull { it.postTime }
+            ?: intentsMap?.values?.maxByOrNull { it.postTime }
+        val pending = target?.pendingIntent
+        val realPkg = if (pkg == BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS) BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER else pkg
+        val creator = pending?.creatorPackage
+        val validCreator = creator == null || creator == realPkg || creator == pkg ||
+            (pkg == BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS && creator == "com.google.android.gms")
+
+        if (pending != null && validCreator) {
+            val options = if (Build.VERSION.SDK_INT >= 36) {
                 ActivityOptions.makeBasic().apply {
+                    pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS
+                }.toBundle()
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ActivityOptions.makeBasic().apply {
+                    @Suppress("DEPRECATION")
                     pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
                 }.toBundle()
             } else null
             runCatching {
                 if (options != null) {
-                    pending.send(this, 0, fillInIntent, null, null, null, options)
+                    pending.send(this, 0, null, null, null, null, options)
                 } else {
-                    pending.send(this, 0, fillInIntent)
+                    pending.send(this, 0, null)
                 }
             }.onFailure {
                 Log.w(TAG, "Failed sending deep link PendingIntent for $pkg, falling back to launch: ${it.message}")
@@ -314,25 +378,19 @@ class LockScreenActivity : FragmentActivity() {
         }
     }
 
-    fun onTriggerIntruderPhoto() {
-        IntruderManager.captureIntruderPhotoNow(applicationContext, lockedPackage)
-    }
-
     /** Bookkeeping when the user walks away from the lock without authenticating. */
     private fun abandon() {
-        if (LockStateTracker.getFailedAttempts(lockedPackage) > 0) {
-            onTriggerIntruderPhoto()
-        }
-        LockStateTracker.clearRegularLockPending(lockedPackage)
+        LockStateTracker.markLockAbandoned(lockedPackage)
         if (isSelfProtection) {
             LockStateTracker.clearSelfProtection()
-            SecurityEventLog.record(this, SecurityEventLog.Type.SELF_PROTECTION_CHALLENGE, "Challenge dismissed without authenticating")
         }
     }
 
     private fun goHomeAndFinish() {
         abandon()
-        startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        if (!isSelfProtection || !BioKeyAccessibilityService.dismissSelfProtection()) {
+            startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
         finishSilently()
     }
 
@@ -348,13 +406,12 @@ class LockScreenActivity : FragmentActivity() {
     }
 
     // ---------------------------------------------------------------------------------------
-    // App label, icon and accent colour
+    // App label and icon
     // ---------------------------------------------------------------------------------------
 
     private fun loadPackageInfo() {
         packageInfoJob?.cancel()
         appIconState = null
-        auraColorState = DEFAULT_AURA
         if (isSelfProtection) {
             appLabelState = "BioKey"
             return
@@ -365,44 +422,16 @@ class LockScreenActivity : FragmentActivity() {
         appLabelState = if (isPasswordManager) "Google Password Manager" else ""
 
         packageInfoJob = lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val pm = packageManager
-                val realPkg = if (isPasswordManager) {
-                    runCatching { pm.getApplicationInfo(BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER, 0) }
-                        .map { BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER }
-                        .getOrDefault("com.google.android.gms")
-                } else {
-                    pkg
-                }
-                val appInfo = pm.getApplicationInfo(realPkg, 0)
-                val label = if (isPasswordManager) "Google Password Manager" else pm.getApplicationLabel(appInfo).toString()
-                val bitmap = drawableToBitmap(pm.getApplicationIcon(appInfo))
-                val palette = Palette.from(bitmap).generate()
-                val accent = palette.getVibrantColor(palette.getDominantColor(DEFAULT_AURA_ARGB))
-                withContext(Dispatchers.Main) {
-                    if (pkg != lockedPackage) return@withContext
-                    appLabelState = label
-                    appIconState = bitmap.asImageBitmap()
-                    auraColorState = Color(accent)
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "App info unavailable: ${e.message}")
-                withContext(Dispatchers.Main) {
-                    if (pkg == lockedPackage && appLabelState.isBlank()) appLabelState = "Protected app"
+            val loaded = AppInfoCache.loadAndCache(this@LockScreenActivity, packageManager, pkg)
+            withContext(Dispatchers.Main) {
+                if (pkg != lockedPackage) return@withContext
+                if (loaded != null) {
+                    appLabelState = loaded.label
+                    appIconState = loaded.iconBitmap
+                } else if (appLabelState.isBlank()) {
+                    appLabelState = "Protected Application"
                 }
             }
-        }
-    }
-
-    private fun drawableToBitmap(drawable: Drawable): Bitmap {
-        if (drawable is BitmapDrawable && drawable.bitmap != null) return drawable.bitmap
-        val size = 192
-        val width = drawable.intrinsicWidth.takeIf { it in 1..512 } ?: size
-        val height = drawable.intrinsicHeight.takeIf { it in 1..512 } ?: size
-        return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->
-            val canvas = Canvas(bitmap)
-            drawable.setBounds(0, 0, canvas.width, canvas.height)
-            drawable.draw(canvas)
         }
     }
 }

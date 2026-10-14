@@ -31,7 +31,11 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
         when (intent.action) {
             Intent.ACTION_SCREEN_OFF,
             Intent.ACTION_DREAMING_STARTED,
-            Intent.ACTION_SHUTDOWN -> LockStateTracker.onScreenTurnedOff()
+            Intent.ACTION_SHUTDOWN -> {
+                if (!BioKeyAccessibilityService.isRunning) {
+                    LockStateTracker.onScreenTurnedOff()
+                }
+            }
         }
     }
 }

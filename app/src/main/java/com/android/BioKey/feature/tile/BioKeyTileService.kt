@@ -37,7 +37,6 @@ class BioKeyTileService : TileService() {
 
     override fun onStartListening() {
         super.onStartListening()
-        updateTile()
         listeningScope?.cancel()
         val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
         listeningScope = scope
@@ -56,7 +55,7 @@ class BioKeyTileService : TileService() {
                     val remaining = pausedUntil - System.currentTimeMillis()
                     if (remaining > 0L) {
                         pauseTimerJob = launch {
-                            delay(remaining)
+                            delay(remaining + 50L)
                             vault.isGlobalLockEnabled()
                             updateTile()
                         }
@@ -78,7 +77,7 @@ class BioKeyTileService : TileService() {
         super.onClick()
         val vault = SecurityVault.getInstance(this)
         if (!vault.isSetupCompleted()) {
-            openApp()
+            if (isLocked) unlockAndRun { openApp() } else openApp()
             return
         }
         if (vault.isGlobalLockEnabled()) {

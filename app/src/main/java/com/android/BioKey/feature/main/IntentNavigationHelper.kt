@@ -44,6 +44,8 @@ object IntentNavigationHelper {
                 Log.d(TAG, "Activity not found for intent: ${intent.action}, trying next fallback")
             } catch (e: SecurityException) {
                 Log.w(TAG, "Security exception for intent: ${intent.action}, trying next fallback")
+            } catch (e: Exception) {
+                Log.w(TAG, "Unexpected error launching intent: ${intent.action}, trying next fallback", e)
             }
         }
         Toast.makeText(context, "Could not open settings on this device", Toast.LENGTH_SHORT).show()

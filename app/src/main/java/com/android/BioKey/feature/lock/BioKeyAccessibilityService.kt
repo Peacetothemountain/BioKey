@@ -1,7 +1,6 @@
 package com.android.BioKey.feature.lock
 
 import android.accessibilityservice.AccessibilityService
-import android.graphics.Rect
 import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -21,13 +20,11 @@ import android.util.Log
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.view.accessibility.AccessibilityWindowInfo
 import android.view.inputmethod.InputMethodManager
 import androidx.core.content.ContextCompat
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.SecurityEngine
-import com.android.BioKey.core.security.SecurityEventLog
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.main.MainActivity
 
@@ -48,6 +45,31 @@ class BioKeyAccessibilityService : AccessibilityService() {
             private set
 
         /** Whether the service is enabled in system settings (exact component match). */
+        @Volatile private var activeService: BioKeyAccessibilityService? = null
+
+        @Volatile
+        var isConfirmingDeviceCredential: Boolean = false
+            private set
+
+        fun lockDevice(): Boolean {
+            return activeService?.performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN) ?: false
+        }
+
+        fun dismissSelfProtection(): Boolean {
+            val svc = activeService ?: return false
+            svc.navigateBackFromGuardedSelfProtection()
+            return true
+        }
+
+        fun isPackageCurrentlyInForeground(packageName: String): Boolean {
+            val svc = activeService ?: return false
+            val root = try { svc.rootInActiveWindow } catch (_: Exception) { null } ?: return svc.lastFocusedPackage == packageName
+            val activePkg = root.packageName?.toString()
+            svc.release(root)
+            return activePkg != null && (svc.sameApp(activePkg, packageName) ||
+                (activePkg == PKG_GMS && packageName == VIRTUAL_PKG_GOOGLE_PASSWORDS))
+        }
+
         fun isServiceEnabled(context: Context): Boolean {
             if (isRunning) return true
             val expected = ComponentName(context, BioKeyAccessibilityService::class.java)
@@ -61,9 +83,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
         private const val PKG_GMS = "com.google.android.gms"
 
         const val SELF_PROTECTION_PENDING_KEY = "biokey:self-protection"
-
-        /** Without the overlay shield, how long the lock screen gets to appear before a relaunch. */
-        private const val LOCK_VERIFY_DELAY_MS = 2_500L
 
         private val KNOWN_LAUNCHERS = setOf(
             "com.google.android.apps.nexuslauncher",
@@ -194,10 +213,15 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 Intent.ACTION_SCREEN_OFF -> {
                     lastFocusedPackage = null
                     authHelperPackage = null
+                    isConfirmingDeviceCredential = false
+                    LockStateTracker.onScreenTurnedOff()
                 }
                 // The keyguard just went away: whatever is on screen must be re-checked even if
                 // no window event arrives (e.g. a locked app was left open when the screen went off).
-                Intent.ACTION_USER_PRESENT -> mainHandler.postDelayed(::reevaluateForeground, 250)
+                Intent.ACTION_USER_PRESENT -> {
+                    reevaluateForeground()
+                    mainHandler.postDelayed(::reevaluateForeground, 250)
+                }
             }
         }
     }
@@ -206,6 +230,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        activeService = this
         isRunning = true
         val userManager = getSystemService(UserManager::class.java)
         if (userManager?.isUserUnlocked == false) {
@@ -234,6 +259,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun initServiceComponents() {
         if (!isRunning) return
         vault = SecurityVault.getInstance(this)
+        AppInfoCache.preWarm(this, vault.getLockedPackages())
         shield = InstantShieldOverlay(this, ::onShieldTimeout)
         selfProtection = SelfProtectionDetector(this)
         refreshSystemLists(force = true)
@@ -268,80 +294,225 @@ class BioKeyAccessibilityService : AccessibilityService() {
     // Event handling
     // -------------------------------------------------------------------------------------------
 
+    @Volatile private var hasMultipleAppWindows = false
+    private var contentMonitoringEnabled = false
+    private var activeSelfProtectionHost: String? = null
+
+    private val checkWindowsRunnable = Runnable { checkVisibleWindows() }
+    private val revokeSelfProtectionAfterExitRunnable = Runnable {
+        if (shield.isShowing || LockScreenActivity.isLockScreenResumed || SecurityEngine.INSTANCE.isAuthenticating()) {
+            return@Runnable
+        }
+        if (LockStateTracker.hasVisitedGuardedSelfProtectionScreen()) {
+            val host = activeSelfProtectionHost
+            val stillGuarded = host != null && selfProtection.isGuardedScreen(host, null)
+            if (!stillGuarded) {
+                LockStateTracker.clearSelfProtection()
+            }
+        }
+    }
+    private val trailingSelfProtectionRunnable = Runnable {
+        val host = activeSelfProtectionHost ?: return@Runnable
+        if (!::vault.isInitialized) return@Runnable
+        if (shield.isShowing || LockScreenActivity.isLockScreenResumed || SecurityEngine.INSTANCE.isAuthenticating()) {
+            return@Runnable
+        }
+        val guarded = selfProtection.isGuardedScreen(host, null)
+        if (guarded) {
+            mainHandler.removeCallbacks(revokeSelfProtectionAfterExitRunnable)
+            if (LockStateTracker.isSelfProtectionGranted()) {
+                LockStateTracker.markSelfProtectionVisitedGuardedScreen()
+                updateContentMonitoring(false)
+            } else if (shouldGuardSelf()) {
+                triggerSelfProtection()
+            }
+        } else if (LockStateTracker.hasVisitedGuardedSelfProtectionScreen()) {
+            mainHandler.removeCallbacks(revokeSelfProtectionAfterExitRunnable)
+            mainHandler.postDelayed(revokeSelfProtectionAfterExitRunnable, 1_500L)
+        }
+    }
+
+    private fun updateContentMonitoring(enable: Boolean) {
+        if (contentMonitoringEnabled == enable) return
+        val info = serviceInfo ?: return
+        contentMonitoringEnabled = enable
+        info.eventTypes = if (enable) {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                AccessibilityEvent.TYPE_WINDOWS_CHANGED or
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+        } else {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                AccessibilityEvent.TYPE_WINDOWS_CHANGED
+        }
+        info.notificationTimeout = if (enable) 100L else 0L
+        runCatching { serviceInfo = info }
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || !::vault.isInitialized) return
         try {
             val type = event.eventType
+            val eventPkg = event.packageName?.toString()
+            val eventCls = event.className?.toString().orEmpty()
+
+            if (!SecurityEngine.INSTANCE.isAuthenticating()) {
+                isConfirmingDeviceCredential = false
+            }
+
+            if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && eventPkg != null) {
+                if (isDeviceCredentialScreen(eventPkg, eventCls)) {
+                    isConfirmingDeviceCredential = true
+                } else if (
+                    isConfirmingDeviceCredential &&
+                    eventPkg != packageName &&
+                    eventPkg != "com.android.settings" &&
+                    eventPkg != "com.android.systemui" &&
+                    eventPkg !in imePackages &&
+                    eventPkg !in SYSTEM_OVERLAYS
+                ) {
+                    isConfirmingDeviceCredential = false
+                }
+                val inSelfProtHost = selfProtection.isHost(eventPkg) && !isConfirmingDeviceCredential
+                if (inSelfProtHost) {
+                    activeSelfProtectionHost = eventPkg
+                    val needContentMonitoring = vault.isSetupCompleted() &&
+                        vault.isProtectionActive() &&
+                        vault.isAccessibilitySelfProtectionEnabled() &&
+                        !LockStateTracker.hasVisitedGuardedSelfProtectionScreen()
+                    updateContentMonitoring(needContentMonitoring)
+                } else if (eventPkg != packageName && !isSystemOrOverlay(eventPkg, eventCls)) {
+                    activeSelfProtectionHost = null
+                    mainHandler.removeCallbacks(revokeSelfProtectionAfterExitRunnable)
+                    updateContentMonitoring(false)
+                }
+            }
 
             // Self-protection runs first: installers count as system overlays below.
-            val eventPkg = event.packageName?.toString()
-            if (eventPkg != null && selfProtection.isHost(eventPkg) && shouldGuardSelf() &&
-                selfProtection.isGuardedScreen(eventPkg, event)
-            ) {
-                triggerSelfProtection()
-                return
+            if (eventPkg != null && selfProtection.isHost(eventPkg) && !isConfirmingDeviceCredential) {
+                if (SecurityEngine.INSTANCE.isAuthenticatingFor(SELF_PROTECTION_PENDING_KEY) ||
+                    LockStateTracker.isRegularLockPending(SELF_PROTECTION_PENDING_KEY)
+                ) {
+                    if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && !LockScreenActivity.isLockScreenResumed) {
+                        shield.show(SELF_PROTECTION_PENDING_KEY) {
+                            launchLockScreen(SELF_PROTECTION_PENDING_KEY, isSelfProtection = true)
+                        }
+                        launchLockScreen(SELF_PROTECTION_PENDING_KEY, isSelfProtection = true)
+                    }
+                    return
+                }
+                if (vault.isSetupCompleted() && vault.isProtectionActive() && vault.isAccessibilitySelfProtectionEnabled() &&
+                    !LockStateTracker.isRecentlyAbandoned(SELF_PROTECTION_PENDING_KEY)
+                ) {
+                    val guarded = selfProtection.isGuardedScreen(eventPkg, event) { delayMs ->
+                        mainHandler.removeCallbacks(trailingSelfProtectionRunnable)
+                        mainHandler.postDelayed(trailingSelfProtectionRunnable, delayMs)
+                    }
+                    if (guarded) {
+                        mainHandler.removeCallbacks(revokeSelfProtectionAfterExitRunnable)
+                        if (LockStateTracker.isSelfProtectionGranted()) {
+                            LockStateTracker.markSelfProtectionVisitedGuardedScreen()
+                            updateContentMonitoring(false)
+                        } else if (shouldGuardSelf()) {
+                            triggerSelfProtection()
+                            return
+                        }
+                    } else if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                        if (LockStateTracker.hasVisitedGuardedSelfProtectionScreen()) {
+                            mainHandler.removeCallbacks(revokeSelfProtectionAfterExitRunnable)
+                            mainHandler.postDelayed(revokeSelfProtectionAfterExitRunnable, 1_500L)
+                        }
+                        mainHandler.removeCallbacks(trailingSelfProtectionRunnable)
+                        mainHandler.postDelayed(trailingSelfProtectionRunnable, 180L)
+                    }
+                }
             }
 
             if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-                checkPipWindows()
+                if (!shield.isShowing && !LockScreenActivity.isLockScreenResumed && !SecurityEngine.INSTANCE.isAuthenticating()) {
+                    mainHandler.removeCallbacks(checkWindowsRunnable)
+                    mainHandler.postDelayed(checkWindowsRunnable, 250L)
+                }
                 return
             }
 
             // Only explicit activity window transitions trigger foreground app evaluation.
-            // Window changes (TYPE_WINDOWS_CHANGED) and content changes (TYPE_WINDOW_CONTENT_CHANGED)
-            // must never trigger app locking, preventing false authentication prompts when exiting,
-            // closing apps, or swiping home.
             if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
                 return
             }
 
             val target = resolveForegroundPackage(event) ?: return
-
-            // Inspect the active focused window to eliminate ghost lock prompts during app exit/closing
-            val activeRoot = try { rootInActiveWindow } catch (e: Exception) { null }
-            val activePkg = activeRoot?.packageName?.toString()
-            if (activeRoot != null) release(activeRoot)
-
-            if (activePkg != null && activePkg != target && !sameApp(activePkg, target)) {
-                if (isLauncher(activePkg)) {
-                    // The user transitioned to Home/Launcher; this is a lingering teardown event from the target.
-                    if (vault.isAppLocked(target)) {
-                        LockStateTracker.onAppExited(target, isLauncherExit = true, timeoutMode = vault.getTimeoutMode())
-                    }
-                    shield.hide()
-                    return
-                }
-            }
-
-            if (vault.isAppLocked(target) && LockStateTracker.isRecentlyExited(target, 1_500L) && !isLauncher(target)) {
-                if (activePkg == null || isLauncher(activePkg)) {
-                    shield.hide()
-                    return
-                }
-            }
-
-            handleForeground(target, event.className?.toString().orEmpty())
+            handleForeground(target, eventCls)
         } catch (t: Throwable) {
             Log.e(TAG, "Unexpected error processing accessibility event: ${t.message}", t)
         }
     }
 
-    private fun checkPipWindows() {
-        if (!::vault.isInitialized || !vault.isGlobalLockEnabled()) return
+    private fun checkVisibleWindows() {
+        if (!::vault.isInitialized || !vault.isGlobalLockEnabled() ||
+            shield.isShowing || LockScreenActivity.isLockScreenResumed || SecurityEngine.INSTANCE.isAuthenticating()
+        ) {
+            hasMultipleAppWindows = false
+            return
+        }
         val currentWindows = try { windows } catch (e: Exception) { null } ?: return
-        for (win in currentWindows) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && win.isInPictureInPictureMode) {
-                val root = win.root ?: continue
-                val pkg = root.packageName?.toString()
-                release(root)
-                if (pkg != null && vault.isAppLocked(pkg) && !LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode())) {
-                    Log.i(TAG, "Locked app $pkg detected in PiP mode without unlock; closing PiP")
+        val appWindows = currentWindows.filter {
+            it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION ||
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && it.isInPictureInPictureMode)
+        }
+        hasMultipleAppWindows = appWindows.size > 1
+        if (!hasMultipleAppWindows && appWindows.none { Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && it.isInPictureInPictureMode }) {
+            return
+        }
+
+        for (win in appWindows) {
+            val isPip = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && win.isInPictureInPictureMode
+            if (!isPip && !hasMultipleAppWindows) continue
+            val root = win.root ?: continue
+            val pkg = root.packageName?.toString()
+            release(root)
+            if (pkg != null && selfProtection.isHost(pkg) && shouldGuardSelf() &&
+                !LockStateTracker.isRecentlyAbandoned(SELF_PROTECTION_PENDING_KEY) &&
+                selfProtection.isGuardedScreen(pkg, null)
+            ) {
+                triggerSelfProtection()
+                break
+            }
+            if (pkg != null && pkg != packageName && vault.isAppLocked(pkg) &&
+                !LockStateTracker.isRecentlyExited(pkg) &&
+                !LockStateTracker.isRecentlyAbandoned(pkg) &&
+                !SecurityEngine.INSTANCE.isAuthenticatingFor(pkg) &&
+                !LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))
+            ) {
+                if (isPip) {
+                    Log.i(TAG, "Locked app $pkg detected in PiP mode without unlock; covering and exiting PiP")
                     performGlobalAction(GLOBAL_ACTION_HOME)
-                    lock(pkg)
-                    break
+                } else {
+                    Log.i(TAG, "Locked app $pkg detected in split-screen/multi-window without unlock; locking")
                 }
+                lock(pkg)
+                break
             }
         }
+    }
+
+    private fun findVisibleLockedWindowPackage(): String? {
+        if (!hasMultipleAppWindows || !::vault.isInitialized || !vault.isGlobalLockEnabled()) return null
+        val currentWindows = try { windows } catch (e: Exception) { null } ?: return null
+        for (win in currentWindows) {
+            if (win.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) continue
+            val root = win.root ?: continue
+            val pkg = root.packageName?.toString()
+            release(root)
+            if (pkg != null && pkg != packageName && vault.isAppLocked(pkg) &&
+                !LockStateTracker.isRecentlyExited(pkg) &&
+                !LockStateTracker.isRecentlyAbandoned(pkg) &&
+                !SecurityEngine.INSTANCE.isAuthenticatingFor(pkg) &&
+                !LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))
+            ) {
+                return pkg
+            }
+        }
+        return null
     }
 
     private fun sameApp(a: String, b: String): Boolean {
@@ -357,24 +528,57 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun handleForeground(target: String, cls: String) {
         // BioKey's own windows (lock screen, main UI) have their own authentication.
         if (target == packageName) {
-            // The lock screen is part of unlocking what's behind it, not an app switch. Opening
-            // BioKey's main UI is: the previous app's session starts ageing, and any round trip
-            // through Settings that self-protection allowed is over.
             if (cls == MainActivity::class.java.name) {
                 lastFocusedPackage?.let { previous ->
-                    if (vault.isAppLocked(previous)) LockStateTracker.onAppExited(previous, timeoutMode = vault.getTimeoutMode())
-                    if (selfProtection.isHost(previous)) LockStateTracker.clearSelfProtection()
+                    if (vault.isAppLocked(previous)) LockStateTracker.onAppExited(previous, timeoutMode = vault.getTimeoutMode(previous))
                 }
+                LockStateTracker.clearSelfProtection()
                 lastFocusedPackage = target
             }
             return
         }
         // Keyboards, permission dialogs, the shade etc. float over the current app: no app switch.
-        // The shield deliberately stays up so these can't reveal a locked app.
         if (isSystemOrOverlay(target, cls)) return
 
-        val timeoutMode = vault.getTimeoutMode()
         val isLauncher = isLauncher(target)
+        val isRecents = isLauncher && isRecentsOverviewClass(cls)
+        val previous = lastFocusedPackage
+
+        // Guard against stale background launcher window-state events when an app or shield is actually in front:
+        if (isLauncher && !isRecents) {
+            val shieldPkg = shield.targetPackage
+            if (shield.isShowing && shieldPkg != null) {
+                val shieldStillActive = LockStateTracker.isRegularLockPending(shieldPkg) ||
+                    (shieldPkg != SELF_PROTECTION_PENDING_KEY && isPackageCurrentlyInForeground(shieldPkg))
+                if (shieldStillActive) {
+                    return
+                }
+            }
+            if (previous != null && !isLauncher(previous) && isPackageCurrentlyInForeground(previous)) {
+                return
+            }
+        }
+
+        // Recents protection: evaluate BEFORE onAppExited locks IMMEDIATE-mode apps.
+        // If user entered Overview directly from a locked app that was NOT unlocked, route to Home.
+        if (isRecents && previous != null &&
+            vault.isAppLocked(previous) && !LockStateTracker.isAppUnlocked(previous, vault.getTimeoutMode(previous))
+        ) {
+            Log.i(TAG, "Recents shield active: routing to Home from Overview for $previous")
+            LockStateTracker.onAppExited(previous, isLauncherExit = true, timeoutMode = vault.getTimeoutMode(previous))
+            lastFocusedPackage = target
+            performGlobalAction(GLOBAL_ACTION_HOME)
+            shield.hide()
+            return
+        }
+
+        if (!selfProtection.isHost(target)) {
+            mainHandler.removeCallbacks(revokeSelfProtectionAfterExitRunnable)
+            LockStateTracker.clearSelfProtection()
+            if (LockStateTracker.isExternalNavigationActive()) {
+                LockStateTracker.lockOwnApp()
+            }
+        }
 
         LockStateTracker.getActiveAuthHost()?.let { host ->
             when {
@@ -383,44 +587,61 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     authHelperPackage = null
                 }
                 target != authHelperPackage && !isAuthHelper(target, cls) -> {
-                    LockStateTracker.abandonAuthSubFlow(host, isLauncherExit = isLauncher)
+                    LockStateTracker.abandonAuthSubFlow(
+                        hostPackage = null,
+                        isLauncherExit = isLauncher,
+                        timeoutModeProvider = vault::getTimeoutMode
+                    )
                     authHelperPackage = null
                 }
             }
         }
 
-        val previous = lastFocusedPackage
         if (previous != null && !sameApp(previous, target)) {
+            val previousTimeout = vault.getTimeoutMode(previous)
             // Hopping from an unlocked app to an auth helper keeps that app's session.
-            if (isAuthHelper(target, cls) && vault.isAppLocked(previous) && LockStateTracker.isAppUnlocked(previous, timeoutMode)) {
+            if (isAuthHelper(target, cls) && vault.isAppLocked(previous) && LockStateTracker.isAppUnlocked(previous, previousTimeout)) {
                 LockStateTracker.enterAuthSubFlow(previous)
                 authHelperPackage = target
             }
-            if (vault.isAppLocked(previous)) LockStateTracker.onAppExited(previous, isLauncherExit = isLauncher, timeoutMode = timeoutMode)
-            if (selfProtection.isHost(previous) && !selfProtection.isHost(target)) LockStateTracker.clearSelfProtection()
+            if (vault.isAppLocked(previous)) LockStateTracker.onAppExited(previous, isLauncherExit = isLauncher, timeoutMode = previousTimeout)
         }
-        lastFocusedPackage = target
 
+        val targetTimeout = vault.getTimeoutMode(target)
         if (isLauncher || !vault.isAppLocked(target)) {
-            // Recents protection: if user enabled recents shielding and entered Overview directly from a locked app,
-            // route them to clean Home to prevent task thumbnail leak.
-            val isRecents = isLauncher && isRecentsOverviewClass(cls)
-            if (vault.isRecentsShieldEnabled() && isRecents && previous != null &&
-                vault.isAppLocked(previous) && !LockStateTracker.isAppUnlocked(previous, timeoutMode)
-            ) {
-                Log.i(TAG, "Recents shield active: routing to Home from Overview for $previous")
-                performGlobalAction(GLOBAL_ACTION_HOME)
-                shield.hide()
+            lastFocusedPackage = target
+
+            // Multi-window / split-screen guard: if an adjacent visible pane contains a locked app, lock it
+            val splitLockedPkg = if (!isLauncher) findVisibleLockedWindowPackage() else null
+            if (splitLockedPkg != null) {
+                lock(splitLockedPkg)
                 return
             }
 
+            if (!LockStateTracker.isRegularLockPending(shield.targetPackage.orEmpty())) {
+                shield.hide()
+            }
+            return
+        }
+
+        if (LockStateTracker.isAppUnlocked(target, targetTimeout)) {
+            lastFocusedPackage = target
+            LockStateTracker.onAppResumed(target)
             shield.hide()
             return
         }
-        if (SecurityEngine.INSTANCE.isAuthenticatingFor(target)) return
-        if (LockStateTracker.isAppUnlocked(target, timeoutMode)) {
-            LockStateTracker.onAppResumed(target)
-            shield.hide()
+
+        if (LockStateTracker.isRecentlyAbandoned(target)) {
+            return
+        }
+
+        // Target is locked and NOT unlocked.
+        lastFocusedPackage = target
+        if (SecurityEngine.INSTANCE.isAuthenticatingFor(target) || LockStateTracker.isRegularLockPending(target)) {
+            if (!LockScreenActivity.isLockScreenResumed || LockScreenActivity.activeLockedTarget != target) {
+                shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
+                launchLockScreen(target, isSelfProtection = false)
+            }
             return
         }
         lock(target)
@@ -444,62 +665,41 @@ class BioKeyAccessibilityService : AccessibilityService() {
             (lower.contains("quickstep") && !lower.contains("launcher"))
     }
 
-    private fun getTargetWindowBounds(target: String): Rect? {
-        try {
-            val currentWindows = windows
-            if (!currentWindows.isNullOrEmpty()) {
-                val (screenWidth, screenHeight) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    val wm = getSystemService(WindowManager::class.java)
-                    val windowBounds = wm?.currentWindowMetrics?.bounds ?: Rect()
-                    Pair(windowBounds.width(), windowBounds.height())
-                } else {
-                    @Suppress("DEPRECATION")
-                    val displayMetrics = resources.displayMetrics
-                    Pair(displayMetrics.widthPixels, displayMetrics.heightPixels)
-                }
-
-                if (screenWidth <= 0 || screenHeight <= 0) return null
-
-                for (win in currentWindows) {
-                    if (win.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
-                    val root = win.root ?: continue
-                    val pkg = root.packageName?.toString()
-                    release(root)
-                    if (pkg != null && (pkg == target || sameApp(pkg, target))) {
-                        val bounds = Rect()
-                        win.getBoundsInScreen(bounds)
-                        val isSplit = !bounds.isEmpty && (
-                            bounds.width() <= (screenWidth * 0.85f).toInt() ||
-                            bounds.height() <= (screenHeight * 0.85f).toInt()
-                        )
-                        if (isSplit) {
-                            Log.d(TAG, "Multi-window split bounds detected for $target: $bounds")
-                            return bounds
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error checking window bounds for $target: ${e.message}")
-        }
-        return null
-    }
-
     private fun lock(target: String) {
-        if (LockStateTracker.isRegularLockPending(target)) return
+        lastFocusedPackage = target
+        if (LockStateTracker.isRegularLockPending(target) &&
+            LockScreenActivity.isLockScreenResumed &&
+            LockScreenActivity.activeLockedTarget == target
+        ) return
         LockStateTracker.setRegularLockPending(target)
-        val bounds = getTargetWindowBounds(target)
-        shield.show(target, bounds) { launchLockScreen(target, isSelfProtection = false, bounds = bounds) }
-        launchLockScreen(target, isSelfProtection = false, bounds = bounds)
+        // Instant non-blocking full-screen launch (< 1.5ms execution time)
+        shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
+        launchLockScreen(target, isSelfProtection = false)
     }
 
     private fun reevaluateForeground() {
         val root = rootInActiveWindow ?: return
         val pkg = root.packageName?.toString()
+        val cls = root.className?.toString().orEmpty()
         release(root)
         if (pkg != null) {
+            if (selfProtection.isHost(pkg) && !isConfirmingDeviceCredential) {
+                activeSelfProtectionHost = pkg
+                val needContentMonitoring = vault.isSetupCompleted() &&
+                    vault.isProtectionActive() &&
+                    vault.isAccessibilitySelfProtectionEnabled() &&
+                    !LockStateTracker.hasVisitedGuardedSelfProtectionScreen()
+                updateContentMonitoring(needContentMonitoring)
+                if (shouldGuardSelf() && selfProtection.isGuardedScreen(pkg, null)) {
+                    triggerSelfProtection()
+                    return
+                }
+            }
+            val target = if (pkg == PKG_CREDENTIAL_MANAGER || (pkg == PKG_GMS && cls.contains("PasswordManager", ignoreCase = true))) {
+                VIRTUAL_PKG_GOOGLE_PASSWORDS
+            } else pkg
             lastFocusedPackage = null
-            handleForeground(pkg, "")
+            handleForeground(target, cls)
         }
     }
 
@@ -509,17 +709,37 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     private fun shouldGuardSelf(): Boolean =
         vault.isSetupCompleted() &&
+            vault.isProtectionActive() &&
+            vault.isAccessibilitySelfProtectionEnabled() &&
             !LockStateTracker.isSelfProtectionGranted() &&
             !SecurityEngine.INSTANCE.isAuthenticatingFor(SELF_PROTECTION_PENDING_KEY)
 
     private fun triggerSelfProtection() {
-        if (LockStateTracker.isRegularLockPending(SELF_PROTECTION_PENDING_KEY)) return
+        if (LockStateTracker.isRegularLockPending(SELF_PROTECTION_PENDING_KEY) &&
+            LockScreenActivity.isLockScreenResumed &&
+            LockScreenActivity.activeLockedTarget == SELF_PROTECTION_PENDING_KEY
+        ) return
         LockStateTracker.setRegularLockPending(SELF_PROTECTION_PENDING_KEY)
         Log.i(TAG, "Guarding a BioKey system settings screen")
         shield.show(SELF_PROTECTION_PENDING_KEY) {
             launchLockScreen(SELF_PROTECTION_PENDING_KEY, isSelfProtection = true)
         }
         launchLockScreen(SELF_PROTECTION_PENDING_KEY, isSelfProtection = true)
+    }
+
+    private fun navigateBackFromGuardedSelfProtection() {
+        LockStateTracker.markLockAbandoned(SELF_PROTECTION_PENDING_KEY)
+        LockStateTracker.clearSelfProtection()
+        mainHandler.postDelayed({
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            shield.hide()
+            mainHandler.postDelayed({
+                val host = activeSelfProtectionHost
+                if (host != null && shouldGuardSelf() && selfProtection.isGuardedScreen(host, null)) {
+                    performGlobalAction(GLOBAL_ACTION_HOME)
+                }
+            }, 220L)
+        }, 60L)
     }
 
     // -------------------------------------------------------------------------------------------
@@ -562,19 +782,23 @@ class BioKeyAccessibilityService : AccessibilityService() {
         return pkg in launcherPackages
     }
 
+    private fun isDeviceCredentialScreen(pkg: String, cls: String): Boolean {
+        if (!SecurityEngine.INSTANCE.isAuthenticating()) return false
+        if (pkg != "com.android.settings" && pkg != "com.miui.securitycenter" && pkg != "com.android.systemui") return false
+        val lower = cls.lowercase()
+        return lower.contains("confirmdevicecredential") ||
+            lower.contains("confirmlockpassword") ||
+            lower.contains("confirmlockpattern") ||
+            lower.contains("confirmcommonpassword") ||
+            lower.contains("biometricprompt")
+    }
+
     private fun isSystemOrOverlay(pkg: String, cls: String): Boolean {
         if (pkg == VIRTUAL_PKG_GOOGLE_PASSWORDS) return false
         if (pkg in SYSTEM_OVERLAYS) return true
         refreshSystemLists()
         if (pkg in imePackages) return true
-        // The device credential screen BiometricPrompt opens for PIN/pattern fallback (Pixel, Samsung, Xiaomi)
-        if (pkg == "com.android.settings" || pkg == "com.miui.securitycenter") {
-            val lower = cls.lowercase()
-            return lower.contains("confirmdevicecredential") ||
-                lower.contains("confirmlockpassword") ||
-                lower.contains("chooselockpassword") ||
-                lower.contains("confirmcommonpassword")
-        }
+        if (isDeviceCredentialScreen(pkg, cls)) return true
         return false
     }
 
@@ -591,21 +815,32 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     /** Shield timed out: relaunch the lock if the locked app is still in front, else let it go. */
     private fun onShieldTimeout(target: String, attempt: Int): Boolean {
-        // No readable active window isn't proof the app left: fall back to the last app seen in
-        // front (BioKey's lock screen never replaces it).
         val foreground = rootInActiveWindow?.let { root -> root.packageName?.toString().also { release(root) } }
             ?: lastFocusedPackage
+        if (target == SELF_PROTECTION_PENDING_KEY) {
+            val stillExposed = foreground != null && selfProtection.isHost(foreground) &&
+                shouldGuardSelf() && selfProtection.isGuardedScreen(foreground, null)
+            if (!stillExposed) return false
+            if (attempt > 0) {
+                Log.w(TAG, "Self-protection lock screen missing after shield timeout (attempt $attempt); relaunching")
+            }
+            LockStateTracker.clearRegularLockPending(target)
+            LockStateTracker.setRegularLockPending(target)
+            launchLockScreen(target, isSelfProtection = true)
+            return true
+        }
         val stillExposed = foreground != null && (sameApp(foreground, target) || foreground == PKG_GMS && target == VIRTUAL_PKG_GOOGLE_PASSWORDS)
-        if (!stillExposed || LockStateTracker.isAppUnlocked(target, vault.getTimeoutMode())) return false
-        Log.w(TAG, "Lock screen missing after shield timeout (attempt $attempt); relaunching")
+        if (!stillExposed || LockStateTracker.isAppUnlocked(target, vault.getTimeoutMode(target))) return false
+        if (attempt > 0) {
+            Log.w(TAG, "Lock screen missing after shield timeout (attempt $attempt); relaunching")
+        }
         LockStateTracker.clearRegularLockPending(target)
         LockStateTracker.setRegularLockPending(target)
-        val bounds = getTargetWindowBounds(target)
-        launchLockScreen(target, isSelfProtection = false, bounds = bounds)
+        launchLockScreen(target, isSelfProtection = false)
         return true
     }
 
-    private fun launchLockScreen(targetPkg: String, isSelfProtection: Boolean, bounds: Rect? = null) {
+    private fun launchLockScreen(targetPkg: String, isSelfProtection: Boolean) {
         val intent = Intent(this, LockScreenActivity::class.java).apply {
             putExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE, targetPkg)
             putExtra(LockScreenActivity.EXTRA_SELF_PROTECTION, isSelfProtection)
@@ -617,14 +852,15 @@ class BioKeyAccessibilityService : AccessibilityService() {
             )
         }
 
+        // Primary launch path: PendingIntent with explicit BAL exemption + 0-animation options
+        // (bypasses Android 14-17 stopAppSwitches() / BAL 1513 silent blocks)
         try {
-            val creatorOptions = ActivityOptions.makeBasic()
-            val sendOptions = ActivityOptions.makeBasic()
-            if (bounds != null && !bounds.isEmpty) {
-                creatorOptions.setLaunchBounds(bounds)
-                sendOptions.setLaunchBounds(bounds)
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val creatorOptions = ActivityOptions.makeCustomAnimation(this, 0, 0)
+            val sendOptions = ActivityOptions.makeCustomAnimation(this, 0, 0)
+            if (Build.VERSION.SDK_INT >= 36) {
+                creatorOptions.setPendingIntentCreatorBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS)
+                sendOptions.setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS)
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 @Suppress("DEPRECATION")
                 creatorOptions.setPendingIntentCreatorBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
                 @Suppress("DEPRECATION")
@@ -639,13 +875,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
             ).send(this, 0, null, null, null, null, sendOptions.toBundle())
             return
         } catch (e: Exception) {
-            Log.w(TAG, "PendingIntent launch failed, trying direct start: ${e.message}")
+            Log.w(TAG, "PendingIntent lock screen start failed, trying startActivity: ${e.message}")
         }
 
         try {
-            val options = if (bounds != null && !bounds.isEmpty) {
-                ActivityOptions.makeBasic().setLaunchBounds(bounds).toBundle()
-            } else null
+            val options = ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle()
             startActivity(intent, options)
         } catch (e: Exception) {
             // Could not cover the app: fail closed by leaving it.
@@ -662,9 +896,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
         if (::shield.isInitialized) {
-            val currentTarget = shield.targetPackage
-            val newBounds = currentTarget?.let { getTargetWindowBounds(it) }
-            shield.onConfigurationChanged(newBounds)
+            shield.onConfigurationChanged()
         }
     }
 
@@ -678,6 +910,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        activeService = null
         onStopped()
         userUnlockedReceiver?.let {
             runCatching { unregisterReceiver(it) }
@@ -690,12 +923,14 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun onStopped() {
         if (!isRunning) return
         isRunning = false
+        isConfirmingDeviceCredential = false
+        mainHandler.removeCallbacks(checkWindowsRunnable)
+        mainHandler.removeCallbacks(trailingSelfProtectionRunnable)
         LockStateTracker.removeLockAllListener(onLockAll)
         // Nothing enforces sessions while the service is gone, so none may outlive it.
         LockStateTracker.lockAll()
         if (::shield.isInitialized) shield.destroy()
         if (::vault.isInitialized && vault.isSetupCompleted()) {
-            SecurityEventLog.record(this, SecurityEventLog.Type.ACCESSIBILITY_STOPPED)
             ProtectionAlerts.serviceStopped(this)
         }
         Log.w(TAG, "Accessibility service stopped")

@@ -20,27 +20,25 @@ object RestrictedSettingsHelper {
     fun isRestrictedSettingsEnforced(context: Context): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
         return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                val installSource = context.packageManager.getInstallSourceInfo(context.packageName)
-                val installer = installSource.installingPackageName
-                if (installer == "com.android.vending") return false
-                if (installSource.packageSource == android.content.pm.PackageInstaller.PACKAGE_SOURCE_STORE) {
-                    return false
-                }
+            val installSource = context.packageManager.getInstallSourceInfo(context.packageName)
+            if (installSource.installingPackageName == "com.android.vending") return false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+                installSource.packageSource == android.content.pm.PackageInstaller.PACKAGE_SOURCE_STORE
+            ) {
+                return false
             }
             val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
-                ?: return false
-            val mode = appOps.unsafeCheckOpNoThrow(
-                OPSTR_ACCESS_RESTRICTED_SETTINGS,
-                context.applicationInfo.uid,
-                context.packageName
-            )
+                ?: return true
+            val mode = runCatching {
+                appOps.unsafeCheckOpNoThrow(
+                    OPSTR_ACCESS_RESTRICTED_SETTINGS,
+                    context.applicationInfo.uid,
+                    context.packageName
+                )
+            }.getOrDefault(AppOpsManager.MODE_IGNORED)
             mode != AppOpsManager.MODE_ALLOWED
-        } catch (_: Exception) {
-            false
+        } catch (_: Throwable) {
+            true
         }
     }
-
-    /** Alias for backward compatibility */
-    fun isRestricted(context: Context): Boolean = isRestrictedSettingsEnforced(context)
 }
