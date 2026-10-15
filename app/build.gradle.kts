@@ -26,8 +26,8 @@ android {
         applicationId = "com.android.BioKey"
         minSdk = 31
         targetSdk = 37
-        versionCode = 520
-        versionName = "5.2.0"
+        versionCode = 530
+        versionName = "5.3.0"
     }
 
     signingConfigs {
@@ -59,6 +59,14 @@ android {
         }
         debug {
             signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.systemProperty("roborazzi.test.record", "true")
+            it.maxHeapSize = "3g"
         }
     }
 
@@ -101,7 +109,15 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.fragment.ktx)
+
+    // Screenshot tests: render screens on the JVM (Robolectric + Roborazzi) for design review.
+    testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
 
 kotlin {

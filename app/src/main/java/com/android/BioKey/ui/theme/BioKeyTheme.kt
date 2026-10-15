@@ -8,6 +8,7 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
@@ -30,7 +31,13 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import kotlinx.coroutines.launch
 
-/** BioKey's Material 3 theme: the wallpaper-based dynamic palette, M3 type and shapes. */
+/**
+ * BioKey's Material 3 theme: the wallpaper-based dynamic palette, M3 type and shapes.
+ *
+ * Everything is drawn on a root [Surface], which sets the page colour *and* the matching content
+ * colour, so text and icons without an explicit colour are always readable (never default black
+ * on a dark page).
+ */
 @Composable
 fun BioKeyTheme(content: @Composable () -> Unit) {
     val context = LocalContext.current
@@ -38,7 +45,23 @@ fun BioKeyTheme(content: @Composable () -> Unit) {
     val colors = remember(context, dark) {
         if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
     }
-    MaterialTheme(colorScheme = colors, content = content)
+    MaterialTheme(colorScheme = colors) {
+        Surface(color = colors.surface, contentColor = colors.onSurface, content = content)
+    }
+}
+
+/**
+ * False when the user turned on "Remove animations" (animator duration scale 0). Decorative
+ * looping animations should then hold still.
+ */
+@Composable
+fun animationsEnabled(): Boolean {
+    val context = LocalContext.current
+    return remember(context) {
+        android.provider.Settings.Global.getFloat(
+            context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f
+        ) != 0f
+    }
 }
 
 /**

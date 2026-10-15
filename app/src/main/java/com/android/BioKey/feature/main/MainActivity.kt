@@ -11,10 +11,17 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PauseCircle
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.foundation.layout.padding
+import com.android.BioKey.ui.theme.Group
+import com.android.BioKey.ui.theme.GroupRow
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -22,7 +29,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.fragment.app.FragmentActivity
+import androidx.activity.ComponentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.BioKey.core.security.WindowProtection
@@ -39,7 +46,7 @@ import kotlinx.coroutines.delay
 /**
  * BioKey's main UI. Requires authentication before showing locked apps or settings.
  */
-class MainActivity : FragmentActivity() {
+class MainActivity : ComponentActivity() {
 
     companion object {
         const val ACTION_PAUSE_PROTECTION = "com.android.BioKey.action.PAUSE_PROTECTION"
@@ -98,7 +105,7 @@ class MainActivity : FragmentActivity() {
                             if (!BioKeyAccessibilityService.lockDevice()) finishAffinity()
                         }
                     )
-                    else -> MainScreenExpressive(a11yActive = a11yActive)
+                    else -> MainScreenExpressive(a11yActive = a11yActive, onPauseRequested = { pauseRequested = true })
                 }
 
                 if (setupCompleted && isAuthenticated && pauseRequested) {
@@ -255,30 +262,34 @@ class MainActivity : FragmentActivity() {
     private fun isUserCancel(code: Int) = SecurityEngine.isUserCancel(code)
 }
 
+/** Pause choices, as a sheet matching the rest of BioKey. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun PauseProtectionDialog(onPause: (Long?) -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Pause protection?") },
-        text = {
-            Column {
-                Text(
-                    "Locked apps open without authentication while protection is paused. Timed pauses resume automatically.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Spacer(Modifier.height(16.dp))
-                listOf(
-                    "For 15 minutes" to 15 * 60_000L,
-                    "For 1 hour" to 60 * 60_000L,
-                    "Until I turn it back on" to null
-                ).forEach { (label, duration) ->
-                    TextButton(onClick = { onPause(duration) }, modifier = Modifier.fillMaxWidth()) {
-                        Text(label, modifier = Modifier.fillMaxWidth())
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    val options = listOf(
+        Triple(Icons.Default.Timer, "For 15 minutes", 15 * 60_000L),
+        Triple(Icons.Default.Schedule, "For 1 hour", 60 * 60_000L),
+        Triple(Icons.Default.PauseCircle, "Until I turn it back on", null)
     )
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().padding(bottom = 28.dp)) {
+            Text(
+                "Pause protection",
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.padding(horizontal = 28.dp)
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Locked apps open without a check while paused. Timed pauses resume by themselves.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 28.dp)
+            )
+            Spacer(Modifier.height(20.dp))
+            Group(count = options.size) { i ->
+                val (icon, label, duration) = options[i]
+                GroupRow(index = i, count = options.size, title = label, icon = icon, onClick = { onPause(duration) })
+            }
+        }
+    }
 }

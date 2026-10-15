@@ -225,14 +225,14 @@ class InstantShieldOverlay(
         }
         val cached = AppInfoCache.get(target)
         if (cached != null) {
-            cover.bind(cached.label, cached.iconDrawable, isBioKey = false)
+            cover.bind(cached.label, cached.icon, isBioKey = false)
             return
         }
         cover.bind(AppInfoCache.quickLabel(service, target), null, isBioKey = false)
         iconLoader.execute {
             val loaded = AppInfoCache.loadAndCache(service, service.packageManager, target) ?: return@execute
             mainHandler.post {
-                if (isShowing && targetPackage == target) cover.bind(loaded.label, loaded.iconDrawable, isBioKey = false)
+                if (isShowing && targetPackage == target) cover.bind(loaded.label, loaded.icon, isBioKey = false)
             }
         }
     }
