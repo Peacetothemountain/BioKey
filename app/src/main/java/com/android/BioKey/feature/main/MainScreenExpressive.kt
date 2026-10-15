@@ -1,6 +1,11 @@
 package com.android.BioKey.feature.main
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.GppBad
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.Settings
@@ -69,10 +75,12 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.BioKey.BioKeyApplication
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.SecurityProfile
+import com.android.BioKey.core.security.AdvancedProtection
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.AppInfoCache
@@ -114,6 +122,12 @@ fun MainScreenExpressive(a11yActive: Boolean, onPauseRequested: () -> Unit) {
     val defaultTimeout by vault.timeoutModeFlow.collectAsStateWithLifecycle()
     val autoSortProfiles by vault.autoSortProfilesFlow.collectAsStateWithLifecycle()
     val packageChangeVersion by BioKeyApplication.packageChangeVersion.collectAsStateWithLifecycle()
+    // Re-checked on every resume: the user may have just changed it in system settings.
+    var blockedByAdvancedProtection by remember { mutableStateOf(AdvancedProtection.blocksBioKey(context)) }
+    LifecycleResumeEffect(Unit) {
+        blockedByAdvancedProtection = AdvancedProtection.blocksBioKey(context)
+        onPauseOrDispose { }
+    }
 
     var installedApps by remember { mutableStateOf(InstalledAppsCache.get(packageChangeVersion, iconPx) ?: emptyList()) }
     var isLoadingApps by remember { mutableStateOf(installedApps.isEmpty()) }
@@ -163,12 +177,8 @@ fun MainScreenExpressive(a11yActive: Boolean, onPauseRequested: () -> Unit) {
     fun profileOf(pkg: String) = packageAliases(pkg).firstNotNullOfOrNull { profileByPackage[it] }
     fun isLocked(pkg: String) = packageAliases(pkg).any { it in lockedApps } || profileOf(pkg) != null
 
-    if (showSettings) {
-        SettingsScreenExpressive(onNavigateBack = { showSettings = false })
-        return
-    }
 
-    BackHandler(enabled = filter != FILTER_ALL) { filter = FILTER_ALL }
+    BackHandler(enabled = filter != FILTER_ALL && !showSettings) { filter = FILTER_ALL }
 
     val matching = remember(installedApps, searchQuery, filter, profiles) {
         installedApps.filter { app ->
@@ -238,11 +248,15 @@ fun MainScreenExpressive(a11yActive: Boolean, onPauseRequested: () -> Unit) {
                         MainHeader(onOpenSettings = { showSettings = true })
                         ProtectionCard(
                             a11yActive = a11yActive,
+                            blockedByAdvancedProtection = blockedByAdvancedProtection,
                             enabled = globalLockEnabled,
                             pausedUntil = pausedUntil,
                             lockedCount = lockedCount,
                             defaultTimeout = defaultTimeout,
-                            onTurnOn = { IntentNavigationHelper.openAccessibilitySettings(context) },
+                            onTurnOn = {
+                                if (blockedByAdvancedProtection) IntentNavigationHelper.openAdvancedProtectionHelp(context)
+                                else IntentNavigationHelper.openAccessibilitySettings(context)
+                            },
                             onResume = { vault.resumeProtection() },
                             onPause = onPauseRequested
                         )
@@ -338,6 +352,16 @@ fun MainScreenExpressive(a11yActive: Boolean, onPauseRequested: () -> Unit) {
                 .navigationBarsPadding()
                 .padding(16.dp)
         )
+    }
+
+    // Settings slides in over the home screen, which stays composed underneath so the
+    // predictive back gesture can reveal it.
+    AnimatedVisibility(
+        visible = showSettings,
+        enter = slideInHorizontally { it / 3 } + fadeIn(),
+        exit = slideOutHorizontally { it / 3 } + fadeOut()
+    ) {
+        SettingsScreenExpressive(onNavigateBack = { showSettings = false })
     }
 
     // ---- Sheets & dialogs ------------------------------------------------------------------
@@ -448,6 +472,7 @@ private fun MainHeader(onOpenSettings: () -> Unit) {
 /** Protection status: what state BioKey is in, in one glance, with the one action that matters. */
 @Composable
 private fun ProtectionCard(
+    blockedByAdvancedProtection: Boolean,
     a11yActive: Boolean,
     enabled: Boolean,
     pausedUntil: Long,
@@ -461,6 +486,11 @@ private fun ProtectionCard(
     val colors = MaterialTheme.colorScheme
     data class Look(val container: Color, val content: Color, val icon: ImageVector, val title: String, val body: String)
     val look = when {
+        !a11yActive && blockedByAdvancedProtection -> Look(
+            colors.errorContainer, colors.onErrorContainer, Icons.Default.GppBad,
+            "Blocked by Advanced Protection",
+            "Android's Advanced Protection only lets accessibility tools use accessibility, so BioKey can't see which app is open. Android's own App Lock still works, or turn Advanced Protection off."
+        )
         !a11yActive -> Look(
             colors.errorContainer, colors.onErrorContainer, Icons.Default.Warning,
             "App lock is off", "Turn on BioKey in Accessibility settings to start locking apps."
@@ -507,7 +537,9 @@ private fun ProtectionCard(
             Spacer(Modifier.height(16.dp))
             val buttonColors = ButtonDefaults.buttonColors(containerColor = look.content, contentColor = look.container)
             when {
-                !a11yActive -> Button(onClick = onTurnOn, colors = buttonColors, modifier = Modifier.fillMaxWidth()) { Text("Turn on") }
+                !a11yActive -> Button(onClick = onTurnOn, colors = buttonColors, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (blockedByAdvancedProtection) "See options" else "Turn on")
+                }
                 !enabled -> Button(onClick = onResume, colors = buttonColors, modifier = Modifier.fillMaxWidth()) { Text("Resume protection") }
                 else -> OutlinedButton(
                     onClick = onPause,

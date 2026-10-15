@@ -32,6 +32,18 @@ object WindowProtection {
             activity.setRecentsScreenshotEnabled(false)
         }
         window.decorView.filterTouchesWhenObscured = true
+        hideFromNonToolAccessibilityServices(window.decorView)
+    }
+
+    /**
+     * Only real accessibility tools (screen readers, switch/voice/Braille input) may read or
+     * operate this view and everything inside it. Accessibility malware can't read which apps are
+     * locked or tap "Pause protection"; TalkBack users are unaffected.
+     */
+    fun hideFromNonToolAccessibilityServices(view: android.view.View) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            view.setAccessibilityDataSensitive(android.view.View.ACCESSIBILITY_DATA_SENSITIVE_YES)
+        }
     }
 
     fun isMotionEventObscured(event: MotionEvent): Boolean {

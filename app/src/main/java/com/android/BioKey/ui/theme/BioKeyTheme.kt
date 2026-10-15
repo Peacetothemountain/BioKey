@@ -45,6 +45,7 @@ fun BioKeyTheme(content: @Composable () -> Unit) {
     val colors = remember(context, dark) {
         if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
     }
+    // Switch to MaterialExpressiveTheme (expressive spring motion) once material3 1.5 is stable.
     MaterialTheme(colorScheme = colors) {
         Surface(color = colors.surface, contentColor = colors.onSurface, content = content)
     }

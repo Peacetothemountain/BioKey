@@ -20,6 +20,7 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.GppBad
 import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material3.Button
@@ -38,6 +39,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.android.BioKey.core.security.AdvancedProtection
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.main.BioKeyLogo
@@ -61,12 +63,14 @@ fun SetupScreenExpressive(
     var a11yActive by remember { mutableStateOf(BioKeyAccessibilityService.isServiceEnabled(context)) }
     var hasAutoPrompted by remember { mutableStateOf(false) }
     var restrictedSettingsBlocked by remember { mutableStateOf(false) }
+    var advancedProtectionBlocks by remember { mutableStateOf(false) }
 
     // Advance by itself once the service is on; don't loop if the user cancels the prompt.
     LifecycleResumeEffect(Unit) {
         val active = BioKeyAccessibilityService.isServiceEnabled(context)
         a11yActive = active
         restrictedSettingsBlocked = !active && RestrictedSettingsHelper.isRestrictedSettingsEnforced(context)
+        advancedProtectionBlocks = !active && AdvancedProtection.blocksBioKey(context)
         if (active && !hasAutoPrompted && authError == null) {
             hasAutoPrompted = true
             onSetupComplete()
@@ -80,7 +84,16 @@ fun SetupScreenExpressive(
 
     data class Step(val icon: ImageVector, val title: String, val subtitle: String, val done: Boolean, val onClick: (() -> Unit)?)
     val steps = buildList {
-        if (restrictedSettingsBlocked) {
+        if (advancedProtectionBlocks) {
+            add(
+                Step(
+                    Icons.Default.GppBad, "Advanced Protection is on",
+                    "Android only lets accessibility tools use accessibility while it's on, so BioKey can't lock apps. Turn it off in Security & privacy, or use Android's own App Lock.",
+                    done = false
+                ) { IntentNavigationHelper.openAdvancedProtectionHelp(context) }
+            )
+        }
+        if (restrictedSettingsBlocked && !advancedProtectionBlocks) {
             add(
                 Step(
                     Icons.Default.Policy, "Allow restricted settings",
@@ -180,7 +193,13 @@ fun SetupScreenExpressive(
         }
 
         Button(
-            onClick = { if (a11yActive) onSetupComplete() else IntentNavigationHelper.openAccessibilitySettings(context) },
+            onClick = {
+                when {
+                    a11yActive -> onSetupComplete()
+                    advancedProtectionBlocks -> IntentNavigationHelper.openAdvancedProtectionHelp(context)
+                    else -> IntentNavigationHelper.openAccessibilitySettings(context)
+                }
+            },
             enabled = !isAuthenticating,
             shape = CircleShape,
             modifier = Modifier
@@ -202,6 +221,7 @@ fun SetupScreenExpressive(
                 when {
                     isAuthenticating -> "Confirming…"
                     a11yActive -> "Confirm and finish"
+                    advancedProtectionBlocks -> "See options"
                     else -> "Open Accessibility settings"
                 },
                 style = MaterialTheme.typography.titleMedium

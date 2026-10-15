@@ -268,8 +268,12 @@ class LockScreenActivity : ComponentActivity() {
             launchApp(pkg)
             return
         }
+        // BioKey's lock screen is on screen while it forwards the app's own link: grant the
+        // launch only while visible (Android 17's hardened mode), never an open-ended grant.
         val options = ActivityOptions.makeBasic().apply {
-            if (Build.VERSION.SDK_INT >= 36) {
+            if (Build.VERSION.SDK_INT >= 37) {
+                pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE
+            } else if (Build.VERSION.SDK_INT >= 36) {
                 pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 @Suppress("DEPRECATION")

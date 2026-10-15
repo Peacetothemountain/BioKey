@@ -56,6 +56,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         /** How long a cover raised by a tap waits for the tapped app's window (cold starts). */
         private const val PREDICTION_WAIT_MS = 3_000L
 
+        /** Stands for an app window whose owner can't be read; never locked, never a helper. */
+        private const val UNIDENTIFIED_APP = "biokey:unidentified-app"
+
         @Volatile
         var isRunning: Boolean = false
             private set
@@ -584,7 +587,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         for (w in windowList) {
             liveIds += w.id
             if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
-            val pkg = windowPackages[w.id] ?: windowPackage(w)?.also { windowPackages[w.id] = it } ?: continue
+            // Windows that hide from non-tool accessibility services (accessibility-data-sensitive,
+            // e.g. BioKey's own) can't be identified: count them as some other app.
+            val pkg = windowPackages[w.id] ?: windowPackage(w)?.also { windowPackages[w.id] = it } ?: UNIDENTIFIED_APP
             visible += pkg
             if (w.isInPictureInPictureMode) pip += pkg
             if (front == null && (w.isActive || w.isFocused)) front = pkg

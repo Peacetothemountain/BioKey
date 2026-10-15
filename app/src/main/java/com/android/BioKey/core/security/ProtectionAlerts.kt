@@ -28,7 +28,7 @@ object ProtectionAlerts {
         )
     }
 
-    private fun post(context: Context, id: Int, title: String, text: String, ongoing: Boolean = false) {
+    private fun post(context: Context, id: Int, title: String, text: String, ongoing: Boolean = false, offerTurnOn: Boolean = true) {
         val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return
         ensureChannels(context)
@@ -44,7 +44,7 @@ object ProtectionAlerts {
             com.android.BioKey.feature.main.IntentNavigationHelper.accessibilitySettingsIntent(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_lock_key)
             .setContentTitle(title)
             .setContentText(text)
@@ -52,10 +52,10 @@ object ProtectionAlerts {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_ERROR)
             .setContentIntent(open)
-            .addAction(R.drawable.ic_lock_key, "Turn on", turnOnIntent)
             .setOngoing(ongoing)
             .setAutoCancel(!ongoing)
-            .build()
+        if (offerTurnOn) builder.addAction(R.drawable.ic_lock_key, "Turn on", turnOnIntent)
+        val notification = builder.build()
         try {
             manager.notify(id, notification)
         } catch (_: SecurityException) {
@@ -63,13 +63,27 @@ object ProtectionAlerts {
         }
     }
 
-    fun serviceStopped(context: Context) = post(
-        context,
-        ID_SERVICE_STOPPED,
-        "App lock is off",
-        "BioKey's app lock service stopped, so locked apps are not protected. Tap to turn it back on.",
-        ongoing = true
-    )
+    fun serviceStopped(context: Context) {
+        if (AdvancedProtection.blocksBioKey(context)) {
+            // Android switched the service off and won't let it back on: say so, don't offer "Turn on".
+            post(
+                context,
+                ID_SERVICE_STOPPED,
+                "Advanced Protection turned off app lock",
+                "Android's Advanced Protection only lets accessibility tools use accessibility, so BioKey can't lock apps while it's on. Tap for options.",
+                ongoing = true,
+                offerTurnOn = false
+            )
+            return
+        }
+        post(
+            context,
+            ID_SERVICE_STOPPED,
+            "App lock is off",
+            "BioKey's app lock service stopped, so locked apps are not protected. Tap to turn it back on.",
+            ongoing = true
+        )
+    }
 
     fun serviceRestored(context: Context) = NotificationManagerCompat.from(context).cancel(ID_SERVICE_STOPPED)
 }

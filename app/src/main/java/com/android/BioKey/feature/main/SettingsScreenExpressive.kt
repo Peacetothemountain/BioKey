@@ -2,7 +2,14 @@ package com.android.BioKey.feature.main
 
 import android.content.Intent
 import android.widget.Toast
-import androidx.activity.compose.BackHandler
+import androidx.activity.BackEventCompat
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlin.coroutines.cancellation.CancellationException
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -57,8 +64,6 @@ import com.android.BioKey.ui.theme.Haptics
 import com.android.BioKey.ui.theme.SectionHeader
 import com.android.BioKey.ui.theme.springPress
 
-/** [android.provider.Settings.ACTION_APP_LOCK_SETTINGS] (API 37.2), as a literal for older SDKs. */
-private const val SYSTEM_APP_LOCK_SETTINGS = "android.settings.APP_LOCK_SETTINGS"
 
 /** One row of a settings group. */
 private class SettingItem(
@@ -74,7 +79,23 @@ private class SettingItem(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
-    BackHandler(onBack = onNavigateBack)
+    // Predictive back: the page follows the back gesture (shrinks, rounds, shifts) and reveals the
+    // home screen underneath; releasing completes it, swiping back cancels it.
+    var backProgress by remember { mutableFloatStateOf(0f) }
+    var backFromLeft by remember { mutableStateOf(true) }
+    PredictiveBackHandler { gesture ->
+        try {
+            gesture.collect { event ->
+                backProgress = event.progress
+                backFromLeft = event.swipeEdge == BackEventCompat.EDGE_LEFT
+            }
+            onNavigateBack()
+        } catch (e: CancellationException) {
+            backProgress = 0f
+            throw e
+        }
+    }
+    val shownProgress by animateFloatAsState(backProgress, label = "predictive_back")
 
     val context = LocalContext.current
     val view = LocalView.current
@@ -185,6 +206,16 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
+            .graphicsLayer {
+                val p = shownProgress
+                scaleX = 1f - 0.1f * p
+                scaleY = 1f - 0.1f * p
+                translationX = (if (backFromLeft) 1f else -1f) * size.width * 0.04f * p
+                shape = RoundedCornerShape(32.dp * p)
+                clip = p > 0f
+            }
+            // Opaque to touches: taps on empty space must not reach the home screen underneath.
+            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
             .rejectObscuredTouches()
             .nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {

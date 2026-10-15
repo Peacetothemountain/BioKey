@@ -131,6 +131,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         isClickable = true
         filterTouchesWhenObscured = true
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
+        com.android.BioKey.core.security.WindowProtection.hideFromNonToolAccessibilityServices(this)
 
         val identity = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL

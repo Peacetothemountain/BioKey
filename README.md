@@ -25,7 +25,7 @@ An Android app lock modelled on Android 17's own App Lock: the apps you choose o
 | **Self-protection** | BioKey's App info page (force stop, uninstall, clear storage), its accessibility switch, notification access and the uninstall dialog require authentication. Pages you open from inside BioKey are pre-authorised. |
 | **Protection alert** | A notification fires if the accessibility service stops. |
 | **Pause** | Pause for 15 minutes, 1 hour, or until turned back on, from the app or the Quick Settings tile (behind authentication). |
-| **Window hardening** | `FLAG_SECURE`, no Recents thumbnails of BioKey, other apps' overlays hidden, and touches through obscuring windows rejected (tapjacking). |
+| **Window hardening** | `FLAG_SECURE`, no Recents thumbnails of BioKey, other apps' overlays hidden, touches through obscuring windows rejected (tapjacking), and BioKey's screens marked accessibility-data-sensitive so only genuine accessibility tools (e.g. TalkBack) can read or operate them; accessibility malware can't see your locked apps or tap "Pause". |
 | **No network access** | No `INTERNET` permission. Backup and device-to-device transfer are disabled. |
 
 ## Android 17 App Lock
@@ -37,6 +37,7 @@ Android 17 QPR2 (API 37.2) adds a native App Lock (`PackageManager.getEnableAppL
 An app lock running as a regular app can't defend against everything:
 
 - **Root, ADB, or a modified OS** can bypass any app lock.
+- **Advanced Protection (Android 17)** limits the accessibility API to genuine accessibility tools. BioKey honestly declares it isn't one, so Android switches it off while Advanced Protection is on. BioKey detects this and says so (home card, setup, alert) and points to Android's own App Lock, which keeps working.
 - **Safe mode** disables third-party accessibility services, so locked apps open without a check until you reboot normally. The protection alert tells you the service stopped.
 - **Recents previews** of a locked app can't be blanked; only the system App Lock can do that.
 - **Launches without a tap** (links from other apps, the quick-switch gesture) are covered when the app's window appears, which can be a frame later than a tap-started launch.
@@ -51,6 +52,7 @@ An app lock running as a regular app can't defend against everything:
 | `HIDE_OVERLAY_WINDOWS` | Hides other apps' overlays while BioKey's screens are showing. |
 | `POST_NOTIFICATIONS` | The protection alert and hidden-notification stand-ins. |
 | `RECEIVE_BOOT_COMPLETED` | Warns after a reboot if the accessibility service is off. |
+| `QUERY_ADVANCED_PROTECTION_MODE` | Detects Android's Advanced Protection, which blocks BioKey's service, so BioKey can explain it instead of failing silently. |
 | Notification access (optional) | The notification shield. |
 
 Package visibility is limited to launchable apps, launchers, keyboards and a few system settings pages (`<queries>`); BioKey doesn't request `QUERY_ALL_PACKAGES`.
