@@ -12,9 +12,9 @@ import androidx.compose.ui.input.pointer.pointerInteropFilter
 /**
  * Window protection and anti-tapjacking utilities.
  */
-object IdentityCheckManager {
+object WindowProtection {
 
-    private const val TAG = "IdentityCheckManager"
+    private const val TAG = "WindowProtection"
 
     /**
      * FLAG_SECURE (no screenshots/recording/recents thumbnails), hides other apps' overlays
@@ -49,7 +49,7 @@ object IdentityCheckManager {
 @OptIn(ExperimentalComposeUiApi::class)
 fun Modifier.rejectObscuredTouches(onObscuredDetected: () -> Unit = {}): Modifier =
     pointerInteropFilter { motionEvent ->
-        if (IdentityCheckManager.isMotionEventObscured(motionEvent)) {
+        if (WindowProtection.isMotionEventObscured(motionEvent)) {
             if (motionEvent.actionMasked == MotionEvent.ACTION_DOWN) {
                 onObscuredDetected()
             }

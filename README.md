@@ -1,8 +1,8 @@
 # BioKey
 
-An Android app lock that puts the apps you choose behind your fingerprint, face, or screen lock, backed by Android Keystore keys that only work after a real authentication.
+An Android app lock modelled on Android 17's own App Lock: the apps you choose open only after your face, fingerprint or screen lock, and stay unlocked while you're using them.
 
-[![Platform](https://img.shields.io/badge/Android-12%2B%20(API%2031%E2%80%9337)-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
+[![Platform](https://img.shields.io/badge/Android-12%2B%20(API%2031%E2%80%9337.2)-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![UI](https://img.shields.io/badge/UI-Jetpack%20Compose%20%2F%20Material%203-4285F4?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
@@ -11,74 +11,69 @@ An Android app lock that puts the apps you choose behind your fingerprint, face,
 
 ## How it works
 
-1. **Detection.** An accessibility service watches which app is in the foreground (including split-screen and picture-in-picture windows). When a locked app appears, BioKey covers it straight away with an opaque, screenshot-proof window, then shows its lock screen.
-2. **Authentication.** Unlocking uses `BiometricPrompt` with a `CryptoObject`. The prompt is bound to an AES-GCM key in the Android Keystore that can only be used right after a successful authentication. BioKey only treats an unlock as successful once that key has actually encrypted a fresh random challenge. A spoofed or hooked "success" callback unlocks nothing.
-3. **Sessions.** An unlocked app stays unlocked according to your re-lock setting (immediately, 30 s, 1 min, 5 min, or until the screen turns off). Turning the screen off always locks everything.
+1. **Covering.** An accessibility service watches the screen. When a locked app is about to open (a tap on its icon, a Recents card or a search result) or appears (any other way, including split screen and picture-in-picture), BioKey covers it at once with an opaque, screenshot-proof overlay.
+2. **Authenticating.** A lightweight lock screen takes over from the cover and shows the system `BiometricPrompt`: Class 3 face unlock first, fingerprint at the same time, then your PIN, pattern or password. Weak (Class 2) face unlock is never accepted.
+3. **Sessions.** An unlocked app stays unlocked for as long as it is on screen, whatever happens inside it (refreshes, dialogs, sign-in sheets, keyboards, chat heads, assistants). It counts as left only once its windows have gone. Then it locks again after its re-lock delay: immediately, after 30 s, 1, 5 or 15 min, or when the screen turns off. Going straight to a helper app (authenticator, email, file picker, camera) and back doesn't end the session. Turning the screen off always locks everything.
 
-## Security features
+## Features
 
 | Feature | What it does |
 |---|---|
-| **Hardware-bound unlock** | Keystore keys (StrongBox when available, otherwise the TEE) gate every unlock. The real storage level is read from `KeyInfo`, not assumed. |
-| **Biometric change detection** | If fingerprints or faces are added or removed, the biometric key is invalidated by the platform. BioKey then requires your device PIN/pattern/password before issuing a new key, and logs the event. |
-| **Identity Check** | Optional strict mode: Class 3 biometrics only, with no PIN fallback. This protects against someone who has watched or forced your PIN. Adding or removing a fingerprint or face (which needs only the PIN) starts a 30-minute security delay with an alert, after which the PIN confirms the change. |
-| **BioKey locks itself** | BioKey's own UI always requires authentication. Pausing protection or missing permissions doesn't skip it. |
-| **Step-up authentication** | Anything that *weakens* protection needs an authentication from the last 60 seconds: unlocking an app, pausing, lengthening the re-lock delay, turning off a shield, deleting intruder photos. The settings store refuses these changes on its own, so a missed UI check fails closed. |
-| **Self-protection** | BioKey's App info page (force stop, uninstall, clear storage), its accessibility toggle, device-admin page, and the uninstall dialog all require authentication. Pages you open from inside BioKey are pre-authorised. |
-| **Uninstall protection** | A device admin with **no policies** makes uninstalling a two-step process (deactivate, then uninstall). Both steps are guarded by self-protection. |
-| **Tamper-evident settings** | Settings are sealed with an HMAC under a non-exportable Keystore key. If they're changed outside BioKey, it re-arms protection, alerts you, and logs the event. |
-| **Protection alerts** | A high-priority notification fires if the accessibility service stops, the device admin is removed, or tampering is detected. |
-| **Timed pause** | Pause protection for 15 minutes or 1 hour (it resumes automatically), or until you turn it back on. Available from the Quick Settings tile, behind authentication. |
-| **Intruder photos** | Optional. After two failed unlocks, BioKey takes a silent front-camera photo. Each photo is envelope-encrypted (a random AES-256 key per photo, wrapped by a Keystore key). File names are random, so the storage reveals nothing about which apps you lock. |
-| **Notification shield** | Optional. Notifications from locked apps are replaced with "N hidden notifications" until you unlock. Even the app name is hidden on the lock screen. |
-| **Security log** | An encrypted, on-device log of pauses, tampering, biometric changes, failed unlocks, and blocked attempts to switch BioKey off. |
-| **Crash disguise** | Optional. Shows a fake "app keeps stopping" dialog instead of the lock screen. A double tap or long press on its title opens the real prompt. |
-| **Window hardening** | `FLAG_SECURE`, no recents thumbnails, `setHideOverlayWindows`, and rejection of touches through obscuring overlays (tapjacking). |
-| **No network access** | BioKey has no `INTERNET` permission. Backup and device-to-device transfer are disabled for all data. |
+| **Profiles** | Group apps (Finance, Social, Work, or your own) with their own re-lock delay. Each profile is edited from its own page. An app lives in at most one profile. Optional auto-sort puts recognised apps into the built-in profiles. |
+| **Notification shield** | Optional. A locked app's notifications are snoozed and replaced with "N hidden notifications" until you unlock it; tapping the stand-in unlocks and opens the original. Calls, alarms, media and navigation always show. |
+| **BioKey locks itself** | BioKey's own screens need authentication and lock again after 3 minutes of inactivity. |
+| **Self-protection** | BioKey's App info page (force stop, uninstall, clear storage), its accessibility switch, notification access and the uninstall dialog require authentication. Pages you open from inside BioKey are pre-authorised. |
+| **Protection alert** | A notification fires if the accessibility service stops. |
+| **Pause** | Pause for 15 minutes, 1 hour, or until turned back on, from the app or the Quick Settings tile (behind authentication). |
+| **Window hardening** | `FLAG_SECURE`, no Recents thumbnails of BioKey, other apps' overlays hidden, and touches through obscuring windows rejected (tapjacking). |
+| **No network access** | No `INTERNET` permission. Backup and device-to-device transfer are disabled. |
 
-## Limits (read this)
+## Android 17 App Lock
+
+Android 17 QPR2 (API 37.2) adds a native App Lock (`PackageManager.getEnableAppLockIntentForPackage`, `ApplicationInfo.isAppLockEnabled`). Turning it on for an app needs `LOCK_APPS`, which only the default launcher can hold, so BioKey can't use it directly; this was verified on a device. Where it's available, BioKey's settings link to the system App Lock page.
+
+## Limits
 
 An app lock running as a regular app can't defend against everything:
 
-- **Root, ADB, or a modified OS** can bypass any app lock, BioKey included.
-- **Safe mode** disables third-party accessibility services, so locked apps open without a check until you reboot normally. Protection alerts tell you the service stopped.
-- **Self-protection is heuristic.** There's no Android API for "this screen can disable app X", so BioKey recognises those screens by package and content. It's tested against AOSP/Pixel layouts. OEM Settings apps may differ.
-- **Notification shield** can't edit another app's notification, only dismiss it. The content is still in the app itself. Ongoing notifications (calls, media, foreground services) can't be dismissed.
-- **Intruder photos** are best-effort. The camera may be busy (face unlock), or the OS may block camera access in some states.
+- **Root, ADB, or a modified OS** can bypass any app lock.
+- **Safe mode** disables third-party accessibility services, so locked apps open without a check until you reboot normally. The protection alert tells you the service stopped.
+- **Recents previews** of a locked app can't be blanked; only the system App Lock can do that.
+- **Launches without a tap** (links from other apps, the quick-switch gesture) are covered when the app's window appears, which can be a frame later than a tap-started launch.
+- **Self-protection is heuristic.** There's no Android API for "this screen can disable app X", so BioKey recognises those screens by package and content. It's tested against Pixel layouts; other manufacturers' Settings may differ.
 
 ## Permissions
 
 | Permission | Why |
 |---|---|
-| Accessibility service | Detects when a locked app (or a BioKey settings page) is in the foreground. Doesn't read what you type. |
-| Device admin (`watch-login` only) | Two-step uninstall. Optionally notices failed screen unlocks, for intruder photos. Can't lock, wipe, or change the device. |
-| `USE_BIOMETRIC` | Fingerprint and face authentication. |
-| `HIDE_OVERLAY_WINDOWS` | Hides other apps' overlays while BioKey's lock screen is showing. |
-| `POST_NOTIFICATIONS` | Protection alerts and hidden-notification stand-ins. |
-| `CAMERA` (optional) | Intruder photos. |
-| Notification access (optional) | Notification shield. |
-| `RECEIVE_BOOT_COMPLETED` | Prepares Keystore keys after a reboot. |
+| Accessibility service | Sees which app is on screen, reads the name of the app you tap on the home screen or in Recents, and recognises BioKey's own settings pages. Doesn't read what you type. |
+| `USE_BIOMETRIC` | Face and fingerprint authentication. |
+| `HIDE_OVERLAY_WINDOWS` | Hides other apps' overlays while BioKey's screens are showing. |
+| `POST_NOTIFICATIONS` | The protection alert and hidden-notification stand-ins. |
+| `RECEIVE_BOOT_COMPLETED` | Warns after a reboot if the accessibility service is off. |
+| Notification access (optional) | The notification shield. |
 
-Package visibility is limited to launchable apps, launchers, and keyboards (`<queries>`); BioKey doesn't request `QUERY_ALL_PACKAGES`.
+Package visibility is limited to launchable apps, launchers, keyboards and a few system settings pages (`<queries>`); BioKey doesn't request `QUERY_ALL_PACKAGES`.
 
 ## Architecture
 
 ```
-feature/main      MainActivity (own lock, step-up provider), main screen, settings, intruder photos
-feature/setup     First-run setup and the repair screen for revoked permissions
-feature/lock      Accessibility service, lock screen, instant cover, self-protection detector,
-                  device admin, crash disguise
-feature/notification  Notification shield (NotificationListenerService)
-feature/tile      Quick Settings tile
-core/security     HardwareKeyManager (Keystore keys, crypto-bound prompts, integrity MAC)
-                  SecurityEngine (all authentication), LockStateTracker (sessions, step-up)
-                  SecurityVault (sealed settings), SecurityEventLog, ProtectionAlerts
-core/intruder     Intruder photo capture and envelope encryption
+core/data          LockTimeoutMode, SecurityProfile, AppClassifier
+core/security      SecurityVault (settings, locked apps, profiles), LockStateTracker (sessions),
+                   SecurityEngine (BiometricPrompt), WindowProtection, ProtectionAlerts
+core/receiver      Boot receiver
+feature/lock       BioKeyAccessibilityService, InstantShieldOverlay, LockScreenActivity,
+                   LockCoverView, SelfProtectionDetector, AppInfoCache, ScreenReceiver
+feature/main       MainActivity (BioKey's own lock), main screen, profile sheets, settings
+feature/setup      First-run setup
+feature/notification  Notification shield
+feature/tile       Quick Settings tile
+ui/theme           BioKeyTheme, system haptics, press animation
 ```
 
 ## Building
 
-Requirements: JDK 17 and the Android SDK (compileSdk 37).
+Requirements: JDK 17 and the Android SDK (compileSdk 37.2; Gradle downloads it if missing).
 
 ```bash
 ./gradlew :app:assembleDebug
@@ -88,7 +83,7 @@ Requirements: JDK 17 and the Android SDK (compileSdk 37).
 
 Release builds use R8 (minify and resource shrinking). `Log.d/i/v` calls are stripped.
 
-To sign a release, copy the example config and fill in your own keystore:
+To sign a release, copy the example config and point it at your keystore (keep the keystore out of the repo and backed up offline: losing it means you can never update the installed app):
 
 ```bash
 cp key.properties.example key.properties   # git-ignored

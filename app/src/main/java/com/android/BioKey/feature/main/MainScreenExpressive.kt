@@ -1,15 +1,6 @@
 package com.android.BioKey.feature.main
 
-import android.content.Context
-import android.content.Intent
-import android.content.pm.LauncherApps
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.drawable.BitmapDrawable
-import android.graphics.drawable.Drawable
-import android.os.Build
-import android.os.Process
-import androidx.compose.animation.AnimatedVisibility
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.EaseInOutCubic
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -19,6 +10,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import com.android.BioKey.ui.theme.springPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,1435 +24,683 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Chat
-import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.filled.Work
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import com.android.BioKey.BioKeyApplication
-import com.android.BioKey.core.data.LockTimeoutMode
-import com.android.BioKey.core.data.SecurityProfile
-import java.util.UUID
 import androidx.compose.material3.TextButton
-import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.android.BioKey.BioKeyApplication
 import com.android.BioKey.R
+import com.android.BioKey.core.data.SecurityProfile
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.rejectObscuredTouches
-import com.android.BioKey.feature.lock.BioKeyAccessibilityService
-import com.android.BioKey.ui.theme.ExpressiveTokens
-import com.android.BioKey.ui.theme.springPress
+import com.android.BioKey.feature.lock.AppInfoCache
+import com.android.BioKey.ui.theme.Haptics
+import androidx.compose.ui.platform.LocalView
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private const val ICON_RENDER_DP = 44
+private const val ICON_RENDER_DP = 40
+private const val FILTER_ALL = "filter:all"
 
-private object InstalledAppsCache {
-    @Volatile var cachedApps: List<AppItem> = emptyList()
-    @Volatile var cachedVersion: Int = -1
-    @Volatile var cachedIconPx: Int = -1
-}
-
+/**
+ * BioKey's home: one list of apps, each with a lock switch that always works, plus profiles.
+ *
+ * A profile is a page of its own (pick its chip): its header holds everything about it (name,
+ * icon, re-lock delay, add apps, delete), so editing a profile happens inside the profile.
+ * Tapping any app opens its options (lock, which profile).
+ */
 @Composable
-fun MainScreenExpressive(
-    a11yActive: Boolean = BioKeyAccessibilityService.isServiceEnabled(LocalContext.current)
-) {
+fun MainScreenExpressive(a11yActive: Boolean) {
     val context = LocalContext.current
+    val view = LocalView.current
     val iconPx = with(LocalDensity.current) { ICON_RENDER_DP.dp.roundToPx() }
     val vault = remember { SecurityVault.getInstance(context) }
-
-    var showSettings by rememberSaveable { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
 
     val lockedApps by vault.lockedAppsFlow.collectAsStateWithLifecycle()
     val globalLockEnabled by vault.globalLockEnabledFlow.collectAsStateWithLifecycle()
     val pausedUntil by vault.pausedUntilFlow.collectAsStateWithLifecycle()
-    val activeProfileId by vault.activeProfileIdFlow.collectAsStateWithLifecycle()
     val profiles by vault.profilesFlow.collectAsStateWithLifecycle()
+    val defaultTimeout by vault.timeoutModeFlow.collectAsStateWithLifecycle()
     val autoSortProfiles by vault.autoSortProfilesFlow.collectAsStateWithLifecycle()
     val packageChangeVersion by BioKeyApplication.packageChangeVersion.collectAsStateWithLifecycle()
-    val currentProfile = if (activeProfileId == SecurityVault.PROFILE_ALL) null else profiles.firstOrNull { it.id == activeProfileId }
 
-    var showProfileEditor by rememberSaveable { mutableStateOf(false) }
-    var editingProfileId by rememberSaveable { mutableStateOf<String?>(null) }
-    val editingProfile = remember(editingProfileId, profiles) {
-        editingProfileId?.let { id -> profiles.firstOrNull { it.id == id } }
-    }
-
-    val initialCached = remember(packageChangeVersion, iconPx) {
-        if (InstalledAppsCache.cachedVersion == packageChangeVersion &&
-            InstalledAppsCache.cachedIconPx == iconPx &&
-            InstalledAppsCache.cachedApps.isNotEmpty()
-        ) {
-            InstalledAppsCache.cachedApps
-        } else null
-    }
-    var installedApps by remember { mutableStateOf(initialCached ?: InstalledAppsCache.cachedApps) }
+    var installedApps by remember { mutableStateOf(InstalledAppsCache.get(packageChangeVersion, iconPx) ?: emptyList()) }
     var isLoadingApps by remember { mutableStateOf(installedApps.isEmpty()) }
-    var searchQuery by rememberSaveable { mutableStateOf("") }
-    val listState = key(activeProfileId) { rememberLazyListState() }
 
-    // Load installed launcher apps once per packageChangeVersion and keep in memory across re-auth
     LaunchedEffect(packageChangeVersion, iconPx) {
-        if (InstalledAppsCache.cachedVersion == packageChangeVersion &&
-            InstalledAppsCache.cachedIconPx == iconPx &&
-            InstalledAppsCache.cachedApps.isNotEmpty()
-        ) {
-            installedApps = InstalledAppsCache.cachedApps
+        InstalledAppsCache.get(packageChangeVersion, iconPx)?.let {
+            installedApps = it
             isLoadingApps = false
             return@LaunchedEffect
         }
-        withContext(Dispatchers.IO) {
-            val pm = context.packageManager
-            val items = mutableListOf<AppItem>()
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                val launcherApps = context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as? LauncherApps
-                launcherApps?.let { la ->
-                    val myUser = Process.myUserHandle()
-                    val userProfiles = la.profiles.sortedBy { it != myUser }
-                    for (user in userProfiles) {
-                        val isWork = user != myUser
-                        val activities = la.getActivityList(null, user)
-                        for (activity in activities) {
-                            val pkg = activity.applicationInfo.packageName
-                            if (pkg == context.packageName) continue
-                            if (pkg == BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER) continue
-
-                            val label = activity.label.toString()
-                            val drawable = if (isWork) activity.getBadgedIcon(0) else activity.getIcon(0)
-                            val bitmap = drawableToBitmap(drawable, iconPx)
-                            val category = categorizeApp(label, pkg, activity.applicationInfo.category)
-                            val isRec = category in setOf(AppCategory.FINANCE, AppCategory.AUTH, AppCategory.PRIVACY, AppCategory.SOCIAL)
-                            items.add(AppItem(pkg, label, bitmap.asImageBitmap(), category, isRec, isWorkProfile = isWork, uniqueKey = pkg))
-                        }
-                    }
-                }
-            }
-
-            if (items.isEmpty()) {
-                val mainIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-                val activities = pm.queryIntentActivities(mainIntent, 0)
-                items.addAll(activities.mapNotNull { resolveInfo ->
-                    val pkg = resolveInfo.activityInfo.packageName
-                    if (pkg == context.packageName) return@mapNotNull null
-                    if (pkg == BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER) return@mapNotNull null
-                    val label = resolveInfo.loadLabel(pm).toString()
-                    val drawable = resolveInfo.loadIcon(pm)
-                    val bitmap = drawableToBitmap(drawable, iconPx)
-                    val category = categorizeApp(label, pkg, resolveInfo.activityInfo.applicationInfo?.category ?: -1)
-                    val isRec = category in setOf(AppCategory.FINANCE, AppCategory.AUTH, AppCategory.PRIVACY, AppCategory.SOCIAL)
-                    AppItem(pkg, label, bitmap.asImageBitmap(), category, isRec, isWorkProfile = false)
-                })
-            }
-
-            // Synthesize Google Password Manager if present
-            val hasGooglePasswords = try {
-                val hasCredMgr = try {
-                    pm.getPackageInfo(BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER, 0) != null
-                } catch (_: Exception) { false }
-
-                val gmsInfo = try {
-                    pm.getPackageInfo("com.google.android.gms", android.content.pm.PackageManager.GET_ACTIVITIES)
-                } catch (_: Exception) { null }
-                val hasGmsPasswords = gmsInfo?.activities?.any {
-                    it.name.contains("PasswordManager", ignoreCase = true) ||
-                            it.name.contains("ManagePasswords", ignoreCase = true)
-                } == true
-
-                hasCredMgr || hasGmsPasswords
-            } catch (_: Exception) {
-                false
-            }
-
-            if (hasGooglePasswords) {
-                val iconBitmap = try {
-                    val iconDrawable = try {
-                        val credMgrInfo = pm.getApplicationInfo(BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER, 0)
-                        pm.getApplicationIcon(credMgrInfo)
-                    } catch (_: Exception) {
-                        val gmsAppInfo = pm.getApplicationInfo("com.google.android.gms", 0)
-                        pm.getApplicationIcon(gmsAppInfo)
-                    }
-                    drawableToBitmap(iconDrawable, iconPx)
-                } catch (_: Exception) {
-                    null
-                }
-                items.add(
-                    AppItem(
-                        packageName = BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS,
-                        label = "Google Password Manager",
-                        iconBitmap = iconBitmap?.asImageBitmap(),
-                        category = AppCategory.AUTH,
-                        isRecommended = true
-                    )
-                )
-            }
-
-            val finalItems = items.distinctBy { it.packageName }.sortedBy { it.label.lowercase() }
-            InstalledAppsCache.cachedApps = finalItems
-            InstalledAppsCache.cachedVersion = packageChangeVersion
-            InstalledAppsCache.cachedIconPx = iconPx
-            val appPairs = finalItems.map { it.packageName to it.label }
-            vault.autoSortAppsIntoProfiles(appPairs, pm)
-            withContext(Dispatchers.Main) {
-                installedApps = finalItems
-                isLoadingApps = false
-                com.android.BioKey.feature.lock.AppInfoCache.preWarm(context, vault.getLockedPackages())
-            }
-        }
+        val apps = withContext(Dispatchers.IO) { loadInstalledApps(context, iconPx) }
+        InstalledAppsCache.apps = apps
+        InstalledAppsCache.version = packageChangeVersion
+        InstalledAppsCache.iconPx = iconPx
+        installedApps = apps
+        isLoadingApps = false
+        AppInfoCache.preWarm(context, vault.getLockedPackages())
     }
 
     LaunchedEffect(autoSortProfiles, installedApps) {
         if (autoSortProfiles && installedApps.isNotEmpty()) {
             withContext(Dispatchers.IO) {
-                val appPairs = installedApps.map { it.packageName to it.label }
-                vault.autoSortAppsIntoProfiles(appPairs, context.packageManager)
+                vault.autoSortAppsIntoProfiles(installedApps.map { it.packageName to it.label }, context.packageManager)
             }
         }
     }
+
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    var filter by rememberSaveable { mutableStateOf(FILTER_ALL) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var optionsForPackage by rememberSaveable { mutableStateOf<String?>(null) }
+    var showAddApps by rememberSaveable { mutableStateOf(false) }
+    var showNewProfile by rememberSaveable { mutableStateOf(false) }
+    /** After creating a profile from an app's options, put that app in it. */
+    var newProfileForPackage by rememberSaveable { mutableStateOf<String?>(null) }
+    var showEditProfile by rememberSaveable { mutableStateOf(false) }
+    var showRelock by rememberSaveable { mutableStateOf(false) }
+
+    val visibleProfiles = profiles
+    val currentProfile = visibleProfiles.firstOrNull { it.id == filter }
+    LaunchedEffect(filter, currentProfile == null) {
+        if (filter != FILTER_ALL && currentProfile == null) filter = FILTER_ALL
+    }
+
+    val profileByPackage = remember(visibleProfiles) {
+        HashMap<String, SecurityProfile>().apply {
+            for (p in visibleProfiles) for (pkg in p.packages) put(pkg, p)
+        }
+    }
+    fun profileOf(pkg: String) = packageAliases(pkg).firstNotNullOfOrNull { profileByPackage[it] }
+    fun isLocked(pkg: String) = packageAliases(pkg).any { it in lockedApps } || profileOf(pkg) != null
 
     if (showSettings) {
         SettingsScreenExpressive(onNavigateBack = { showSettings = false })
         return
     }
 
-    if (showProfileEditor) {
-        ProfileEditorScreenExpressive(
-            profileToEdit = editingProfile,
-            allProfiles = profiles,
-            lockedApps = lockedApps,
-            installedApps = installedApps,
-            onDismiss = { showProfileEditor = false },
-            onSaveProfile = { profile ->
-                vault.saveProfile(profile)
-                vault.activateProfile(profile.id)
-                showProfileEditor = false
-            },
-            onDeleteProfile = { profileId ->
-                vault.deleteProfile(profileId)
-                vault.activateProfile(SecurityVault.PROFILE_ALL)
-                showProfileEditor = false
+    BackHandler(enabled = filter != FILTER_ALL) { filter = FILTER_ALL }
+
+    val shownApps = remember(installedApps, searchQuery, filter, profiles, lockedApps) {
+        installedApps
+            .filter { app ->
+                when {
+                    currentProfile != null -> profileOf(app.packageName)?.id == currentProfile.id
+                    else -> true
+                }
             }
-        )
-        return
+            .filter { searchQuery.isBlank() || it.label.contains(searchQuery.trim(), ignoreCase = true) }
+    }
+    val appCountByProfile = remember(installedApps, profiles) {
+        installedApps.mapNotNull { profileOf(it.packageName)?.id }.groupingBy { it }.eachCount()
     }
 
-    val isViewingAll = currentProfile == null
-
-    BackHandler(enabled = !isViewingAll) {
-        vault.activateProfile(SecurityVault.PROFILE_ALL)
-    }
-
-    val filteredApps = remember(installedApps, searchQuery, activeProfileId, profiles) {
-        val baseList = if (currentProfile == null) {
-            installedApps
-        } else {
-            installedApps.filter { app ->
-                val targets = if (app.packageName in setOf(BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS, BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER)) {
-                    setOf(BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS, BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER)
-                } else setOf(app.packageName)
-                currentProfile.packages.any { it in targets }
-            }
-        }
-        if (searchQuery.isBlank()) {
-            baseList
-        } else {
-            baseList.filter {
-                it.label.contains(searchQuery, ignoreCase = true) ||
-                        it.packageName.contains(searchQuery, ignoreCase = true)
+    fun toggleLock(app: AppItem, locked: Boolean) {
+        Haptics.toggle(view, locked)
+        val formerProfile = profileOf(app.packageName)
+        vault.setAppLock(app.packageName, locked)
+        if (!locked) {
+            scope.launch {
+                snackbar.currentSnackbarData?.dismiss()
+                val text = if (formerProfile != null) "${app.label} unlocked and removed from ${formerProfile.name}" else "${app.label} unlocked"
+                val result = snackbar.showSnackbar(text, actionLabel = "Undo", duration = SnackbarDuration.Short)
+                if (result == SnackbarResult.ActionPerformed) {
+                    if (formerProfile != null) vault.moveAppToProfile(app.packageName, formerProfile.id)
+                    else vault.setAppLock(app.packageName, true)
+                }
             }
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .rejectObscuredTouches()
-            .background(MaterialTheme.colorScheme.surface)
-    ) {
-        // Living dynamic constellation ambient particle field across top header
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
+        containerColor = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.rejectObscuredTouches()
+    ) { padding ->
+        Box(Modifier.fillMaxSize()) {
+        // Living constellation behind the header (drawn under the status bar, like before).
         HeaderMatrixDotsExpressive(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(320.dp)
                 .align(Alignment.TopCenter)
         )
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding()
+                .padding(padding)
         ) {
-            val infiniteTransition = rememberInfiniteTransition(label = "logo_aura_main")
-            val pulseAura by infiniteTransition.animateFloat(
-                initialValue = 0.94f,
-                targetValue = 1.08f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(2800, easing = EaseInOutCubic),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "pulse_aura"
+            MainHeader(onOpenSettings = { showSettings = true })
+            StatusBanner(
+                a11yActive = a11yActive,
+                globalLockEnabled = globalLockEnabled,
+                pausedUntil = pausedUntil,
+                onEnableService = { IntentNavigationHelper.openAccessibilitySettings(context) },
+                onResume = { vault.resumeProtection() }
             )
+            SearchField(searchQuery) { searchQuery = it }
 
-            // Header with dual-layer branding centered and settings button on the right with generous breathing room
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item(key = FILTER_ALL) {
+                    FilterChoice("All apps", Icons.Default.Apps, filter == FILTER_ALL) { filter = FILTER_ALL }
+                }
+                items(visibleProfiles, key = { it.id }) { profile ->
+                    FilterChoice(
+                        label = "${profile.name} · ${appCountByProfile[profile.id] ?: 0}",
+                        icon = profileIcon(profile.iconKey),
+                        selected = filter == profile.id
+                    ) { filter = profile.id }
+                }
+                item(key = "new_profile") {
+                    FilterChip(
+                        selected = false,
+                        onClick = { newProfileForPackage = null; showNewProfile = true },
+                        label = { Text("New profile") },
+                        leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        shape = CircleShape
+                    )
+                }
+            }
+
+            val listState = key(filter) { rememberLazyListState() }
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 32.dp)
+            ) {
+                if (currentProfile != null) {
+                    item(key = "profile_header_${currentProfile.id}") {
+                        ProfileHeader(
+                            profile = currentProfile,
+                            appCount = appCountByProfile[currentProfile.id] ?: 0,
+                            onEdit = { showEditProfile = true },
+                            onRelock = { showRelock = true },
+                            onAddApps = { showAddApps = true }
+                        )
+                    }
+                }
+                when {
+                    isLoadingApps -> item(key = "loading") {
+                        Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                    shownApps.isEmpty() -> item(key = "empty") {
+                        EmptyState(
+                            text = when {
+                                searchQuery.isNotBlank() -> "No apps match “${searchQuery.trim()}”"
+                                currentProfile != null -> "No apps in ${currentProfile.name} yet"
+                                else -> "No apps found"
+                            },
+                            actionLabel = if (currentProfile != null && searchQuery.isBlank()) "Add apps" else null,
+                            onAction = { showAddApps = true }
+                        )
+                    }
+                    else -> {
+                        if (currentProfile == null) {
+                            item(key = "list_label") {
+                                SectionLabel("Choose apps to lock")
+                            }
+                        }
+                        items(shownApps, key = { it.packageName }) { app ->
+                            AppRow(
+                                app = app,
+                                locked = isLocked(app.packageName),
+                                profile = if (currentProfile == null) profileOf(app.packageName) else null,
+                                onLockedChange = { toggleLock(app, it) },
+                                onOpenOptions = { optionsForPackage = app.packageName }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        }
+    }
+
+    // ---- Sheets & dialogs ------------------------------------------------------------------
+
+    optionsForPackage?.let { pkg ->
+        val app = installedApps.firstOrNull { it.packageName == pkg }
+        if (app == null) {
+            optionsForPackage = null
+        } else {
+            AppOptionsSheet(
+                app = app,
+                isLocked = isLocked(pkg),
+                currentProfile = profileOf(pkg),
+                profiles = visibleProfiles,
+                defaultTimeout = defaultTimeout,
+                onLockedChange = { toggleLock(app, it) },
+                onMoveToProfile = { profileId -> vault.moveAppToProfile(pkg, profileId) },
+                onNewProfile = {
+                    newProfileForPackage = pkg
+                    optionsForPackage = null
+                    showNewProfile = true
+                },
+                onDismiss = { optionsForPackage = null }
+            )
+        }
+    }
+
+    if (showNewProfile) {
+        ProfileDetailsDialog(
+            existing = null,
+            onDismiss = { showNewProfile = false; newProfileForPackage = null },
+            onSave = { name, iconKey ->
+                val created = vault.createProfile(name, iconKey, defaultTimeout)
+                showNewProfile = false
+                filter = created.id
+                val forPkg = newProfileForPackage
+                newProfileForPackage = null
+                if (forPkg != null) vault.moveAppToProfile(forPkg, created.id) else showAddApps = true
+            },
+            onDelete = null
+        )
+    }
+
+    if (showEditProfile && currentProfile != null) {
+        ProfileDetailsDialog(
+            existing = currentProfile,
+            onDismiss = { showEditProfile = false },
+            onSave = { name, iconKey ->
+                vault.updateProfileDetails(currentProfile.id, name = name, iconKey = iconKey)
+                showEditProfile = false
+            },
+            onDelete = {
+                val name = currentProfile.name
+                vault.deleteProfile(currentProfile.id)
+                showEditProfile = false
+                filter = FILTER_ALL
+                scope.launch { snackbar.showSnackbar("Deleted $name. Its apps are still locked.") }
+            }
+        )
+    }
+
+    if (showRelock && currentProfile != null) {
+        RelockSheet(
+            title = "Re-lock ${currentProfile.name}",
+            current = currentProfile.timeoutMode,
+            onSelect = { mode ->
+                vault.updateProfileDetails(currentProfile.id, timeoutMode = mode)
+                showRelock = false
+            },
+            onDismiss = { showRelock = false }
+        )
+    }
+
+    if (showAddApps && currentProfile != null) {
+        AddAppsSheet(
+            profile = currentProfile,
+            installedApps = installedApps,
+            profileOfApp = ::profileOf,
+            lockedApps = lockedApps,
+            onAdd = { packages ->
+                vault.addAppsToProfile(currentProfile.id, packages)
+                showAddApps = false
+            },
+            onDismiss = { showAddApps = false }
+        )
+    }
+}
+
+@Composable
+private fun MainHeader(onOpenSettings: () -> Unit) {
+    val primary = MaterialTheme.colorScheme.primary
+    val tertiary = MaterialTheme.colorScheme.tertiary
+    // Breathing aura behind the logo. Read only inside graphicsLayer, so each frame is a cheap
+    // layer property update: no recomposition, no re-layout, no re-record of the logo.
+    val breath = rememberInfiniteTransition(label = "logo_aura_main")
+    val auraScale by breath.animateFloat(
+        initialValue = 0.94f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(tween(2800, easing = EaseInOutCubic), RepeatMode.Reverse),
+        label = "aura_scale"
+    )
+    val auraAlpha by breath.animateFloat(
+        initialValue = 0.75f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(2800, easing = EaseInOutCubic), RepeatMode.Reverse),
+        label = "aura_alpha"
+    )
+    val auraBrush = remember(primary, tertiary) {
+        Brush.radialGradient(listOf(primary.copy(alpha = 0.22f), tertiary.copy(alpha = 0.09f), Color.Transparent))
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 18.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .height(80.dp)
+                .width(240.dp),
+            contentAlignment = Alignment.Center
+        ) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 18.dp)
-            ) {
-                // Dual-layer BioKey logo centered with generous room and ambient aura
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .height(80.dp)
-                        .width(240.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(240.dp, 80.dp)
-                            .graphicsLayer {
-                                scaleX = pulseAura
-                                scaleY = pulseAura
-                            }
-                            .background(
-                                brush = Brush.radialGradient(
-                                    colors = listOf(
-                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.20f),
-                                        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.08f),
-                                        Color.Transparent
-                                    )
-                                ),
-                                shape = CircleShape
-                            )
-                    )
-
-                    Image(
-                        painter = painterResource(R.drawable.ic_title_logo_letters),
-                        contentDescription = "BioKey",
-                        modifier = Modifier.fillMaxHeight(),
-                        contentScale = ContentScale.Fit,
-                        colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary, BlendMode.Modulate)
-                    )
-                    Image(
-                        painter = painterResource(R.drawable.ic_title_logo_tentacles),
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxHeight(),
-                        contentScale = ContentScale.Fit,
-                        colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.tertiary, BlendMode.Modulate)
-                    )
-                }
-
-                IconButton(
-                    onClick = { showSettings = true },
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .springPress()
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Settings",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
-
-            // Banners (seamless in-stream alerts, no squircle box)
-            if (!a11yActive) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f))
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Warning,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onErrorContainer,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "App lock is off",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onErrorContainer
-                        )
-                        Text(
-                            text = "Turn on accessibility in settings to lock apps.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer
-                        )
+                    .size(240.dp, 80.dp)
+                    .graphicsLayer {
+                        scaleX = auraScale
+                        scaleY = auraScale
+                        alpha = auraAlpha
                     }
-                    TextButton(
-                        onClick = { IntentNavigationHelper.openAccessibilitySettings(context) }
-                    ) {
-                        Text(
-                            text = "Turn on",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onErrorContainer
-                        )
-                    }
-                }
-            } else if (!globalLockEnabled) {
-                val pausedTitle = if (pausedUntil > System.currentTimeMillis()) {
-                    val timeText = android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil))
-                    "Protection paused until $timeText"
-                } else {
-                    "Protection paused"
-                }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.8f))
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Shield,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = pausedTitle,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onTertiaryContainer
-                        )
-                        Text(
-                            text = "Locked apps open without authentication.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onTertiaryContainer
-                        )
-                    }
-                    TextButton(
-                        onClick = { vault.resumeProtection() }
-                    ) {
-                        Text(
-                            text = "Resume",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onTertiaryContainer
-                        )
-                    }
-                }
-            }
-
-            val keyboardController = LocalSoftwareKeyboardController.current
-
-            // Search Bar (Pill)
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text("Search apps") },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }) {
-                            Icon(
-                                imageVector = Icons.Default.Clear,
-                                contentDescription = "Clear",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                },
-                shape = CircleShape,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.6f),
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.4f),
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-                ),
-                singleLine = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .background(auraBrush, CircleShape)
             )
+            Image(
+                painter = painterResource(R.drawable.ic_title_logo_letters),
+                contentDescription = "BioKey",
+                modifier = Modifier.fillMaxHeight(),
+                contentScale = ContentScale.Fit,
+                colorFilter = ColorFilter.tint(primary, BlendMode.Modulate)
+            )
+            Image(
+                painter = painterResource(R.drawable.ic_title_logo_tentacles),
+                contentDescription = null,
+                modifier = Modifier.fillMaxHeight(),
+                contentScale = ContentScale.Fit,
+                colorFilter = ColorFilter.tint(tertiary, BlendMode.Modulate)
+            )
+        }
+        IconButton(
+            onClick = onOpenSettings,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .springPress()
+        ) {
+            Icon(Icons.Default.Settings, contentDescription = "Settings", modifier = Modifier.size(24.dp))
+        }
+    }
+}
 
-            // Uniform-height Profile selector pills row (never swaps height or layout structure)
-            LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // "All" pill
-                item(key = "profile_all_pill") {
-                    val isAllActive = activeProfileId == SecurityVault.PROFILE_ALL
-                    Surface(
-                        onClick = {
-                            ExpressiveTokens.triggerHaptic(context, ExpressiveTokens.HapticFeedbackStyle.CLICK_SUBTLE)
-                            vault.activateProfile(SecurityVault.PROFILE_ALL)
-                        },
-                        shape = CircleShape,
-                        color = if (isAllActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-                        modifier = Modifier.springPress()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Shield,
-                                contentDescription = null,
-                                tint = if (isAllActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "All",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (isAllActive) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isAllActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
-                }
-
-                // Profile pills
-                items(
-                    items = profiles.filter { it.id != SecurityVault.PROFILE_ALL },
-                    key = { it.id }
-                ) { profile ->
-                    val isActive = profile.id == activeProfileId
-                    val icon = when (profile.iconKey) {
-                        "finance" -> Icons.Default.AccountBalance
-                        "social" -> Icons.AutoMirrored.Filled.Chat
-                        "lock" -> Icons.Default.Lock
-                        "work" -> Icons.Default.Work
-                        "privacy" -> Icons.Default.VisibilityOff
-                        else -> Icons.Default.Shield
-                    }
-
-                    Surface(
-                        onClick = {
-                            ExpressiveTokens.triggerHaptic(context, ExpressiveTokens.HapticFeedbackStyle.CLICK_SUBTLE)
-                            if (isActive) {
-                                editingProfileId = profile.id
-                                showProfileEditor = true
-                            } else {
-                                vault.activateProfile(profile.id)
-                            }
-                        },
-                        shape = CircleShape,
-                        color = if (isActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-                        modifier = Modifier.springPress()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = icon,
-                                contentDescription = null,
-                                tint = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = profile.name,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                            )
-                            if (isActive) {
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = "Edit profile",
-                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // "+ New Profile" button
-                item(key = "new_profile_pill") {
-                    Surface(
-                        onClick = {
-                            editingProfileId = null
-                            showProfileEditor = true
-                        },
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        modifier = Modifier.springPress()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "New",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                }
+@Composable
+private fun StatusBanner(
+    a11yActive: Boolean,
+    globalLockEnabled: Boolean,
+    pausedUntil: Long,
+    onEnableService: () -> Unit,
+    onResume: () -> Unit
+) {
+    val context = LocalContext.current
+    val (title, body, action, onAction) = when {
+        !a11yActive -> Quad("App lock is off", "Turn on BioKey in Accessibility settings to lock apps.", "Turn on", onEnableService)
+        !globalLockEnabled -> {
+            val title = if (pausedUntil > System.currentTimeMillis()) {
+                "Paused until " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil))
+            } else "Protection paused"
+            Quad(title, "Locked apps open without authentication.", "Resume", onResume)
+        }
+        else -> return
+    }
+    val isError = !a11yActive
+    Surface(
+        color = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer,
+        shape = RoundedCornerShape(24.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+    ) {
+        Row(Modifier.padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                if (isError) Icons.Default.Warning else Icons.Default.Shield,
+                contentDescription = null,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(body, style = MaterialTheme.typography.bodySmall)
             }
+            TextButton(onClick = onAction) { Text(action, fontWeight = FontWeight.SemiBold) }
+        }
+    }
+}
 
-            // Seamless App List — No container boxes, no squircle shapes!
-            if (isLoadingApps) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(44.dp)
-                    )
-                }
-            } else if (currentProfile != null && searchQuery.isBlank() && filteredApps.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "No apps in '${currentProfile.name}'",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Button(
-                                onClick = {
-                                    editingProfileId = currentProfile.id
-                                    showProfileEditor = true
-                                },
-                                shape = CircleShape
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Add apps")
-                            }
+private data class Quad(val title: String, val body: String, val action: String, val onAction: () -> Unit)
 
-                            Button(
-                                onClick = {
-                                    vault.activateProfile(SecurityVault.PROFILE_ALL)
-                                },
-                                shape = CircleShape,
-                                colors = ButtonDefaults.filledTonalButtonColors()
-                            ) {
-                                Text("All apps")
-                            }
-                        }
-                    }
-                }
-            } else if (filteredApps.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
+@Composable
+private fun SearchField(query: String, onChange: (String) -> Unit) {
+    val keyboard = LocalSoftwareKeyboardController.current
+    OutlinedTextField(
+        value = query,
+        onValueChange = onChange,
+        placeholder = { Text("Search apps") },
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
+        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onChange("") }) { Icon(Icons.Default.Clear, contentDescription = "Clear search") }
+            }
+        },
+        shape = CircleShape,
+        singleLine = true,
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            unfocusedBorderColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    )
+}
+
+@Composable
+private fun FilterChoice(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, selected: Boolean, onClick: () -> Unit) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label) },
+        leadingIcon = { Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
+        shape = CircleShape,
+        colors = FilterChipDefaults.filterChipColors(
+            selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer
+        )
+    )
+}
+
+/** Everything about a profile, at the top of its own page. */
+@Composable
+private fun ProfileHeader(
+    profile: SecurityProfile,
+    appCount: Int,
+    onEdit: () -> Unit,
+    onRelock: () -> Unit,
+    onAddApps: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) {
+        Column(Modifier.padding(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.clickable(onClick = onEdit)) { ProfileBadge(profile.iconKey, 56.dp) }
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(profile.name, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
-                        text = "No matching apps",
-                        style = MaterialTheme.typography.titleMedium,
+                        text = "${if (appCount == 1) "1 app" else "$appCount apps"} · all locked",
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-            } else {
-                val switchColors = SwitchDefaults.colors(
-                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                    checkedTrackColor = MaterialTheme.colorScheme.primary,
-                    disabledCheckedThumbColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
-                    disabledCheckedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
-                )
-                val dividerColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
-
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 24.dp)
-                ) {
-                    itemsIndexed(
-                        items = filteredApps,
-                        key = { _, app -> app.uniqueKey }
-                    ) { index, app ->
-                        val memberProfiles = remember(profiles, app.packageName) {
-                            val targets = if (app.packageName in setOf(BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS, BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER)) {
-                                setOf(BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS, BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER, "com.google.android.gms.passwordmanager")
-                            } else setOf(app.packageName)
-                            profiles.filter { it.id != SecurityVault.PROFILE_ALL && it.packages.any { pkg -> pkg in targets } }
-                        }
-                        val isLocked = if (currentProfile == null) {
-                            app.packageName in lockedApps || memberProfiles.isNotEmpty()
-                        } else {
-                            true
-                        }
-                        // Apps in profiles are non-selectable on "All", and apps already inside a profile page are non-selectable on that profile page
-                        val isRowSelectable = isViewingAll && memberProfiles.isEmpty()
-
-                        AppRowItem(
-                            app = app,
-                            isLocked = isLocked,
-                            enabled = isRowSelectable,
-                            memberProfiles = if (isViewingAll) memberProfiles else listOfNotNull(currentProfile),
-                            onToggle = { checked ->
-                                if (!isRowSelectable) return@AppRowItem
-                                ExpressiveTokens.triggerHaptic(
-                                    context,
-                                    if (checked) ExpressiveTokens.HapticFeedbackStyle.TOGGLE_ON
-                                    else ExpressiveTokens.HapticFeedbackStyle.TOGGLE_OFF
-                                )
-                                vault.setAppLock(app.packageName, checked)
-                            },
-                            switchColors = switchColors
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Default.Edit, contentDescription = "Rename, change icon or delete ${profile.name}")
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Surface(
+                onClick = onRelock,
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.LockClock, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Re-lock", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            profile.timeoutMode.shortLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-
-                        // Subtle inset divider between rows (omit on last item)
-                        if (index < filteredApps.lastIndex) {
-                            HorizontalDivider(
-                                modifier = Modifier.padding(start = 80.dp, end = 20.dp),
-                                color = dividerColor
-                            )
-                        }
                     }
+                    Text("Change", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = onAddApps, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Add apps")
+                }
+                OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Edit profile")
                 }
             }
         }
     }
+    if (appCount > 0) SectionLabel("Apps in ${profile.name}")
 }
 
 @Composable
-private fun AppRowItem(
+private fun AppRow(
     app: AppItem,
-    isLocked: Boolean,
-    enabled: Boolean,
-    onToggle: (Boolean) -> Unit,
-    switchColors: androidx.compose.material3.SwitchColors,
-    modifier: Modifier = Modifier,
-    memberProfiles: List<SecurityProfile> = emptyList()
+    locked: Boolean,
+    profile: SecurityProfile?,
+    onLockedChange: (Boolean) -> Unit,
+    onOpenOptions: () -> Unit
 ) {
     Row(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxWidth()
-            .then(
-                if (enabled) {
-                    Modifier.toggleable(
-                        value = isLocked,
-                        role = Role.Switch,
-                        onValueChange = onToggle
-                    )
-                } else {
-                    Modifier
-                }
-            )
-            .padding(horizontal = 20.dp, vertical = 12.dp),
+            .clickable(onClick = onOpenOptions)
+            .padding(start = 24.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (app.iconBitmap != null) {
-            Image(
-                bitmap = app.iconBitmap,
-                contentDescription = null,
-                modifier = Modifier.size(44.dp)
-            )
-        } else {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.size(44.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        text = app.label.take(1).uppercase(),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.width(16.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
+        AppIcon(app)
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.weight(1f)) {
             Text(
-                text = app.label,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface,
+                app.label,
+                style = MaterialTheme.typography.bodyLarge,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(modifier = Modifier.height(2.dp))
-            if (memberProfiles.isNotEmpty()) {
-                val profileNames = memberProfiles.joinToString(", ") { it.name }
-                Text(
-                    text = "$profileNames • ${if (app.isWorkProfile) "Work profile • " else ""}${app.category.label}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            } else {
-                Text(
-                    text = if (app.isWorkProfile) "Work profile • ${app.category.label}" else app.category.label,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+            val subtitle = buildString {
+                if (profile != null) append(profile.name) else append(app.category.label)
+                if (app.isWorkProfile) append(" · Work")
             }
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (profile != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Switch(
-            checked = isLocked,
-            onCheckedChange = null,
-            enabled = enabled,
-            colors = switchColors
-        )
-    }
-}
-
-private fun drawableToBitmap(drawable: Drawable, sizePx: Int): Bitmap {
-    if (drawable is BitmapDrawable && drawable.bitmap != null && drawable.bitmap.width <= sizePx) {
-        return drawable.bitmap
-    }
-    val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-    drawable.setBounds(0, 0, canvas.width, canvas.height)
-    drawable.draw(canvas)
-    return bitmap
-}
-
-private fun categorizeApp(label: String, pkg: String, appCategory: Int = -1): AppCategory {
-    val haystack = "${pkg.lowercase()} ${label.lowercase()}"
-
-    val financeWords = listOf(
-        "bank", "crypto", "wallet", "pay", "cash", "venmo", "paypal", "zelle", "chime", "wise",
-        "revolut", "robinhood", "coinbase", "binance", "kraken", "metamask", "trustwallet",
-        "phantom", "ledger", "fidelity", "vanguard", "schwab", "etrade", "webull", "acorns",
-        "stash", "mint", "ynab", "credit", "karma", "experian", "equifax", "transunion",
-        "amex", "chase", "wellsfargo", "citi", "capitalone", "discover", "barclays", "hsbc",
-        "santander", "ally", "sofi", "affirm", "klarna", "afterpay", "stripe", "square",
-        "turbotax", "irs", "finance", "invest", "trading", "stock", "money"
-    )
-    val authWords = listOf(
-        "authenticator", "authy", "2fas", "totp", "bitwarden", "1password", "dashlane",
-        "lastpass", "keepass", "enpass", "nordpass", "protonpass", "roboform", "keeper",
-        "yubico", "okta", "duo", "passwordmanager", "credentialmanager", "password"
-    )
-    val socialWords = listOf(
-        "whatsapp", "telegram", "signal", "messenger", "instagram", "facebook", "threads",
-        "twitter", "x.android", "snapchat", "tiktok", "musically", "discord", "reddit",
-        "pinterest", "tumblr", "linkedin", "mastodon", "bluesky", "wechat", "line", "viber",
-        "kakaotalk", "hinge", "tinder", "bumble", "grindr", "badoo", "okcupid", "match",
-        "messages", "messaging", "chat"
-    )
-    val privacyWords = listOf(
-        "photo", "gallery", "camera", "album", "files", "filemanager", "documents",
-        "downloads", "explorer", "solidexplorer", "mixplorer", "vault", "private", "secret",
-        "locker", "notes", "keep", "diary", "journal", "dayone", "health", "garmin", "strava",
-        "flo", "clue", "myfitnesspal", "medical", "patient", "mychart", "pharmacy",
-        "walgreens", "cvs", "chrome", "firefox", "brave", "duckduckgo", "opera", "vivaldi",
-        "edge", "tor", "vpn", "protonvpn", "nordvpn", "expressvpn", "mullvad", "tailscale", "wireguard"
-    )
-
-    return when {
-        financeWords.any(haystack::contains) -> AppCategory.FINANCE
-        authWords.any(haystack::contains) -> AppCategory.AUTH
-        appCategory == android.content.pm.ApplicationInfo.CATEGORY_SOCIAL || socialWords.any(haystack::contains) -> AppCategory.SOCIAL
-        appCategory == android.content.pm.ApplicationInfo.CATEGORY_IMAGE || privacyWords.any(haystack::contains) -> AppCategory.PRIVACY
-        pkg.lowercase().startsWith("com.android.") || pkg.lowercase().startsWith("com.google.android.") -> AppCategory.SYSTEM
-        else -> AppCategory.GENERAL
+        Spacer(Modifier.width(12.dp))
+        Switch(checked = locked, onCheckedChange = onLockedChange)
     }
 }
 
 @Composable
-private fun ProfileEditorScreenExpressive(
-    profileToEdit: SecurityProfile?,
-    allProfiles: List<SecurityProfile>,
-    lockedApps: Set<String>,
-    installedApps: List<AppItem>,
-    onDismiss: () -> Unit,
-    onSaveProfile: (SecurityProfile) -> Unit,
-    onDeleteProfile: (String) -> Unit
-) {
-    BackHandler(onBack = onDismiss)
-
-    var profileName by rememberSaveable(profileToEdit?.id) { mutableStateOf(profileToEdit?.name ?: "") }
-    var selectedIconKey by rememberSaveable(profileToEdit?.id) { mutableStateOf(profileToEdit?.iconKey ?: "shield") }
-    var selectedPackages by remember(profileToEdit?.id) { mutableStateOf(profileToEdit?.packages ?: emptySet()) }
-    var selectedTimeoutMode by remember(profileToEdit?.id) { mutableStateOf(profileToEdit?.timeoutMode ?: LockTimeoutMode.IMMEDIATE) }
-    var appSearchQuery by rememberSaveable(profileToEdit?.id) { mutableStateOf("") }
-    var showDeleteConfirm by remember { mutableStateOf(false) }
-
-    if (showDeleteConfirm && profileToEdit != null) {
-        AlertDialog(
-            onDismissRequest = { showDeleteConfirm = false },
-            title = { Text("Delete '${profileToEdit.name}'?") },
-            text = { Text("This custom profile will be removed.") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showDeleteConfirm = false
-                        onDeleteProfile(profileToEdit.id)
-                    }
-                ) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteConfirm = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
-    val iconOptions = listOf(
-        "shield" to Icons.Default.Shield,
-        "finance" to Icons.Default.AccountBalance,
-        "social" to Icons.AutoMirrored.Filled.Chat,
-        "work" to Icons.Default.Work,
-        "privacy" to Icons.Default.VisibilityOff,
-        "lock" to Icons.Default.Lock
-    )
-
-    val timeoutOptions = listOf(
-        LockTimeoutMode.IMMEDIATE to "Immediate",
-        LockTimeoutMode.ON_SCREEN_OFF to "Screen off",
-        LockTimeoutMode.GRACE_30_SECONDS to "30s",
-        LockTimeoutMode.GRACE_1_MINUTE to "1m",
-        LockTimeoutMode.GRACE_5_MINUTES to "5m",
-        LockTimeoutMode.GRACE_15_MINUTES to "15m"
-    )
-
-    val uniqueApps = remember(installedApps) {
-        installedApps.distinctBy { it.packageName }
-    }
-
-    val otherProfilesByPkg = remember(allProfiles, profileToEdit?.id) {
-        val map = HashMap<String, SecurityProfile>()
-        for (p in allProfiles) {
-            if (p.id == SecurityVault.PROFILE_ALL || p.id == profileToEdit?.id) continue
-            for (pkg in p.packages) {
-                map[pkg] = p
-            }
-        }
-        map
-    }
-
-    // Apps already inside this profile
-    val currentProfileApps = remember(uniqueApps, selectedPackages, appSearchQuery) {
-        val inProfile = uniqueApps.filter { it.packageName in selectedPackages }
-        if (appSearchQuery.isBlank()) {
-            inProfile
-        } else {
-            val q = appSearchQuery.trim().lowercase()
-            inProfile.filter { it.label.lowercase().contains(q) || it.packageName.lowercase().contains(q) }
-        }
-    }
-
-    // Apps available to add (excludes apps already in this profile)
-    val candidateAppsToAdd = remember(uniqueApps, selectedPackages, appSearchQuery) {
-        val notInThisProfile = uniqueApps.filterNot { it.packageName in selectedPackages }
-        if (appSearchQuery.isBlank()) {
-            notInThisProfile
-        } else {
-            val q = appSearchQuery.trim().lowercase()
-            notInThisProfile.filter { it.label.lowercase().contains(q) || it.packageName.lowercase().contains(q) }
-        }
-    }
-
-    val keyboardController = LocalSoftwareKeyboardController.current
-    val dividerColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
-
+private fun EmptyState(text: String, actionLabel: String?, onAction: () -> Unit) {
     Column(
         modifier = Modifier
-            .fillMaxSize()
-            .rejectObscuredTouches()
-            .background(MaterialTheme.colorScheme.surface)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .imePadding()
+            .fillMaxWidth()
+            .padding(horizontal = 32.dp, vertical = 40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Top Bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onDismiss) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = MaterialTheme.colorScheme.onSurface
-                )
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                text = if (profileToEdit == null) "New profile" else "Edit ${profileToEdit.name}",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f)
-            )
-            if (profileToEdit != null && !profileToEdit.isPreset) {
-                IconButton(onClick = { showDeleteConfirm = true }) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Delete Profile",
-                        tint = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-            Button(
-                onClick = {
-                    val id = profileToEdit?.id ?: "profile_${UUID.randomUUID()}"
-                    val profile = SecurityProfile(
-                        id = id,
-                        name = profileName.trim(),
-                        iconKey = selectedIconKey,
-                        packages = selectedPackages,
-                        isPreset = profileToEdit?.isPreset ?: false,
-                        timeoutMode = selectedTimeoutMode
-                    )
-                    onSaveProfile(profile)
-                },
-                enabled = profileName.isNotBlank(),
-                shape = CircleShape
-            ) {
-                Text("Save")
-            }
-        }
-
-        // Single unified LazyColumn so headers + app lists scroll smoothly without nested scroll jitter
-        LazyColumn(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            contentPadding = PaddingValues(bottom = 24.dp)
-        ) {
-            item(key = "editor_controls") {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    OutlinedTextField(
-                        value = profileName,
-                        onValueChange = { profileName = it },
-                        label = { Text("Profile name") },
-                        singleLine = true,
-                        shape = CircleShape,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 6.dp)
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Text(
-                        text = "Icon",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 20.dp)
-                    )
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        contentPadding = PaddingValues(horizontal = 20.dp)
-                    ) {
-                        items(iconOptions, key = { it.first }) { (key, iconVector) ->
-                            val isSelected = selectedIconKey == key
-                            Surface(
-                                onClick = { selectedIconKey = key },
-                                shape = CircleShape,
-                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-                                modifier = Modifier.size(42.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = iconVector,
-                                        contentDescription = key,
-                                        tint = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Text(
-                        text = "Re-lock delay",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 20.dp)
-                    )
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        contentPadding = PaddingValues(horizontal = 20.dp)
-                    ) {
-                        items(timeoutOptions, key = { it.first.name }) { (mode, label) ->
-                            val isSelected = selectedTimeoutMode == mode
-                            Surface(
-                                onClick = { selectedTimeoutMode = mode },
-                                shape = CircleShape,
-                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
-                            ) {
-                                Text(
-                                    text = label,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    OutlinedTextField(
-                        value = appSearchQuery,
-                        onValueChange = { appSearchQuery = it },
-                        placeholder = { Text("Search apps") },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
-                        trailingIcon = {
-                            if (appSearchQuery.isNotEmpty()) {
-                                IconButton(onClick = { appSearchQuery = "" }) {
-                                    Icon(Icons.Default.Clear, contentDescription = "Clear search")
-                                }
-                            }
-                        },
-                        singleLine = true,
-                        shape = CircleShape,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp)
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                }
-            }
-
-            if (currentProfileApps.isNotEmpty()) {
-                item(key = "header_in_profile") {
-                    Text(
-                        text = "IN THIS PROFILE (${currentProfileApps.size})",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
-                    )
-                }
-
-                itemsIndexed(
-                    items = currentProfileApps,
-                    key = { _, app -> "in_profile_${app.packageName}" }
-                ) { index, app ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (app.iconBitmap != null) {
-                            Image(
-                                bitmap = app.iconBitmap,
-                                contentDescription = null,
-                                modifier = Modifier.size(38.dp)
-                            )
-                        } else {
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                modifier = Modifier.size(38.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(
-                                        text = app.label.take(1).uppercase(),
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.width(14.dp))
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = app.label,
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = "Already in this profile • ${app.category.label}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
-                        Checkbox(
-                            checked = true,
-                            onCheckedChange = null,
-                            enabled = false,
-                            colors = CheckboxDefaults.colors(
-                                disabledCheckedColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                                checkmarkColor = MaterialTheme.colorScheme.onPrimary
-                            )
-                        )
-
-                        Spacer(modifier = Modifier.width(4.dp))
-
-                        IconButton(
-                            onClick = { selectedPackages = selectedPackages - app.packageName },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Clear,
-                                contentDescription = "Remove from profile",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-
-                    if (index < currentProfileApps.lastIndex) {
-                        HorizontalDivider(
-                            modifier = Modifier.padding(start = 72.dp, end = 20.dp),
-                            color = dividerColor
-                        )
-                    }
-                }
-
-                item(key = "spacer_after_in_profile") {
-                    Spacer(modifier = Modifier.height(14.dp))
-                }
-            }
-
-            item(key = "header_add_apps") {
-                Text(
-                    text = "ADD APPS",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
-                )
-            }
-
-            itemsIndexed(
-                items = candidateAppsToAdd,
-                key = { _, app -> "add_${app.packageName}" }
-            ) { index, app ->
-                val otherProfile = otherProfilesByPkg[app.packageName]
-                val isInOtherProfile = otherProfile != null
-                val isIndividuallyLocked = app.packageName in lockedApps
-                val isChecked = isInOtherProfile || isIndividuallyLocked
-                val isSelectable = !isInOtherProfile
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .alpha(if (isSelectable) 1f else 0.6f)
-                        .then(
-                            if (isSelectable) {
-                                Modifier.toggleable(
-                                    value = false,
-                                    role = Role.Checkbox,
-                                    onValueChange = {
-                                        selectedPackages = selectedPackages + app.packageName
-                                    }
-                                )
-                            } else {
-                                Modifier
-                            }
-                        )
-                        .padding(horizontal = 20.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (app.iconBitmap != null) {
-                        Image(
-                            bitmap = app.iconBitmap,
-                            contentDescription = null,
-                            modifier = Modifier.size(38.dp)
-                        )
-                    } else {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.size(38.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = app.label.take(1).uppercase(),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(14.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = app.label,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        val subtitleText = when {
-                            otherProfile != null -> "In ${otherProfile.name} profile • ${app.category.label}"
-                            isIndividuallyLocked -> "Protected in All • ${app.category.label}"
-                            else -> app.category.label
-                        }
-                        Text(
-                            text = subtitleText,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (otherProfile != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    Checkbox(
-                        checked = isChecked,
-                        onCheckedChange = null,
-                        enabled = isSelectable,
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = MaterialTheme.colorScheme.primary,
-                            disabledCheckedColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                        )
-                    )
-                }
-
-                if (index < candidateAppsToAdd.lastIndex) {
-                    HorizontalDivider(
-                        modifier = Modifier.padding(start = 72.dp, end = 20.dp),
-                        color = dividerColor
-                    )
-                }
+        Text(
+            text,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (actionLabel != null) {
+            Spacer(Modifier.height(16.dp))
+            FilledTonalButton(onClick = onAction) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(actionLabel)
             }
         }
     }

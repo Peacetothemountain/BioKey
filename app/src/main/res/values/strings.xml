@@ -2,9 +2,7 @@
     <string name="app_name">Bio Key</string>
     <string name="accessibility_service_label">Bio Key App Lock Service</string>
     <string name="accessibility_service_summary">Locks the apps you choose behind your fingerprint, face, or screen lock</string>
-    <string name="accessibility_service_description">Bio Key uses this service to see which app is in the foreground, so it can cover apps you\'ve chosen to lock until you authenticate. It also recognises Bio Key\'s own App info, accessibility, and uninstall screens so that switching Bio Key off requires your authentication.\n\nBio Key does not read what you type, does not record the screen, and has no internet access. Nothing it observes leaves your device.</string>
+    <string name="accessibility_service_description">Bio Key uses this service to see which app is on screen, so it can cover apps you\'ve chosen to lock until you authenticate. When you tap an app on the home screen or in Recents, it reads that app\'s name so a locked app is covered before it opens. It also recognises Bio Key\'s own App info, accessibility and uninstall screens, so switching Bio Key off requires your authentication.\n\nBio Key does not read what you type, does not record the screen, and has no internet access. Nothing it observes leaves your device.</string>
     <string name="tile_label">BioKey</string>
-    <string name="tile_description">Pause or resume BioKey protection</string>
-    <string name="device_admin_description">Makes uninstalling Bio Key a two-step process that requires your authentication. If intruder photos are enabled, it is also notified of failed screen unlocks. Bio Key cannot lock, wipe, or change anything on your device through this permission.</string>
     <string name="notification_shield_label">Bio Key notification shield</string>
 </resources>

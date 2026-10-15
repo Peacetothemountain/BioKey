@@ -15,39 +15,25 @@ import kotlinx.coroutines.launch
 /**
  * In-memory lock session state.
  *
+ * Sessions follow the Android App Lock model: once you unlock an app it stays unlocked for as long
+ * as it is on screen, no matter what happens inside it (refreshes, dialogs, sign-in sheets,
+ * keyboards, chat heads, assistant overlays). A session only starts ageing once the app has
+ * actually left the screen, which [com.android.BioKey.feature.lock.BioKeyAccessibilityService]
+ * decides from the window list rather than from individual window events.
+ *
  * Nothing here is persisted: every unlock lives only in RAM and is wiped on screen-off, process
- * death, or manual lock-all, so a reboot or a killed process always fails closed (everything
- * locked again). All times use [SystemClock.elapsedRealtime] so wall-clock changes can't extend
- * a session.
+ * death, or lock-all, so a reboot or a killed process always fails closed. All times use
+ * [SystemClock.elapsedRealtime] so wall-clock changes can't extend a session.
  */
 object LockStateTracker {
 
     private const val TAG = "LockStateTracker"
 
     /**
-     * IMMEDIATE mode tolerance for non-launcher focus changes we couldn't classify, so a
-     * transient system window doesn't double-prompt. Leaving via Home locks with no grace.
+     * Longest an unlocked app stays unlocked while the user hops straight to a helper app (2FA
+     * code, email link, file picker, camera) and back. Going anywhere else ends the hop.
      */
-    private const val IMMEDIATE_GRACE_MS = 3_000L
-
-    /**
-     * Post-unlock launch/trampoline immunity: protects newly unlocked apps against late
-     * launcher window-state events while LockScreenActivity finishes or deep links launch,
-     * and protects immediate internal splash-to-main activity transitions.
-     */
-    private const val POST_UNLOCK_LAUNCH_IMMUNITY_MS = 1_800L
-    private const val POST_UNLOCK_INTERNAL_IMMUNITY_MS = 4_000L
-
-    /**
-     * Handshake Immunity: After an app is unlocked, internal lifecycle shifts
-     * (splash-to-main, task stack replacement, in-app sign in, 2FA, OAuth, and activity
-     * recreation) remain immune from relocking for up to 120 seconds, unless the user
-     * explicitly navigates to the launcher.
-     */
-    const val HANDSHAKE_IMMUNITY_DURATION_MS = 120_000L
-
-    /** Longest a locked app stays unlocked while the user fetches a 2FA code elsewhere. */
-    private const val AUTH_SUBFLOW_MAX_MS = 120_000L
+    const val HOP_MAX_MS = 120_000L
 
     /** Suppresses duplicate lock-screen launches from bursts of accessibility events. */
     private const val PENDING_LOCK_DEBOUNCE_MS = 1_200L
@@ -65,17 +51,18 @@ object LockStateTracker {
     private const val PKG_CREDENTIAL_MANAGER = "com.google.android.apps.credentialmanager"
     private val PASSWORD_MANAGER_ALIASES = setOf(PKG_GMS_PASSWORDS, PKG_CREDENTIAL_MANAGER)
 
-    private val unlockedAt = ConcurrentHashMap<String, Long>()
-    private val exitedAt = ConcurrentHashMap<String, Long>()
-    private val lastExitedAt = ConcurrentHashMap<String, Long>()
+    /**
+     * One unlocked app. [awaySince] is 0 while the app is on screen. [hopTarget] is set while the
+     * user is in a helper app they went to straight from this one.
+     */
+    private class Session {
+        @Volatile var awaySince = 0L
+        @Volatile var hopTarget: String? = null
+    }
+
+    private val sessions = ConcurrentHashMap<String, Session>()
     private val pendingLocks = ConcurrentHashMap<String, Long>()
     private val abandonedAt = ConcurrentHashMap<String, Long>()
-
-    // Tracks packages whose most recent exit was an explicit Home/Launcher exit
-    private val launcherExited = ConcurrentHashMap.newKeySet<String>()
-
-    // Per-package Auth Sub-flow tracking to eliminate multi-app collision
-    private val authSubFlows = ConcurrentHashMap<String, Long>()
 
     @Volatile private var selfProtectionGrantedAt = 0L
     @Volatile private var selfProtectionVisitedGuardedScreen = false
@@ -97,7 +84,7 @@ object LockStateTracker {
     fun addAppUnlockListener(listener: (String) -> Unit) { appUnlockListeners += listener }
     fun removeAppUnlockListener(listener: (String) -> Unit) { appUnlockListeners -= listener }
 
-    /** Notified whenever an app is locked or exits to launcher, e.g. to re-mask notifications. */
+    /** Notified whenever an app's session ends, e.g. to re-mask notifications. */
     fun addAppLockListener(listener: (String) -> Unit) { appLockListeners += listener }
     fun removeAppLockListener(listener: (String) -> Unit) { appLockListeners -= listener }
 
@@ -107,203 +94,128 @@ object LockStateTracker {
     private fun aliasesOf(packageName: String): Set<String> =
         if (packageName in PASSWORD_MANAGER_ALIASES) PASSWORD_MANAGER_ALIASES else setOf(packageName)
 
-    private fun sessionKey(packageName: String): String =
-        aliasesOf(packageName).firstOrNull { unlockedAt.containsKey(it) } ?: packageName
+    private fun sessionOf(packageName: String): Session? =
+        aliasesOf(packageName).firstNotNullOfOrNull { sessions[it] }
 
     // ---------------------------------------------------------------------------------------
     // Locked-app sessions
     // ---------------------------------------------------------------------------------------
 
-    private val lockScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-    private val activeGraceJobs = ConcurrentHashMap<String, Job>()
+    private val timerScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val expiryJobs = ConcurrentHashMap<String, Job>()
 
-    /**
-     * Schedules an active background timer to enforce [lockPackage] when a grace period expires,
-     * immediately notifying [appLockListeners] so notifications re-shield without waiting for app re-entry.
-     * Never locks an app that is still actively in the foreground on screen.
-     */
-    fun scheduleGraceTimeout(packageName: String, delayMs: Long) {
-        cancelGraceTimeout(packageName)
-        if (delayMs <= 0L) {
-            lockPackage(packageName)
-            return
+    /** Re-checks a session when its away time runs out so notifications re-mask on time. */
+    private fun scheduleExpiry(packageName: String, delayMs: Long, timeoutMode: LockTimeoutMode) {
+        cancelExpiry(packageName)
+        val job = timerScope.launch {
+            delay(delayMs + 50L)
+            isAppUnlocked(packageName, timeoutMode)
         }
-        val job = lockScope.launch {
-            delay(delayMs)
-            if (com.android.BioKey.feature.lock.BioKeyAccessibilityService.isPackageCurrentlyInForeground(packageName)) {
-                Log.d(TAG, "Grace timer fired for $packageName while still in foreground; keeping session")
-                onAppResumed(packageName)
-                return@launch
-            }
-            Log.i(TAG, "Grace period expired for $packageName ($delayMs ms); actively locking package")
-            lockPackage(packageName)
-        }
-        for (pkg in aliasesOf(packageName)) {
-            activeGraceJobs[pkg] = job
-        }
+        for (pkg in aliasesOf(packageName)) expiryJobs[pkg] = job
     }
 
-    fun cancelGraceTimeout(packageName: String) {
-        for (pkg in aliasesOf(packageName)) {
-            activeGraceJobs.remove(pkg)?.cancel()
-        }
+    private fun cancelExpiry(packageName: String) {
+        for (pkg in aliasesOf(packageName)) expiryJobs.remove(pkg)?.cancel()
     }
 
     fun onAppUnlocked(packageName: String) {
-        val t = now()
-        cancelGraceTimeout(packageName)
+        cancelExpiry(packageName)
+        val session = Session()
         for (pkg in aliasesOf(packageName)) {
-            unlockedAt[pkg] = t
-            exitedAt.remove(pkg)
-            lastExitedAt.remove(pkg)
+            sessions[pkg] = session
             pendingLocks.remove(pkg)
-            launcherExited.remove(pkg)
+            abandonedAt.remove(pkg)
         }
         Log.i(TAG, "Session started for $packageName")
         appUnlockListeners.forEach { runCatching { it(packageName) } }
     }
 
-    fun isRecentlyUnlocked(packageName: String, thresholdMs: Long = POST_UNLOCK_LAUNCH_IMMUNITY_MS): Boolean {
-        val key = sessionKey(packageName)
-        val t = unlockedAt[key] ?: return false
-        return (now() - t) < thresholdMs
+    /** The unlocked app is on screen: it is in use, so nothing ages. */
+    fun onAppVisible(packageName: String) {
+        val session = sessionOf(packageName) ?: return
+        if (session.awaySince == 0L) return
+        session.awaySince = 0L
+        session.hopTarget = null
+        cancelExpiry(packageName)
     }
 
-    /** The app is in the foreground again within its session: cancel any pending exit timer. */
-    fun onAppResumed(packageName: String) {
-        cancelGraceTimeout(packageName)
-        for (pkg in aliasesOf(packageName)) {
-            exitedAt.remove(pkg)
-            lastExitedAt.remove(pkg)
-            pendingLocks.remove(pkg)
-            launcherExited.remove(pkg)
+    /**
+     * The unlocked app left the screen.
+     *
+     * @param hopTarget the helper app the user went straight to, or null for Home, Recents or a
+     *   regular app. Only a helper hop keeps an IMMEDIATE session alive (for [HOP_MAX_MS]).
+     */
+    fun onAppLeft(packageName: String, timeoutMode: LockTimeoutMode, hopTarget: String?) {
+        val session = sessionOf(packageName) ?: return
+        if (session.awaySince != 0L) return
+        session.awaySince = now()
+        session.hopTarget = hopTarget
+        Log.d(TAG, "$packageName left the screen (hop=$hopTarget)")
+        when {
+            timeoutMode == LockTimeoutMode.IMMEDIATE && hopTarget == null -> lockPackage(packageName)
+            timeoutMode == LockTimeoutMode.ON_SCREEN_OFF -> Unit
+            else -> scheduleExpiry(packageName, awayAllowanceMs(timeoutMode, hopTarget != null), timeoutMode)
         }
     }
 
     /**
-     * Records when the user left the app.
-     *
-     * If [isLauncherExit] is true (Home gesture / back to launcher), the exit is recorded
-     * as an explicit launcher exit so returning to the app requires authentication.
+     * Something new is in front. Any hop that isn't the helper the user went to (or back to the
+     * app itself, which [onAppVisible] handles) is over: the app now ages as a normal exit.
      */
-    fun onAppExited(
-        packageName: String,
-        isLauncherExit: Boolean = false,
-        at: Long = now(),
-        timeoutMode: LockTimeoutMode? = null
-    ) {
-        val key = sessionKey(packageName)
-        if (isAuthSubFlowActive(key)) return
-
-        val unlockTime = unlockedAt[key]
-        // Protect newly unlocked sessions against stale launcher events while LockScreenActivity finishes
-        // or a notification deep link is launching the target app.
-        if (unlockTime != null && (at - unlockTime) < POST_UNLOCK_LAUNCH_IMMUNITY_MS) {
-            if (!isLauncherExit || com.android.BioKey.feature.lock.BioKeyAccessibilityService.isPackageCurrentlyInForeground(packageName)) {
-                return
-            }
-        }
-
-        for (pkg in aliasesOf(packageName)) {
-            exitedAt[pkg] = at
-            lastExitedAt[pkg] = at
-            if (isLauncherExit) {
-                launcherExited.add(pkg)
-            } else {
-                launcherExited.remove(pkg)
-            }
-        }
-
-        if (unlockTime != null) {
-            if (timeoutMode != null) {
-                if (isLauncherExit && timeoutMode == LockTimeoutMode.IMMEDIATE) {
-                    lockPackage(packageName)
-                } else if (timeoutMode == LockTimeoutMode.IMMEDIATE) {
-                    scheduleGraceTimeout(packageName, IMMEDIATE_GRACE_MS)
-                } else if (timeoutMode.durationMillis > 0L) {
-                    scheduleGraceTimeout(packageName, timeoutMode.durationMillis)
-                }
-            } else if (isLauncherExit) {
-                appLockListeners.forEach { runCatching { it(packageName) } }
+    fun onForegroundChanged(foregroundPackage: String, timeoutModeOf: (String) -> LockTimeoutMode) {
+        for ((pkg, session) in sessions) {
+            val hop = session.hopTarget ?: continue
+            if (hop == foregroundPackage || pkg in aliasesOf(foregroundPackage)) continue
+            session.hopTarget = null
+            val mode = timeoutModeOf(pkg)
+            Log.d(TAG, "Hop from $pkg ended at $foregroundPackage")
+            if (!isAppUnlocked(pkg, mode)) continue
+            if (mode.durationMillis > 0L) {
+                scheduleExpiry(pkg, (session.awaySince + mode.durationMillis - now()).coerceAtLeast(0L), mode)
             }
         }
     }
 
-    fun isRecentlyExited(packageName: String, thresholdMs: Long = 1_500L): Boolean {
-        val key = sessionKey(packageName)
-        val exit = lastExitedAt[key] ?: exitedAt[key] ?: return false
-        return (now() - exit) < thresholdMs
+    private fun awayAllowanceMs(timeoutMode: LockTimeoutMode, hopping: Boolean): Long {
+        val grace = timeoutMode.durationMillis.coerceAtLeast(0L)
+        return if (hopping) maxOf(grace, HOP_MAX_MS) else grace
     }
 
     fun isAppUnlocked(packageName: String, timeoutMode: LockTimeoutMode): Boolean {
-        val key = sessionKey(packageName)
-        val unlockTime = unlockedAt[key] ?: return false
-        if (isAuthSubFlowActive(key)) return true
-
-        val currentNow = now()
-        val sinceUnlock = currentNow - unlockTime
-        val exit = exitedAt[key] ?: return true
-        val sinceExit = currentNow - exit
-        val wasLauncher = launcherExited.contains(key)
-
-        // Post-unlock internal transition immunity (even in IMMEDIATE mode):
-        // Protects splash -> main, dispatcher -> main, and immediate post-unlock focus handoffs.
-        if (!wasLauncher && sinceUnlock < POST_UNLOCK_INTERNAL_IMMUNITY_MS) {
-            return true
+        val session = sessionOf(packageName) ?: return false
+        val away = session.awaySince
+        if (away == 0L || timeoutMode == LockTimeoutMode.ON_SCREEN_OFF) return true
+        val hopping = session.hopTarget != null
+        if (timeoutMode == LockTimeoutMode.IMMEDIATE && !hopping) {
+            lockPackage(packageName)
+            return false
         }
-
-        // Handshake Immunity for non-IMMEDIATE grace modes:
-        if (!wasLauncher && timeoutMode != LockTimeoutMode.IMMEDIATE) {
-            val effectiveImmunity = if (timeoutMode.durationMillis > 0L) {
-                minOf(HANDSHAKE_IMMUNITY_DURATION_MS, timeoutMode.durationMillis)
-            } else {
-                HANDSHAKE_IMMUNITY_DURATION_MS
-            }
-            if ((sinceUnlock < effectiveImmunity) && (timeoutMode.durationMillis <= 0L || sinceExit < timeoutMode.durationMillis)) {
-                return true
-            }
-        }
-
-        val stillUnlocked = when (timeoutMode) {
-            LockTimeoutMode.IMMEDIATE -> if (wasLauncher) false else sinceExit < IMMEDIATE_GRACE_MS
-            LockTimeoutMode.ON_SCREEN_OFF -> true
-            LockTimeoutMode.GRACE_30_SECONDS,
-            LockTimeoutMode.GRACE_1_MINUTE,
-            LockTimeoutMode.GRACE_5_MINUTES,
-            LockTimeoutMode.GRACE_15_MINUTES -> sinceExit < timeoutMode.durationMillis
-        }
-
+        val stillUnlocked = now() - away < awayAllowanceMs(timeoutMode, hopping)
         if (!stillUnlocked) lockPackage(packageName)
         return stillUnlocked
     }
 
     fun lockPackage(packageName: String) {
-        cancelGraceTimeout(packageName)
+        cancelExpiry(packageName)
+        var hadSession = false
         for (pkg in aliasesOf(packageName)) {
-            unlockedAt.remove(pkg)
-            exitedAt.remove(pkg)
+            if (sessions.remove(pkg) != null) hadSession = true
             pendingLocks.remove(pkg)
-            launcherExited.remove(pkg)
-            authSubFlows.remove(pkg)
         }
+        if (hadSession) Log.i(TAG, "Session ended for $packageName")
         appLockListeners.forEach { runCatching { it(packageName) } }
     }
 
     /**
      * Wipes every session, including BioKey's own unless [includeOwnApp] is false. Used on
      * screen-off, manual "lock all" and when protection resumes.
-     * Failed-attempt counters deliberately survive so pressing power can't reset them.
      */
     fun lockAll(includeOwnApp: Boolean = true) {
-        activeGraceJobs.values.forEach { it.cancel() }
-        activeGraceJobs.clear()
-        unlockedAt.clear()
-        exitedAt.clear()
-        lastExitedAt.clear()
+        expiryJobs.values.forEach { it.cancel() }
+        expiryJobs.clear()
+        sessions.clear()
         pendingLocks.clear()
         abandonedAt.clear()
-        launcherExited.clear()
-        authSubFlows.clear()
         clearSelfProtection()
         if (includeOwnApp) lockOwnApp()
         Log.i(TAG, "All sessions wiped")
@@ -313,78 +225,7 @@ object LockStateTracker {
     fun onScreenTurnedOff() = lockAll()
 
     // ---------------------------------------------------------------------------------------
-    // Per-App 2FA / Sign-in Sub-flows
-    // ---------------------------------------------------------------------------------------
-
-    fun enterAuthSubFlow(hostPackage: String) {
-        val key = sessionKey(hostPackage)
-        if (!unlockedAt.containsKey(key)) return
-        // Ensure at most one auth sub-flow host is active at a time
-        val otherHosts = authSubFlows.keys.filter { it != key }
-        for (other in otherHosts) {
-            authSubFlows.remove(other)
-            onAppExited(other, isLauncherExit = false)
-        }
-        authSubFlows[key] = now()
-    }
-
-    /** User came straight back to the host app: keep its session. */
-    fun completeAuthSubFlow(hostPackage: String? = null) {
-        val targets = hostPackage?.let { setOf(sessionKey(it)) } ?: authSubFlows.keys.toSet()
-        for (host in targets) {
-            authSubFlows.remove(host)
-            onAppResumed(host)
-        }
-    }
-
-    /**
-     * User went somewhere other than back to the host (Home, another app): the host's session
-     * now ages from this moment as a normal exit.
-     */
-    fun abandonAuthSubFlow(
-        hostPackage: String? = null,
-        isLauncherExit: Boolean = false,
-        timeoutModeProvider: ((String) -> LockTimeoutMode)? = null
-    ) {
-        val targets = hostPackage?.let { setOf(sessionKey(it)) } ?: authSubFlows.keys.toSet()
-        for (host in targets) {
-            authSubFlows.remove(host)
-            onAppExited(host, isLauncherExit, timeoutMode = timeoutModeProvider?.invoke(host))
-        }
-    }
-
-    fun isAuthSubFlowActive(packageName: String): Boolean {
-        val key = sessionKey(packageName)
-        val startedAt = authSubFlows[key] ?: return false
-        if (now() - startedAt < AUTH_SUBFLOW_MAX_MS) return true
-
-        // Overstayed: evict from subflow and age exit from startedAt without handshake bypass
-        authSubFlows.remove(key)
-        for (pkg in aliasesOf(key)) {
-            exitedAt[pkg] = startedAt
-            launcherExited.remove(pkg)
-        }
-        return false
-    }
-
-    fun getActiveAuthHost(): String? {
-        val now = now()
-        val expired = mutableListOf<String>()
-        var activeHost: String? = null
-        for ((host, startedAt) in authSubFlows) {
-            if (now - startedAt < AUTH_SUBFLOW_MAX_MS) {
-                activeHost = host
-                break
-            } else {
-                expired.add(host)
-            }
-        }
-        for (host in expired) isAuthSubFlowActive(host)
-        return activeHost
-    }
-
-    // ---------------------------------------------------------------------------------------
-    // Lock-screen launch debouncing and failed attempts
+    // Lock-screen launch debouncing
     // ---------------------------------------------------------------------------------------
 
     fun isRegularLockPending(packageName: String): Boolean {
@@ -464,8 +305,6 @@ object LockStateTracker {
         ownInForeground = true
         externalNavigationAt = 0L
     }
-
-    fun onStepUpAuthenticated() = onOwnAppUnlocked()
 
     fun isOwnAppUnlocked(): Boolean {
         if (ownUnlockedAt == 0L) return false

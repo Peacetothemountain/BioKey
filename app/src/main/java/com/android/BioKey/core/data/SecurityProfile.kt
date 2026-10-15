@@ -3,51 +3,46 @@ package com.android.BioKey.core.data
 import org.json.JSONArray
 import org.json.JSONObject
 
+/**
+ * A named group of locked apps that share a re-lock delay. An app is in at most one profile, and
+ * every app in a profile is locked.
+ */
 data class SecurityProfile(
     val id: String,
     val name: String,
-    val iconKey: String = "shield", // "shield", "finance", "social", "lock", "work", "privacy"
+    val iconKey: String = "shield",
     val packages: Set<String> = emptySet(),
-    val isPreset: Boolean = false,
     val timeoutMode: LockTimeoutMode = LockTimeoutMode.IMMEDIATE
 ) {
-    fun toJson(): JSONObject {
-        return JSONObject().apply {
-            put("id", id)
-            put("name", name)
-            put("iconKey", iconKey)
-            put("isPreset", isPreset)
-            put("timeoutMode", timeoutMode.name)
-            val pkgArray = JSONArray()
-            packages.sorted().forEach { pkgArray.put(it) }
-            put("packages", pkgArray)
-        }
-    }
+    fun toJson(): JSONObject = JSONObject()
+        .put("id", id)
+        .put("name", name)
+        .put("iconKey", iconKey)
+        .put("timeoutMode", timeoutMode.name)
+        .put("packages", JSONArray(packages.sorted()))
 
     companion object {
+        const val PRESET_PERSONAL = "profile_personal"
+        const val PRESET_FINANCE = "profile_finance"
+        const val PRESET_SOCIAL = "profile_social"
+        const val PRESET_WORK = "profile_work"
+
+        val DEFAULTS = listOf(
+            SecurityProfile(PRESET_PERSONAL, "Personal", "shield"),
+            SecurityProfile(PRESET_FINANCE, "Finance", "finance"),
+            SecurityProfile(PRESET_SOCIAL, "Social", "social"),
+            SecurityProfile(PRESET_WORK, "Work", "work", timeoutMode = LockTimeoutMode.GRACE_5_MINUTES)
+        )
+
         fun fromJson(json: JSONObject): SecurityProfile {
-            val id = json.optString("id", "")
-            val name = json.optString("name", "Custom Profile")
-            val iconKey = json.optString("iconKey", "shield")
-            val isPreset = json.optBoolean("isPreset", false)
-            val timeoutModeStr = json.optString("timeoutMode", LockTimeoutMode.IMMEDIATE.name)
-            val timeoutMode = LockTimeoutMode.fromName(timeoutModeStr)
-
-            val packages = mutableSetOf<String>()
             val pkgArray = json.optJSONArray("packages")
-            if (pkgArray != null) {
-                for (i in 0 until pkgArray.length()) {
-                    packages.add(pkgArray.getString(i))
-                }
-            }
-
+            val packages = buildSet { for (i in 0 until (pkgArray?.length() ?: 0)) add(pkgArray!!.getString(i)) }
             return SecurityProfile(
-                id = id,
-                name = name,
-                iconKey = iconKey,
+                id = json.optString("id"),
+                name = json.optString("name", "Profile"),
+                iconKey = json.optString("iconKey", "shield"),
                 packages = packages,
-                isPreset = isPreset,
-                timeoutMode = timeoutMode
+                timeoutMode = LockTimeoutMode.fromName(json.optString("timeoutMode"))
             )
         }
     }

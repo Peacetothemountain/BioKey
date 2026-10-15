@@ -61,6 +61,18 @@ object AppInfoCache {
         }
     }
 
+    /** Label only (no icon decode), for the first frame of a cover on a cache miss. */
+    fun quickLabel(context: Context, pkg: String): String {
+        cache[pkg]?.let { return it.label }
+        if (pkg == BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS || pkg == BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER) {
+            return "Google Password Manager"
+        }
+        return runCatching {
+            val pm = context.packageManager
+            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+        }.getOrDefault("This app")
+    }
+
     fun loadAndCache(context: Context, pm: PackageManager, pkg: String): CachedAppInfo? {
         return try {
             val isPasswordManager = pkg == BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS ||

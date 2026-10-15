@@ -47,8 +47,7 @@ import com.android.BioKey.feature.main.IntentNavigationHelper
 import com.android.BioKey.ui.theme.springPress
 
 /**
- * Clean 1-step setup for BioKey matching Google native App Lock standard.
- * Fluid full-screen canvas layout with zero squircle container boxes.
+ * First-run setup: turn on the accessibility service, then confirm identity once.
  */
 @Composable
 fun SetupScreenExpressive(
@@ -59,11 +58,13 @@ fun SetupScreenExpressive(
     val context = LocalContext.current
     var a11yActive by remember { mutableStateOf(BioKeyAccessibilityService.isServiceEnabled(context)) }
     var hasAutoPrompted by remember { mutableStateOf(false) }
+    var restrictedSettingsBlocked by remember { mutableStateOf(false) }
 
     // Auto-advance once as soon as permission is granted; don't infinite-loop if user cancels prompt
     LifecycleResumeEffect(Unit) {
         val active = BioKeyAccessibilityService.isServiceEnabled(context)
         a11yActive = active
+        restrictedSettingsBlocked = !active && RestrictedSettingsHelper.isRestrictedSettingsEnforced(context)
         if (active && !hasAutoPrompted && authError == null) {
             hasAutoPrompted = true
             onSetupComplete()
@@ -198,7 +199,7 @@ fun SetupScreenExpressive(
                 )
             }
 
-            if (!a11yActive && RestrictedSettingsHelper.isRestrictedSettingsEnforced(context)) {
+            if (restrictedSettingsBlocked) {
                 Spacer(modifier = Modifier.height(14.dp))
 
                 TextButton(

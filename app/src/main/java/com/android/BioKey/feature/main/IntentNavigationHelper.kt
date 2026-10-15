@@ -5,156 +5,79 @@ import android.app.admin.DevicePolicyManager
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
-import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import android.util.Log
 import android.widget.Toast
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 
+/** Settings page for one accessibility service (Android 13+); not exposed as an SDK constant. */
+private const val ACCESSIBILITY_DETAILS_SETTINGS = "android.settings.ACCESSIBILITY_DETAILS_SETTINGS"
+
 /**
- * Centralized intent navigation with strict fallback hierarchies for all system configuration pages.
- * Pre-authorizes self-protection round-trips via [LockStateTracker] to prevent false lock triggers.
+ * Opens system settings pages, most specific page first. Leaving BioKey this way keeps the
+ * owner's session and pre-authorises BioKey's own settings pages (see [LockStateTracker]).
  */
 object IntentNavigationHelper {
-    private const val TAG = "IntentNavigationHelper"
 
-    /**
-     * Attempts a sequence of intents in prioritized order.
-     */
-    fun launchFallbackCascade(
-        context: Context,
-        intents: List<Intent>,
-        preAuthorizeSelfProtection: Boolean = true
-    ): Boolean {
+    /** Starts the first intent the device can handle. */
+    fun launchFallbackCascade(context: Context, intents: List<Intent>): Boolean {
+        LockStateTracker.beginExternalNavigation(preAuthorizeSelfProtection = true)
         for (intent in intents) {
+            if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             try {
-                if (preAuthorizeSelfProtection) {
-                    LockStateTracker.beginExternalNavigation(preAuthorizeSelfProtection = true)
-                }
-                if (context !is Activity) {
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
                 context.startActivity(intent)
                 return true
-            } catch (e: ActivityNotFoundException) {
-                Log.d(TAG, "Activity not found for intent: ${intent.action}, trying next fallback")
-            } catch (e: SecurityException) {
-                Log.w(TAG, "Security exception for intent: ${intent.action}, trying next fallback")
-            } catch (e: Exception) {
-                Log.w(TAG, "Unexpected error launching intent: ${intent.action}, trying next fallback", e)
+            } catch (_: ActivityNotFoundException) {
+            } catch (_: SecurityException) {
             }
         }
-        Toast.makeText(context, "Could not open settings on this device", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Couldn't open settings on this device", Toast.LENGTH_SHORT).show()
         return false
     }
 
-    /**
-     * Screen Lock setup: Directly open set new password wizard -> Security settings -> Main settings.
-     */
-    fun openScreenLockSetup(context: Context) {
-        val candidates = listOf(
+    private fun appDetails(context: Context) =
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+
+    fun openScreenLockSetup(context: Context) = launchFallbackCascade(
+        context,
+        listOf(
             Intent(DevicePolicyManager.ACTION_SET_NEW_PASSWORD),
             Intent(Settings.ACTION_SECURITY_SETTINGS),
             Intent(Settings.ACTION_SETTINGS)
         )
-        launchFallbackCascade(context, candidates)
-    }
+    )
 
-    /**
-     * Battery Optimization: Direct exemption prompt -> Optimization list -> App Info -> Main settings.
-     */
-    fun openBatteryOptimization(context: Context) {
-        val candidates = listOf(
-            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = Uri.parse("package:${context.packageName}")
-            },
-            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
-            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.fromParts("package", context.packageName, null)
-            },
-            Intent(Settings.ACTION_SETTINGS)
+    /** BioKey's own accessibility toggle where the device has that page, else the accessibility list. */
+    fun accessibilitySettingsIntent(context: Context): Intent {
+        val details = Intent(ACCESSIBILITY_DETAILS_SETTINGS).putExtra(
+            Intent.EXTRA_COMPONENT_NAME,
+            ComponentName(context, BioKeyAccessibilityService::class.java).flattenToString()
         )
-        launchFallbackCascade(context, candidates)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            context.packageManager.resolveActivity(details, 0) != null
+        ) details else Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
     }
 
-    /**
-     * Notification Listener: Detail page (API 30+) -> Global Listener list -> App Info -> Main settings.
-     */
-    fun openNotificationListenerSettings(context: Context) {
-        val candidates = mutableListOf<Intent>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            candidates.add(
-                Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).apply {
-                    putExtra(
-                        Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
-                        ComponentName(context, BioKeyNotificationShieldService::class.java).flattenToString()
-                    )
-                }
-            )
-        }
-        candidates.add(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-        candidates.add(
-            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.fromParts("package", context.packageName, null)
-            }
+    fun openAccessibilitySettings(context: Context) = launchFallbackCascade(
+        context,
+        listOf(accessibilitySettingsIntent(context), Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), appDetails(context))
+    )
+
+    fun openNotificationListenerSettings(context: Context) = launchFallbackCascade(
+        context,
+        listOf(
+            Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).putExtra(
+                Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
+                ComponentName(context, BioKeyNotificationShieldService::class.java).flattenToString()
+            ),
+            Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS),
+            appDetails(context)
         )
-        candidates.add(Intent(Settings.ACTION_SETTINGS))
-        launchFallbackCascade(context, candidates)
-    }
+    )
 
-    /**
-     * Accessibility Settings: A11y settings -> App Info (for restricted settings) -> Main settings.
-     */
-    fun openAccessibilitySettings(context: Context) {
-        val candidates = listOf(
-            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
-            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.fromParts("package", context.packageName, null)
-            },
-            Intent(Settings.ACTION_SETTINGS)
-        )
-        launchFallbackCascade(context, candidates)
-    }
-
-    /**
-     * Application Details Settings (App Info).
-     */
-    fun openAppDetailsSettings(context: Context) {
-        val candidates = listOf(
-            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.fromParts("package", context.packageName, null)
-            },
-            Intent(Settings.ACTION_SETTINGS)
-        )
-        launchFallbackCascade(context, candidates)
-    }
-
-    /**
-     * Application Notification Settings (API 26+).
-     */
-    fun openAppNotificationSettings(context: Context) {
-        val candidates = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            listOf(
-                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                },
-                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                    data = Uri.fromParts("package", context.packageName, null)
-                },
-                Intent(Settings.ACTION_SETTINGS)
-            )
-        } else {
-            listOf(
-                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                    data = Uri.fromParts("package", context.packageName, null)
-                },
-                Intent(Settings.ACTION_SETTINGS)
-            )
-        }
-        launchFallbackCascade(context, candidates)
-    }
+    fun openAppDetailsSettings(context: Context) = launchFallbackCascade(context, listOf(appDetails(context)))
 }

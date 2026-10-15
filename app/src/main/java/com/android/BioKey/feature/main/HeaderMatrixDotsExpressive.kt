@@ -1,9 +1,7 @@
 package com.android.BioKey.feature.main
 
+import android.provider.Settings
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -16,151 +14,182 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.isActive
+import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
 
 /**
- * Ambient particle field behind the main screen header.
+ * Ambient constellation behind the header: two depth layers of drifting, pulsing dots, joined by
+ * links that fade with distance, the whole field fading out toward the content below.
  *
- * Motion is integrated against the real frame time, so the drift speed is identical on 60Hz and
- * 120Hz panels and doesn't jump after a dropped frame. The particle array is allocated once and
- * updated in place, so draw passes don't allocate.
+ * Performance:
+ * - Draws in its own graphics layer, so a new frame re-records only this canvas, never the
+ *   screen behind it.
+ * - Frame state is read only in the draw phase: no recomposition or layout per frame.
+ * - Capped at ~60 fps (motion is time-based, so it looks identical on 120 Hz panels at half the
+ *   GPU work), paused whenever the screen isn't resumed, and frozen when the system's
+ *   "Remove animations" setting is on.
+ * - Particle state lives in flat float arrays updated in place: no allocation while animating.
  */
-private class MatrixParticle(
-    var x: Float,
-    var y: Float,
-    var vx: Float,
-    var vy: Float,
-    val phaseOffset: Float,
-    val baseRadius: Float
-)
-
-/** Drift speed in px/s. */
-private const val MAX_SPEED = 24f
-/** Longest step integrated in one frame, so resuming after a pause doesn't teleport particles. */
+private const val FRAME_INTERVAL_NANOS = 16_000_000L
 private const val MAX_STEP_SECONDS = 0.05f
-private const val MAX_LINK_DIST_SQ = 230f * 230f
+private const val LINK_DIST = 220f
+private const val LINK_DIST_SQ = LINK_DIST * LINK_DIST
+private const val EDGE_MARGIN = 24f
 
-@Composable
-fun HeaderMatrixDotsExpressive(
-    modifier: Modifier = Modifier
-        .fillMaxWidth()
-        .height(280.dp),
-    particleCount: Int = 26
-) {
-    val primary = MaterialTheme.colorScheme.primary
-    val tertiary = MaterialTheme.colorScheme.tertiary
+private class Field(count: Int) {
+    val n = count
+    val x = FloatArray(count)
+    val y = FloatArray(count)
+    val heading = FloatArray(count)
+    val speed = FloatArray(count)
+    val radius = FloatArray(count)
+    val phase = FloatArray(count)
+    /** 1 = near layer (bigger, brighter, faster, linked), 0 = far layer. */
+    val near = BooleanArray(count)
+    var seeded = false
+    var startNanos = 0L
+    var lastNanos = 0L
 
-    val particles = remember(particleCount) {
-        Array(particleCount) { i ->
-            MatrixParticle(
-                x = Random.nextFloat() * 1000f,
-                y = Random.nextFloat() * 600f,
-                vx = (Random.nextFloat() * 2f - 1f) * MAX_SPEED,
-                vy = (Random.nextFloat() * 2f - 1f) * MAX_SPEED,
-                phaseOffset = i * 0.35f,
-                baseRadius = 3f + Random.nextFloat() * 1.5f
-            )
+    init {
+        for (i in 0 until count) {
+            near[i] = i % 3 != 0
+            heading[i] = Random.nextFloat() * (2f * Math.PI.toFloat())
+            speed[i] = if (near[i]) 14f + Random.nextFloat() * 14f else 6f + Random.nextFloat() * 6f
+            radius[i] = if (near[i]) 2.8f + Random.nextFloat() * 1.6f else 1.6f + Random.nextFloat() * 0.8f
+            phase[i] = Random.nextFloat() * 6.28f
         }
     }
 
+    fun seed(w: Float, h: Float) {
+        for (i in 0 until n) {
+            x[i] = Random.nextFloat() * w
+            y[i] = Random.nextFloat() * h
+        }
+        seeded = true
+    }
+
+    fun step(dt: Float, t: Float, w: Float, h: Float) {
+        for (i in 0 until n) {
+            // Smooth wander: the heading drifts on a slow per-particle wave instead of bouncing.
+            heading[i] += sin(t * 0.35f + phase[i]) * 0.55f * dt
+            x[i] += cos(heading[i]) * speed[i] * dt
+            y[i] += sin(heading[i]) * speed[i] * dt
+            // Wrap just outside the edges so dots glide in and out of view.
+            if (x[i] < -EDGE_MARGIN) x[i] = w + EDGE_MARGIN else if (x[i] > w + EDGE_MARGIN) x[i] = -EDGE_MARGIN
+            if (y[i] < -EDGE_MARGIN) y[i] = h + EDGE_MARGIN else if (y[i] > h + EDGE_MARGIN) y[i] = -EDGE_MARGIN
+        }
+    }
+}
+
+@Composable
+fun HeaderMatrixDotsExpressive(
+    modifier: Modifier = Modifier,
+    particleCount: Int = 30
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    val tertiary = MaterialTheme.colorScheme.tertiary
+    val context = LocalContext.current
+    val animationsOff = remember {
+        Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+    }
+    val field = remember(particleCount) { Field(particleCount) }
+    val wash = remember(primary, tertiary) {
+        Brush.verticalGradient(listOf(primary.copy(alpha = 0.14f), tertiary.copy(alpha = 0.05f), Color.Transparent))
+    }
+
     var frameNanos by remember { mutableLongStateOf(0L) }
-    val clock = remember { LongArray(2) } // [0] = first frame, [1] = previous frame
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    LaunchedEffect(lifecycleOwner) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner, animationsOff) {
+        if (animationsOff) {
+            withFrameNanos { frameNanos = it }
+            return@LaunchedEffect
+        }
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            clock[1] = 0L // reset delta time on resume
+            field.lastNanos = 0L // no jump after a pause
+            var lastPublished = 0L
             while (isActive) {
-                withFrameNanos { frameNanos = it }
+                withFrameNanos { now ->
+                    if (now - lastPublished >= FRAME_INTERVAL_NANOS) {
+                        lastPublished = now
+                        frameNanos = now
+                    }
+                }
             }
         }
     }
 
-    Canvas(
-        modifier = modifier.background(
-            Brush.verticalGradient(
-                listOf(
-                    primary.copy(alpha = 0.14f),
-                    tertiary.copy(alpha = 0.05f),
-                    Color.Transparent
-                )
-            )
-        )
-    ) {
+    Canvas(modifier = modifier.graphicsLayer()) {
+        drawRect(wash)
         val w = size.width
         val h = size.height
         val now = frameNanos
         if (w <= 0f || h <= 0f || now == 0L) return@Canvas
 
-        if (clock[0] == 0L) {
-            clock[0] = now
-            clock[1] = now
-            for (p in particles) {
-                p.x = Random.nextFloat() * w
-                p.y = Random.nextFloat() * h
-            }
+        if (!field.seeded) {
+            field.seed(w, h)
+            field.startNanos = now
         }
-        val dt = ((now - clock[1]) / 1_000_000_000f).coerceIn(0f, MAX_STEP_SECONDS)
-        clock[1] = now
-        val seconds = (now - clock[0]) / 1_000_000_000f
+        val dt = if (field.lastNanos == 0L) 0f else ((now - field.lastNanos) / 1e9f).coerceIn(0f, MAX_STEP_SECONDS)
+        field.lastNanos = now
+        val t = (now - field.startNanos) / 1e9f
+        field.step(dt, t, w, h)
 
-        // 1. Integrate motion, reflecting off the canvas edges.
-        for (p in particles) {
-            p.x += p.vx * dt
-            p.y += p.vy * dt
-            if (p.x < 0f) {
-                p.x = 0f
-                p.vx = -p.vx
-            } else if (p.x > w) {
-                p.x = w
-                p.vx = -p.vx
-            }
-            if (p.y < 0f) {
-                p.y = 0f
-                p.vy = -p.vy
-            } else if (p.y > h) {
-                p.y = h
-                p.vy = -p.vy
-            }
-        }
+        val x = field.x
+        val y = field.y
+        val n = field.n
 
-        // 2. Constellation lines that fade with distance.
-        for (i in particles.indices) {
-            val p1 = particles[i]
-            for (j in i + 1 until particles.size) {
-                val p2 = particles[j]
-                val dx = p1.x - p2.x
-                val dy = p1.y - p2.y
-                val distSq = dx * dx + dy * dy
-                if (distSq < MAX_LINK_DIST_SQ) {
-                    drawLine(
-                        color = primary.copy(alpha = (1f - distSq / MAX_LINK_DIST_SQ) * 0.32f),
-                        start = Offset(p1.x, p1.y),
-                        end = Offset(p2.x, p2.y),
-                        strokeWidth = 1.6f
-                    )
-                }
+        // Links between near dots, fading with distance and toward the bottom.
+        for (i in 0 until n) {
+            if (!field.near[i]) continue
+            for (j in i + 1 until n) {
+                if (!field.near[j]) continue
+                val dx = x[i] - x[j]
+                val dy = y[i] - y[j]
+                val d2 = dx * dx + dy * dy
+                if (d2 >= LINK_DIST_SQ) continue
+                val fade = depthFade((y[i] + y[j]) * 0.5f, h)
+                drawLine(
+                    color = primary.copy(alpha = (1f - d2 / LINK_DIST_SQ) * 0.30f * fade),
+                    start = Offset(x[i], y[i]),
+                    end = Offset(x[j], y[j]),
+                    strokeWidth = 1.4f
+                )
             }
         }
 
-        // 3. Pulsing dots with a soft glow.
-        for (p in particles) {
-            val pulse = (sin(seconds * 2.5f + p.phaseOffset) + 1f) * 0.5f
-            val center = Offset(p.x, p.y)
+        // Dots: far layer dim and still-ish, near layer pulsing with a soft tertiary glow.
+        for (i in 0 until n) {
+            val fade = depthFade(y[i], h)
+            if (fade <= 0.01f) continue
+            val center = Offset(x[i], y[i])
+            if (!field.near[i]) {
+                drawCircle(color = tertiary.copy(alpha = 0.35f * fade), radius = field.radius[i], center = center)
+                continue
+            }
+            val pulse = (sin(t * 2.2f + field.phase[i]) + 1f) * 0.5f
             drawCircle(
-                color = primary.copy(alpha = 0.75f),
-                radius = p.baseRadius + 1.8f * pulse,
+                color = tertiary.copy(alpha = (1f - pulse) * 0.16f * fade),
+                radius = field.radius[i] * 2.8f + 5f * pulse,
                 center = center
             )
             drawCircle(
-                color = tertiary.copy(alpha = (1f - pulse) * 0.18f),
-                radius = p.baseRadius * 2.8f + 5f * pulse,
+                color = primary.copy(alpha = 0.78f * fade),
+                radius = field.radius[i] + 1.6f * pulse,
                 center = center
             )
         }
     }
+}
+
+/** 1 at the top, easing to 0 at the bottom edge so the field melts into the content. */
+private fun depthFade(y: Float, h: Float): Float {
+    val p = (y / h).coerceIn(0f, 1f)
+    return 1f - p * p
 }

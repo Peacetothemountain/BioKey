@@ -6,8 +6,7 @@ import android.view.MotionEvent
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.biometric.BiometricPrompt
-import androidx.compose.foundation.isSystemInDarkTheme
+
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,26 +15,25 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.android.BioKey.core.security.IdentityCheckManager
+import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.lock.LockScreenUIExpressive
 import com.android.BioKey.feature.setup.SetupScreenExpressive
+import com.android.BioKey.ui.theme.BioKeyTheme
+import com.android.BioKey.ui.theme.Haptics
 import kotlinx.coroutines.delay
 
 /**
@@ -61,26 +59,13 @@ class MainActivity : FragmentActivity() {
     private var setupAuthError by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        IdentityCheckManager.applyWindowProtections(this)
+        WindowProtection.applyWindowProtections(this)
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) pauseRequested = intent?.action == ACTION_PAUSE_PROTECTION
 
         setContent {
-            val darkTheme = isSystemInDarkTheme()
-            val colorScheme = remember(darkTheme) {
-                if (darkTheme) dynamicDarkColorScheme(this) else dynamicLightColorScheme(this)
-            }
             val setupCompleted by vault.setupCompletedFlow.collectAsStateWithLifecycle()
-            val pausedUntil by vault.pausedUntilFlow.collectAsStateWithLifecycle()
-
-            LaunchedEffect(pausedUntil) {
-                if (pausedUntil > 0L) {
-                    val remaining = maxOf(0L, pausedUntil - System.currentTimeMillis())
-                    delay(remaining)
-                    vault.isGlobalLockEnabled()
-                }
-            }
 
             androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
                 refreshPermissions()
@@ -94,46 +79,38 @@ class MainActivity : FragmentActivity() {
                 }
             }
 
-            MaterialTheme(
-                colorScheme = colorScheme,
-                shapes = com.android.BioKey.ui.theme.M3XShapes.toMaterial3Shapes(),
-                typography = com.android.BioKey.ui.theme.M3XDefaultTypography.toMaterial3Typography()
-            ) {
-                com.android.BioKey.ui.theme.ProvideExpressiveHaptics {
-                    when {
-                        !setupCompleted -> SetupScreenExpressive(
-                            isAuthenticating = isSetupAuthenticating,
-                            authError = setupAuthError,
-                            onSetupComplete = ::completeSetup
-                        )
-                        !isAuthenticated -> LockScreenUIExpressive(
-                            appName = "BioKey",
-                            appIcon = null,
-                            onUnlockClicked = { authenticate() },
-                            onCancelClicked = { finishAffinity() },
-                            isBioKeyLock = true,
-                            statusMessage = lockMessage,
-                            isPermanentLockout = isPermanentLockout,
-                            onLockDeviceClicked = {
-                                if (!BioKeyAccessibilityService.lockDevice()) finishAffinity()
-                            }
-                        )
-                        else -> MainScreenExpressive(
-                            a11yActive = a11yActive
-                        )
-                    }
+            BioKeyTheme {
+                when {
+                    !setupCompleted -> SetupScreenExpressive(
+                        isAuthenticating = isSetupAuthenticating,
+                        authError = setupAuthError,
+                        onSetupComplete = ::completeSetup
+                    )
+                    !isAuthenticated -> LockScreenUIExpressive(
+                        appName = "BioKey",
+                        appIcon = null,
+                        onUnlockClicked = { authenticate() },
+                        onCancelClicked = { finishAffinity() },
+                        isBioKeyLock = true,
+                        statusMessage = lockMessage,
+                        isPermanentLockout = isPermanentLockout,
+                        onLockDeviceClicked = {
+                            if (!BioKeyAccessibilityService.lockDevice()) finishAffinity()
+                        }
+                    )
+                    else -> MainScreenExpressive(a11yActive = a11yActive)
+                }
 
-                    if (setupCompleted && isAuthenticated && pauseRequested) {
-                        PauseProtectionDialog(
-                            onPause = { duration ->
-                                pauseRequested = false
-                                if (vault.pauseProtection(duration)) {
-                                    Toast.makeText(this, "Protection paused", Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            onDismiss = { pauseRequested = false }
-                        )
-                    }
+                if (setupCompleted && isAuthenticated && pauseRequested) {
+                    PauseProtectionDialog(
+                        onPause = { duration ->
+                            pauseRequested = false
+                            if (vault.pauseProtection(duration)) {
+                                Toast.makeText(this, "Protection paused", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onDismiss = { pauseRequested = false }
+                    )
                 }
             }
         }
@@ -191,7 +168,7 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-        if (IdentityCheckManager.isMotionEventObscured(ev)) {
+        if (WindowProtection.isMotionEventObscured(ev)) {
             return true
         }
         if (ev.actionMasked == MotionEvent.ACTION_DOWN && isAuthenticated && !LockStateTracker.onOwnAppInteraction()) {
@@ -227,9 +204,9 @@ class MainActivity : FragmentActivity() {
                 isSetupAuthenticating = false
                 setupAuthError = null
                 refreshPermissions()
-                com.android.BioKey.ui.theme.BioKeyHaptics.onUnlockSuccess(this@MainActivity)
+                Haptics.confirm(window.decorView)
                 vault.setSetupCompletedSync(true)
-                vault.resumeProtection("Setup completed")
+                vault.resumeProtection()
                 LockStateTracker.onOwnAppUnlocked()
                 isAuthenticated = true
             },
@@ -237,7 +214,7 @@ class MainActivity : FragmentActivity() {
                 isSetupAuthenticating = false
                 setupAuthError = when {
                     isUserCancel(code) -> "Biometric confirmation was cancelled. Tap to retry."
-                    code == BiometricPrompt.ERROR_NO_DEVICE_CREDENTIAL || code == BiometricPrompt.ERROR_NO_BIOMETRICS ->
+                    code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL || code == SecurityEngine.ERROR_NO_BIOMETRICS ->
                         "Set a screen lock (PIN, pattern, or password) in system settings first."
                     else -> message.toString()
                 }
@@ -259,14 +236,14 @@ class MainActivity : FragmentActivity() {
                 onAuthenticated()
             },
             onError = { code, message ->
-                if (code == BiometricPrompt.ERROR_LOCKOUT_PERMANENT) {
+                if (code == SecurityEngine.ERROR_LOCKOUT_PERMANENT) {
                     isPermanentLockout = true
-                    lockMessage = "Biometric sensor locked by Titan M2 hardware policy. Please lock your device screen and unlock with PIN to reset."
+                    lockMessage = "Too many attempts. Lock your phone, then unlock it with your PIN, pattern or password to use biometrics again."
                 } else {
                     isPermanentLockout = false
                     lockMessage = when {
                         isUserCancel(code) -> null
-                        code == BiometricPrompt.ERROR_NO_DEVICE_CREDENTIAL || code == BiometricPrompt.ERROR_NO_BIOMETRICS ->
+                        code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL || code == SecurityEngine.ERROR_NO_BIOMETRICS ->
                             "Set a screen lock (PIN, pattern, or password) in system settings to use BioKey."
                         else -> message.toString()
                     }
@@ -275,9 +252,7 @@ class MainActivity : FragmentActivity() {
         )
     }
 
-    private fun isUserCancel(code: Int) = code == BiometricPrompt.ERROR_USER_CANCELED ||
-        code == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
-        code == BiometricPrompt.ERROR_CANCELED
+    private fun isUserCancel(code: Int) = SecurityEngine.isUserCancel(code)
 }
 
 @Composable

@@ -198,7 +198,7 @@ fun LockScreenUIExpressive(
                         )
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = "Hardware Sensor Locked",
+                            text = "Biometrics locked",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onErrorContainer,
@@ -206,7 +206,7 @@ fun LockScreenUIExpressive(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = statusMessage ?: "Biometric sensor locked by Titan M2 hardware policy. Please lock your device screen and unlock with PIN to reset.",
+                            text = statusMessage ?: "Too many attempts. Lock your phone, then unlock it with your PIN, pattern or password to use biometrics again.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onErrorContainer,
                             textAlign = TextAlign.Center

@@ -11,130 +11,76 @@ import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.main.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
- * Quick Settings tile. Turning protection back on is instant. Pausing it opens BioKey, which
- * requires authentication before offering the pause options; from the lock screen shade the
- * device must be unlocked first.
+ * Quick Settings tile. Turning protection back on is instant. Pausing opens BioKey, which asks
+ * for authentication before offering pause options (from the lock screen the phone must be
+ * unlocked first). The tile mirrors the vault's state while it's visible.
  */
 class BioKeyTileService : TileService() {
 
     companion object {
         fun requestTileUpdate(context: Context) {
-            runCatching {
-                requestListeningState(context, ComponentName(context, BioKeyTileService::class.java))
-            }
+            runCatching { requestListeningState(context, ComponentName(context, BioKeyTileService::class.java)) }
         }
     }
 
-    private var listeningScope: CoroutineScope? = null
-    private var pauseTimerJob: kotlinx.coroutines.Job? = null
+    private val vault by lazy { SecurityVault.getInstance(this) }
+    private var listening: Job? = null
 
     override fun onStartListening() {
         super.onStartListening()
-        listeningScope?.cancel()
-        val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
-        listeningScope = scope
-        scope.launch {
-            val vault = SecurityVault.getInstance(this@BioKeyTileService)
-            combine(
-                vault.setupCompletedFlow,
-                vault.globalLockEnabledFlow,
-                vault.pausedUntilFlow
-            ) { setupCompleted, enabled, pausedUntil ->
-                Triple(setupCompleted, enabled, pausedUntil)
-            }.collect { (setupCompleted, _, pausedUntil) ->
-                updateTile()
-                pauseTimerJob?.cancel()
-                if (setupCompleted && pausedUntil > 0L) {
-                    val remaining = pausedUntil - System.currentTimeMillis()
-                    if (remaining > 0L) {
-                        pauseTimerJob = launch {
-                            delay(remaining + 50L)
-                            vault.isGlobalLockEnabled()
-                            updateTile()
-                        }
-                    }
-                }
+        listening?.cancel()
+        listening = CoroutineScope(Dispatchers.Main.immediate).launch {
+            combine(vault.setupCompletedFlow, vault.globalLockEnabledFlow, ::Pair).collect { (setupCompleted, enabled) ->
+                render(setupCompleted, enabled)
             }
         }
     }
 
     override fun onStopListening() {
-        pauseTimerJob?.cancel()
-        pauseTimerJob = null
-        listeningScope?.cancel()
-        listeningScope = null
+        listening?.cancel()
+        listening = null
         super.onStopListening()
     }
 
     override fun onClick() {
         super.onClick()
-        val vault = SecurityVault.getInstance(this)
-        if (!vault.isSetupCompleted()) {
-            if (isLocked) unlockAndRun { openApp() } else openApp()
-            return
-        }
-        if (vault.isGlobalLockEnabled()) {
-            if (isLocked) unlockAndRun { openPauseScreen() } else openPauseScreen()
-        } else {
-            vault.resumeProtection("Quick Settings tile")
-            updateTile()
-        }
-    }
-
-    private fun openPauseScreen() {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            action = MainActivity.ACTION_PAUSE_PROTECTION
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        launchActivityAndCollapse(intent)
-    }
-
-    private fun openApp() {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        launchActivityAndCollapse(intent)
-    }
-
-    private fun launchActivityAndCollapse(intent: Intent) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val pending = PendingIntent.getActivity(
-                this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            startActivityAndCollapse(pending)
-        } else {
-            @Suppress("DEPRECATION", "StartActivityAndCollapseDeprecated")
-            startActivityAndCollapse(intent)
-        }
-    }
-
-    private fun updateTile() {
-        val tile = qsTile ?: return
-        val vault = SecurityVault.getInstance(this)
-        val setupCompleted = vault.isSetupCompleted()
-        val enabled = vault.isGlobalLockEnabled()
-
-        tile.label = "BioKey"
         when {
-            !setupCompleted -> {
-                tile.state = Tile.STATE_UNAVAILABLE
-                tile.subtitle = "Setup required"
+            !vault.isSetupCompleted() -> launch(Intent(this, MainActivity::class.java))
+            !vault.isGlobalLockEnabled() -> vault.resumeProtection()
+            else -> launch(Intent(this, MainActivity::class.java).setAction(MainActivity.ACTION_PAUSE_PROTECTION))
+        }
+    }
+
+    private fun launch(intent: Intent) {
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val start = {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startActivityAndCollapse(PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+            } else {
+                @Suppress("DEPRECATION", "StartActivityAndCollapseDeprecated")
+                startActivityAndCollapse(intent)
             }
-            enabled -> {
-                tile.state = Tile.STATE_ACTIVE
-                tile.subtitle = "Protecting"
-            }
-            else -> {
-                tile.state = Tile.STATE_INACTIVE
-                tile.subtitle = "Paused"
-            }
+        }
+        if (isLocked) unlockAndRun(start) else start()
+    }
+
+    private fun render(setupCompleted: Boolean, enabled: Boolean) {
+        val tile = qsTile ?: return
+        tile.label = "BioKey"
+        tile.state = when {
+            !setupCompleted -> Tile.STATE_UNAVAILABLE
+            enabled -> Tile.STATE_ACTIVE
+            else -> Tile.STATE_INACTIVE
+        }
+        tile.subtitle = when {
+            !setupCompleted -> "Setup required"
+            enabled -> "Protecting"
+            else -> "Paused"
         }
         tile.updateTile()
     }
