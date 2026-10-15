@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -466,35 +467,40 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
 }
 
 /** Logo in the middle; status on the left and Settings on the right, as matching tiles. */
+/**
+ * Status and Settings as equal-width columns at the edges, the logo filling everything between
+ * them (so it's as large as the screen allows and always centred).
+ */
 @Composable
 private fun MainHeader(status: ProtectionLook, onOpenStatus: () -> Unit, onOpenSettings: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = GroupInset, end = GroupInset, top = 20.dp, bottom = 16.dp),
+            .padding(start = 12.dp, end = 12.dp, top = 28.dp, bottom = 24.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-            HeaderTile(
-                icon = status.icon,
-                label = status.shortLabel,
-                container = status.container,
-                content = status.content,
-                contentDescription = "${status.title}. Details",
-                onClick = onOpenStatus
-            )
-        }
-        BioKeyLogo(Modifier.size(200.dp, 68.dp))
-        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-            HeaderTile(
-                icon = Icons.Default.Settings,
-                label = "Settings",
-                container = MaterialTheme.colorScheme.surfaceContainerHigh,
-                content = MaterialTheme.colorScheme.onSurface,
-                contentDescription = "Settings",
-                onClick = onOpenSettings
-            )
-        }
+        HeaderTile(
+            icon = status.icon,
+            label = status.shortLabel,
+            container = status.container,
+            content = status.content,
+            contentDescription = "${status.title}. Details",
+            onClick = onOpenStatus
+        )
+        BioKeyLogo(
+            Modifier
+                .weight(1f)
+                .padding(horizontal = 4.dp)
+                .aspectRatio(2.3f) // the artwork's own proportions, so it fills the width
+        )
+        HeaderTile(
+            icon = Icons.Default.Settings,
+            label = "Settings",
+            container = MaterialTheme.colorScheme.surfaceContainerHigh,
+            content = MaterialTheme.colorScheme.onSurface,
+            contentDescription = "Settings",
+            onClick = onOpenSettings
+        )
     }
 }
 
@@ -511,25 +517,25 @@ private fun HeaderTile(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .width(76.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .width(84.dp)
+            .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick, role = Role.Button)
             .springPress()
             .semantics(mergeDescendants = true) { this.contentDescription = contentDescription }
-            .padding(vertical = 4.dp)
+            .padding(vertical = 6.dp)
     ) {
         Box(
             modifier = Modifier
-                .size(52.dp)
+                .size(64.dp)
                 .background(container, CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(26.dp))
+            Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(32.dp))
         }
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
             label,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
