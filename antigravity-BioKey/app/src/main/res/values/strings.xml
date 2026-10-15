@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Bio Key</string>
+    <string name="accessibility_service_description">Bio Key Accessibility Service detects app launches in real-time to enforce hardware-backed biometric security locks.</string>
+    <string name="accessibility_service_label">Bio Key App Lock Service</string>
+    <string name="tile_label">BioKey</string>
+    <string name="tile_description">Toggle BioKey Master Protection</string>
+    <string name="device_admin_description">Bio Key Device Administrator protects the security engine from unauthorized removal or tampering.</string>
+</resources>
