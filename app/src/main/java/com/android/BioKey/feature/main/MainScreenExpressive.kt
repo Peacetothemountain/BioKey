@@ -94,7 +94,8 @@ import com.android.BioKey.core.data.SecurityProfile
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.AppInfoCache
-import com.android.BioKey.ui.theme.ExpressiveTokens
+import com.android.BioKey.ui.theme.Haptics
+import androidx.compose.ui.platform.LocalView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -112,6 +113,7 @@ private const val FILTER_ALL = "filter:all"
 @Composable
 fun MainScreenExpressive(a11yActive: Boolean) {
     val context = LocalContext.current
+    val view = LocalView.current
     val iconPx = with(LocalDensity.current) { ICON_RENDER_DP.dp.roundToPx() }
     val vault = remember { SecurityVault.getInstance(context) }
     val scope = rememberCoroutineScope()
@@ -162,7 +164,7 @@ fun MainScreenExpressive(a11yActive: Boolean) {
     var showEditProfile by rememberSaveable { mutableStateOf(false) }
     var showRelock by rememberSaveable { mutableStateOf(false) }
 
-    val visibleProfiles = profiles.filter { it.id != SecurityVault.PROFILE_ALL }
+    val visibleProfiles = profiles
     val currentProfile = visibleProfiles.firstOrNull { it.id == filter }
     LaunchedEffect(filter, currentProfile == null) {
         if (filter != FILTER_ALL && currentProfile == null) filter = FILTER_ALL
@@ -198,10 +200,7 @@ fun MainScreenExpressive(a11yActive: Boolean) {
     }
 
     fun toggleLock(app: AppItem, locked: Boolean) {
-        ExpressiveTokens.triggerHaptic(
-            context,
-            if (locked) ExpressiveTokens.HapticFeedbackStyle.TOGGLE_ON else ExpressiveTokens.HapticFeedbackStyle.TOGGLE_OFF
-        )
+        Haptics.toggle(view, locked)
         val formerProfile = profileOf(app.packageName)
         vault.setAppLock(app.packageName, locked)
         if (!locked) {

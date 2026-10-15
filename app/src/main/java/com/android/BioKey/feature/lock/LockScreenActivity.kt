@@ -1,6 +1,7 @@
 package com.android.BioKey.feature.lock
 
-import android.app.Activity
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import android.app.ActivityOptions
 import android.content.Intent
 import android.content.res.Configuration
@@ -9,8 +10,7 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.util.Log
 import android.view.MotionEvent
-import android.window.OnBackInvokedDispatcher
-import com.android.BioKey.core.security.IdentityCheckManager
+import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
@@ -20,13 +20,13 @@ import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
  * Covers a locked app (or a BioKey system-settings page) and hosts the system prompt until the
  * owner authenticates.
  *
- * Kept deliberately light (a plain [Activity] drawing [LockCoverView], no Compose, no fragments)
+ * Kept deliberately light (a [ComponentActivity] drawing [LockCoverView], no Compose, no fragments)
  * because it sits on the critical path: the prompt is requested the moment this window's first
  * frame is committed, which is also when the [InstantShieldOverlay] above it is removed.
  *
  * Not exported: only BioKey's own components can start it.
  */
-class LockScreenActivity : Activity() {
+class LockScreenActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "LockScreenActivity"
@@ -57,12 +57,12 @@ class LockScreenActivity : Activity() {
     private var isPermanentLockout = false
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-        if (IdentityCheckManager.isMotionEventObscured(ev)) return true
+        if (WindowProtection.isMotionEventObscured(ev)) return true
         return super.dispatchTouchEvent(ev)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        IdentityCheckManager.applyWindowProtections(this)
+        WindowProtection.applyWindowProtections(this)
         noTransition(open = true)
         super.onCreate(savedInstanceState)
         vault = SecurityVault.getInstance(this)
@@ -80,9 +80,9 @@ class LockScreenActivity : Activity() {
         bindCover()
         setContentView(cover)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, ::goHomeAndFinish)
-        }
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() = goHomeAndFinish()
+        })
 
         // The shield above us can go as soon as our identical cover is actually on screen.
         cover.viewTreeObserver.registerFrameCommitCallback {
@@ -91,10 +91,6 @@ class LockScreenActivity : Activity() {
             maybeAutoPrompt()
         }
     }
-
-    @Deprecated("Android 12L and below")
-    @Suppress("DEPRECATION")
-    override fun onBackPressed() = goHomeAndFinish()
 
     /** Applies an intent's target. Returns false if there is nothing left to protect. */
     private fun readIntent(intent: Intent): Boolean {

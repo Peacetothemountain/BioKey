@@ -2,7 +2,8 @@ package com.android.BioKey.feature.main
 
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ApplicationInfo
+import com.android.BioKey.core.data.AppCategory
+import com.android.BioKey.core.data.AppClassifier
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -50,7 +51,7 @@ internal fun loadInstalledApps(context: Context, iconPx: Int): List<AppItem> {
                     packageName = pkg,
                     label = label,
                     iconBitmap = drawableToBitmap(drawable, iconPx).asImageBitmap(),
-                    category = categorizeApp(label, pkg, activity.applicationInfo.category),
+                    category = AppClassifier.categorize(pkg, label, activity.applicationInfo.category),
                     isWorkProfile = isWork
                 )
             }
@@ -67,7 +68,7 @@ internal fun loadInstalledApps(context: Context, iconPx: Int): List<AppItem> {
                 packageName = pkg,
                 label = label,
                 iconBitmap = drawableToBitmap(info.loadIcon(pm), iconPx).asImageBitmap(),
-                category = categorizeApp(label, pkg, info.activityInfo.applicationInfo?.category ?: -1)
+                category = AppClassifier.categorize(pkg, label, info.activityInfo.applicationInfo?.category ?: -1)
             )
         }
     }
@@ -106,47 +107,4 @@ private fun drawableToBitmap(drawable: Drawable, sizePx: Int): Bitmap {
     drawable.setBounds(0, 0, canvas.width, canvas.height)
     drawable.draw(canvas)
     return bitmap
-}
-
-private fun categorizeApp(label: String, pkg: String, appCategory: Int = -1): AppCategory {
-    val haystack = "${pkg.lowercase()} ${label.lowercase()}"
-
-    val financeWords = listOf(
-        "bank", "crypto", "wallet", "pay", "cash", "venmo", "paypal", "zelle", "chime", "wise",
-        "revolut", "robinhood", "coinbase", "binance", "kraken", "metamask", "trustwallet",
-        "phantom", "ledger", "fidelity", "vanguard", "schwab", "etrade", "webull", "acorns",
-        "stash", "mint", "ynab", "credit", "karma", "experian", "equifax", "transunion",
-        "amex", "chase", "wellsfargo", "citi", "capitalone", "discover", "barclays", "hsbc",
-        "santander", "ally", "sofi", "affirm", "klarna", "afterpay", "stripe", "square",
-        "turbotax", "irs", "finance", "invest", "trading", "stock", "money"
-    )
-    val authWords = listOf(
-        "authenticator", "authy", "2fas", "totp", "bitwarden", "1password", "dashlane",
-        "lastpass", "keepass", "enpass", "nordpass", "protonpass", "roboform", "keeper",
-        "yubico", "okta", "duo", "passwordmanager", "credentialmanager", "password"
-    )
-    val socialWords = listOf(
-        "whatsapp", "telegram", "signal", "messenger", "instagram", "facebook", "threads",
-        "twitter", "x.android", "snapchat", "tiktok", "musically", "discord", "reddit",
-        "pinterest", "tumblr", "linkedin", "mastodon", "bluesky", "wechat", "line", "viber",
-        "kakaotalk", "hinge", "tinder", "bumble", "grindr", "badoo", "okcupid", "match",
-        "messages", "messaging", "chat"
-    )
-    val privacyWords = listOf(
-        "photo", "gallery", "camera", "album", "files", "filemanager", "documents",
-        "downloads", "explorer", "solidexplorer", "mixplorer", "vault", "private", "secret",
-        "locker", "notes", "keep", "diary", "journal", "dayone", "health", "garmin", "strava",
-        "flo", "clue", "myfitnesspal", "medical", "patient", "mychart", "pharmacy",
-        "walgreens", "cvs", "chrome", "firefox", "brave", "duckduckgo", "opera", "vivaldi",
-        "edge", "tor", "vpn", "protonvpn", "nordvpn", "expressvpn", "mullvad", "tailscale", "wireguard"
-    )
-
-    return when {
-        financeWords.any(haystack::contains) -> AppCategory.FINANCE
-        authWords.any(haystack::contains) -> AppCategory.AUTH
-        appCategory == ApplicationInfo.CATEGORY_SOCIAL || socialWords.any(haystack::contains) -> AppCategory.SOCIAL
-        appCategory == ApplicationInfo.CATEGORY_IMAGE || privacyWords.any(haystack::contains) -> AppCategory.PRIVACY
-        pkg.lowercase().startsWith("com.android.") || pkg.lowercase().startsWith("com.google.android.") -> AppCategory.SYSTEM
-        else -> AppCategory.GENERAL
-    }
 }

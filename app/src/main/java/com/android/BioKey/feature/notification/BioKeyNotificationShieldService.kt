@@ -6,7 +6,6 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -53,17 +52,15 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         fun isNotificationAccessGranted(context: Context): Boolean =
             NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
 
-        fun getNotificationSettingsIntent(context: Context? = null): Intent =
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && context != null) {
-                Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).apply {
-                    putExtra(
-                        Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
-                        android.content.ComponentName(context, BioKeyNotificationShieldService::class.java).flattenToString()
-                    )
-                }
-            } else {
-                Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-            }
+        /** Calls, alarms, media, navigation etc. must always show. */
+        private val NEVER_HIDDEN_CATEGORIES = setOf(
+            Notification.CATEGORY_CALL,
+            Notification.CATEGORY_ALARM,
+            Notification.CATEGORY_TRANSPORT,
+            Notification.CATEGORY_PROGRESS,
+            Notification.CATEGORY_SERVICE,
+            Notification.CATEGORY_NAVIGATION
+        )
     }
 
     data class CachedPendingIntent(
@@ -107,7 +104,48 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         LockStateTracker.addLockAllListener(onLockAll)
         LockStateTracker.addAppUnlockListener(onAppUnlocked)
         LockStateTracker.addAppLockListener(onAppLocked)
+        rehydrateSnoozed()
         sweepActiveNotifications()
+    }
+
+    /**
+     * What this service has hidden lives in memory, but the snoozes live in the system for 24 h.
+     * After a restart (update, crash, low memory) rebuild the bookkeeping from the system's
+     * snoozed list, so hidden notifications always come back when their app is unlocked.
+     * Snoozes from apps that aren't locked are the user's own and are left alone.
+     */
+    private fun rehydrateSnoozed() {
+        val snoozed = runCatching { snoozedNotifications }.getOrNull() ?: return
+        // Our own stand-ins mark the apps we hid, even ones that have since been unlocked in BioKey.
+        val standIns = runCatching { activeNotifications }.getOrNull().orEmpty()
+            .filter { it.packageName == packageName && it.tag?.startsWith(TAG_PREFIX) == true }
+            .mapNotNull { it.tag?.removePrefix(TAG_PREFIX) }
+            .toSet()
+        val touched = HashSet<String>()
+        for (sbn in snoozed) {
+            val pkg = sbn.packageName ?: continue
+            if (pkg == packageName || pkg in IGNORED_PACKAGES) continue
+            if (!vault.isAppLocked(pkg) && pkg !in standIns) continue
+            val isSummary = sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0
+            val keys = if (isSummary) hiddenSummaryKeys else hiddenNotificationKeys
+            keys.computeIfAbsent(pkg) { ConcurrentHashMap.newKeySet() }.add(sbn.key)
+            sbn.notification.contentIntent?.let {
+                cachedPendingIntents.computeIfAbsent(pkg) { ConcurrentHashMap() }[sbn.key] =
+                    CachedPendingIntent(it, sbn.postTime, isSummary)
+            }
+            touched += pkg
+        }
+        // Stand-ins whose notifications are all gone are stale.
+        for (pkg in standIns - touched) NotificationManagerCompat.from(this).cancel(TAG_PREFIX + pkg, SUMMARY_ID)
+        for (pkg in touched) {
+            val stillHidden = vault.isAppLocked(pkg) && vault.isGlobalLockEnabled() && vault.isNotificationShieldEnabled() &&
+                !LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))
+            if (!stillHidden) {
+                restoreNotificationsForPackage(pkg)
+            } else {
+                postReplacement(pkg, (hiddenNotificationKeys[pkg]?.size ?: 0).coerceAtLeast(1))
+            }
+        }
     }
 
     override fun onListenerDisconnected() {
@@ -201,16 +239,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         val notif = sbn.notification
         if (!sbn.isClearable || sbn.isOngoing) return false
         if (notif.flags and (Notification.FLAG_FOREGROUND_SERVICE or Notification.FLAG_ONGOING_EVENT) != 0) return false
-        // Never suppress calls, alarms, media transport, progress, navigation, or active services
-        if (notif.category in setOf(
-                Notification.CATEGORY_CALL,
-                Notification.CATEGORY_ALARM,
-                Notification.CATEGORY_TRANSPORT,
-                Notification.CATEGORY_PROGRESS,
-                Notification.CATEGORY_SERVICE,
-                Notification.CATEGORY_NAVIGATION
-            )
-        ) return false
+        if (notif.category in NEVER_HIDDEN_CATEGORIES) return false
         if (notif.extras?.containsKey(Notification.EXTRA_MEDIA_SESSION) == true) return false
         if (notif.fullScreenIntent != null) return false
 

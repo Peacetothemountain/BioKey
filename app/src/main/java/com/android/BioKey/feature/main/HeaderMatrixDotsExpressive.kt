@@ -2,8 +2,6 @@ package com.android.BioKey.feature.main
 
 import android.provider.Settings
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -18,7 +16,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -93,9 +90,7 @@ private class Field(count: Int) {
 
 @Composable
 fun HeaderMatrixDotsExpressive(
-    modifier: Modifier = Modifier
-        .fillMaxWidth()
-        .height(280.dp),
+    modifier: Modifier = Modifier,
     particleCount: Int = 30
 ) {
     val primary = MaterialTheme.colorScheme.primary

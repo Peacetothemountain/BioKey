@@ -41,7 +41,7 @@ object ProtectionAlerts {
         val turnOnIntent = PendingIntent.getActivity(
             context,
             id + 1,
-            Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            com.android.BioKey.feature.main.IntentNavigationHelper.accessibilitySettingsIntent(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
