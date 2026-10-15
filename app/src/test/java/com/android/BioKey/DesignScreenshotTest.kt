@@ -3,6 +3,7 @@ package com.android.BioKey
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.test.core.app.ApplicationProvider
@@ -92,4 +93,21 @@ class DesignScreenshotTest {
         LockScreenUIExpressive(appName = "BioKey", appIcon = null, onUnlockClicked = {}, onCancelClicked = {}, isBioKeyLock = true)
     }
     @Test fun setup() = shoot("setup") { SetupScreenExpressive(onSetupComplete = {}) }
+
+    private fun cover(actions: Boolean) = @Composable {
+        val context = androidx.compose.ui.platform.LocalContext.current
+        androidx.compose.ui.viewinterop.AndroidView(
+            factory = {
+                com.android.BioKey.feature.lock.LockCoverView(it).apply {
+                    val size = (88 * context.resources.displayMetrics.density).toInt()
+                    bind("Chase", android.graphics.drawable.BitmapDrawable(context.resources, icon("Chase", 0xFF1A73E8.toInt(), size)), isBioKey = false, packageName = "com.chase.sig.android")
+                    setActionsVisible(actions)
+                }
+            },
+            modifier = androidx.compose.ui.Modifier.fillMaxSize()
+        )
+    }
+
+    @Test fun coverPrompt() = shoot("cover_prompt", cover(actions = false))
+    @Test fun coverActions() = shoot("cover_actions", cover(actions = true))
 }

@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -59,6 +60,7 @@ fun LockScreenUIExpressive(
         modifier = Modifier
             .fillMaxSize()
             .rejectObscuredTouches()
+            .semantics { contentDescription = if (isBioKeyLock) "BioKey is locked" else "${appName.ifBlank { "This app" }} is locked" }
             .background(MaterialTheme.colorScheme.surface)
     ) {
         if (isBioKeyLock) {
@@ -86,20 +88,7 @@ fun LockScreenUIExpressive(
                     Icon(Icons.Default.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 }
             }
-            if (!isBioKeyLock) {
-                Spacer(Modifier.height(20.dp))
-                Text(appName.ifBlank { "This app" }, style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    if (isBioKeyLock) "BioKey is locked" else "Locked",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            // No "is locked" caption: the logo or icon says what is locked; screen readers get it below.
             if (!statusMessage.isNullOrBlank()) {
                 Spacer(Modifier.height(16.dp))
                 Text(

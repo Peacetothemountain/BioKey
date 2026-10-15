@@ -119,7 +119,7 @@ class LockScreenActivity : ComponentActivity() {
             cover.bind("BioKey", null, isBioKey = true)
         } else {
             val cached = AppInfoCache.get(lockedPackage) ?: AppInfoCache.loadAndCache(this, packageManager, lockedPackage)
-            cover.bind(cached?.label ?: AppInfoCache.quickLabel(this, lockedPackage), cached?.icon, isBioKey = false)
+            cover.bind(cached?.label ?: AppInfoCache.quickLabel(this, lockedPackage), cached?.icon, isBioKey = false, packageName = lockedPackage)
         }
         cover.setActionsVisible(false)
     }

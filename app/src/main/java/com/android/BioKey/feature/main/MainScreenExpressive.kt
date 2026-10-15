@@ -40,6 +40,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
@@ -73,7 +75,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -160,6 +165,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     var newProfileForPackage by rememberSaveable { mutableStateOf<String?>(null) }
     var showEditProfile by rememberSaveable { mutableStateOf(false) }
     var showRelock by rememberSaveable { mutableStateOf(false) }
+    var showProtectionSheet by rememberSaveable { mutableStateOf(false) }
 
     val currentProfile = profiles.firstOrNull { it.id == filter }
     LaunchedEffect(filter, currentProfile == null) {
@@ -186,6 +192,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         installedApps.mapNotNull { profileOf(it.packageName)?.id }.groupingBy { it }.eachCount()
     }
     val lockedCount = remember(installedApps, lockedApps, profiles) { installedApps.count { isLocked(it.packageName) } }
+    val look = protectionLook(mode, globalLockEnabled, pausedUntil, lockedCount, defaultTimeout)
 
     fun toggleLock(app: AppItem, locked: Boolean) {
         Haptics.toggle(view, locked)
@@ -240,24 +247,11 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                 Box {
                     HeaderMatrixDotsExpressive(Modifier.matchParentSize())
                     Column(Modifier.statusBarsPadding()) {
-                        MainHeader(onOpenSettings = { showSettings = true })
-                        ProtectionCard(
-                            mode = mode,
-                            enabled = globalLockEnabled,
-                            pausedUntil = pausedUntil,
-                            lockedCount = lockedCount,
-                            defaultTimeout = defaultTimeout,
-                            onTurnOn = {
-                                if (mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP) {
-                                    disclosures.request(Disclosure.COMPATIBILITY) { IntentNavigationHelper.openNextCompatibilityPermission(context) }
-                                } else {
-                                    disclosures.request(Disclosure.ACCESSIBILITY) { IntentNavigationHelper.openAccessibilitySettings(context) }
-                                }
-                            },
-                            onResume = { vault.resumeProtection() },
-                            onPause = onPauseRequested
+                        MainHeader(
+                            status = look,
+                            onOpenStatus = { showProtectionSheet = true },
+                            onOpenSettings = { showSettings = true }
                         )
-                        Spacer(Modifier.height(8.dp))
                     }
                 }
             }
@@ -363,6 +357,27 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
 
     // ---- Sheets & dialogs ------------------------------------------------------------------
 
+    if (showProtectionSheet) {
+        ProtectionSheet(
+            look = look,
+            onAction = {
+                showProtectionSheet = false
+                when (mode) {
+                    ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP ->
+                        disclosures.request(Disclosure.COMPATIBILITY) { IntentNavigationHelper.openNextCompatibilityPermission(context) }
+                    ProtectionEngine.Mode.OFF ->
+                        disclosures.request(Disclosure.ACCESSIBILITY) { IntentNavigationHelper.openAccessibilitySettings(context) }
+                    else -> vault.resumeProtection()
+                }
+            },
+            onPause = {
+                showProtectionSheet = false
+                onPauseRequested()
+            },
+            onDismiss = { showProtectionSheet = false }
+        )
+    }
+
     optionsForPackage?.let { pkg ->
         val app = installedApps.firstOrNull { it.packageName == pkg }
         if (app == null) {
@@ -447,105 +462,161 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     }
 }
 
+/** Logo in the middle; status on the left and Settings on the right, as matching tiles. */
 @Composable
-private fun MainHeader(onOpenSettings: () -> Unit) {
-    Box(
+private fun MainHeader(status: ProtectionLook, onOpenStatus: () -> Unit, onOpenSettings: () -> Unit) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 20.dp, end = 12.dp, top = 22.dp, bottom = 18.dp)
+            .padding(start = GroupInset, end = GroupInset, top = 20.dp, bottom = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        BioKeyLogo(Modifier.align(Alignment.Center).size(240.dp, 80.dp))
-        FilledTonalIconButton(
-            onClick = onOpenSettings,
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .springPress()
-        ) {
-            Icon(Icons.Default.Settings, contentDescription = "Settings")
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+            HeaderTile(
+                icon = status.icon,
+                label = status.shortLabel,
+                container = status.container,
+                content = status.content,
+                contentDescription = "${status.title}. Details",
+                onClick = onOpenStatus
+            )
+        }
+        BioKeyLogo(Modifier.size(200.dp, 68.dp))
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+            HeaderTile(
+                icon = Icons.Default.Settings,
+                label = "Settings",
+                container = MaterialTheme.colorScheme.surfaceContainerHigh,
+                content = MaterialTheme.colorScheme.onSurface,
+                contentDescription = "Settings",
+                onClick = onOpenSettings
+            )
         }
     }
 }
 
-/** Protection status: what state BioKey is in, in one glance, with the one action that matters. */
 @Composable
-private fun ProtectionCard(
+private fun HeaderTile(
+    icon: ImageVector,
+    label: String,
+    container: Color,
+    content: Color,
+    contentDescription: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(22.dp),
+        color = container,
+        contentColor = content,
+        modifier = Modifier
+            .size(width = 84.dp, height = 72.dp)
+            .springPress()
+            .semantics { this.contentDescription = contentDescription }
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(26.dp))
+            Spacer(Modifier.height(4.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** How each protection state looks, in the header tile and its sheet. */
+private data class ProtectionLook(
+    val container: Color,
+    val content: Color,
+    val icon: ImageVector,
+    val shortLabel: String,
+    val title: String,
+    val body: String,
+    /** Primary action, or null when protecting normally (then the sheet offers Pause). */
+    val action: String?
+)
+
+@Composable
+private fun protectionLook(
     mode: ProtectionEngine.Mode,
     enabled: Boolean,
     pausedUntil: Long,
     lockedCount: Int,
-    defaultTimeout: LockTimeoutMode,
-    onTurnOn: () -> Unit,
-    onResume: () -> Unit,
-    onPause: () -> Unit
-) {
+    defaultTimeout: LockTimeoutMode
+): ProtectionLook {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
-    data class Look(val container: Color, val content: Color, val icon: ImageVector, val title: String, val body: String, val action: String?)
     val apps = if (lockedCount == 1) "1 app locked" else "$lockedCount apps locked"
-    val look = when {
-        mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP -> Look(
-            colors.tertiaryContainer, colors.onTertiaryContainer, Icons.Default.GppMaybe,
+    return when {
+        mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP -> ProtectionLook(
+            colors.tertiaryContainer, colors.onTertiaryContainer, Icons.Default.GppMaybe, "Set up",
             "Advanced Protection is on",
             "It reserves accessibility for accessibility tools. Allow usage access and display over other apps, and BioKey keeps locking your apps in compatibility mode.",
             "Set up compatibility mode"
         )
-        mode == ProtectionEngine.Mode.OFF -> Look(
-            colors.errorContainer, colors.onErrorContainer, Icons.Default.Warning,
+        mode == ProtectionEngine.Mode.OFF -> ProtectionLook(
+            colors.errorContainer, colors.onErrorContainer, Icons.Default.Warning, "Off",
             "App lock is off", "Turn on BioKey in Accessibility settings to start locking apps.", "Turn on"
         )
-        !enabled -> Look(
-            colors.tertiaryContainer, colors.onTertiaryContainer, Icons.Default.PauseCircle,
+        !enabled -> ProtectionLook(
+            colors.tertiaryContainer, colors.onTertiaryContainer, Icons.Default.PauseCircle, "Paused",
             if (pausedUntil > System.currentTimeMillis()) {
                 "Paused until " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil))
             } else "Protection paused",
             "Locked apps open without a check until you resume.",
             "Resume protection"
         )
-        else -> Look(
-            colors.primaryContainer, colors.onPrimaryContainer, Icons.Default.VerifiedUser,
+        else -> ProtectionLook(
+            colors.primaryContainer, colors.onPrimaryContainer, Icons.Default.VerifiedUser, "Protected",
             "Protected",
             apps + " · " + defaultTimeout.relockPhrase.lowercase() +
                 if (mode == ProtectionEngine.Mode.COMPATIBILITY) "\nCompatibility mode (works with Advanced Protection)" else "",
             null
         )
     }
+}
 
-    Surface(
-        color = look.container,
-        contentColor = look.content,
-        shape = RoundedCornerShape(28.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = GroupInset)
-    ) {
-        Column(Modifier.padding(20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(52.dp)
-                        .background(look.content.copy(alpha = 0.12f), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(look.icon, contentDescription = null, modifier = Modifier.size(28.dp))
-                }
-                Spacer(Modifier.width(16.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(look.title, style = MaterialTheme.typography.titleLarge)
-                    Spacer(Modifier.height(2.dp))
-                    Text(look.body, style = MaterialTheme.typography.bodyMedium, color = look.content.copy(alpha = 0.85f))
-                }
+/** Protection details and the one action that matters, opened from the header tile. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProtectionSheet(
+    look: ProtectionLook,
+    onAction: () -> Unit,
+    onPause: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .rejectObscuredTouches()
+                .padding(horizontal = 28.dp)
+                .padding(bottom = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(72.dp)
+                    .background(look.container, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(look.icon, contentDescription = null, tint = look.content, modifier = Modifier.size(36.dp))
             }
             Spacer(Modifier.height(16.dp))
-            val filled = ButtonDefaults.buttonColors(containerColor = look.content, contentColor = look.container)
+            Text(look.title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                look.body,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(24.dp))
             if (look.action != null) {
-                val onClick = if (mode == ProtectionEngine.Mode.OFF || mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP) onTurnOn else onResume
-                Button(onClick = onClick, colors = filled, modifier = Modifier.fillMaxWidth()) { Text(look.action) }
+                Button(onClick = onAction, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text(look.action) }
             } else {
-                OutlinedButton(
-                    onClick = onPause,
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = look.content),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                OutlinedButton(onClick = onPause, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                     Icon(Icons.Default.PauseCircle, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("Pause protection")
