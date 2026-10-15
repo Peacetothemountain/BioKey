@@ -57,7 +57,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     }
 
     private companion object {
-        const val ICON_DP = 88
+        const val ICON_DP = 96
     }
 
     var onUnlock: (() -> Unit)? = null

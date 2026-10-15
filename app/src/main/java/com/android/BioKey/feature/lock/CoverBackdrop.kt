@@ -30,6 +30,8 @@ internal class CoverBackdrop(context: Context) : View(context) {
         private const val BREATH_MS = 5_600.0
         private const val STAR_COUNT = 26
         private const val LINK_DIST_DP = 120f
+        /** The ring hugs the icon: a thin bezel, not a gap. */
+        private const val RING_GAP_DP = 3.5f
     }
 
     private val density = resources.displayMetrics.density
@@ -143,10 +145,10 @@ internal class CoverBackdrop(context: Context) : View(context) {
         canvas.restore()
 
         discPaint.color = disc
-        canvas.drawCircle(focusX, focusY, focusRadius + 10 * density, discPaint)
-        ringPaint.strokeWidth = 2 * density
+        canvas.drawCircle(focusX, focusY, focusRadius + RING_GAP_DP * density, discPaint)
+        ringPaint.strokeWidth = 2.5f * density
         ringPaint.color = withAlpha(accent, 0.55f + 0.25f * breath)
-        canvas.drawCircle(focusX, focusY, focusRadius + 10 * density, ringPaint)
+        canvas.drawCircle(focusX, focusY, focusRadius + RING_GAP_DP * density, ringPaint)
 
         if (animate && isShown) postInvalidateOnAnimation()
     }
