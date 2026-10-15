@@ -8,7 +8,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Outline
-import android.graphics.PorterDuff
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -24,6 +23,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.android.BioKey.R
 import com.android.BioKey.core.security.WindowProtection
+import com.android.BioKey.ui.brand.WordmarkView
 
 /**
  * The lock cover, shared by [InstantShieldOverlay] (drawn the instant a locked app shows up) and
@@ -69,17 +69,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
 
     private val backdrop = CoverBackdrop(context)
 
-    /** BioKey's two-layer wordmark (letters + tentacles). */
-    private fun wordmark() = FrameLayout(context).apply {
-        addView(ImageView(context).apply {
-            setImageResource(R.drawable.ic_title_logo_letters)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-        }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        addView(ImageView(context).apply {
-            setImageResource(R.drawable.ic_title_logo_tentacles)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-        }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-    }
+    /** BioKey's wordmark, its vine slithering on the same clock as the home screen's. */
+    private fun wordmark() = WordmarkView(context)
 
     /** Large logo: the identity when BioKey itself is locked. */
     private val logo = wordmark().apply { visibility = GONE }
@@ -133,7 +124,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     private val identity = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
-        addView(logo, LinearLayout.LayoutParams(dp(280), dp(118)))
+        addView(logo, LinearLayout.LayoutParams(dp(300), dp(104)))
         addView(icon, LinearLayout.LayoutParams(dp(ICON_DP), dp(ICON_DP)))
         addView(status, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(36)
@@ -155,7 +146,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
             rightMargin = dp(32)
             bottomMargin = dp(96)
         })
-        addView(brandMark, LayoutParams(dp(120), dp(50), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+        addView(brandMark, LayoutParams(dp(132), dp(46), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
             bottomMargin = dp(40)
         })
         addView(actions, LayoutParams(minOf(resources.displayMetrics.widthPixels - dp(64), dp(360)), LayoutParams.WRAP_CONTENT,
@@ -199,10 +190,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         cancelButton.background = ripple(Color.TRANSPARENT, p.primary)
         primaryButton.setTextColor(p.onPrimary)
         primaryButton.background = ripple(p.primary, p.onPrimary)
-        for (mark in listOf(logo, brandMark)) {
-            (mark.getChildAt(0) as ImageView).setColorFilter(p.primary, PorterDuff.Mode.SRC_IN)
-            (mark.getChildAt(1) as ImageView).setColorFilter(p.tertiary, PorterDuff.Mode.SRC_IN)
-        }
+        for (mark in listOf(logo, brandMark)) mark.setColors(p.primary, p.tertiary, p.surface)
     }
 
     private fun ripple(fill: Int, rippleColor: Int): Drawable {

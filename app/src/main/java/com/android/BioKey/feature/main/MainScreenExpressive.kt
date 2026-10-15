@@ -93,6 +93,7 @@ import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.AppInfoCache
+import com.android.BioKey.ui.brand.Wordmark
 import com.android.BioKey.ui.theme.GroupGap
 import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow
@@ -492,7 +493,7 @@ private fun MainHeader(status: ProtectionLook, onOpenStatus: () -> Unit, onOpenS
             BioKeyLogo(
                 Modifier
                     .fillMaxWidth(0.84f)
-                    .aspectRatio(2.26f) // the artwork's own proportions
+                    .aspectRatio(Wordmark.ASPECT)
             )
         }
         HeaderTile(

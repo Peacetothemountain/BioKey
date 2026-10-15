@@ -103,6 +103,7 @@ feature/setup      First-run setup
 feature/notification  Notification shield
 feature/tile       Quick Settings tile
 ui/theme           BioKeyTheme, system haptics, press animation
+ui/brand           The animated BioKey wordmark (vector; shared by Compose and the lock cover)
 ```
 
 ## Building
