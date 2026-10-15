@@ -163,13 +163,20 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         applyPalette()
     }
 
+    private val iconLocation = IntArray(2)
+    private val backdropLocation = IntArray(2)
+
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
-        // The glow and ring surround the app icon, wherever layout put it.
+        // The glow and ring surround the app icon. Measured in the backdrop's own coordinates
+        // (window positions, not parent offsets), so padding for system bars, margins and the
+        // window type can't shift the ring away from the icon.
         if (icon.visibility == VISIBLE && icon.width > 0) {
+            icon.getLocationInWindow(iconLocation)
+            backdrop.getLocationInWindow(backdropLocation)
             backdrop.setFocus(
-                identity.left + icon.left + icon.width / 2f,
-                identity.top + icon.top + icon.height / 2f,
+                iconLocation[0] - backdropLocation[0] + icon.width / 2f,
+                iconLocation[1] - backdropLocation[1] + icon.height / 2f,
                 icon.width / 2f
             )
         } else {
