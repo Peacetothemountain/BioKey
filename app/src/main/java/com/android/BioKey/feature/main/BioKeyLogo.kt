@@ -19,7 +19,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -31,8 +30,10 @@ import com.android.BioKey.R
 import com.android.BioKey.ui.theme.animationsEnabled
 
 /**
- * The two-layer BioKey wordmark (letters in primary, tentacles in tertiary) over its breathing
- * aura. The aura is read only inside graphicsLayer, so each frame is a layer property update:
+ * The two-layer BioKey wordmark over its breathing aura. Both layers are white shapes with
+ * two-tone detail in their alpha, filled with the theme: letters in primary, the
+ * fingerprint-ridge loops in tertiary, so the logo follows the wallpaper palette.
+ * The aura is read only inside graphicsLayer, so each frame is a layer property update:
  * no recomposition, no re-layout, no re-record of the logo.
  */
 @Composable
@@ -49,14 +50,14 @@ fun BioKeyLogo(modifier: Modifier = Modifier.size(240.dp, 80.dp)) {
             contentDescription = "BioKey",
             modifier = Modifier.fillMaxHeight(),
             contentScale = ContentScale.Fit,
-            colorFilter = ColorFilter.tint(primary, BlendMode.Modulate)
+            colorFilter = ColorFilter.tint(primary)
         )
         Image(
             painter = painterResource(R.drawable.ic_title_logo_tentacles),
             contentDescription = null,
             modifier = Modifier.fillMaxHeight(),
             contentScale = ContentScale.Fit,
-            colorFilter = ColorFilter.tint(tertiary, BlendMode.Modulate)
+            colorFilter = ColorFilter.tint(tertiary)
         )
     }
 }

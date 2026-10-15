@@ -200,8 +200,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         primaryButton.setTextColor(p.onPrimary)
         primaryButton.background = ripple(p.primary, p.onPrimary)
         for (mark in listOf(logo, brandMark)) {
-            (mark.getChildAt(0) as ImageView).setColorFilter(p.primary, PorterDuff.Mode.MULTIPLY)
-            (mark.getChildAt(1) as ImageView).setColorFilter(p.tertiary, PorterDuff.Mode.MULTIPLY)
+            (mark.getChildAt(0) as ImageView).setColorFilter(p.primary, PorterDuff.Mode.SRC_IN)
+            (mark.getChildAt(1) as ImageView).setColorFilter(p.tertiary, PorterDuff.Mode.SRC_IN)
         }
     }
 

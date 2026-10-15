@@ -7,6 +7,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -495,6 +498,7 @@ private fun MainHeader(status: ProtectionLook, onOpenStatus: () -> Unit, onOpenS
     }
 }
 
+/** A circle around an icon, with its label underneath; the whole column is the touch target. */
 @Composable
 private fun HeaderTile(
     icon: ImageVector,
@@ -504,24 +508,32 @@ private fun HeaderTile(
     contentDescription: String,
     onClick: () -> Unit
 ) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(22.dp),
-        color = container,
-        contentColor = content,
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .size(width = 84.dp, height = 72.dp)
+            .width(76.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick, role = Role.Button)
             .springPress()
-            .semantics { this.contentDescription = contentDescription }
+            .semantics(mergeDescendants = true) { this.contentDescription = contentDescription }
+            .padding(vertical = 4.dp)
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+        Box(
+            modifier = Modifier
+                .size(52.dp)
+                .background(container, CircleShape),
+            contentAlignment = Alignment.Center
         ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(26.dp))
-            Spacer(Modifier.height(4.dp))
-            Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(26.dp))
         }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
