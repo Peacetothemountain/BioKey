@@ -20,14 +20,14 @@ val allowDebugSignedRelease = providers.gradleProperty("biokey.allowDebugSignedR
 
 android {
     namespace = "com.android.BioKey"
-    compileSdk { version = release(37) { minorApiLevel = 0 } }
+    compileSdk { version = release(37) { minorApiLevel = 2 } }
 
     defaultConfig {
         applicationId = "com.android.BioKey"
         minSdk = 31
         targetSdk = 37
-        versionCode = 510
-        versionName = "5.1.0"
+        versionCode = 520
+        versionName = "5.2.0"
     }
 
     signingConfigs {

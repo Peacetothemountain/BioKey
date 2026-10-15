@@ -127,14 +127,63 @@ class InstantShieldOverlay(
         if (cover.isAttachedToWindow) runCatching { windowManager.updateViewLayout(cover, layoutParams) }
     }
 
+    /** True while covering for a launch that was predicted from a tap but hasn't appeared yet. */
+    var isPredicted = false
+        private set
+    private var predictionExpired: ((String) -> Unit)? = null
+    private val predictionRunnable = Runnable {
+        val pkg = targetPackage
+        if (isShowing && isPredicted && pkg != null) predictionExpired?.invoke(pkg)
+    }
+
+    /**
+     * Covers the screen the moment the user taps a locked app, before the app has a window.
+     * Waits for the app to actually appear (then [show] takes over and the lock screen starts)
+     * or for [waitMs], after which [onExpired] decides whether anything needs covering.
+     */
+    fun showPredicted(targetPackage: String, waitMs: Long, onTapped: () -> Unit, onExpired: (String) -> Unit) {
+        if (isDestroyed || isShowing) return
+        if (!showCover(targetPackage, onTapped)) return
+        isPredicted = true
+        predictionExpired = onExpired
+        mainHandler.removeCallbacks(predictionRunnable)
+        mainHandler.postDelayed(predictionRunnable, waitMs)
+    }
+
     fun show(targetPackage: String, onTapped: () -> Unit) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             mainHandler.post { show(targetPackage, onTapped) }
             return
         }
         if (isDestroyed) return
-        if (isShowing && this.targetPackage == targetPackage) return
+        if (isShowing && this.targetPackage == targetPackage) {
+            if (isPredicted) {
+                // The predicted app arrived: from here on it's a regular cover.
+                endPrediction()
+                cover.setOnClickListener { onTapped() }
+                cover.onUnlock = onTapped
+                startVerification()
+            }
+            return
+        }
+        if (isShowing) endPrediction()
+        if (showCover(targetPackage, onTapped)) startVerification()
+    }
 
+    private fun endPrediction() {
+        isPredicted = false
+        predictionExpired = null
+        mainHandler.removeCallbacks(predictionRunnable)
+    }
+
+    private fun startVerification() {
+        attempt = 0
+        mainHandler.removeCallbacks(fastVerifyRunnable)
+        mainHandler.postDelayed(fastVerifyRunnable, FAST_VERIFY_MS)
+        armTimeout()
+    }
+
+    private fun showCover(targetPackage: String, onTapped: () -> Unit): Boolean {
         this.targetPackage = targetPackage
         attempt = 0
         bindTarget(targetPackage)
@@ -151,8 +200,7 @@ class InstantShieldOverlay(
             }
             hide()
         }
-
-        try {
+        return try {
             cover.visibility = View.VISIBLE
             layoutParams.flags = layoutParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             if (cover.isAttachedToWindow) {
@@ -163,11 +211,10 @@ class InstantShieldOverlay(
             }
             isShowing = true
             activeInstance = this
-            mainHandler.removeCallbacks(fastVerifyRunnable)
-            mainHandler.postDelayed(fastVerifyRunnable, FAST_VERIFY_MS)
-            armTimeout()
+            true
         } catch (e: Exception) {
             Log.e(TAG, "Could not show shield: ${e.message}")
+            false
         }
     }
 
@@ -204,6 +251,7 @@ class InstantShieldOverlay(
         }
         mainHandler.removeCallbacks(fastVerifyRunnable)
         mainHandler.removeCallbacks(timeoutRunnable)
+        endPrediction()
         if (!isShowing) return
         isShowing = false
         targetPackage = null

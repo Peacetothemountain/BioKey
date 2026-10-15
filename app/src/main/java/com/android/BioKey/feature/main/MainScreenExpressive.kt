@@ -1,8 +1,19 @@
 package com.android.BioKey.feature.main
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.EaseInOutCubic
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import com.android.BioKey.ui.theme.springPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -90,7 +101,6 @@ import kotlinx.coroutines.withContext
 
 private const val ICON_RENDER_DP = 40
 private const val FILTER_ALL = "filter:all"
-private const val FILTER_LOCKED = "filter:locked"
 
 /**
  * BioKey's home: one list of apps, each with a lock switch that always works, plus profiles.
@@ -155,7 +165,7 @@ fun MainScreenExpressive(a11yActive: Boolean) {
     val visibleProfiles = profiles.filter { it.id != SecurityVault.PROFILE_ALL }
     val currentProfile = visibleProfiles.firstOrNull { it.id == filter }
     LaunchedEffect(filter, currentProfile == null) {
-        if (filter != FILTER_ALL && filter != FILTER_LOCKED && currentProfile == null) filter = FILTER_ALL
+        if (filter != FILTER_ALL && currentProfile == null) filter = FILTER_ALL
     }
 
     val profileByPackage = remember(visibleProfiles) {
@@ -178,7 +188,6 @@ fun MainScreenExpressive(a11yActive: Boolean) {
             .filter { app ->
                 when {
                     currentProfile != null -> profileOf(app.packageName)?.id == currentProfile.id
-                    filter == FILTER_LOCKED -> isLocked(app.packageName)
                     else -> true
                 }
             }
@@ -187,7 +196,6 @@ fun MainScreenExpressive(a11yActive: Boolean) {
     val appCountByProfile = remember(installedApps, profiles) {
         installedApps.mapNotNull { profileOf(it.packageName)?.id }.groupingBy { it }.eachCount()
     }
-    val lockedCount = remember(installedApps, profiles, lockedApps) { installedApps.count { isLocked(it.packageName) } }
 
     fun toggleLock(app: AppItem, locked: Boolean) {
         ExpressiveTokens.triggerHaptic(
@@ -214,6 +222,14 @@ fun MainScreenExpressive(a11yActive: Boolean) {
         containerColor = MaterialTheme.colorScheme.surface,
         modifier = Modifier.rejectObscuredTouches()
     ) { padding ->
+        Box(Modifier.fillMaxSize()) {
+        // Living constellation behind the header (drawn under the status bar, like before).
+        HeaderMatrixDotsExpressive(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(320.dp)
+                .align(Alignment.TopCenter)
+        )
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -236,9 +252,6 @@ fun MainScreenExpressive(a11yActive: Boolean) {
             ) {
                 item(key = FILTER_ALL) {
                     FilterChoice("All apps", Icons.Default.Apps, filter == FILTER_ALL) { filter = FILTER_ALL }
-                }
-                item(key = FILTER_LOCKED) {
-                    FilterChoice("Locked · $lockedCount", Icons.Default.Lock, filter == FILTER_LOCKED) { filter = FILTER_LOCKED }
                 }
                 items(visibleProfiles, key = { it.id }) { profile ->
                     FilterChoice(
@@ -286,7 +299,6 @@ fun MainScreenExpressive(a11yActive: Boolean) {
                             text = when {
                                 searchQuery.isNotBlank() -> "No apps match “${searchQuery.trim()}”"
                                 currentProfile != null -> "No apps in ${currentProfile.name} yet"
-                                filter == FILTER_LOCKED -> "No locked apps yet. Turn on the switch next to any app to lock it."
                                 else -> "No apps found"
                             },
                             actionLabel = if (currentProfile != null && searchQuery.isBlank()) "Add apps" else null,
@@ -296,7 +308,7 @@ fun MainScreenExpressive(a11yActive: Boolean) {
                     else -> {
                         if (currentProfile == null) {
                             item(key = "list_label") {
-                                SectionLabel(if (filter == FILTER_LOCKED) "Locked apps" else "Choose apps to lock")
+                                SectionLabel("Choose apps to lock")
                             }
                         }
                         items(shownApps, key = { it.packageName }) { app ->
@@ -311,6 +323,7 @@ fun MainScreenExpressive(a11yActive: Boolean) {
                     }
                 }
             }
+        }
         }
     }
 
@@ -402,30 +415,71 @@ fun MainScreenExpressive(a11yActive: Boolean) {
 
 @Composable
 private fun MainHeader(onOpenSettings: () -> Unit) {
+    val primary = MaterialTheme.colorScheme.primary
+    val tertiary = MaterialTheme.colorScheme.tertiary
+    // Breathing aura behind the logo. Read only inside graphicsLayer, so each frame is a cheap
+    // layer property update: no recomposition, no re-layout, no re-record of the logo.
+    val breath = rememberInfiniteTransition(label = "logo_aura_main")
+    val auraScale by breath.animateFloat(
+        initialValue = 0.94f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(tween(2800, easing = EaseInOutCubic), RepeatMode.Reverse),
+        label = "aura_scale"
+    )
+    val auraAlpha by breath.animateFloat(
+        initialValue = 0.75f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(2800, easing = EaseInOutCubic), RepeatMode.Reverse),
+        label = "aura_alpha"
+    )
+    val auraBrush = remember(primary, tertiary) {
+        Brush.radialGradient(listOf(primary.copy(alpha = 0.22f), tertiary.copy(alpha = 0.09f), Color.Transparent))
+    }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 4.dp)
-            .height(64.dp)
+            .padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 18.dp)
     ) {
-        Box(Modifier.align(Alignment.Center).height(56.dp).width(170.dp)) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .height(80.dp)
+                .width(240.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(240.dp, 80.dp)
+                    .graphicsLayer {
+                        scaleX = auraScale
+                        scaleY = auraScale
+                        alpha = auraAlpha
+                    }
+                    .background(auraBrush, CircleShape)
+            )
             Image(
                 painter = painterResource(R.drawable.ic_title_logo_letters),
                 contentDescription = "BioKey",
-                modifier = Modifier.fillMaxHeight().align(Alignment.Center),
+                modifier = Modifier.fillMaxHeight(),
                 contentScale = ContentScale.Fit,
-                colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary, BlendMode.Modulate)
+                colorFilter = ColorFilter.tint(primary, BlendMode.Modulate)
             )
             Image(
                 painter = painterResource(R.drawable.ic_title_logo_tentacles),
                 contentDescription = null,
-                modifier = Modifier.fillMaxHeight().align(Alignment.Center),
+                modifier = Modifier.fillMaxHeight(),
                 contentScale = ContentScale.Fit,
-                colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.tertiary, BlendMode.Modulate)
+                colorFilter = ColorFilter.tint(tertiary, BlendMode.Modulate)
             )
         }
-        IconButton(onClick = onOpenSettings, modifier = Modifier.align(Alignment.CenterEnd)) {
-            Icon(Icons.Default.Settings, contentDescription = "Settings")
+        IconButton(
+            onClick = onOpenSettings,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .springPress()
+        ) {
+            Icon(Icons.Default.Settings, contentDescription = "Settings", modifier = Modifier.size(24.dp))
         }
     }
 }

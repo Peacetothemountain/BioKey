@@ -53,6 +53,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         /** An app must be off screen this long before it counts as left (trampolines, relaunches). */
         private const val LEAVE_CONFIRM_MS = 400L
 
+        /** How long a cover raised by a tap waits for the tapped app's window (cold starts). */
+        private const val PREDICTION_WAIT_MS = 3_000L
+
         @Volatile
         var isRunning: Boolean = false
             private set
@@ -356,10 +359,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
         info.eventTypes = if (enable) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                 AccessibilityEvent.TYPE_WINDOWS_CHANGED or
+                AccessibilityEvent.TYPE_VIEW_CLICKED or
                 AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
         } else {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
-                AccessibilityEvent.TYPE_WINDOWS_CHANGED
+                AccessibilityEvent.TYPE_WINDOWS_CHANGED or
+                AccessibilityEvent.TYPE_VIEW_CLICKED
         }
         info.notificationTimeout = if (enable) 100L else 0L
         runCatching { serviceInfo = info }
@@ -380,6 +385,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
             val eventPkg = event.packageName?.toString()
             val eventCls = event.className?.toString().orEmpty()
 
+            if (type == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+                if (eventPkg != null && isLauncher(eventPkg)) predictLaunch(event)
+                return
+            }
             if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
                 onWindowsChanged(event)
                 return
@@ -474,6 +483,61 @@ class BioKeyAccessibilityService : AccessibilityService() {
         } catch (t: Throwable) {
             Log.e(TAG, "Unexpected error processing accessibility event: ${t.message}", t)
         }
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // Launch prediction
+    // -------------------------------------------------------------------------------------------
+
+    /** Lower-cased label -> locked packages with that label, rebuilt when the locked set changes. */
+    private var lockedLabelIndex: Map<String, List<String>> = emptyMap()
+    private var lockedLabelIndexKey: Set<String>? = null
+
+    private fun lockedPackagesForLabel(label: String): List<String> {
+        val locked = vault.getLockedPackages()
+        if (locked != lockedLabelIndexKey) {
+            lockedLabelIndex = locked.groupBy { AppInfoCache.quickLabel(this, it).trim().lowercase() }
+            lockedLabelIndexKey = locked
+        }
+        return lockedLabelIndex[label].orEmpty()
+    }
+
+    /**
+     * A tap on a launcher icon, a Recents card or a search result is the earliest sign an app is
+     * about to open: earlier than any window it creates. If what was tapped is a locked app, the
+     * cover goes up right now, so not one frame of the app is drawn uncovered. The cover then
+     * waits for the app's window and the normal lock flow takes over.
+     */
+    private fun predictLaunch(event: AccessibilityEvent) {
+        if (!vault.isGlobalLockEnabled() || shield.isShowing || LockScreenActivity.isLockScreenResumed) return
+        val spoken = buildList {
+            event.contentDescription?.let(::add)
+            addAll(event.text)
+        }
+        for (raw in spoken) {
+            // "Messages, 3 notifications", "Work Messages", multi-line cards: keep the name part.
+            val name = raw.toString().lineSequence().firstOrNull()?.substringBefore(',')?.trim()?.lowercase() ?: continue
+            if (name.isEmpty()) continue
+            val target = (lockedPackagesForLabel(name) + lockedPackagesForLabel(name.removePrefix("work ").trim()))
+                .firstOrNull { needsCover(it) } ?: continue
+            shield.showPredicted(
+                targetPackage = target,
+                waitMs = PREDICTION_WAIT_MS,
+                // A tap before the app appears means nothing is opening (e.g. a folder that
+                // shares the app's name): stand down. If the app is there, lock it.
+                onTapped = { onPredictionExpired(target) },
+                onExpired = ::onPredictionExpired
+            )
+            return
+        }
+    }
+
+    /** The predicted app never showed up in time: cover it if it's there now, else stand down. */
+    private fun onPredictionExpired(target: String) {
+        val front = rootInActiveWindow?.let { root -> root.packageName?.toString().also { release(root) } }
+        val arrived = front == target ||
+            (target == VIRTUAL_PKG_GOOGLE_PASSWORDS && (front == PKG_GMS || front == PKG_CREDENTIAL_MANAGER))
+        if (arrived && needsCover(target)) lock(target) else shield.hide()
     }
 
     private fun onWindowsChanged(event: AccessibilityEvent) {
@@ -652,7 +716,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
         foregroundPackage = target
 
         if (isLauncher || !vault.isAppLocked(target)) {
-            if (!LockStateTracker.isRegularLockPending(shield.targetPackage.orEmpty())) shield.hide()
+            // A tap-predicted cover outlives launcher events (the app is still on its way) but
+            // not a different app taking the screen.
+            val keep = LockStateTracker.isRegularLockPending(shield.targetPackage.orEmpty()) ||
+                (shield.isPredicted && isLauncher)
+            if (!keep) shield.hide()
             return
         }
 

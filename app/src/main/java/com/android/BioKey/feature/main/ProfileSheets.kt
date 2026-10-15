@@ -383,9 +383,11 @@ internal fun AddAppsSheet(
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var selected by remember { mutableStateOf(emptySet<String>()) }
+    // Only apps that aren't in any profile yet: an app lives in exactly one profile, and moving
+    // it between profiles is done from the app's own options.
     val candidates = remember(installedApps, profile.packages, query) {
         installedApps
-            .filterNot { app -> packageAliases(app.packageName).any { it in profile.packages } }
+            .filter { app -> profileOfApp(app.packageName) == null }
             .filter { query.isBlank() || it.label.contains(query.trim(), ignoreCase = true) }
     }
 
@@ -430,9 +432,19 @@ internal fun AddAppsSheet(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(bottom = 16.dp)
             ) {
+                if (candidates.isEmpty()) {
+                    item(key = "none") {
+                        Text(
+                            text = if (query.isBlank()) "Every app is already in a profile. To move one here, tap it in the app list and pick ${profile.name}."
+                            else "No apps outside a profile match “${query.trim()}”",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 24.dp)
+                        )
+                    }
+                }
                 items(candidates, key = { it.packageName }) { app ->
                     val checked = app.packageName in selected
-                    val elsewhere = profileOfApp(app.packageName)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -447,14 +459,13 @@ internal fun AddAppsSheet(
                         Column(Modifier.weight(1f)) {
                             Text(app.label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             val note = when {
-                                elsewhere != null -> "In ${elsewhere.name} · moves here"
                                 app.packageName in lockedApps -> "Locked"
                                 else -> app.category.label
                             }
                             Text(
                                 note,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (elsewhere != null) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Checkbox(checked = checked, onCheckedChange = null)

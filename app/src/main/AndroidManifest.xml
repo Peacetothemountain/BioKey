@@ -26,6 +26,10 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.HOME" />
         </intent>
+        <!-- Android's own App Lock settings page (Android 17 QPR2+), linked from Settings. -->
+        <intent>
+            <action android:name="android.settings.APP_LOCK_SETTINGS" />
+        </intent>
         <!-- Keyboards: an IME window must never count as leaving a locked app. -->
         <intent>
             <action android:name="android.view.InputMethod" />

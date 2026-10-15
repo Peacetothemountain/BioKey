@@ -1,6 +1,7 @@
 package com.android.BioKey.feature.main
 
 import android.content.Context
+import android.content.Intent
 import android.os.PowerManager
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -69,6 +70,9 @@ import com.android.BioKey.ui.theme.ExpressiveTokens
 import com.android.BioKey.ui.theme.springPress
 import kotlinx.coroutines.launch
 
+/** [android.provider.Settings.ACTION_APP_LOCK_SETTINGS] (API 37.2), as a literal for older SDKs. */
+private const val SYSTEM_APP_LOCK_SETTINGS = "android.settings.APP_LOCK_SETTINGS"
+
 /**
  * Pure Google Native Settings for BioKey.
  * Clean, seamless flat rows without squircle container boxes.
@@ -98,6 +102,12 @@ fun SettingsScreenExpressive(
     }
 
     var showTimeoutSheet by remember { mutableStateOf(false) }
+
+    // Android 17 QPR2 (API 37.2) ships its own App Lock. Only the launcher may switch it on per
+    // app (LOCK_APPS), but its settings page is open to everyone.
+    val systemAppLockAvailable = remember {
+        context.packageManager.resolveActivity(Intent(SYSTEM_APP_LOCK_SETTINGS), 0) != null
+    }
 
     LifecycleResumeEffect(Unit) {
         a11yActive = BioKeyAccessibilityService.isServiceEnabled(context)
@@ -210,6 +220,21 @@ fun SettingsScreenExpressive(
                         }
                     }
                 )
+                if (systemAppLockAvailable) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 56.dp, end = 16.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
+                    )
+                    SettingClickableRow(
+                        icon = Icons.Default.Security,
+                        title = "Android App Lock",
+                        subtitle = "Android 17's built-in lock stops an app before it draws anything. " +
+                            "Apps you lock there never flash on screen. BioKey can't switch it on for you",
+                        onClick = {
+                            IntentNavigationHelper.launchFallbackCascade(context, listOf(Intent(SYSTEM_APP_LOCK_SETTINGS)))
+                        }
+                    )
+                }
                 Spacer(modifier = Modifier.height(20.dp))
             }
 
