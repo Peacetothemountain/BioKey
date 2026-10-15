@@ -34,6 +34,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
@@ -60,7 +61,7 @@ class MainActivity : ComponentActivity() {
     private var promptAutoLaunched = false
     private var lockMessage by mutableStateOf<String?>(null)
     private var isPermanentLockout by mutableStateOf(false)
-    private var a11yActive by mutableStateOf(false)
+    private var protectionMode by mutableStateOf(ProtectionEngine.Mode.OFF)
     private var pauseRequested by mutableStateOf(false)
     private var isSetupAuthenticating by mutableStateOf(false)
     private var setupAuthError by mutableStateOf<String?>(null)
@@ -105,7 +106,7 @@ class MainActivity : ComponentActivity() {
                             if (!BioKeyAccessibilityService.lockDevice()) finishAffinity()
                         }
                     )
-                    else -> MainScreenExpressive(a11yActive = a11yActive, onPauseRequested = { pauseRequested = true })
+                    else -> MainScreenExpressive(mode = protectionMode, onPauseRequested = { pauseRequested = true })
                 }
 
                 if (setupCompleted && isAuthenticated && pauseRequested) {
@@ -192,8 +193,10 @@ class MainActivity : ComponentActivity() {
         lockMessage = "Locked after ${LockStateTracker.OWN_APP_IDLE_MS / 60_000} minutes without activity"
     }
 
+    /** Starts or stops compatibility mode as needed, then records which engine protects apps. */
     private fun refreshPermissions() {
-        a11yActive = BioKeyAccessibilityService.isServiceEnabled(this)
+        if (vault.isSetupCompleted()) ProtectionEngine.refresh(this)
+        protectionMode = ProtectionEngine.mode(this)
     }
 
     private fun completeSetup() {

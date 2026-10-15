@@ -85,8 +85,8 @@ class DesignScreenshotTest {
         }
     }
 
-    @Test fun main() = shoot("main") { MainScreenExpressive(a11yActive = true, onPauseRequested = {}) }
-    @Test fun mainOff() = shoot("main_off") { MainScreenExpressive(a11yActive = false, onPauseRequested = {}) }
+    @Test fun main() = shoot("main") { MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
+    @Test fun mainOff() = shoot("main_off") { MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP, onPauseRequested = {}) }
     @Test fun settings() = shoot("settings") { SettingsScreenExpressive(onNavigateBack = {}) }
     @Test fun ownLock() = shoot("lock") {
         LockScreenUIExpressive(appName = "BioKey", appIcon = null, onUnlockClicked = {}, onCancelClicked = {}, isBioKeyLock = true)

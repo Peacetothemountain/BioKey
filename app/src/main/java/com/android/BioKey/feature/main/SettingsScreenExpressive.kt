@@ -54,9 +54,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.rejectObscuredTouches
-import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupRow
@@ -108,9 +108,11 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
     val notificationShieldEnabled by vault.notificationShieldFlow.collectAsStateWithLifecycle()
     val autoSortProfiles by vault.autoSortProfilesFlow.collectAsStateWithLifecycle()
 
-    var a11yActive by remember { mutableStateOf(BioKeyAccessibilityService.isServiceEnabled(context)) }
+    var mode by remember { mutableStateOf(ProtectionEngine.mode(context)) }
     var notifListenerActive by remember { mutableStateOf(BioKeyNotificationShieldService.isNotificationAccessGranted(context)) }
     var showRelockSheet by remember { mutableStateOf(false) }
+    val disclosures = rememberDisclosureGate()
+    val protecting = mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.COMPATIBILITY
 
     // Android 17 QPR2 (API 37.2) ships its own App Lock. Only the launcher may switch it on per
     // app (LOCK_APPS), but its settings page is open to everyone.
@@ -119,9 +121,19 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
     }
 
     LifecycleResumeEffect(Unit) {
-        a11yActive = BioKeyAccessibilityService.isServiceEnabled(context)
+        ProtectionEngine.refresh(context)
+        mode = ProtectionEngine.mode(context)
         notifListenerActive = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
         onPauseOrDispose { }
+    }
+
+    /** Sends the user to whatever lets BioKey watch apps, after the matching disclosure. */
+    fun enableEngine() {
+        if (mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP) {
+            disclosures.request(Disclosure.COMPATIBILITY) { IntentNavigationHelper.openNextCompatibilityPermission(context) }
+        } else {
+            disclosures.request(Disclosure.ACCESSIBILITY) { IntentNavigationHelper.openAccessibilitySettings(context) }
+        }
     }
 
     val appLock = buildList {
@@ -130,16 +142,18 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
                 icon = Icons.Default.Shield,
                 title = "App lock",
                 subtitle = when {
-                    !a11yActive -> "Off · turn on BioKey in Accessibility settings"
-                    globalLockEnabled -> "Locked apps need your face, fingerprint or screen lock"
-                    pausedUntil > System.currentTimeMillis() ->
+                    mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP -> "Advanced Protection is on · tap to set up compatibility mode"
+                    !protecting -> "Off · turn on BioKey in Accessibility settings"
+                    !globalLockEnabled && pausedUntil > System.currentTimeMillis() ->
                         "Paused until " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil))
-                    else -> "Paused"
+                    !globalLockEnabled -> "Paused"
+                    mode == ProtectionEngine.Mode.COMPATIBILITY -> "On · compatibility mode (works with Advanced Protection)"
+                    else -> "Locked apps need your face, fingerprint or screen lock"
                 },
-                checked = globalLockEnabled && a11yActive,
+                checked = globalLockEnabled && protecting,
                 onChange = { on ->
                     vault.setGlobalLockEnabled(on)
-                    if (on && !a11yActive) IntentNavigationHelper.openAccessibilitySettings(context)
+                    if (on && !protecting) enableEngine()
                 }
             )
         )
@@ -176,19 +190,25 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
             onChange = { on ->
                 vault.setNotificationShield(on)
                 if (on && !notifListenerActive) {
-                    IntentNavigationHelper.openNotificationListenerSettings(context)
-                    Toast.makeText(context, "Turn on notification access for BioKey", Toast.LENGTH_SHORT).show()
+                    disclosures.request(Disclosure.NOTIFICATIONS) {
+                        IntentNavigationHelper.openNotificationListenerSettings(context)
+                        Toast.makeText(context, "Turn on notification access for BioKey", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         ),
         SettingItem(
             icon = Icons.Default.AdminPanelSettings,
             title = "Protect BioKey's settings",
-            subtitle = "Ask for authentication before BioKey can be switched off, force-stopped or uninstalled",
-            checked = selfProtectionEnabled && a11yActive,
+            subtitle = when (mode) {
+                ProtectionEngine.Mode.ACCESSIBILITY ->
+                    "Optional. Ask for your authentication before BioKey can be switched off, force-stopped or uninstalled"
+                else -> "Optional. Needs the Accessibility service, so it isn't available in compatibility mode"
+            },
+            checked = selfProtectionEnabled && mode == ProtectionEngine.Mode.ACCESSIBILITY,
             onChange = { on ->
                 vault.setAccessibilitySelfProtectionEnabled(on)
-                if (on && !a11yActive) IntentNavigationHelper.openAccessibilitySettings(context)
+                if (on && mode == ProtectionEngine.Mode.OFF) enableEngine()
             }
         )
     )

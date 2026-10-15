@@ -33,7 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.GppBad
+import androidx.compose.material.icons.filled.GppMaybe
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.Settings
@@ -80,7 +80,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.BioKey.BioKeyApplication
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.SecurityProfile
-import com.android.BioKey.core.security.AdvancedProtection
+import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.AppInfoCache
@@ -107,7 +107,7 @@ private const val FILTER_ALL = "filter:all"
  * Tapping an app opens its options (lock, which profile).
  */
 @Composable
-fun MainScreenExpressive(a11yActive: Boolean, onPauseRequested: () -> Unit) {
+fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Unit) {
     val context = LocalContext.current
     val view = LocalView.current
     val iconPx = with(LocalDensity.current) { ICON_RENDER_DP.dp.roundToPx() }
@@ -122,12 +122,7 @@ fun MainScreenExpressive(a11yActive: Boolean, onPauseRequested: () -> Unit) {
     val defaultTimeout by vault.timeoutModeFlow.collectAsStateWithLifecycle()
     val autoSortProfiles by vault.autoSortProfilesFlow.collectAsStateWithLifecycle()
     val packageChangeVersion by BioKeyApplication.packageChangeVersion.collectAsStateWithLifecycle()
-    // Re-checked on every resume: the user may have just changed it in system settings.
-    var blockedByAdvancedProtection by remember { mutableStateOf(AdvancedProtection.blocksBioKey(context)) }
-    LifecycleResumeEffect(Unit) {
-        blockedByAdvancedProtection = AdvancedProtection.blocksBioKey(context)
-        onPauseOrDispose { }
-    }
+    val disclosures = rememberDisclosureGate()
 
     var installedApps by remember { mutableStateOf(InstalledAppsCache.get(packageChangeVersion, iconPx) ?: emptyList()) }
     var isLoadingApps by remember { mutableStateOf(installedApps.isEmpty()) }
@@ -247,15 +242,17 @@ fun MainScreenExpressive(a11yActive: Boolean, onPauseRequested: () -> Unit) {
                     Column(Modifier.statusBarsPadding()) {
                         MainHeader(onOpenSettings = { showSettings = true })
                         ProtectionCard(
-                            a11yActive = a11yActive,
-                            blockedByAdvancedProtection = blockedByAdvancedProtection,
+                            mode = mode,
                             enabled = globalLockEnabled,
                             pausedUntil = pausedUntil,
                             lockedCount = lockedCount,
                             defaultTimeout = defaultTimeout,
                             onTurnOn = {
-                                if (blockedByAdvancedProtection) IntentNavigationHelper.openAdvancedProtectionHelp(context)
-                                else IntentNavigationHelper.openAccessibilitySettings(context)
+                                if (mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP) {
+                                    disclosures.request(Disclosure.COMPATIBILITY) { IntentNavigationHelper.openNextCompatibilityPermission(context) }
+                                } else {
+                                    disclosures.request(Disclosure.ACCESSIBILITY) { IntentNavigationHelper.openAccessibilitySettings(context) }
+                                }
                             },
                             onResume = { vault.resumeProtection() },
                             onPause = onPauseRequested
@@ -472,8 +469,7 @@ private fun MainHeader(onOpenSettings: () -> Unit) {
 /** Protection status: what state BioKey is in, in one glance, with the one action that matters. */
 @Composable
 private fun ProtectionCard(
-    blockedByAdvancedProtection: Boolean,
-    a11yActive: Boolean,
+    mode: ProtectionEngine.Mode,
     enabled: Boolean,
     pausedUntil: Long,
     lockedCount: Int,
@@ -484,28 +480,33 @@ private fun ProtectionCard(
 ) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
-    data class Look(val container: Color, val content: Color, val icon: ImageVector, val title: String, val body: String)
+    data class Look(val container: Color, val content: Color, val icon: ImageVector, val title: String, val body: String, val action: String?)
+    val apps = if (lockedCount == 1) "1 app locked" else "$lockedCount apps locked"
     val look = when {
-        !a11yActive && blockedByAdvancedProtection -> Look(
-            colors.errorContainer, colors.onErrorContainer, Icons.Default.GppBad,
-            "Blocked by Advanced Protection",
-            "Android's Advanced Protection only lets accessibility tools use accessibility, so BioKey can't see which app is open. Android's own App Lock still works, or turn Advanced Protection off."
+        mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP -> Look(
+            colors.tertiaryContainer, colors.onTertiaryContainer, Icons.Default.GppMaybe,
+            "Advanced Protection is on",
+            "It reserves accessibility for accessibility tools. Allow usage access and display over other apps, and BioKey keeps locking your apps in compatibility mode.",
+            "Set up compatibility mode"
         )
-        !a11yActive -> Look(
+        mode == ProtectionEngine.Mode.OFF -> Look(
             colors.errorContainer, colors.onErrorContainer, Icons.Default.Warning,
-            "App lock is off", "Turn on BioKey in Accessibility settings to start locking apps."
+            "App lock is off", "Turn on BioKey in Accessibility settings to start locking apps.", "Turn on"
         )
         !enabled -> Look(
             colors.tertiaryContainer, colors.onTertiaryContainer, Icons.Default.PauseCircle,
             if (pausedUntil > System.currentTimeMillis()) {
                 "Paused until " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil))
             } else "Protection paused",
-            "Locked apps open without a check until you resume."
+            "Locked apps open without a check until you resume.",
+            "Resume protection"
         )
         else -> Look(
             colors.primaryContainer, colors.onPrimaryContainer, Icons.Default.VerifiedUser,
             "Protected",
-            (if (lockedCount == 1) "1 app locked" else "$lockedCount apps locked") + " · " + defaultTimeout.relockPhrase.lowercase()
+            apps + " · " + defaultTimeout.relockPhrase.lowercase() +
+                if (mode == ProtectionEngine.Mode.COMPATIBILITY) "\nCompatibility mode (works with Advanced Protection)" else "",
+            null
         )
     }
 
@@ -535,13 +536,12 @@ private fun ProtectionCard(
                 }
             }
             Spacer(Modifier.height(16.dp))
-            val buttonColors = ButtonDefaults.buttonColors(containerColor = look.content, contentColor = look.container)
-            when {
-                !a11yActive -> Button(onClick = onTurnOn, colors = buttonColors, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (blockedByAdvancedProtection) "See options" else "Turn on")
-                }
-                !enabled -> Button(onClick = onResume, colors = buttonColors, modifier = Modifier.fillMaxWidth()) { Text("Resume protection") }
-                else -> OutlinedButton(
+            val filled = ButtonDefaults.buttonColors(containerColor = look.content, contentColor = look.container)
+            if (look.action != null) {
+                val onClick = if (mode == ProtectionEngine.Mode.OFF || mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP) onTurnOn else onResume
+                Button(onClick = onClick, colors = filled, modifier = Modifier.fillMaxWidth()) { Text(look.action) }
+            } else {
+                OutlinedButton(
                     onClick = onPause,
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = look.content),
                     modifier = Modifier.fillMaxWidth()

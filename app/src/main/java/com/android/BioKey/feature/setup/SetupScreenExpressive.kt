@@ -18,9 +18,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Accessibility
+import androidx.compose.material.icons.filled.AppSettingsAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Fingerprint
-import androidx.compose.material.icons.filled.GppBad
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material3.Button
@@ -40,18 +41,23 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.android.BioKey.core.security.AdvancedProtection
+import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.main.BioKeyLogo
+import com.android.BioKey.feature.main.Disclosure
 import com.android.BioKey.feature.main.HeaderMatrixDotsExpressive
 import com.android.BioKey.feature.main.IntentNavigationHelper
+import com.android.BioKey.feature.main.rememberDisclosureGate
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.springPress
 
 /**
- * First-run setup: turn on the accessibility service, then confirm identity once.
- * Shown as a short checklist so it's always clear what's done and what's next.
+ * First-run setup, as a short checklist: give BioKey a way to see which app is open, then confirm
+ * identity once. Normally that's the Accessibility service; with Android's Advanced Protection on
+ * (which reserves accessibility for accessibility tools) it's compatibility mode instead: usage
+ * access plus display over other apps. Every permission is preceded by its disclosure.
  */
 @Composable
 fun SetupScreenExpressive(
@@ -60,40 +66,39 @@ fun SetupScreenExpressive(
     onSetupComplete: () -> Unit
 ) {
     val context = LocalContext.current
+    val disclosures = rememberDisclosureGate()
     var a11yActive by remember { mutableStateOf(BioKeyAccessibilityService.isServiceEnabled(context)) }
-    var hasAutoPrompted by remember { mutableStateOf(false) }
+    var compatibilityMode by remember { mutableStateOf(false) }
+    var usageAccess by remember { mutableStateOf(false) }
+    var overlay by remember { mutableStateOf(false) }
     var restrictedSettingsBlocked by remember { mutableStateOf(false) }
-    var advancedProtectionBlocks by remember { mutableStateOf(false) }
+    var hasAutoPrompted by remember { mutableStateOf(false) }
+    val ready = a11yActive || (compatibilityMode && usageAccess && overlay)
 
-    // Advance by itself once the service is on; don't loop if the user cancels the prompt.
+    // Advance by itself once BioKey can see apps; don't loop if the user cancels the prompt.
     LifecycleResumeEffect(Unit) {
-        val active = BioKeyAccessibilityService.isServiceEnabled(context)
-        a11yActive = active
-        restrictedSettingsBlocked = !active && RestrictedSettingsHelper.isRestrictedSettingsEnforced(context)
-        advancedProtectionBlocks = !active && AdvancedProtection.blocksBioKey(context)
-        if (active && !hasAutoPrompted && authError == null) {
+        a11yActive = BioKeyAccessibilityService.isServiceEnabled(context)
+        compatibilityMode = !a11yActive && AdvancedProtection.blocksBioKey(context)
+        usageAccess = ProtectionEngine.hasUsageAccess(context)
+        overlay = ProtectionEngine.canDrawOverlays(context)
+        restrictedSettingsBlocked = !a11yActive && !compatibilityMode && RestrictedSettingsHelper.isRestrictedSettingsEnforced(context)
+        val nowReady = a11yActive || (compatibilityMode && usageAccess && overlay)
+        if (nowReady && !hasAutoPrompted && authError == null) {
             hasAutoPrompted = true
             onSetupComplete()
-        } else if (!active) {
+        } else if (!nowReady) {
             hasAutoPrompted = false
         }
         onPauseOrDispose { }
     }
 
+    val openAccessibility = { disclosures.request(Disclosure.ACCESSIBILITY) { IntentNavigationHelper.openAccessibilitySettings(context) } }
+    val openCompatibility = { disclosures.request(Disclosure.COMPATIBILITY) { IntentNavigationHelper.openNextCompatibilityPermission(context) } }
     val needsScreenLock = authError?.contains("screen lock", ignoreCase = true) == true
 
     data class Step(val icon: ImageVector, val title: String, val subtitle: String, val done: Boolean, val onClick: (() -> Unit)?)
     val steps = buildList {
-        if (advancedProtectionBlocks) {
-            add(
-                Step(
-                    Icons.Default.GppBad, "Advanced Protection is on",
-                    "Android only lets accessibility tools use accessibility while it's on, so BioKey can't lock apps. Turn it off in Security & privacy, or use Android's own App Lock.",
-                    done = false
-                ) { IntentNavigationHelper.openAdvancedProtectionHelp(context) }
-            )
-        }
-        if (restrictedSettingsBlocked && !advancedProtectionBlocks) {
+        if (restrictedSettingsBlocked) {
             add(
                 Step(
                     Icons.Default.Policy, "Allow restricted settings",
@@ -102,13 +107,30 @@ fun SetupScreenExpressive(
                 ) { IntentNavigationHelper.openAppDetailsSettings(context) }
             )
         }
-        add(
-            Step(
-                Icons.Default.Accessibility, "Turn on BioKey in Accessibility",
-                "Lets BioKey see which app is open so it can cover locked ones.",
-                done = a11yActive
-            ) { IntentNavigationHelper.openAccessibilitySettings(context) }
-        )
+        if (compatibilityMode) {
+            add(
+                Step(
+                    Icons.Default.AppSettingsAlt, "Allow usage access",
+                    "Advanced Protection is on, so BioKey uses compatibility mode: this tells it which app was opened.",
+                    done = usageAccess, onClick = openCompatibility
+                )
+            )
+            add(
+                Step(
+                    Icons.Default.Layers, "Allow display over other apps",
+                    "Lets BioKey cover a locked app as it opens.",
+                    done = overlay, onClick = openCompatibility
+                )
+            )
+        } else {
+            add(
+                Step(
+                    Icons.Default.Accessibility, "Turn on BioKey in Accessibility",
+                    "Lets BioKey see which app is open so it can cover locked ones.",
+                    done = a11yActive, onClick = openAccessibility
+                )
+            )
+        }
         if (needsScreenLock) {
             add(
                 Step(
@@ -123,7 +145,7 @@ fun SetupScreenExpressive(
                 Icons.Default.Fingerprint, "Confirm it's you",
                 "One check with your face, fingerprint or screen lock to finish.",
                 done = false,
-                onClick = if (a11yActive && !isAuthenticating) onSetupComplete else null
+                onClick = if (ready && !isAuthenticating) onSetupComplete else null
             )
         )
     }
@@ -195,9 +217,9 @@ fun SetupScreenExpressive(
         Button(
             onClick = {
                 when {
-                    a11yActive -> onSetupComplete()
-                    advancedProtectionBlocks -> IntentNavigationHelper.openAdvancedProtectionHelp(context)
-                    else -> IntentNavigationHelper.openAccessibilitySettings(context)
+                    ready -> onSetupComplete()
+                    compatibilityMode -> openCompatibility()
+                    else -> openAccessibility()
                 }
             },
             enabled = !isAuthenticating,
@@ -212,7 +234,7 @@ fun SetupScreenExpressive(
                 .springPress()
         ) {
             Icon(
-                if (a11yActive) Icons.Default.Fingerprint else Icons.AutoMirrored.Filled.OpenInNew,
+                if (ready) Icons.Default.Fingerprint else Icons.AutoMirrored.Filled.OpenInNew,
                 contentDescription = null,
                 modifier = Modifier.size(20.dp)
             )
@@ -220,9 +242,9 @@ fun SetupScreenExpressive(
             Text(
                 when {
                     isAuthenticating -> "Confirming…"
-                    a11yActive -> "Confirm and finish"
-                    advancedProtectionBlocks -> "See options"
-                    else -> "Open Accessibility settings"
+                    ready -> "Confirm and finish"
+                    compatibilityMode -> "Allow next permission"
+                    else -> "Turn on Accessibility"
                 },
                 style = MaterialTheme.typography.titleMedium
             )

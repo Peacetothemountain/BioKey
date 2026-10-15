@@ -8,6 +8,9 @@ import android.content.IntentFilter
 import android.os.UserManager
 import android.util.Log
 import androidx.core.content.ContextCompat
+import android.os.Build
+import android.security.advancedprotection.AdvancedProtectionManager
+import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.ScreenReceiver
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -59,11 +62,22 @@ class BioKeyApplication : Application() {
             try {
                 // Pre-warm SecurityVault so UI threads find it ready in memory
                 SecurityVault.getInstance(app)
+                ProtectionEngine.refresh(app)
             } catch (e: Exception) {
                 Log.e(TAG, "Error initializing credential-protected components", e)
             }
         }
         registerPackageChangeReceiver()
+        watchAdvancedProtection()
+    }
+
+    /** Switch engines the moment Advanced Protection is turned on or off. */
+    private fun watchAdvancedProtection() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.BAKLAVA) return
+        runCatching {
+            getSystemService(AdvancedProtectionManager::class.java)
+                ?.registerAdvancedProtectionCallback(mainExecutor) { ProtectionEngine.refresh(this) }
+        }
     }
 
     private fun registerPackageChangeReceiver() {

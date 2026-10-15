@@ -69,8 +69,8 @@ object ProtectionAlerts {
             post(
                 context,
                 ID_SERVICE_STOPPED,
-                "Advanced Protection turned off app lock",
-                "Android's Advanced Protection only lets accessibility tools use accessibility, so BioKey can't lock apps while it's on. Tap for options.",
+                "Switch BioKey to compatibility mode",
+                "Advanced Protection reserves accessibility for accessibility tools. Tap to give BioKey usage access and display-over-apps instead, so it keeps locking your apps.",
                 ongoing = true,
                 offerTurnOn = false
             )

@@ -1,8 +1,6 @@
 package com.android.BioKey.feature.lock
 
 import android.accessibilityservice.AccessibilityService
-import android.app.ActivityOptions
-import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -17,6 +15,7 @@ import android.os.SystemClock
 import android.os.UserManager
 import android.provider.Settings
 import android.util.Log
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -24,6 +23,7 @@ import android.view.inputmethod.InputMethodManager
 import androidx.core.content.ContextCompat
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
+import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.main.MainActivity
@@ -93,86 +93,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
         const val SELF_PROTECTION_PENDING_KEY = "biokey:self-protection"
 
-        private val KNOWN_LAUNCHERS = setOf(
-            "com.google.android.apps.nexuslauncher",
-            "com.android.launcher",
-            "com.android.launcher3",
-            "com.sec.android.app.launcher",
-            "com.miui.home",
-            "com.oppo.launcher",
-            "com.oneplus.launcher",
-            "com.huawei.android.launcher"
-        )
-
-        /**
-         * Apps people hop to mid-task (authenticators, SMS/email for codes, account and file
-         * pickers, cameras for scanning). Going to one straight from an unlocked app and coming
-         * straight back keeps that app's session, even in "Immediately" mode.
-         */
-        private val HOP_HELPER_PACKAGES = setOf(
-            PKG_GMS,
-            "com.google.android.gsf",
-            "com.google.android.apps.credentialmanager",
-            "com.android.credentialmanager",
-            "com.google.android.apps.authenticator2",
-            "com.azure.authenticator",
-            "com.authy.authy",
-            "com.yubico.yubioath",
-            "com.duosecurity.duomobile",
-            "org.fedorahosted.freeotp",
-            "org.liberty.android.freeotpplus",
-            "com.beemdevelopment.aegis",
-            "com.twofasapp",
-            "io.ente.auth",
-            "com.bitwarden.authenticator",
-            "com.x8bit.bitwarden",
-            "com.onepassword.android",
-            "com.lastpass.authenticator",
-            "com.callpod.android_apps.keeper",
-            "com.dashlane",
-            "com.zoho.accounts.oneauth",
-            "com.google.android.apps.messaging",
-            "com.samsung.android.messaging",
-            "com.google.android.gm",
-            "com.microsoft.office.outlook",
-            "ch.protonmail.android",
-            "com.google.android.documentsui",
-            "com.android.documentsui",
-            "com.google.android.providers.media.module",
-            "com.android.providers.media.module",
-            "com.google.android.GoogleCamera",
-            "com.android.camera",
-            "com.android.camera2",
-            "com.sec.android.app.camera"
-        )
-
-        /** Windows that float over apps without meaning the user switched apps. Exact names only. */
-        private val SYSTEM_OVERLAYS = setOf(
-            "android",
-            "com.android.systemui",
-            "com.google.android.permissioncontroller",
-            "com.android.permissioncontroller",
-            "com.google.android.packageinstaller",
-            "com.android.packageinstaller",
-            "com.android.credentialmanager",
-            "com.google.android.webview",
-            "com.android.webview",
-            "com.google.android.as",
-            "com.google.android.apps.wellbeing",
-            "com.google.android.intentresolver",
-            "com.android.intentresolver",
-            "com.google.android.markup",
-            "com.android.companiondevicemanager"
-        )
-
-        private val KNOWN_BROWSERS = setOf(
-            "com.android.chrome", "com.chrome.beta", "com.chrome.canary", "com.chrome.dev",
-            "org.mozilla.firefox", "org.mozilla.firefox_beta", "org.mozilla.fenix", "org.mozilla.focus",
-            "com.microsoft.emmx", "com.duckduckgo.mobile.android", "com.opera.browser", "com.opera.gx",
-            "com.opera.mini.native", "com.brave.browser", "com.sec.android.app.sbrowser",
-            "com.sec.android.app.sbrowser.beta", "com.vivaldi.browser"
-        )
-
         private val GPM_IGNORED_CLASS_HINTS = listOf(
             "Autofill", "Credential", "ConfirmUser", "Authenticator", "SignIn", "OAuth", "Fido", "Passkey",
             "AccountPicker", "ChooseAccount", "TwoStep", "SecondFactor", "Consent", "AuthAccount",
@@ -225,7 +145,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
     /** Apps that have dropped off screen, and since when, awaiting [LEAVE_CONFIRM_MS]. */
     private val pendingLeaves = HashMap<String, Long>()
 
-    private var launcherPackages: Set<String> = KNOWN_LAUNCHERS
     private var imePackages: Set<String> = emptySet()
     private var systemListsRefreshedAt = 0L
 
@@ -278,7 +197,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (!isRunning) return
         vault = SecurityVault.getInstance(this)
         AppInfoCache.preWarm(this, vault.getLockedPackages())
-        shield = InstantShieldOverlay(this, ::onShieldTimeout)
+        shield = InstantShieldOverlay(
+            this,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            goHome = { performGlobalAction(GLOBAL_ACTION_HOME) },
+            onTimeout = ::onShieldTimeout
+        )
         selfProtection = SelfProtectionDetector(this)
         refreshSystemLists(force = true)
         ContextCompat.registerReceiver(
@@ -292,6 +216,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
         )
         LockStateTracker.addLockAllListener(onLockAll)
         ProtectionAlerts.serviceRestored(this)
+        // The accessibility engine is the better one: compatibility mode stands down.
+        UsageWatchService.stop(this)
         // A locked app may already be in front (service restarted, or enabled over it).
         mainHandler.postDelayed(::reevaluateForeground, 250)
         Log.i(TAG, "Accessibility service connected & components initialized")
@@ -419,7 +345,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     eventPkg != "com.android.settings" &&
                     eventPkg != "com.android.systemui" &&
                     eventPkg !in imePackages &&
-                    eventPkg !in SYSTEM_OVERLAYS
+                    eventPkg !in ForegroundRules.SYSTEM_OVERLAYS
                 ) {
                     isConfirmingDeviceCredential = false
                 }
@@ -671,11 +597,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         return root.packageName?.toString().also { release(root) }
     }
 
-    private fun isHopHelper(pkg: String): Boolean {
-        if (pkg in HOP_HELPER_PACKAGES) return true
-        val cls = lastClassByPackage[pkg].orEmpty()
-        return pkg in KNOWN_BROWSERS && (cls.contains("CustomTab", ignoreCase = true) || cls.contains("AuthTab", ignoreCase = true))
-    }
+    private fun isHopHelper(pkg: String): Boolean = ForegroundRules.isHopHelper(pkg, lastClassByPackage[pkg])
 
     private fun handleForeground(target: String, cls: String) {
         // BioKey's own windows (lock screen, main UI) have their own authentication.
@@ -863,15 +785,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (!force && now - systemListsRefreshedAt < 30_000L) return
         systemListsRefreshedAt = now
         try {
-            val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
-            val homes = packageManager.queryIntentActivities(homeIntent, PackageManager.MATCH_ALL)
-                .mapNotNull { it.activityInfo?.packageName }
-                .filter { it != "com.android.settings" } // Settings' fallback home is not a launcher.
-            launcherPackages = KNOWN_LAUNCHERS + homes
-        } catch (e: Exception) {
-            Log.w(TAG, "Launcher query failed: ${e.message}")
-        }
-        try {
             imePackages = getSystemService(InputMethodManager::class.java).enabledInputMethodList
                 .map { it.packageName }
                 .toSet()
@@ -882,7 +795,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     private fun isLauncher(pkg: String): Boolean {
         refreshSystemLists()
-        return pkg in launcherPackages
+        return ForegroundRules.isLauncher(this, pkg)
     }
 
     private fun isDeviceCredentialScreen(pkg: String, cls: String): Boolean {
@@ -898,7 +811,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     private fun isSystemOrOverlay(pkg: String, cls: String): Boolean {
         if (pkg == VIRTUAL_PKG_GOOGLE_PASSWORDS) return false
-        if (pkg in SYSTEM_OVERLAYS) return true
+        if (pkg in ForegroundRules.SYSTEM_OVERLAYS) return true
         // Anything of Credential Manager's that isn't the password manager is a passkey/sign-in
         // sheet over another app.
         if (pkg == PKG_CREDENTIAL_MANAGER) return true
@@ -938,48 +851,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
     }
 
     private fun launchLockScreen(targetPkg: String, isSelfProtection: Boolean) {
-        val intent = Intent(this, LockScreenActivity::class.java).apply {
-            putExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE, targetPkg)
-            putExtra(LockScreenActivity.EXTRA_SELF_PROTECTION, isSelfProtection)
-            addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_NO_ANIMATION or
-                    Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS or
-                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-            )
-        }
-
-        // Primary path: PendingIntent with an explicit background-start grant and no animation
-        // (plain startActivity from a service can be silently blocked on Android 14+).
-        try {
-            val creatorOptions = ActivityOptions.makeCustomAnimation(this, 0, 0)
-            val sendOptions = ActivityOptions.makeCustomAnimation(this, 0, 0)
-            if (Build.VERSION.SDK_INT >= 36) {
-                creatorOptions.setPendingIntentCreatorBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS)
-                sendOptions.setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS)
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                @Suppress("DEPRECATION")
-                creatorOptions.setPendingIntentCreatorBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
-                @Suppress("DEPRECATION")
-                sendOptions.setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
-            }
-            PendingIntent.getActivity(
-                this,
-                targetPkg.hashCode(),
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                creatorOptions.toBundle()
-            ).send(this, 0, null, null, null, null, sendOptions.toBundle())
-            return
-        } catch (e: Exception) {
-            Log.w(TAG, "PendingIntent lock screen start failed, trying startActivity: ${e.message}")
-        }
-
-        try {
-            startActivity(intent, ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle())
-        } catch (e: Exception) {
+        if (!LockLauncher.launch(this, targetPkg, isSelfProtection)) {
             // Could not cover the app: fail closed by leaving it.
-            Log.e(TAG, "Lock screen launch failed; sending user home", e)
             performGlobalAction(GLOBAL_ACTION_HOME)
             shield.hide()
         }
@@ -1025,7 +898,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         LockStateTracker.lockAll()
         if (::shield.isInitialized) shield.destroy()
         if (::vault.isInitialized && vault.isSetupCompleted()) {
-            ProtectionAlerts.serviceStopped(this)
+            // Hand over to compatibility mode if it's set up (e.g. Advanced Protection was just turned on).
+            ProtectionEngine.refresh(this)
+            if (!UsageWatchService.isRunning) ProtectionAlerts.serviceStopped(this)
         }
         Log.w(TAG, "Accessibility service stopped")
     }

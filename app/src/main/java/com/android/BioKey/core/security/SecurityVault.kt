@@ -103,7 +103,7 @@ class SecurityVault private constructor(private val context: Context) {
     private val _autoSortProfilesFlow = MutableStateFlow(true)
     val autoSortProfilesFlow: StateFlow<Boolean> = _autoSortProfilesFlow.asStateFlow()
 
-    private val _accessibilitySelfProtectionFlow = MutableStateFlow(true)
+    private val _accessibilitySelfProtectionFlow = MutableStateFlow(false)
     val accessibilitySelfProtectionFlow: StateFlow<Boolean> = _accessibilitySelfProtectionFlow.asStateFlow()
 
     /** Apps the owner took out of a profile by hand, which auto-sort must leave alone. */
@@ -412,7 +412,8 @@ class SecurityVault private constructor(private val context: Context) {
         _timeoutModeFlow.value = LockTimeoutMode.fromName(prefs.getString(KEY_TIMEOUT, null))
         _notificationShieldFlow.value = prefs.getBoolean(KEY_NOTIFICATION_SHIELD, true)
         _setupCompletedFlow.value = prefs.getBoolean(KEY_SETUP_COMPLETED, false)
-        _accessibilitySelfProtectionFlow.value = prefs.getBoolean(KEY_SELF_PROTECTION, true)
+        // Opt-in (Play policy: no blocking of uninstall/disable unless the user chose it).
+        _accessibilitySelfProtectionFlow.value = prefs.getBoolean(KEY_SELF_PROTECTION, false)
         _autoSortProfilesFlow.value = prefs.getBoolean(KEY_AUTO_SORT, true)
 
         // A pause survives a reboot only while its time is left (capped, as the wall clock can lie).

@@ -11,6 +11,7 @@ import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 
@@ -85,11 +86,21 @@ object IntentNavigationHelper {
     fun openAppDetailsSettings(context: Context) = launchFallbackCascade(context, listOf(appDetails(context)))
 
     /**
-     * When Advanced Protection blocks BioKey: Android's own App Lock (which keeps working under
-     * Advanced Protection) if this phone has it, else Security & privacy, where the mode is switched.
+     * Compatibility mode's next missing permission: BioKey's own usage-access page, then its
+     * display-over-other-apps page. Returns false when both are already granted.
      */
-    fun openAdvancedProtectionHelp(context: Context) = launchFallbackCascade(
-        context,
-        listOf(Intent(SYSTEM_APP_LOCK_SETTINGS), Intent(Settings.ACTION_SECURITY_SETTINGS), Intent(Settings.ACTION_SETTINGS))
-    )
+    fun openNextCompatibilityPermission(context: Context): Boolean {
+        val pkgUri = Uri.fromParts("package", context.packageName, null)
+        return when {
+            !ProtectionEngine.hasUsageAccess(context) -> launchFallbackCascade(
+                context,
+                listOf(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS, pkgUri), Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+            )
+            !ProtectionEngine.canDrawOverlays(context) -> launchFallbackCascade(
+                context,
+                listOf(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri), Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
+            )
+            else -> false
+        }
+    }
 }

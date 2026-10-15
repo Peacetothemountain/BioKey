@@ -1,6 +1,6 @@
 package com.android.BioKey.feature.lock
 
-import android.accessibilityservice.AccessibilityService
+import android.content.Context
 import android.annotation.SuppressLint
 import android.graphics.PixelFormat
 import android.os.Handler
@@ -14,16 +14,18 @@ import java.util.concurrent.Executors
 
 /**
  * Full-screen cover drawn the instant a locked app reaches the screen, before
- * [LockScreenActivity] has had time to start. It is an accessibility overlay, so it sits above
- * the app's first frames, and it draws the same [LockCoverView] as the activity, so the hand-off
- * is seamless.
+ * [LockScreenActivity] has had time to start. It sits above the app's first frames (as an
+ * accessibility overlay, or an application overlay in compatibility mode) and draws the same
+ * [LockCoverView] as the activity, so the hand-off is seamless.
  *
  * The window is attached once and kept (hidden) for the service's lifetime: showing it is a
  * visibility flip, never a window add. Nothing slow happens before it is visible; a missing icon is
  * loaded afterwards.
  */
 class InstantShieldOverlay(
-    private val service: AccessibilityService,
+    private val service: Context,
+    windowType: Int,
+    private val goHome: () -> Unit,
     private val onTimeout: (targetPackage: String, attempt: Int) -> Boolean
 ) {
 
@@ -73,7 +75,7 @@ class InstantShieldOverlay(
             armTimeout()
         } else {
             Log.w(TAG, "Lock screen did not appear for $pkg; failing closed")
-            if (attempt >= MAX_ATTEMPTS) service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+            if (attempt >= MAX_ATTEMPTS) goHome()
             hide()
         }
     }
@@ -81,7 +83,7 @@ class InstantShieldOverlay(
     private val layoutParams = WindowManager.LayoutParams(
         WindowManager.LayoutParams.MATCH_PARENT,
         WindowManager.LayoutParams.MATCH_PARENT,
-        WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+        windowType,
         WindowManager.LayoutParams.FLAG_SECURE or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
@@ -196,7 +198,7 @@ class InstantShieldOverlay(
             if (targetPackage != BioKeyAccessibilityService.SELF_PROTECTION_PENDING_KEY ||
                 !BioKeyAccessibilityService.dismissSelfProtection()
             ) {
-                service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+                goHome()
             }
             hide()
         }
