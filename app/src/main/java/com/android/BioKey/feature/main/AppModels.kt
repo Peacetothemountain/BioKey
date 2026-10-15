@@ -7,8 +7,8 @@ enum class AppCategory(val label: String) {
     AUTH("2FA & Security"),
     PRIVACY("Photos & Vault"),
     SOCIAL("Social & Chat"),
-    SYSTEM("System Core"),
-    GENERAL("Application")
+    SYSTEM("System"),
+    GENERAL("App")
 }
 
 data class AppItem(
@@ -16,7 +16,5 @@ data class AppItem(
     val label: String,
     val iconBitmap: ImageBitmap?,
     val category: AppCategory,
-    val isRecommended: Boolean,
-    val isWorkProfile: Boolean = false,
-    val uniqueKey: String = "${packageName}_${if (isWorkProfile) "work" else "personal"}"
+    val isWorkProfile: Boolean = false
 )

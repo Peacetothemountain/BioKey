@@ -175,9 +175,9 @@ fun SettingsScreenExpressive(
                 )
                 SettingClickableRow(
                     icon = Icons.Default.LockClock,
-                    title = "Re-lock delay",
+                    title = "Default re-lock delay",
                     subtitle = when (timeoutMode) {
-                        LockTimeoutMode.IMMEDIATE -> "Immediately upon leaving"
+                        LockTimeoutMode.IMMEDIATE -> "Immediately after leaving · for apps not in a profile"
                         LockTimeoutMode.ON_SCREEN_OFF -> "When screen turns off"
                         LockTimeoutMode.GRACE_30_SECONDS -> "30 seconds"
                         LockTimeoutMode.GRACE_1_MINUTE -> "1 minute"
@@ -269,8 +269,8 @@ fun SettingsScreenExpressive(
                 )
                 SettingSwitchRow(
                     icon = Icons.Default.Tune,
-                    title = "Profile Presorted Applications",
-                    subtitle = "Automatically presorts installed applications into finance, social, and work profiles",
+                    title = "Auto-sort into profiles",
+                    subtitle = "Puts recognised banking, social and work apps into matching profiles (which locks them)",
                     checked = autoSortProfiles,
                     onCheckedChange = { enabled ->
                         vault.setAutoSortProfilesEnabled(enabled)
@@ -437,7 +437,7 @@ private fun TimeoutSheet(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Choose how quickly apps lock again after leaving them.",
+                text = "Apps stay unlocked while you use them. This sets when apps that aren't in a profile lock again after you leave. Profiles set their own.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

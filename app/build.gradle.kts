@@ -26,8 +26,8 @@ android {
         applicationId = "com.android.BioKey"
         minSdk = 31
         targetSdk = 37
-        versionCode = 500
-        versionName = "5.0.0"
+        versionCode = 510
+        versionName = "5.1.0"
     }
 
     signingConfigs {
@@ -102,7 +102,6 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.fragment.ktx)
-    implementation(libs.androidx.biometric)
 }
 
 kotlin {

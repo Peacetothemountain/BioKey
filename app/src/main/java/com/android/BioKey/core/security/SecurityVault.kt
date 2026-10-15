@@ -39,7 +39,6 @@ class SecurityVault private constructor(private val context: Context) {
         private const val KEY_PAUSED_ELAPSED = "paused_until_elapsed"
         const val PROFILE_ALL = "all"
         private const val KEY_PROFILES_JSON = "security_profiles_json"
-        private const val KEY_ACTIVE_PROFILE_ID = "active_profile_id"
         private const val KEY_AUTO_SORT = "auto_sort_profiles_enabled"
         private const val KEY_AUTO_SORT_EXCLUDED = "auto_sort_excluded_packages"
         private const val KEY_SELF_PROTECTION = "accessibility_self_protection_enabled"
@@ -87,9 +86,6 @@ class SecurityVault private constructor(private val context: Context) {
 
     private val _profilesFlow = MutableStateFlow<List<SecurityProfile>>(emptyList())
     val profilesFlow: StateFlow<List<SecurityProfile>> = _profilesFlow.asStateFlow()
-
-    private val _activeProfileIdFlow = MutableStateFlow(PROFILE_ALL)
-    val activeProfileIdFlow: StateFlow<String> = _activeProfileIdFlow.asStateFlow()
 
     private val _autoSortProfilesFlow = MutableStateFlow(true)
     val autoSortProfilesFlow: StateFlow<Boolean> = _autoSortProfilesFlow.asStateFlow()
@@ -146,12 +142,12 @@ class SecurityVault private constructor(private val context: Context) {
         _accessibilitySelfProtectionFlow.value = sharedPrefs.getBoolean(KEY_SELF_PROTECTION, true)
 
         val profilesJson = sharedPrefs.getString(KEY_PROFILES_JSON, null)
-        var profileParseFailed = false
+
         val loadedProfiles = if (!profilesJson.isNullOrBlank()) {
             runCatching {
                 val array = JSONArray(profilesJson)
                 (0 until array.length()).map { SecurityProfile.fromJson(array.getJSONObject(it)) }
-            }.onFailure { profileParseFailed = true }.getOrDefault(defaultProfiles())
+            }.getOrDefault(defaultProfiles())
         } else {
             defaultProfiles()
         }
@@ -169,15 +165,6 @@ class SecurityVault private constructor(private val context: Context) {
         }
         _lockedAppsFlow.value = lockedAppsSet.toSet()
 
-        val savedActiveId = sharedPrefs.getString(KEY_ACTIVE_PROFILE_ID, PROFILE_ALL) ?: PROFILE_ALL
-        _activeProfileIdFlow.value = if (
-            profileParseFailed ||
-            (savedActiveId != PROFILE_ALL && _profilesFlow.value.none { it.id == savedActiveId })
-        ) {
-            PROFILE_ALL
-        } else {
-            savedActiveId
-        }
         _autoSortProfilesFlow.value = sharedPrefs.getBoolean(KEY_AUTO_SORT, true)
         rebuildSnapshot()
         com.android.BioKey.feature.lock.AppInfoCache.preWarm(context, getLockedPackages())
@@ -208,10 +195,8 @@ class SecurityVault private constructor(private val context: Context) {
         if (pkg in PASSWORD_MANAGER_ALIASES) PASSWORD_MANAGER_ALIASES else setOf(pkg)
 
     private fun rebuildSnapshot() {
-        val activeId = _activeProfileIdFlow.value
         val profiles = _profilesFlow.value
         val globalDefaultTimeout = _timeoutModeFlow.value
-        val active = if (activeId == PROFILE_ALL) null else profiles.firstOrNull { it.id == activeId }
 
         val lockedSet = HashSet<String>()
         val timeoutMap = HashMap<String, LockTimeoutMode>()
@@ -227,25 +212,12 @@ class SecurityVault private constructor(private val context: Context) {
                 }
             }
         }
-        if (active != null) {
-            for (pkg in active.packages) {
-                for (alias in aliasesOf(pkg)) {
-                    timeoutMap[alias] = active.timeoutMode
-                }
-            }
-        }
 
         snapshot = LookupSnapshot(
             effectiveLockedPackages = lockedSet,
             effectiveTimeoutByPackage = timeoutMap,
             defaultTimeoutMode = globalDefaultTimeout
         )
-    }
-
-    fun activeProfile(): SecurityProfile? {
-        val id = _activeProfileIdFlow.value
-        if (id == PROFILE_ALL) return null
-        return _profilesFlow.value.firstOrNull { it.id == id }
     }
 
     /**
@@ -507,14 +479,30 @@ class SecurityVault private constructor(private val context: Context) {
         sharedPrefs.edit().putBoolean(KEY_SETUP_COMPLETED, completed).commit()
     }
 
-    fun activateProfile(profileId: String?): Boolean = synchronized(stateLock) {
-        val targetId = profileId ?: PROFILE_ALL
-        if (_activeProfileIdFlow.value == targetId) return@synchronized true
-        _activeProfileIdFlow.value = targetId
-        rebuildSnapshot()
-        persist()
-        true
+    /** Creates an empty profile and returns it. */
+    fun createProfile(name: String, iconKey: String, timeoutMode: LockTimeoutMode = LockTimeoutMode.IMMEDIATE): SecurityProfile {
+        val profile = SecurityProfile(
+            id = "profile_${java.util.UUID.randomUUID()}",
+            name = name.trim().ifBlank { "New profile" },
+            iconKey = iconKey,
+            timeoutMode = timeoutMode
+        )
+        saveProfile(profile)
+        return profile
     }
+
+    /** Renames / re-icons / re-times a profile without touching its apps. */
+    fun updateProfileDetails(profileId: String, name: String? = null, iconKey: String? = null, timeoutMode: LockTimeoutMode? = null) =
+        synchronized(stateLock) {
+            val profile = _profilesFlow.value.firstOrNull { it.id == profileId } ?: return@synchronized
+            saveProfile(
+                profile.copy(
+                    name = name?.trim()?.ifBlank { profile.name } ?: profile.name,
+                    iconKey = iconKey ?: profile.iconKey,
+                    timeoutMode = timeoutMode ?: profile.timeoutMode
+                )
+            )
+        }
 
     fun saveProfile(profile: SecurityProfile): Boolean = synchronized(stateLock) {
         val prevEffective = snapshot.effectiveLockedPackages
@@ -572,43 +560,48 @@ class SecurityVault private constructor(private val context: Context) {
         true
     }
 
+
+    /** Deletes a profile. Its apps stay locked and fall back to the default re-lock delay. */
     fun deleteProfile(profileId: String) = synchronized(stateLock) {
-        val prevEffective = snapshot.effectiveLockedPackages
-        val deletedProfile = _profilesFlow.value.firstOrNull { it.id == profileId }
-        val remainingProfiles = _profilesFlow.value.filterNot { it.id == profileId }
-        _profilesFlow.value = remainingProfiles
-        if (deletedProfile != null) {
-            val removedPkgs = deletedProfile.packages.filter { pkg ->
-                remainingProfiles.none { it.packages.contains(pkg) }
-            }
-            lockedAppsSet.removeAll(removedPkgs.toSet())
-            _lockedAppsFlow.value = lockedAppsSet.toSet()
-        }
-        val wasActive = _activeProfileIdFlow.value == profileId
-        if (wasActive) {
-            _activeProfileIdFlow.value = PROFILE_ALL
-        }
+        val deletedProfile = _profilesFlow.value.firstOrNull { it.id == profileId } ?: return@synchronized
+        _profilesFlow.value = _profilesFlow.value.filterNot { it.id == profileId }
+        lockedAppsSet.addAll(deletedProfile.packages)
+        _lockedAppsFlow.value = lockedAppsSet.toSet()
         rebuildSnapshot()
-        val newlyUnlocked = prevEffective - snapshot.effectiveLockedPackages
-        if (newlyUnlocked.isNotEmpty()) {
-            BioKeyNotificationShieldService.restoreNotificationsForPackages(newlyUnlocked)
-        }
         persist()
     }
 
-    fun addAppToProfile(profileId: String, packageName: String) = synchronized(stateLock) {
-        val current = _profilesFlow.value
-        val profile = current.firstOrNull { it.id == profileId } ?: return@synchronized
-        val updatedProfile = profile.copy(packages = profile.packages + aliasesOf(packageName))
-        saveProfile(updatedProfile)
+    /** Adds apps to a profile (moving them out of any other one). They become locked. */
+    fun addAppsToProfile(profileId: String, packages: Collection<String>) = synchronized(stateLock) {
+        val profile = _profilesFlow.value.firstOrNull { it.id == profileId } ?: return@synchronized
+        saveProfile(profile.copy(packages = profile.packages + packages.flatMap(::aliasesOf)))
     }
 
-    fun removeAppFromProfile(profileId: String, packageName: String) = synchronized(stateLock) {
-        val current = _profilesFlow.value
-        val profile = current.firstOrNull { it.id == profileId } ?: return@synchronized
-        val updatedProfile = profile.copy(packages = profile.packages - aliasesOf(packageName))
-        saveProfile(updatedProfile)
+    /**
+     * Puts a locked app in [profileId], or in no profile when null. The app stays locked either way.
+     */
+    fun moveAppToProfile(packageName: String, profileId: String?) = synchronized(stateLock) {
+        val targets = aliasesOf(packageName)
+        if (profileId != null) {
+            addAppsToProfile(profileId, targets)
+            return@synchronized
+        }
+        lockedAppsSet.addAll(targets)
+        _lockedAppsFlow.value = lockedAppsSet.toSet()
+        _profilesFlow.value = _profilesFlow.value.map { p ->
+            if (p.packages.any { it in targets }) p.copy(packages = p.packages - targets) else p
+        }
+        // Taken out of a profile by hand: auto-sort must not put it straight back.
+        autoSortExcludedSet.addAll(targets)
+        rebuildSnapshot()
+        persist()
     }
+
+    fun profileOf(packageName: String): SecurityProfile? {
+        val targets = aliasesOf(packageName)
+        return _profilesFlow.value.firstOrNull { p -> p.packages.any { it in targets } }
+    }
+
 
     fun isAutoSortProfilesEnabled(): Boolean = _autoSortProfilesFlow.value
 
@@ -761,7 +754,6 @@ class SecurityVault private constructor(private val context: Context) {
                 val profilesJson = JSONArray().apply {
                     _profilesFlow.value.forEach { put(it.toJson()) }
                 }.toString()
-                val activeProfileId = _activeProfileIdFlow.value
                 val autoSort = _autoSortProfilesFlow.value
 
                 sharedPrefs.edit()
@@ -774,7 +766,6 @@ class SecurityVault private constructor(private val context: Context) {
                     .putBoolean(KEY_SELF_PROTECTION, selfProt)
                     .putBoolean(KEY_SETUP_COMPLETED, setup)
                     .putString(KEY_PROFILES_JSON, profilesJson)
-                    .putString(KEY_ACTIVE_PROFILE_ID, activeProfileId)
                     .putBoolean(KEY_AUTO_SORT, autoSort)
                     .apply()
             }
