@@ -487,12 +487,14 @@ private fun MainHeader(status: ProtectionLook, onOpenStatus: () -> Unit, onOpenS
             contentDescription = "${status.title}. Details",
             onClick = onOpenStatus
         )
-        BioKeyLogo(
-            Modifier
-                .weight(1f)
-                .padding(horizontal = 4.dp)
-                .aspectRatio(2.3f) // the artwork's own proportions, so it fills the width
-        )
+        // Centred between the two equal-width tiles, with breathing room on both sides.
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            BioKeyLogo(
+                Modifier
+                    .fillMaxWidth(0.84f)
+                    .aspectRatio(2.26f) // the artwork's own proportions
+            )
+        }
         HeaderTile(
             icon = Icons.Default.Settings,
             label = "Settings",
