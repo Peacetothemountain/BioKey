@@ -12,6 +12,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -35,9 +36,9 @@ import com.android.BioKey.ui.brand.VineView
  * colours as the activity's window background, so the hand-off between them is invisible.
  *
  * The locked app's icon sits in a thin ring over a soft glow in the app's own colour
- * ([CoverBackdrop]), on a background tinted with the wallpaper's Material You colours; no text,
- * since the icon says which app and the system prompt says what to do. A small, still BioKey mark
- * shows who is asking.
+ * ([CoverBackdrop]), with the app's name beneath, on a background tinted with the wallpaper's
+ * Material You colours. The system prompt says what to do. A small, still BioKey mark shows who
+ * is asking.
  *
  * Plain Views on purpose: no Compose start-up cost on the path between a locked app appearing and
  * the fingerprint/face prompt.
@@ -52,6 +53,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         ) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
 
         val surface = scheme.surface.toArgb()
+        val onSurface = scheme.onSurface.toArgb()
         val surfaceContainer = scheme.surfaceContainerHigh.toArgb()
         /** The wallpaper's colour washing down from the top. */
         val wash = scheme.primaryContainer.toArgb()
@@ -98,6 +100,16 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         clipToOutline = true
     }
 
+    /** The locked app's name under its icon. */
+    private val name = TextView(context).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        gravity = Gravity.CENTER
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
     private val status = TextView(context).apply {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
         gravity = Gravity.CENTER
@@ -138,8 +150,11 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         gravity = Gravity.CENTER_HORIZONTAL
         addView(logo, LinearLayout.LayoutParams(dp(280), dp(118)))
         addView(icon, LinearLayout.LayoutParams(dp(ICON_DP), dp(ICON_DP)))
+        addView(name, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(22)
+        })
         addView(status, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(36)
+            topMargin = dp(16)
         })
     }
 
@@ -200,6 +215,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
             intArrayOf(blend(p.surface, p.wash, 0.5f), blend(p.surface, p.wash, 0.16f), p.surface)
         )
         backdrop.setColors(p.primary, p.surfaceContainer)
+        name.setTextColor(p.onSurface)
         status.setTextColor(p.error)
         cancelButton.setTextColor(p.primary)
         cancelButton.background = ripple(Color.TRANSPARENT, p.primary)
@@ -228,6 +244,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     fun bind(label: String, appIcon: Drawable?, isBioKey: Boolean) {
         logo.visibility = if (isBioKey) VISIBLE else GONE
         icon.visibility = if (isBioKey) GONE else VISIBLE
+        name.visibility = icon.visibility
+        name.text = label
         brandMark.visibility = if (isBioKey || actions.visibility == VISIBLE) GONE else VISIBLE
         setIcon(appIcon)
         contentDescription = if (isBioKey) "BioKey is locked" else "$label is locked"

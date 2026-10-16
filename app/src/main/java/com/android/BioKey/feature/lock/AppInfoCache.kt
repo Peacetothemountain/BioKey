@@ -83,10 +83,10 @@ object AppInfoCache {
             val info = pm.getApplicationInfo(realPkg, 0)
             Triple(pm.getApplicationLabel(info).toString(), pm.getApplicationIcon(info), null as UserHandle?)
         }.getOrNull() ?: fromOtherProfiles(context, realPkg) ?: return null
-        // Drawn once at cover size as a true circle (see [AppIcons]); a work app gets its badge after.
+        // Drawn once at cover size (see [AppIcons]); a work app gets its badge after.
         val px = (ICON_DP * context.resources.displayMetrics.density).roundToInt()
-        val round: Drawable = BitmapDrawable(context.resources, AppIcons.circle(raw, px))
-        val icon = if (user != null) pm.getUserBadgedIcon(round, user) else round
+        val rendered: Drawable = BitmapDrawable(context.resources, AppIcons.render(raw, px))
+        val icon = if (user != null) pm.getUserBadgedIcon(rendered, user) else rendered
         CachedAppInfo(pkg, if (passwordManager) "Google Password Manager" else label, icon).also { cache[pkg] = it }
     } catch (e: Exception) {
         Log.w(TAG, "Couldn't load app info for $pkg: ${e.message}")

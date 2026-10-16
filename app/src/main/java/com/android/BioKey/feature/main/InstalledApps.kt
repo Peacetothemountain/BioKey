@@ -48,9 +48,9 @@ internal fun loadInstalledApps(context: Context, iconPx: Int): List<AppItem> {
                 val pkg = activity.applicationInfo.packageName
                 if (pkg == context.packageName || pkg == BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER) continue
                 val label = activity.label.toString()
-                // Shape first, then badge, so work apps are circles with the briefcase on top.
-                val round = AppIcons.circle(activity.getIcon(0), iconPx)
-                val icon = if (isWork) badged(context, round, user, iconPx) else round
+                // Render first, then badge, so the briefcase sits on top of the final icon.
+                val rendered = AppIcons.render(activity.getIcon(0), iconPx)
+                val icon = if (isWork) badged(context, rendered, user, iconPx) else rendered
                 items += AppItem(
                     packageName = pkg,
                     label = label,
@@ -71,7 +71,7 @@ internal fun loadInstalledApps(context: Context, iconPx: Int): List<AppItem> {
             items += AppItem(
                 packageName = pkg,
                 label = label,
-                iconBitmap = AppIcons.circle(info.loadIcon(pm), iconPx).asImageBitmap(),
+                iconBitmap = AppIcons.render(info.loadIcon(pm), iconPx).asImageBitmap(),
                 category = AppClassifier.categorize(pkg, label, info.activityInfo.applicationInfo?.category ?: -1)
             )
         }
@@ -92,7 +92,7 @@ private fun passwordManagerItem(pm: PackageManager, iconPx: Int): AppItem? {
     if (!hasGmsPasswords) return null
     val icon = runCatching {
         val source = if (hasCredMgr) BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER else "com.google.android.gms"
-        AppIcons.circle(pm.getApplicationIcon(source), iconPx).asImageBitmap()
+        AppIcons.render(pm.getApplicationIcon(source), iconPx).asImageBitmap()
     }.getOrNull()
     return AppItem(
         packageName = BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS,
