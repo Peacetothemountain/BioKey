@@ -26,7 +26,7 @@ android {
         applicationId = "com.android.BioKey"
         minSdk = 31
         targetSdk = 37
-        versionCode = 602
+        versionCode = 450
         versionName = "4.5"
     }
 
