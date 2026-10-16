@@ -4,18 +4,20 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
@@ -24,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -37,6 +40,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -47,8 +51,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,14 +64,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.SecurityProfile
+import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupGap
@@ -179,7 +192,10 @@ internal fun ProfileDetailsDialog(
             onDismissRequest = { confirmDelete = false },
             icon = { Icon(profileIcon(existing.iconKey), contentDescription = null) },
             title = { Text("Delete “${existing.name}”?") },
-            text = { Text("Its apps stay locked and will use your default re-lock delay.") },
+            text = {
+                ProtectDialogWindow()
+                Text("Its apps stay locked and will use your default re-lock delay.")
+            },
             confirmButton = {
                 TextButton(onClick = { confirmDelete = false; onDelete() }) {
                     Text("Delete", color = MaterialTheme.colorScheme.error)
@@ -195,6 +211,7 @@ internal fun ProfileDetailsDialog(
         icon = { Icon(profileIcon(iconKey), contentDescription = null) },
         title = { Text(if (existing == null) "New profile" else "Edit profile") },
         text = {
+            ProtectDialogWindow()
             Column(modifier = Modifier.rejectObscuredTouches()) {
                 OutlinedTextField(
                     value = name,
@@ -257,6 +274,7 @@ internal fun RelockSheet(
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
+        ProtectDialogWindow()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -299,6 +317,7 @@ internal fun AppOptionsSheet(
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
+        ProtectDialogWindow()
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
@@ -397,10 +416,13 @@ private fun ProfileChoiceRow(index: Int, count: Int, title: String, subtitle: St
     }
 }
 
-/** Multi-select picker for adding apps to [profile]. */
+/**
+ * Multi-select picker for adding apps to [profile]: a full-screen page, as Material suggests for
+ * a long list with search (and a bottom sheet fights a long list over the overscroll at its end).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun AddAppsSheet(
+internal fun AddAppsScreen(
     profile: SecurityProfile,
     installedApps: List<AppItem>,
     profileOfApp: (String) -> SecurityProfile?,
@@ -409,7 +431,7 @@ internal fun AddAppsSheet(
     onDismiss: () -> Unit
 ) {
     var query by rememberSaveable { mutableStateOf("") }
-    var selected by remember { mutableStateOf(emptySet<String>()) }
+    var selected by rememberSaveable { mutableStateOf(emptySet<String>()) }
     // Only apps that aren't in any profile yet: an app lives in exactly one profile, and moving
     // it between profiles is done from the app's own options.
     val candidates = remember(installedApps, profile.packages, query) {
@@ -418,55 +440,93 @@ internal fun AddAppsSheet(
             .filter { query.isBlank() || it.label.contains(query.trim(), ignoreCase = true) }
     }
 
-    ModalBottomSheet(
+    Dialog(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.92f)
-                .rejectObscuredTouches()
-        ) {
-            SheetTitle("Add to ${profile.name}", "Apps already in a profile aren't listed") {
-                Button(onClick = { onAdd(selected) }, enabled = selected.isNotEmpty()) {
-                    Text(if (selected.isEmpty()) "Add" else "Add ${selected.size}")
-                }
-            }
-            SearchPill(query, onChange = { query = it }, modifier = Modifier.padding(horizontal = GroupInset, vertical = 8.dp))
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(start = GroupInset, end = GroupInset, top = 8.dp, bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(GroupGap)
+        ProtectDialogWindow()
+        EdgeToEdgeDialogBars()
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .systemBarsPadding()
+                    .imePadding()
+                    .rejectObscuredTouches()
             ) {
-                if (candidates.isEmpty()) {
-                    item(key = "none") {
-                        Text(
-                            text = if (query.isBlank()) "Every app is already in a profile. To move one here, tap it in the app list and pick ${profile.name}."
-                            else "No apps outside a profile match “${query.trim()}”",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(16.dp)
-                        )
-                    }
-                }
-                itemsIndexed(candidates, key = { _, app -> app.packageName }) { i, app ->
-                    val checked = app.packageName in selected
-                    GroupRow(
-                        index = i,
-                        count = candidates.size,
-                        title = app.label,
-                        subtitle = if (app.packageName in lockedApps) "Locked" else app.category.label,
-                        leading = { AppIcon(app) },
-                        interaction = Modifier.toggleable(value = checked, role = Role.Checkbox) {
-                            selected = if (it) selected + app.packageName else selected - app.packageName
+                TopAppBar(
+                    title = { Text("Add to ${profile.name}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    navigationIcon = {
+                        IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close") }
+                    },
+                    actions = {
+                        Button(
+                            onClick = { onAdd(selected) },
+                            enabled = selected.isNotEmpty(),
+                            modifier = Modifier.padding(end = 8.dp)
+                        ) {
+                            Text(if (selected.isEmpty()) "Add" else "Add ${selected.size}")
                         }
-                    ) {
-                        Checkbox(checked = checked, onCheckedChange = null)
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+                )
+                Text(
+                    text = "Apps already in a profile aren't listed",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = GroupInset + 8.dp)
+                )
+                SearchPill(query, onChange = { query = it }, modifier = Modifier.padding(horizontal = GroupInset, vertical = 12.dp))
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(start = GroupInset, end = GroupInset, top = 4.dp, bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(GroupGap)
+                ) {
+                    if (candidates.isEmpty()) {
+                        item(key = "none") {
+                            Text(
+                                text = if (query.isBlank()) "Every app is already in a profile. To move one here, tap it in the app list and pick ${profile.name}."
+                                else "No apps outside a profile match “${query.trim()}”",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(16.dp)
+                            )
+                        }
+                    }
+                    itemsIndexed(candidates, key = { _, app -> app.packageName }) { i, app ->
+                        val checked = app.packageName in selected
+                        GroupRow(
+                            index = i,
+                            count = candidates.size,
+                            title = app.label,
+                            subtitle = if (app.packageName in lockedApps) "Locked" else app.category.label,
+                            leading = { AppIcon(app) },
+                            interaction = Modifier.toggleable(value = checked, role = Role.Checkbox) {
+                                selected = if (it) selected + app.packageName else selected - app.packageName
+                            }
+                        ) {
+                            Checkbox(checked = checked, onCheckedChange = null)
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+/** A full-screen dialog draws under the system bars: give their icons the right contrast. */
+@Composable
+private fun EdgeToEdgeDialogBars() {
+    val view = LocalView.current
+    val light = MaterialTheme.colorScheme.surface.luminance() > 0.5f
+    DisposableEffect(view, light) {
+        (view.parent as? DialogWindowProvider)?.window?.let { window ->
+            WindowCompat.getInsetsController(window, window.decorView).apply {
+                isAppearanceLightStatusBars = light
+                isAppearanceLightNavigationBars = light
+            }
+        }
+        onDispose { }
     }
 }
 

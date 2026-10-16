@@ -3,11 +3,17 @@ package com.android.BioKey.feature.lock
 import android.content.Context
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import android.os.Handler
+import android.os.Looper
+import android.os.UserHandle
 import android.os.UserManager
 import android.util.Log
+import com.android.BioKey.ui.AppIcons
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
 data class CachedAppInfo(
     val packageName: String,
@@ -22,8 +28,12 @@ data class CachedAppInfo(
 object AppInfoCache {
     private const val TAG = "AppInfoCache"
 
+    /** Size of the app icon on the lock cover. */
+    const val ICON_DP = 96
+
     private val cache = ConcurrentHashMap<String, CachedAppInfo>()
     private val loader = Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-app-info").apply { isDaemon = true } }
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     fun get(packageName: String): CachedAppInfo? = cache[packageName]
 
@@ -38,6 +48,15 @@ object AppInfoCache {
         if (missing.isEmpty()) return
         loader.execute {
             for (pkg in missing) if (!cache.containsKey(pkg)) loadAndCache(appContext, appContext.packageManager, pkg)
+        }
+    }
+
+    /** Hands [pkg]'s info to [onLoaded] on the main thread, loading it in the background if needed. */
+    fun load(context: Context, pkg: String, onLoaded: (CachedAppInfo) -> Unit) {
+        val appContext = context.applicationContext
+        loader.execute {
+            val info = cache[pkg] ?: loadAndCache(appContext, appContext.packageManager, pkg) ?: return@execute
+            mainHandler.post { onLoaded(info) }
         }
     }
 
@@ -60,10 +79,14 @@ object AppInfoCache {
                 .map { BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER }
                 .getOrDefault("com.google.android.gms")
         }
-        val (label, icon) = runCatching {
+        val (label, raw, user) = runCatching {
             val info = pm.getApplicationInfo(realPkg, 0)
-            pm.getApplicationLabel(info).toString() to pm.getApplicationIcon(info)
+            Triple(pm.getApplicationLabel(info).toString(), pm.getApplicationIcon(info), null as UserHandle?)
         }.getOrNull() ?: fromOtherProfiles(context, realPkg) ?: return null
+        // Drawn once at cover size as a true circle (see [AppIcons]); a work app gets its badge after.
+        val px = (ICON_DP * context.resources.displayMetrics.density).roundToInt()
+        val round: Drawable = BitmapDrawable(context.resources, AppIcons.circle(raw, px))
+        val icon = if (user != null) pm.getUserBadgedIcon(round, user) else round
         CachedAppInfo(pkg, if (passwordManager) "Google Password Manager" else label, icon).also { cache[pkg] = it }
     } catch (e: Exception) {
         Log.w(TAG, "Couldn't load app info for $pkg: ${e.message}")
@@ -71,11 +94,11 @@ object AppInfoCache {
     }
 
     /** Apps only installed in the work profile aren't visible to [PackageManager] in the main user. */
-    private fun fromOtherProfiles(context: Context, pkg: String): Pair<String, Drawable>? = runCatching {
+    private fun fromOtherProfiles(context: Context, pkg: String): Triple<String, Drawable, UserHandle?>? = runCatching {
         val launcherApps = context.getSystemService(LauncherApps::class.java)
         val users = context.getSystemService(UserManager::class.java).userProfiles
         users.firstNotNullOfOrNull { user ->
-            launcherApps.getActivityList(pkg, user).firstOrNull()?.let { it.label.toString() to it.getBadgedIcon(0) }
+            launcherApps.getActivityList(pkg, user).firstOrNull()?.let { Triple(it.label.toString(), it.getIcon(0), user) }
         }
     }.getOrNull()
 

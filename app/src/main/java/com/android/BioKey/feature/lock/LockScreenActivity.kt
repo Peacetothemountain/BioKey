@@ -1,7 +1,5 @@
 package com.android.BioKey.feature.lock
 
-import androidx.activity.ComponentActivity
-import androidx.activity.OnBackPressedCallback
 import android.app.ActivityOptions
 import android.content.Intent
 import android.content.res.Configuration
@@ -10,10 +8,12 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.util.Log
 import android.view.MotionEvent
-import com.android.BioKey.core.security.WindowProtection
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 
 /**
@@ -118,8 +118,13 @@ class LockScreenActivity : ComponentActivity() {
         if (isSelfProtection) {
             cover.bind("BioKey", null, isBioKey = true)
         } else {
-            val cached = AppInfoCache.get(lockedPackage) ?: AppInfoCache.loadAndCache(this, packageManager, lockedPackage)
-            cover.bind(cached?.label ?: AppInfoCache.quickLabel(this, lockedPackage), cached?.icon, isBioKey = false, packageName = lockedPackage)
+            val pkg = lockedPackage
+            val cached = AppInfoCache.get(pkg)
+            cover.bind(cached?.label ?: AppInfoCache.quickLabel(this, pkg), cached?.icon, isBioKey = false)
+            // Never load on the way to the prompt: the icon follows as soon as it's ready.
+            if (cached == null) AppInfoCache.load(this, pkg) { info ->
+                if (!isFinishing && lockedPackage == pkg) cover.setIcon(info.icon)
+            }
         }
         cover.setActionsVisible(false)
     }

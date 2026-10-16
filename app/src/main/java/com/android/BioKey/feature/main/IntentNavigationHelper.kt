@@ -18,9 +18,6 @@ import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 /** Settings page for one accessibility service (Android 13+); not exposed as an SDK constant. */
 private const val ACCESSIBILITY_DETAILS_SETTINGS = "android.settings.ACCESSIBILITY_DETAILS_SETTINGS"
 
-/** [Settings.ACTION_APP_LOCK_SETTINGS] (API 37.2), as a literal for older SDKs. */
-const val SYSTEM_APP_LOCK_SETTINGS = "android.settings.APP_LOCK_SETTINGS"
-
 /**
  * Opens system settings pages, most specific page first. Leaving BioKey this way keeps the
  * owner's session and pre-authorises BioKey's own settings pages (see [LockStateTracker]).

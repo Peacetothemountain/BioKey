@@ -4,10 +4,10 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.ColorStateList
 import android.content.res.Configuration
-import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Outline
+import android.graphics.PorterDuff
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -21,18 +21,23 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.ui.graphics.toArgb
+import androidx.core.graphics.createBitmap
 import com.android.BioKey.R
 import com.android.BioKey.core.security.WindowProtection
-import com.android.BioKey.ui.brand.WordmarkView
+import com.android.BioKey.ui.brand.VineView
 
 /**
  * The lock cover, shared by [InstantShieldOverlay] (drawn the instant a locked app shows up) and
  * [LockScreenActivity] (which hosts the system prompt). Both draw this exact view with the same
  * colours as the activity's window background, so the hand-off between them is invisible.
  *
- * The locked app's icon sits in a ring over a breathing glow in the app's own colour, on BioKey's
- * constellation ([CoverBackdrop]); no text, since the icon says which app and the system prompt
- * says what to do. A small BioKey mark shows who is asking.
+ * The locked app's icon sits in a thin ring over a soft glow in the app's own colour
+ * ([CoverBackdrop]), on a background tinted with the wallpaper's Material You colours; no text,
+ * since the icon says which app and the system prompt says what to do. A small, still BioKey mark
+ * shows who is asking.
  *
  * Plain Views on purpose: no Compose start-up cost on the path between a locked app appearing and
  * the fingerprint/face prompt.
@@ -40,24 +45,25 @@ import com.android.BioKey.ui.brand.WordmarkView
 @SuppressLint("ViewConstructor")
 class LockCoverView(context: Context) : FrameLayout(context) {
 
-    /** Material You roles resolved straight from the system palette (Android 12+). */
-    class Palette(private val context: Context) {
-        private val dark = (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-            Configuration.UI_MODE_NIGHT_YES
-        private fun c(light: Int, night: Int) = context.getColor(if (dark) night else light)
+    /** Material You roles, the same dynamic scheme as BioKey's own screens (Android 12+). */
+    class Palette(context: Context) {
+        private val scheme = if (
+            (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        ) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
 
-        val surface = c(android.R.color.system_neutral1_10, android.R.color.system_neutral1_900)
-        val onSurface = c(android.R.color.system_neutral1_900, android.R.color.system_neutral1_100)
-        val onSurfaceVariant = c(android.R.color.system_neutral2_700, android.R.color.system_neutral2_200)
-        val surfaceContainer = c(android.R.color.system_neutral2_50, android.R.color.system_neutral2_800)
-        val primary = c(android.R.color.system_accent1_600, android.R.color.system_accent1_200)
-        val onPrimary = c(android.R.color.system_accent1_0, android.R.color.system_accent1_800)
-        val tertiary = c(android.R.color.system_accent3_600, android.R.color.system_accent3_200)
-        val error = if (dark) 0xFFF2B8B5.toInt() else 0xFFB3261E.toInt()
+        val surface = scheme.surface.toArgb()
+        val surfaceContainer = scheme.surfaceContainerHigh.toArgb()
+        /** The wallpaper's colour washing down from the top. */
+        val wash = scheme.primaryContainer.toArgb()
+        val primary = scheme.primary.toArgb()
+        val onPrimary = scheme.onPrimary.toArgb()
+        val tertiary = scheme.tertiary.toArgb()
+        val error = scheme.error.toArgb()
     }
 
     private companion object {
-        const val ICON_DP = 96
+        const val ICON_DP = AppInfoCache.ICON_DP
+        const val HUE_BUCKETS = 18
     }
 
     var onUnlock: (() -> Unit)? = null
@@ -69,8 +75,14 @@ class LockCoverView(context: Context) : FrameLayout(context) {
 
     private val backdrop = CoverBackdrop(context)
 
-    /** BioKey's wordmark, its vine slithering on the same clock as the home screen's. */
-    private fun wordmark() = WordmarkView(context)
+    /** BioKey's two-layer wordmark, held still: the cover is no place for motion. */
+    private fun wordmark() = FrameLayout(context).apply {
+        addView(ImageView(context).apply {
+            setImageResource(R.drawable.ic_title_logo_letters)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(VineView(context, animated = false), LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    }
 
     /** Large logo: the identity when BioKey itself is locked. */
     private val logo = wordmark().apply { visibility = GONE }
@@ -124,7 +136,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     private val identity = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
-        addView(logo, LinearLayout.LayoutParams(dp(300), dp(104)))
+        addView(logo, LinearLayout.LayoutParams(dp(280), dp(118)))
         addView(icon, LinearLayout.LayoutParams(dp(ICON_DP), dp(ICON_DP)))
         addView(status, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(36)
@@ -146,7 +158,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
             rightMargin = dp(32)
             bottomMargin = dp(96)
         })
-        addView(brandMark, LayoutParams(dp(132), dp(46), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+        addView(brandMark, LayoutParams(dp(120), dp(50), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
             bottomMargin = dp(40)
         })
         addView(actions, LayoutParams(minOf(resources.displayMetrics.widthPixels - dp(64), dp(360)), LayoutParams.WRAP_CONTENT,
@@ -183,14 +195,20 @@ class LockCoverView(context: Context) : FrameLayout(context) {
 
     private fun applyPalette() {
         val p = palette
-        setBackgroundColor(p.surface)
-        backdrop.setColors(p.primary, p.tertiary, p.surfaceContainer)
+        background = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(blend(p.surface, p.wash, 0.5f), blend(p.surface, p.wash, 0.16f), p.surface)
+        )
+        backdrop.setColors(p.primary, p.surfaceContainer)
         status.setTextColor(p.error)
         cancelButton.setTextColor(p.primary)
         cancelButton.background = ripple(Color.TRANSPARENT, p.primary)
         primaryButton.setTextColor(p.onPrimary)
         primaryButton.background = ripple(p.primary, p.onPrimary)
-        for (mark in listOf(logo, brandMark)) mark.setColors(p.primary, p.tertiary, p.surface)
+        for (mark in listOf(logo, brandMark)) {
+            (mark.getChildAt(0) as ImageView).setColorFilter(p.primary, PorterDuff.Mode.SRC_IN)
+            (mark.getChildAt(1) as VineView).setTint(p.tertiary)
+        }
     }
 
     private fun ripple(fill: Int, rippleColor: Int): Drawable {
@@ -206,15 +224,11 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         return RippleDrawable(ColorStateList.valueOf(Color.argb(alpha, Color.red(rippleColor), Color.green(rippleColor), Color.blue(rippleColor))), shape, mask)
     }
 
-    /**
-     * Shows a locked app's icon (or BioKey's logo when [isBioKey]). [packageName] seeds the
-     * constellation so both covers draw the same one; [label] is for screen readers.
-     */
-    fun bind(label: String, appIcon: Drawable?, isBioKey: Boolean, packageName: String = label) {
+    /** Shows a locked app's icon (or BioKey's logo when [isBioKey]); [label] is for screen readers. */
+    fun bind(label: String, appIcon: Drawable?, isBioKey: Boolean) {
         logo.visibility = if (isBioKey) VISIBLE else GONE
         icon.visibility = if (isBioKey) GONE else VISIBLE
         brandMark.visibility = if (isBioKey || actions.visibility == VISIBLE) GONE else VISIBLE
-        backdrop.setSeed(packageName.hashCode())
         setIcon(appIcon)
         contentDescription = if (isBioKey) "BioKey is locked" else "$label is locked"
         setStatus(null, permanentLockout = false)
@@ -234,33 +248,48 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         }
     }
 
-    /** The icon's dominant colour, vivid enough to glow; null if it has none (e.g. monochrome). */
+    /**
+     * The icon's own colour for the glow: its most prominent vivid hue (white, black and grey
+     * backgrounds don't count), so a red logo on a white tile glows red rather than a muddy
+     * average. Null if the icon has no colour (monochrome), and BioKey's own colour is used.
+     */
     private fun appColor(drawable: Drawable): Int? = runCatching {
         val sample = drawable.constantState?.newDrawable(resources)?.mutate() ?: return null
-        val bmp = Bitmap.createBitmap(12, 12, Bitmap.Config.ARGB_8888)
-        sample.setBounds(0, 0, 12, 12)
+        val n = 24
+        val bmp = createBitmap(n, n)
+        sample.setBounds(0, 0, n, n)
         sample.draw(Canvas(bmp))
-        var r = 0L
-        var g = 0L
-        var b = 0L
-        var n = 0
-        for (x in 0 until 12) for (y in 0 until 12) {
+        // Hue buckets weighted by how vivid each pixel is; then the average colour of the winner.
+        val weight = FloatArray(HUE_BUCKETS)
+        val sums = Array(HUE_BUCKETS) { FloatArray(3) }
+        val hsv = FloatArray(3)
+        for (x in 0 until n) for (y in 0 until n) {
             val c = bmp.getPixel(x, y)
             if (Color.alpha(c) < 160) continue
-            r += Color.red(c)
-            g += Color.green(c)
-            b += Color.blue(c)
-            n++
+            Color.colorToHSV(c, hsv)
+            if (hsv[1] < 0.25f || hsv[2] < 0.25f) continue
+            val bucket = (hsv[0] / 360f * HUE_BUCKETS).toInt().coerceIn(0, HUE_BUCKETS - 1)
+            val w = hsv[1] * hsv[2]
+            weight[bucket] += w
+            sums[bucket][0] += Color.red(c) * w
+            sums[bucket][1] += Color.green(c) * w
+            sums[bucket][2] += Color.blue(c) * w
         }
         bmp.recycle()
-        if (n == 0) return null
-        val hsv = FloatArray(3)
-        Color.RGBToHSV((r / n).toInt(), (g / n).toInt(), (b / n).toInt(), hsv)
-        if (hsv[1] < 0.15f) return null
-        hsv[1] = hsv[1].coerceAtLeast(0.5f)
-        hsv[2] = hsv[2].coerceIn(0.6f, 0.95f)
+        val best = weight.indices.maxBy { weight[it] }
+        if (weight[best] < n * n * 0.03f) return null
+        val s = sums[best]
+        Color.colorToHSV(Color.rgb((s[0] / weight[best]).toInt(), (s[1] / weight[best]).toInt(), (s[2] / weight[best]).toInt()), hsv)
+        hsv[1] = hsv[1].coerceIn(0.45f, 0.85f)
+        hsv[2] = hsv[2].coerceIn(0.65f, 0.95f)
         Color.HSVToColor(hsv)
     }.getOrNull()
+
+    private fun blend(a: Int, b: Int, t: Float): Int = Color.rgb(
+        (Color.red(a) + (Color.red(b) - Color.red(a)) * t).toInt(),
+        (Color.green(a) + (Color.green(b) - Color.green(a)) * t).toInt(),
+        (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * t).toInt()
+    )
 
     fun setStatus(message: String?, permanentLockout: Boolean) {
         lockoutMode = permanentLockout

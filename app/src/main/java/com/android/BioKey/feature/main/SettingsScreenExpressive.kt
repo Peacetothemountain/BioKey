@@ -1,15 +1,9 @@
 package com.android.BioKey.feature.main
 
-import android.content.Intent
 import android.widget.Toast
 import androidx.activity.BackEventCompat
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import kotlin.coroutines.cancellation.CancellationException
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -21,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
@@ -28,7 +23,6 @@ import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.NotificationsOff
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -42,12 +36,15 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
@@ -63,6 +60,7 @@ import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.Haptics
 import com.android.BioKey.ui.theme.SectionHeader
 import com.android.BioKey.ui.theme.springPress
+import kotlin.coroutines.cancellation.CancellationException
 
 
 /** One row of a settings group. */
@@ -114,12 +112,6 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
     val disclosures = rememberDisclosureGate()
     val protecting = mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.COMPATIBILITY
 
-    // Android 17 QPR2 (API 37.2) ships its own App Lock. Only the launcher may switch it on per
-    // app (LOCK_APPS), but its settings page is open to everyone.
-    val systemAppLockAvailable = remember {
-        context.packageManager.resolveActivity(Intent(SYSTEM_APP_LOCK_SETTINGS), 0) != null
-    }
-
     LifecycleResumeEffect(Unit) {
         ProtectionEngine.refresh(context)
         mode = ProtectionEngine.mode(context)
@@ -165,17 +157,6 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
                 onClick = { showRelockSheet = true }
             )
         )
-        if (systemAppLockAvailable) {
-            add(
-                SettingItem(
-                    icon = Icons.Default.Security,
-                    title = "Android App Lock",
-                    subtitle = "Android 17's built-in lock stops an app before it draws anything. Only Android can switch it on.",
-                    external = true,
-                    onClick = { IntentNavigationHelper.launchFallbackCascade(context, listOf(Intent(SYSTEM_APP_LOCK_SETTINGS))) }
-                )
-            )
-        }
     }
     val privacy = listOf(
         SettingItem(

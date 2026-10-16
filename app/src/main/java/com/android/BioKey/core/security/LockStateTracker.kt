@@ -3,14 +3,14 @@ package com.android.BioKey.core.security
 import android.os.SystemClock
 import android.util.Log
 import com.android.BioKey.core.data.LockTimeoutMode
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CopyOnWriteArraySet
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArraySet
 
 /**
  * In-memory lock session state.
@@ -41,6 +41,9 @@ object LockStateTracker {
     /** Suppresses immediate re-triggering while exiting an abandoned lock screen. */
     private const val ABANDONED_LOCK_COOLDOWN_MS = 900L
 
+    /** How long after an app left the screen its window may still flicker back during the exit animation. */
+    private const val JUST_LEFT_MS = 2_000L
+
     /** How long a successful self-protection challenge lets the user stay in BioKey's settings pages. */
     private const val SELF_PROTECTION_LEASE_MS = 120_000L
 
@@ -63,6 +66,7 @@ object LockStateTracker {
     private val sessions = ConcurrentHashMap<String, Session>()
     private val pendingLocks = ConcurrentHashMap<String, Long>()
     private val abandonedAt = ConcurrentHashMap<String, Long>()
+    private val leftAt = ConcurrentHashMap<String, Long>()
 
     @Volatile private var selfProtectionGrantedAt = 0L
     @Volatile private var selfProtectionVisitedGuardedScreen = false
@@ -150,6 +154,7 @@ object LockStateTracker {
         if (session.awaySince != 0L) return
         session.awaySince = now()
         session.hopTarget = hopTarget
+        for (pkg in aliasesOf(packageName)) leftAt[pkg] = session.awaySince
         Log.d(TAG, "$packageName left the screen (hop=$hopTarget)")
         when {
             timeoutMode == LockTimeoutMode.IMMEDIATE && hopTarget == null -> lockPackage(packageName)
@@ -179,6 +184,18 @@ object LockStateTracker {
     private fun awayAllowanceMs(timeoutMode: LockTimeoutMode, hopping: Boolean): Long {
         val grace = timeoutMode.durationMillis.coerceAtLeast(0L)
         return if (hopping) maxOf(grace, HOP_MAX_MS) else grace
+    }
+
+    /**
+     * True for a short while after [packageName] left the screen. Going Home or dismissing an app
+     * in Recents animates its window away, and Android can hand that window focus once more on
+     * the way out: during this window, such a flicker is the exit, not the app coming back.
+     */
+    fun justLeft(packageName: String): Boolean {
+        val stamp = aliasesOf(packageName).firstNotNullOfOrNull { leftAt[it] } ?: return false
+        if (now() - stamp < JUST_LEFT_MS) return true
+        for (pkg in aliasesOf(packageName)) leftAt.remove(pkg)
+        return false
     }
 
     fun isAppUnlocked(packageName: String, timeoutMode: LockTimeoutMode): Boolean {
@@ -216,6 +233,7 @@ object LockStateTracker {
         sessions.clear()
         pendingLocks.clear()
         abandonedAt.clear()
+        leftAt.clear()
         clearSelfProtection()
         if (includeOwnApp) lockOwnApp()
         Log.i(TAG, "All sessions wiped")

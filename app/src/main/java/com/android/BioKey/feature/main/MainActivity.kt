@@ -4,23 +4,21 @@ import android.content.Intent
 import android.os.Bundle
 import android.view.MotionEvent
 import android.widget.Toast
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Timer
-import androidx.compose.foundation.layout.padding
-import com.android.BioKey.ui.theme.Group
-import com.android.BioKey.ui.theme.GroupRow
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,18 +27,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.activity.ComponentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.lock.LockScreenUIExpressive
 import com.android.BioKey.feature.setup.SetupScreenExpressive
 import com.android.BioKey.ui.theme.BioKeyTheme
+import com.android.BioKey.ui.theme.Group
+import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.Haptics
 import kotlinx.coroutines.delay
 
@@ -275,6 +275,7 @@ internal fun PauseProtectionDialog(onPause: (Long?) -> Unit, onDismiss: () -> Un
         Triple(Icons.Default.PauseCircle, "Until I turn it back on", null)
     )
     ModalBottomSheet(onDismissRequest = onDismiss) {
+        ProtectDialogWindow()
         Column(Modifier.fillMaxWidth().padding(bottom = 28.dp)) {
             Text(
                 "Pause protection",

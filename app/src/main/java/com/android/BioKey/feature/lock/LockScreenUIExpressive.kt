@@ -5,7 +5,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,9 +25,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
@@ -37,7 +39,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.main.BioKeyLogo
-import com.android.BioKey.feature.main.HeaderMatrixDotsExpressive
 import com.android.BioKey.ui.theme.springPress
 
 /**
@@ -61,11 +62,8 @@ fun LockScreenUIExpressive(
             .fillMaxSize()
             .rejectObscuredTouches()
             .semantics { contentDescription = if (isBioKeyLock) "BioKey is locked" else "${appName.ifBlank { "This app" }} is locked" }
-            .background(MaterialTheme.colorScheme.surface)
+            .background(coverWash())
     ) {
-        if (isBioKeyLock) {
-            HeaderMatrixDotsExpressive(Modifier.fillMaxWidth().height(420.dp).align(Alignment.TopCenter))
-        }
 
         Column(
             modifier = Modifier
@@ -77,7 +75,7 @@ fun LockScreenUIExpressive(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             when {
-                isBioKeyLock -> BioKeyLogo(Modifier.size(280.dp, 96.dp))
+                isBioKeyLock -> BioKeyLogo(Modifier.size(280.dp, 96.dp), animated = false)
                 appIcon != null -> Image(bitmap = appIcon, contentDescription = null, modifier = Modifier.size(72.dp))
                 else -> Box(
                     Modifier
@@ -135,4 +133,12 @@ fun LockScreenUIExpressive(
             }
         }
     }
+}
+
+/** The lock cover's background: the wallpaper's colour washing down into the surface, as on [LockCoverView]. */
+@Composable
+private fun coverWash(): Brush {
+    val surface = MaterialTheme.colorScheme.surface
+    val wash = MaterialTheme.colorScheme.primaryContainer
+    return remember(surface, wash) { Brush.verticalGradient(listOf(lerp(surface, wash, 0.5f), lerp(surface, wash, 0.16f), surface)) }
 }

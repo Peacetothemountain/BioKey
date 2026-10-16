@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.IconBadge
 
@@ -115,6 +116,7 @@ private fun DisclosureSheet(disclosure: Disclosure, onAgree: () -> Unit, onDecli
         onDismissRequest = onDecline,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ) {
+        ProtectDialogWindow()
         Column(
             modifier = Modifier
                 .fillMaxWidth()

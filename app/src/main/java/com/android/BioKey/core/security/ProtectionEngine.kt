@@ -1,7 +1,10 @@
 package com.android.BioKey.core.security
 
+import android.Manifest
 import android.app.AppOpsManager
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Process
 import android.provider.Settings
 import android.util.Log
@@ -34,8 +37,17 @@ object ProtectionEngine {
 
     fun hasUsageAccess(context: Context): Boolean {
         val appOps = context.getSystemService(AppOpsManager::class.java) ?: return false
-        return appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName) ==
-            AppOpsManager.MODE_ALLOWED
+        val op = AppOpsManager.OPSTR_GET_USAGE_STATS
+        val mode = if (Build.VERSION.SDK_INT >= 36) {
+            appOps.checkOpNoThrow(op, Process.myUid(), context.packageName)
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.unsafeCheckOpNoThrow(op, Process.myUid(), context.packageName)
+        }
+        // MODE_DEFAULT (e.g. granted by a device policy) defers to the permission itself.
+        return mode == AppOpsManager.MODE_ALLOWED ||
+            (mode == AppOpsManager.MODE_DEFAULT &&
+                context.checkSelfPermission(Manifest.permission.PACKAGE_USAGE_STATS) == PackageManager.PERMISSION_GRANTED)
     }
 
     fun canDrawOverlays(context: Context): Boolean = Settings.canDrawOverlays(context)

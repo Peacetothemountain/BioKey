@@ -56,6 +56,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         /** How long a cover raised by a tap waits for the tapped app's window (cold starts). */
         private const val PREDICTION_WAIT_MS = 3_000L
 
+        /** How long a just-left app's window must stay on screen with the launcher before it counts as back. */
+        private const val EXIT_SETTLE_MS = 500L
+
         /** Stands for an app window whose owner can't be read; never locked, never a helper. */
         private const val UNIDENTIFIED_APP = "biokey:unidentified-app"
 
@@ -144,6 +147,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private val onScreenSessions = HashSet<String>()
     /** Apps that have dropped off screen, and since when, awaiting [LEAVE_CONFIRM_MS]. */
     private val pendingLeaves = HashMap<String, Long>()
+    /** Just-left apps seen on screen again alongside the launcher, and since when ([EXIT_SETTLE_MS]). */
+    private val returningSince = HashMap<String, Long>()
 
     private var imePackages: Set<String> = emptySet()
     private var systemListsRefreshedAt = 0L
@@ -155,6 +160,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     foregroundPackage = null
                     onScreenSessions.clear()
                     pendingLeaves.clear()
+                    returningSince.clear()
                     isConfirmingDeviceCredential = false
                     LockStateTracker.onScreenTurnedOff()
                 }
@@ -232,6 +238,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         mainHandler.post {
             onScreenSessions.clear()
             pendingLeaves.clear()
+            returningSince.clear()
             if (isRunning && isInteractive()) reevaluateForeground()
         }
     }
@@ -333,7 +340,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
                 // Fast path: cover a locked app before any other work.
                 val target = resolveForegroundPackage(event)
-                if (target != null && !isSystemOrOverlay(target, eventCls) && needsCover(target)) {
+                if (target != null && !isSystemOrOverlay(target, eventCls) && needsCover(target) && !isExitTransition(target)) {
                     shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
                 }
 
@@ -475,14 +482,43 @@ class BioKeyAccessibilityService : AccessibilityService() {
             AccessibilityEvent.WINDOWS_CHANGE_ACTIVE or
             AccessibilityEvent.WINDOWS_CHANGE_FOCUSED
         // A window we already know came (back) to the front, e.g. a locked app resumed from
-        // Recents: cover it now instead of waiting for its state event.
+        // Recents: cover it now instead of waiting for its state event. Only if it really is in
+        // front, though: a window can be "added" or "focused" for a moment on its way out.
         if (changes and surfaced != 0) {
             val pkg = windowPackages[event.windowId]
-            if (pkg != null && !isSystemOrOverlay(pkg, "") && !isLauncher(pkg) && isCoverableByVisibility(pkg) && needsCover(pkg)) {
+            if (pkg != null && !isSystemOrOverlay(pkg, "") && !isLauncher(pkg) && isCoverableByVisibility(pkg) &&
+                needsCover(pkg) && isFrontWindow(event.windowId) && !isExitTransition(pkg)
+            ) {
                 lock(pkg)
             }
         }
         scheduleReconcile()
+    }
+
+    private fun isFrontWindow(windowId: Int): Boolean {
+        val w = (try { windows } catch (_: Exception) { null })?.firstOrNull { it.id == windowId } ?: return false
+        return w.type == AccessibilityWindowInfo.TYPE_APPLICATION && (w.isActive || w.isFocused)
+    }
+
+    /**
+     * Going Home or dismissing an app's card in Recents animates the app's window away, and
+     * Android can hand that window focus (and send its events) once more on the way out. Right
+     * after an app left, its window turning up while the launcher is still on screen is that exit,
+     * not the app coming back. [reconcile] covers it if it stays ([EXIT_SETTLE_MS]); a real return
+     * is covered at once anyway, by the tap on its icon or card ([predictLaunch]), or because
+     * the launcher isn't on screen (switching straight back to it).
+     */
+    private fun isExitTransition(pkg: String): Boolean {
+        if (!LockStateTracker.justLeft(pkg)) return false
+        val list = try { windows } catch (_: Exception) { null } ?: return false
+        val launcherOnScreen = list.any { w ->
+            w.type == AccessibilityWindowInfo.TYPE_APPLICATION && windowPackages[w.id]?.let(::isLauncher) == true
+        }
+        if (launcherOnScreen) {
+            Log.i(TAG, "$pkg surfaced while leaving; waiting for it to settle")
+            scheduleReconcile(EXIT_SETTLE_MS)
+        }
+        return launcherOnScreen
     }
 
     private fun scheduleReconcile(delayMs: Long = RECONCILE_DELAY_MS) {
@@ -563,6 +599,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             for (pkg in visible) {
                 if (!isCoverableByVisibility(pkg) || isLauncher(pkg) || !needsCover(pkg)) continue
                 if (LockStateTracker.isRegularLockPending(pkg)) continue
+                if (pkg !in pip && !hasSettled(pkg, visible, now)) continue
                 if (pkg in pip) {
                     Log.i(TAG, "Locked app $pkg in picture-in-picture without unlock; leaving PiP")
                     performGlobalAction(GLOBAL_ACTION_HOME)
@@ -589,6 +626,25 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 onScreenSessions += pkg
             }
         }
+        returningSince.keys.retainAll(visible)
+    }
+
+    /**
+     * Whether a locked app's window is really back rather than flickering on its way out (see
+     * [isExitTransition]): a just-left app next to the launcher must stay for [EXIT_SETTLE_MS].
+     */
+    private fun hasSettled(pkg: String, visible: Set<String>, now: Long): Boolean {
+        if (!LockStateTracker.justLeft(pkg) || visible.none(::isLauncher)) {
+            returningSince.remove(pkg)
+            return true
+        }
+        val since = returningSince.getOrPut(pkg) { now }
+        if (now - since >= EXIT_SETTLE_MS) {
+            returningSince.remove(pkg)
+            return true
+        }
+        mainHandler.postDelayed({ scheduleReconcile(0L) }, EXIT_SETTLE_MS - (now - since) + 20L)
+        return false
     }
 
     /** Fallback when a window appeared without a state event: ask the window itself (an IPC). */
@@ -671,6 +727,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             }
             return
         }
+        if (isExitTransition(target)) return
         lock(target)
     }
 

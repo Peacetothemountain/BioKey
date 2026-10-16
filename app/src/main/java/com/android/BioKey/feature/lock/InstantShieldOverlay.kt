@@ -1,7 +1,7 @@
 package com.android.BioKey.feature.lock
 
-import android.content.Context
 import android.annotation.SuppressLint
+import android.content.Context
 import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
@@ -10,7 +10,6 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
 import com.android.BioKey.core.security.LockStateTracker
-import java.util.concurrent.Executors
 
 /**
  * Full-screen cover drawn the instant a locked app reaches the screen, before
@@ -34,8 +33,6 @@ class InstantShieldOverlay(
         private const val FAST_VERIFY_MS = 60L
         private const val TIMEOUT_MS = 700L
         private const val MAX_ATTEMPTS = 4
-
-        private val iconLoader = Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-shield-icons") }
 
         @SuppressLint("StaticFieldLeak")
         @Volatile
@@ -227,15 +224,12 @@ class InstantShieldOverlay(
         }
         val cached = AppInfoCache.get(target)
         if (cached != null) {
-            cover.bind(cached.label, cached.icon, isBioKey = false, packageName = target)
+            cover.bind(cached.label, cached.icon, isBioKey = false)
             return
         }
-        cover.bind(AppInfoCache.quickLabel(service, target), null, isBioKey = false, packageName = target)
-        iconLoader.execute {
-            val loaded = AppInfoCache.loadAndCache(service, service.packageManager, target) ?: return@execute
-            mainHandler.post {
-                if (isShowing && targetPackage == target) cover.bind(loaded.label, loaded.icon, isBioKey = false, packageName = target)
-            }
+        cover.bind(AppInfoCache.quickLabel(service, target), null, isBioKey = false)
+        AppInfoCache.load(service, target) { loaded ->
+            if (isShowing && targetPackage == target) cover.setIcon(loaded.icon)
         }
     }
 

@@ -59,7 +59,7 @@ What only the developer account can do:
 
 ## Android 17 App Lock
 
-Android 17 QPR2 (API 37.2) adds a native App Lock (`PackageManager.getEnableAppLockIntentForPackage`, `ApplicationInfo.isAppLockEnabled`). Turning it on for an app needs `LOCK_APPS`, which only the default launcher can hold, so BioKey can't use it directly; this was verified on a device. Where it's available, BioKey's settings link to the system App Lock page.
+Android 17 QPR2 (API 37.2) adds a native App Lock (`PackageManager.getEnableAppLockIntentForPackage`, `ApplicationInfo.isAppLockEnabled`). Turning it on for an app needs `LOCK_APPS`, which only the default launcher can hold, so BioKey can't use it directly; this was verified on a device.
 
 ## Limits
 
@@ -103,7 +103,6 @@ feature/setup      First-run setup
 feature/notification  Notification shield
 feature/tile       Quick Settings tile
 ui/theme           BioKeyTheme, system haptics, press animation
-ui/brand           The animated BioKey wordmark (vector; shared by Compose and the lock cover)
 ```
 
 ## Building

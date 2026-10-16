@@ -100,7 +100,7 @@ class DesignScreenshotTest {
             factory = {
                 com.android.BioKey.feature.lock.LockCoverView(it).apply {
                     val size = (88 * context.resources.displayMetrics.density).toInt()
-                    bind("Chase", android.graphics.drawable.BitmapDrawable(context.resources, icon("Chase", 0xFF1A73E8.toInt(), size)), isBioKey = false, packageName = "com.chase.sig.android")
+                    bind("Chase", android.graphics.drawable.BitmapDrawable(context.resources, icon("Chase", 0xFF1A73E8.toInt(), size)), isBioKey = false)
                     setActionsVisible(actions)
                 }
             },

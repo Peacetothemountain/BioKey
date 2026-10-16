@@ -8,9 +8,11 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.withInfiniteAnimationFrameMillis
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -25,69 +27,71 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
-import com.android.BioKey.ui.brand.Wordmark
-import com.android.BioKey.ui.brand.WordmarkPainter
+import com.android.BioKey.R
+import com.android.BioKey.ui.brand.VineSlither
 import com.android.BioKey.ui.theme.animationsEnabled
 
 /**
- * The BioKey [Wordmark] over its breathing aura, in the theme's colours: chrome letters in
- * primary, the vine in tertiary, so the logo follows the wallpaper palette.
+ * The two-layer BioKey wordmark over its breathing aura. Both layers are white shapes with
+ * two-tone detail in their alpha, filled with the theme: letters in primary, the
+ * fingerprint-ridge vines in tertiary, so the logo follows the wallpaper palette.
  *
- * The vine's phase and the aura are read only while drawing, so each frame redraws the logo's
- * own layer: no recomposition, no re-layout. Capped at 60 fps; stops when BioKey is off screen
- * and holds still when "Remove animations" is on.
+ * The vines slither like snakes ([VineSlither]); the letters stay still. The wave and the aura
+ * are read only while drawing, so each frame redraws the logo's own layers: no recomposition,
+ * no re-layout. Capped at 60 fps, paused off screen; still when [animated] is false (lock
+ * screens) or with "Remove animations".
  */
 @Composable
-fun BioKeyLogo(modifier: Modifier = Modifier.size(240.dp, 88.dp)) {
-    val colors = MaterialTheme.colorScheme
-    val primary = colors.primary
-    val tertiary = colors.tertiary
-    val ground = colors.surface.toArgb()
+fun BioKeyLogo(modifier: Modifier = Modifier, animated: Boolean = true) {
+    val primary = MaterialTheme.colorScheme.primary
+    val tertiary = MaterialTheme.colorScheme.tertiary
     val auraBrush = remember(primary, tertiary) {
         Brush.radialGradient(listOf(primary.copy(alpha = 0.22f), tertiary.copy(alpha = 0.09f), Color.Transparent))
     }
-    val painter = remember { WordmarkPainter() }
-    val phase = remember { mutableFloatStateOf(Wordmark.STILL_PHASE) }
-    val animate = animationsEnabled()
-    if (animate) {
+    val resources = LocalResources.current
+    val vines = remember(resources) { VineSlither(resources) }
+    val animate = animated && animationsEnabled()
+    val slither = animate && VineSlither.canAnimate
+    val phase = remember { mutableFloatStateOf(0f) }
+    if (slither) {
         LaunchedEffect(Unit) {
             var last = 0L
             while (true) {
                 withInfiniteAnimationFrameMillis { ms ->
                     if (ms - last >= 16) {
                         last = ms
-                        phase.floatValue = Wordmark.phaseAt(SystemClock.uptimeMillis())
+                        phase.floatValue = VineSlither.phaseAt(SystemClock.uptimeMillis())
                     }
                 }
             }
         }
     }
-    Box(
-        modifier.semantics {
-            contentDescription = "BioKey"
-            role = Role.Image
-        },
-        contentAlignment = Alignment.Center
-    ) {
+    Box(modifier, contentAlignment = Alignment.Center) {
         if (animate) BreathingAura(auraBrush) else Box(Modifier.fillMaxSize().background(auraBrush, CircleShape))
+        Image(
+            painter = painterResource(R.drawable.ic_title_logo_letters),
+            contentDescription = "BioKey",
+            modifier = Modifier.fillMaxHeight(),
+            contentScale = ContentScale.Fit,
+            colorFilter = ColorFilter.tint(primary)
+        )
         Spacer(
             Modifier
                 .fillMaxSize()
                 .graphicsLayer()
                 .drawBehind {
-                    val p = phase.floatValue
-                    drawIntoCanvas {
-                        painter.draw(it.nativeCanvas, size.width, size.height, p, primary.toArgb(), tertiary.toArgb(), ground)
-                    }
+                    val p = if (slither) phase.floatValue else null
+                    vines.setTint(tertiary.toArgb())
+                    drawIntoCanvas { vines.draw(it.nativeCanvas, size.width, size.height, p) }
                 }
         )
     }
