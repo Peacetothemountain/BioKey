@@ -25,6 +25,8 @@
         <package android:name="com.google.android.gms" />
         <package android:name="com.google.android.apps.credentialmanager" />
         <package android:name="com.android.credentialmanager" />
+        <!-- Settings' own labels ("Force stop", "Uninstall"...), read in the phone's language for self-protection. -->
+        <package android:name="com.android.settings" />
         <!-- Apps the user can pick to lock. -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -38,10 +40,6 @@
         <!-- BioKey's own switch on the Accessibility settings page (Android 13+). -->
         <intent>
             <action android:name="android.settings.ACCESSIBILITY_DETAILS_SETTINGS" />
-        </intent>
-        <!-- Android's own App Lock settings page (Android 17 QPR2+), linked from Settings. -->
-        <intent>
-            <action android:name="android.settings.APP_LOCK_SETTINGS" />
         </intent>
         <!-- Keyboards: an IME window must never count as leaving a locked app. -->
         <intent>

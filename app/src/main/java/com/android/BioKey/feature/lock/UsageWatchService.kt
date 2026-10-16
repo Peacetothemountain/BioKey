@@ -16,6 +16,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
@@ -48,6 +49,8 @@ class UsageWatchService : Service() {
         private const val POLL_MS = 150L
         /** Re-read a little of the past each time, so no event slips between two polls. */
         private const val OVERLAP_MS = 2_000L
+        /** How far back to look for the app already in front when the engine starts. */
+        private const val STARTUP_LOOKBACK_MS = 6 * 60 * 60_000L
 
         @Volatile
         var isRunning: Boolean = false
@@ -71,7 +74,10 @@ class UsageWatchService : Service() {
 
     /** App in front, as last reported. */
     private var foreground: String? = null
-    private var lastEventTime = 0L
+    /** Wall-clock end of the last query: each poll reads only from here (minus [OVERLAP_MS]) on. */
+    private var queriedUntil = 0L
+    /** Timestamp of the newest app-resumed event already acted on. */
+    private var handledUntil = 0L
     private var polling = false
 
     private val poll = object : Runnable {
@@ -91,14 +97,19 @@ class UsageWatchService : Service() {
                     shield.hide()
                 }
                 Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> startPolling()
+                // Usage events carry wall-clock times: after a clock change, start afresh from now.
+                Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED -> resetCursor()
             }
         }
     }
 
     private val onLockAll: () -> Unit = {
-        // A locked app may be on screen right now: re-evaluate it.
-        handler.post { foreground?.let { handleForeground(it, null) } }
+        // A locked app may be on screen right now: re-evaluate it. Not with the screen off, where
+        // nothing shows and the lock screen would only end up over the keyguard.
+        handler.post { if (isInteractive()) foreground?.let { handleForeground(it, null) } }
     }
+
+    private fun isInteractive() = getSystemService(PowerManager::class.java)?.isInteractive == true
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -122,13 +133,16 @@ class UsageWatchService : Service() {
                 addAction(Intent.ACTION_SCREEN_OFF)
                 addAction(Intent.ACTION_SCREEN_ON)
                 addAction(Intent.ACTION_USER_PRESENT)
+                addAction(Intent.ACTION_TIME_CHANGED)
+                addAction(Intent.ACTION_TIMEZONE_CHANGED)
             },
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
         LockStateTracker.addLockAllListener(onLockAll)
         ProtectionAlerts.serviceRestored(this)
-        lastEventTime = System.currentTimeMillis() - OVERLAP_MS
-        if (getSystemService(PowerManager::class.java)?.isInteractive == true) startPolling()
+        // A locked app may already be in front (after a reboot or an update): find it first.
+        coverAppAlreadyInFront()
+        if (isInteractive()) startPolling()
         Log.i(TAG, "Compatibility mode started")
     }
 
@@ -157,28 +171,51 @@ class UsageWatchService : Service() {
         handler.removeCallbacks(poll)
     }
 
-    /** Reads new app-resumed events; acts on the newest one. */
+    private fun resetCursor() {
+        val now = System.currentTimeMillis()
+        queriedUntil = now
+        handledUntil = now - OVERLAP_MS
+    }
+
+    private fun coverAppAlreadyInFront() {
+        val now = System.currentTimeMillis()
+        // Usage history survives reboots: only this boot's events say what's in front now.
+        val bootedAt = now - SystemClock.elapsedRealtime()
+        val newest = newestResume(maxOf(now - STARTUP_LOOKBACK_MS, bootedAt), now, after = 0L)
+        resetCursor()
+        if (newest != null && isInteractive()) {
+            handledUntil = maxOf(handledUntil, newest.third)
+            handleForeground(newest.first, newest.second)
+        }
+    }
+
+    /**
+     * Reads the app-resumed events since the last poll and acts on the newest. Each poll reads only
+     * the last couple of seconds, however long the user stays in one app.
+     */
     private fun checkForeground() {
         val now = System.currentTimeMillis()
-        val events = try {
-            usage.queryEvents(lastEventTime - OVERLAP_MS, now)
-        } catch (e: Exception) {
-            return
-        }
-        var newestPkg: String? = null
-        var newestClass: String? = null
-        var newestTime = lastEventTime
+        // The clock went backwards (changed by hand, or corrected): nothing would look new any more.
+        if (now < queriedUntil) resetCursor()
+        val newest = newestResume(queriedUntil - OVERLAP_MS, now, after = handledUntil)
+        queriedUntil = now
+        if (newest == null) return // No change since last time: keep what we know.
+        handledUntil = newest.third
+        handleForeground(newest.first, newest.second)
+    }
+
+    /** The newest app-resumed event in [from, to] that is later than [after]: package, class, time. */
+    private fun newestResume(from: Long, to: Long, after: Long): Triple<String, String?, Long>? {
+        val events = try { usage.queryEvents(from, to) } catch (_: Exception) { return null }
+        var newest: Triple<String, String?, Long>? = null
         val event = UsageEvents.Event()
         while (events.hasNextEvent()) {
             events.getNextEvent(event)
-            if (event.eventType != UsageEvents.Event.ACTIVITY_RESUMED || event.timeStamp <= newestTime) continue
-            newestTime = event.timeStamp
-            newestPkg = event.packageName
-            newestClass = event.className
+            if (event.eventType != UsageEvents.Event.ACTIVITY_RESUMED) continue
+            if (event.timeStamp <= after || event.timeStamp < (newest?.third ?: Long.MIN_VALUE)) continue
+            newest = Triple(event.packageName, event.className, event.timeStamp)
         }
-        if (newestPkg == null) return // No change since last time: keep what we know.
-        lastEventTime = newestTime
-        handleForeground(newestPkg, newestClass)
+        return newest
     }
 
     private fun handleForeground(pkg: String, activityClass: String?) {
