@@ -24,6 +24,15 @@ import com.android.BioKey.core.security.LockStateTracker
 class InstantShieldOverlay(
     private val service: Context,
     windowType: Int,
+    /**
+     * Keep the window on screen while hidden, fully transparent and untouchable, and show the cover
+     * by making it opaque. Android holds back an app overlay that *appears* during an app-opening
+     * animation until the animation ends; one that is already there just changes opacity, at once.
+     * A transparent, untouchable window doesn't count as covering anything, so touches reach the
+     * apps below (even ones that refuse touches through overlays). Used by compatibility mode,
+     * which only learns of a launch once that animation is under way.
+     */
+    private val keepWindowShown: Boolean = false,
     private val goHome: () -> Unit,
     private val onTimeout: (targetPackage: String, attempt: Int) -> Boolean
 ) {
@@ -48,7 +57,10 @@ class InstantShieldOverlay(
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val windowManager = service.getSystemService(WindowManager::class.java)
-    private val cover = LockCoverView(service).apply { visibility = View.GONE }
+    private val cover = LockCoverView(service).apply {
+        visibility = if (keepWindowShown) View.VISIBLE else View.GONE
+        setMotionPaused(keepWindowShown)
+    }
 
     var isShowing = false
         private set
@@ -81,7 +93,9 @@ class InstantShieldOverlay(
         WindowManager.LayoutParams.MATCH_PARENT,
         WindowManager.LayoutParams.MATCH_PARENT,
         windowType,
-        WindowManager.LayoutParams.FLAG_SECURE or
+        // Screenshot-proof while the cover shows. A window kept on screen while hidden only gets it
+        // when shown, or it could blank screenshots and recordings of everything beneath it.
+        (if (keepWindowShown) 0 else WindowManager.LayoutParams.FLAG_SECURE) or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -90,6 +104,7 @@ class InstantShieldOverlay(
         PixelFormat.TRANSLUCENT
     ).apply {
         layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        if (keepWindowShown) alpha = 0f
         windowAnimations = 0
         title = "BioKeyShield"
     }
@@ -201,6 +216,9 @@ class InstantShieldOverlay(
         }
         return try {
             cover.visibility = View.VISIBLE
+            layoutParams.alpha = 1f
+            cover.setMotionPaused(false)
+            layoutParams.flags = layoutParams.flags or WindowManager.LayoutParams.FLAG_SECURE
             layoutParams.flags = layoutParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             if (cover.isAttachedToWindow) {
                 windowManager.updateViewLayout(cover, layoutParams)
@@ -253,7 +271,13 @@ class InstantShieldOverlay(
         targetPackage = null
         if (activeInstance === this) activeInstance = null
         try {
-            cover.visibility = View.GONE
+            if (keepWindowShown) {
+                layoutParams.alpha = 0f
+                cover.setMotionPaused(true)
+                layoutParams.flags = layoutParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
+            } else {
+                cover.visibility = View.GONE
+            }
             layoutParams.flags = layoutParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             if (cover.isAttachedToWindow) windowManager.updateViewLayout(cover, layoutParams)
         } catch (e: Exception) {
