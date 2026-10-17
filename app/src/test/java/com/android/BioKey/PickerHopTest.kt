@@ -43,6 +43,21 @@ class PickerHopTest {
     }
 
     @Test
+    fun lockingTheDeviceEndsEverySessionEveryTime() {
+        LockStateTracker.onDeviceLockState(false)
+        LockStateTracker.onAppUnlocked(chat)
+        LockStateTracker.onDeviceLockState(true) // e.g. Lockdown, with the screen still on
+        assertFalse(LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.GRACE_5_MINUTES))
+
+        LockStateTracker.onDeviceLockState(false) // unlocked again
+        LockStateTracker.onAppUnlocked(chat)
+        assertTrue(LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.GRACE_5_MINUTES))
+        LockStateTracker.onDeviceLockState(true)
+        assertFalse(LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.GRACE_5_MINUTES))
+        LockStateTracker.onDeviceLockState(false)
+    }
+
+    @Test
     fun anyPhotoPickerOnTheDeviceIsAHelper() {
         install("com.vendor.gallery", Intent.ACTION_PICK, "image/*")
         install("com.vendor.camera", "android.media.action.IMAGE_CAPTURE")

@@ -1,6 +1,7 @@
 package com.android.BioKey.feature.lock
 
 import android.accessibilityservice.AccessibilityService
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -245,6 +246,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     private fun isInteractive() = getSystemService(PowerManager::class.java)?.isInteractive == true
 
+    private fun isDeviceLocked() = getSystemService(KeyguardManager::class.java)?.isDeviceLocked == true
+
     // -------------------------------------------------------------------------------------------
     // Event handling
     // -------------------------------------------------------------------------------------------
@@ -477,6 +480,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
     }
 
     private fun onWindowsChanged(event: AccessibilityEvent) {
+        // The lock screen coming up (Lockdown, a lock with the screen on) is a window change too.
+        LockStateTracker.onDeviceLockState(isDeviceLocked())
         val changes = event.windowChanges
         val surfaced = AccessibilityEvent.WINDOWS_CHANGE_ADDED or
             AccessibilityEvent.WINDOWS_CHANGE_ACTIVE or

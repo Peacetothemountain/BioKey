@@ -249,6 +249,17 @@ object LockStateTracker {
 
     fun onScreenTurnedOff() = lockAll()
 
+    @Volatile private var deviceLocked = false
+
+    /**
+     * The device's locked state, as last seen. Locking the device (screen off, screensaver, the
+     * power menu's Lockdown, a lock with the screen still on) ends every session, every time.
+     */
+    fun onDeviceLockState(locked: Boolean) {
+        if (locked && !deviceLocked) lockAll()
+        deviceLocked = locked
+    }
+
     // ---------------------------------------------------------------------------------------
     // Lock-screen launch debouncing
     // ---------------------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 package com.android.BioKey.feature.lock
 
 import android.annotation.SuppressLint
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -251,6 +252,7 @@ class UsageWatchService : Service() {
      */
     private fun checkForeground() {
         val now = System.currentTimeMillis()
+        LockStateTracker.onDeviceLockState(getSystemService(KeyguardManager::class.java)?.isDeviceLocked == true)
         // The clock went backwards (changed by hand, or corrected): nothing would look new any more.
         if (now < queriedUntil) resetCursor()
         val newest = newestResume(queriedUntil - OVERLAP_MS, now, after = handledUntil)
