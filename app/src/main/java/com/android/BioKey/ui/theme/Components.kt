@@ -36,6 +36,9 @@ import androidx.compose.ui.unit.dp
 
 /** Horizontal inset of groups from the screen edge. */
 val GroupInset = 16.dp
+
+/** Widest a list or page gets: phones use their full width, tablets and landscape stay readable. */
+val MaxContentWidth = 720.dp
 private val OuterCorner = 24.dp
 private val InnerCorner = 6.dp
 /** Gap between rows inside a group. */

@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -64,6 +66,7 @@ import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.Haptics
+import com.android.BioKey.ui.theme.MaxContentWidth
 import com.android.BioKey.ui.theme.SectionHeader
 import com.android.BioKey.ui.theme.springPress
 import kotlin.coroutines.cancellation.CancellationException
@@ -293,7 +296,11 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
     ) { padding ->
         val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            // Phones use the full width; on tablets and in landscape the page keeps a readable width.
+            modifier = Modifier
+                .fillMaxSize()
+                .wrapContentWidth()
+                .widthIn(max = MaxContentWidth),
             contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = 32.dp + navBottom)
         ) {
             item { SettingsSection("App lock", appLock) { Haptics.toggle(view, it) } }

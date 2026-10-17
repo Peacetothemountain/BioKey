@@ -102,7 +102,6 @@
             android:excludeFromRecents="true"
             android:exported="false"
             android:showWhenLocked="true"
-            android:resizeableActivity="false"
             android:supportsPictureInPicture="false"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density"
             android:theme="@style/Theme.BioKey.LockScreen" />

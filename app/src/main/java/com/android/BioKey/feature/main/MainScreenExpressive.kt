@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
@@ -97,6 +99,7 @@ import com.android.BioKey.ui.theme.GroupGap
 import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.Haptics
+import com.android.BioKey.ui.theme.MaxContentWidth
 import com.android.BioKey.ui.theme.SectionHeader
 import com.android.BioKey.ui.theme.springPress
 import kotlinx.coroutines.Dispatchers
@@ -240,7 +243,12 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         val listState = key(filter) { rememberLazyListState() }
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            // Phones use the full width; on tablets and in landscape the list keeps a readable width.
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxHeight()
+                .widthIn(max = MaxContentWidth)
+                .fillMaxWidth(),
             contentPadding = PaddingValues(bottom = 96.dp)
         ) {
             item(key = "header") {

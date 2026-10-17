@@ -90,6 +90,21 @@ class DesignScreenshotTest {
     @Test fun main() = shoot("main") { MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
     @Test fun mainOff() = shoot("main_off") { MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP, onPauseRequested = {}) }
     @Test fun settings() = shoot("settings") { SettingsScreenExpressive(onNavigateBack = {}) }
+    /** Tablets and landscape: lists keep a readable width, lock screens stay centred. */
+    @Test fun tablet() {
+        RuntimeEnvironment.setQualifiers("w900dp-h1280dp")
+        shoot("main_tablet") { MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
+    }
+
+    @Test fun landscape() {
+        RuntimeEnvironment.setQualifiers("w915dp-h412dp-land")
+        shoot("cover_land", cover(actions = true))
+        RuntimeEnvironment.setQualifiers("w915dp-h412dp-land")
+        shoot("lock_land") {
+            LockScreenUIExpressive(appName = "BioKey", appIcon = null, onUnlockClicked = {}, onCancelClicked = {}, isBioKeyLock = true)
+        }
+    }
+
     /** The whole Settings page, on a tall screen. */
     @Test fun settingsFull() {
         RuntimeEnvironment.setQualifiers("w412dp-h1900dp")
