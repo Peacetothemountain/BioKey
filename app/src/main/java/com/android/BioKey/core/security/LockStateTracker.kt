@@ -31,9 +31,10 @@ object LockStateTracker {
 
     /**
      * Longest an unlocked app stays unlocked while the user hops straight to a helper app (2FA
-     * code, email link, file picker, camera) and back. Going anywhere else ends the hop.
+     * code, email link, photo or file picker, camera) and back: long enough to browse an album for
+     * the right photo. Going anywhere else ends the hop at once.
      */
-    const val HOP_MAX_MS = 120_000L
+    const val HOP_MAX_MS = 5 * 60_000L
 
     /** Suppresses duplicate lock-screen launches from bursts of accessibility events. */
     private const val PENDING_LOCK_DEBOUNCE_MS = 1_200L

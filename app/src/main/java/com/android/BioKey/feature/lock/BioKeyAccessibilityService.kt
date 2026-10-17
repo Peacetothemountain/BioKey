@@ -653,7 +653,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         return root.packageName?.toString().also { release(root) }
     }
 
-    private fun isHopHelper(pkg: String): Boolean = ForegroundRules.isHopHelper(pkg, lastClassByPackage[pkg])
+    private fun isHopHelper(pkg: String): Boolean = ForegroundRules.isHopHelper(this, pkg, lastClassByPackage[pkg])
 
     private fun handleForeground(target: String, cls: String) {
         // BioKey's own windows (lock screen, main UI) have their own authentication.

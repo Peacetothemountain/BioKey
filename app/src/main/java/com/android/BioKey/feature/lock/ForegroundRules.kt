@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.SystemClock
+import android.provider.MediaStore
 
 /**
  * What the app in front means for sessions, shared by both detection engines (accessibility and
@@ -60,6 +61,10 @@ object ForegroundRules {
         "com.android.documentsui",
         "com.google.android.providers.media.module",
         "com.android.providers.media.module",
+        // The photo picker's own module (Android 15+), and Google Photos, which apps open to pick.
+        "com.android.photopicker",
+        "com.google.android.photopicker",
+        "com.google.android.apps.photos",
         "com.google.android.GoogleCamera",
         "com.android.camera",
         "com.android.camera2",
@@ -111,9 +116,42 @@ object ForegroundRules {
         return pkg in launchers
     }
 
+    /**
+     * Intents for picking or capturing photos, videos and files. Whatever handles them on this
+     * device (the system photo picker, Google Photos, a brand's gallery, file managers, cameras)
+     * is a helper: an app opens it mid-task and gets the result back.
+     */
+    private val PICKER_INTENTS = listOf(
+        Intent("android.provider.action.PICK_IMAGES"),
+        Intent(Intent.ACTION_GET_CONTENT).setType("image/*"),
+        Intent(Intent.ACTION_GET_CONTENT).setType("*/*"),
+        Intent(Intent.ACTION_PICK).setType("image/*"),
+        Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"),
+        Intent(MediaStore.ACTION_IMAGE_CAPTURE),
+        Intent(MediaStore.ACTION_VIDEO_CAPTURE)
+    )
+
+     private var pickers: Set<String> = emptySet()
+     private var pickersCheckedAt = 0L
+
+    /** Apps that pick or capture media and files on this device (refreshed at most every 5 min). */
+    private fun pickerApps(context: Context): Set<String> {
+        val now = SystemClock.elapsedRealtime()
+        if (pickersCheckedAt == 0L || now - pickersCheckedAt > 5 * 60_000L) {
+            pickersCheckedAt = now
+            runCatching {
+                val pm = context.packageManager
+                pickers = PICKER_INTENTS.flatMapTo(HashSet()) { intent ->
+                    pm.queryIntentActivities(intent, PackageManager.MATCH_ALL).mapNotNull { it.activityInfo?.packageName }
+                } - context.packageName
+            }
+        }
+        return pickers
+    }
+
     /** A helper app worth keeping the previous app's session for; [activityClass] spots custom tabs. */
-    fun isHopHelper(pkg: String, activityClass: String?): Boolean {
-        if (pkg in HOP_HELPER_PACKAGES) return true
+    fun isHopHelper(context: Context, pkg: String, activityClass: String?): Boolean {
+        if (pkg in HOP_HELPER_PACKAGES || pkg in pickerApps(context)) return true
         val cls = activityClass.orEmpty()
         return pkg in KNOWN_BROWSERS && (cls.contains("CustomTab", ignoreCase = true) || cls.contains("AuthTab", ignoreCase = true))
     }

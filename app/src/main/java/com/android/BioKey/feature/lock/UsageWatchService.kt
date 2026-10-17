@@ -286,7 +286,7 @@ class UsageWatchService : Service() {
         foreground = pkg
 
         if (previous != null && previous != pkg && previous != packageName && vault.isAppLocked(previous)) {
-            val hop = pkg.takeIf { !ForegroundRules.isLauncher(this, it) && ForegroundRules.isHopHelper(it, activityClass) }
+            val hop = pkg.takeIf { !ForegroundRules.isLauncher(this, it) && ForegroundRules.isHopHelper(this, it, activityClass) }
             LockStateTracker.onAppLeft(previous, vault.getTimeoutMode(previous), hop)
         }
         LockStateTracker.onForegroundChanged(pkg, vault::getTimeoutMode)

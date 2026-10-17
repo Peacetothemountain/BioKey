@@ -41,6 +41,29 @@
         <intent>
             <action android:name="android.settings.ACCESSIBILITY_DETAILS_SETTINGS" />
         </intent>
+        <!-- Photo pickers, galleries, file pickers and cameras: an app opening one mid-task (to
+             attach a photo, say) and getting the result back keeps its session. -->
+        <intent>
+            <action android:name="android.provider.action.PICK_IMAGES" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.GET_CONTENT" />
+            <data android:mimeType="*/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.PICK" />
+            <data android:mimeType="image/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT" />
+            <data android:mimeType="*/*" />
+        </intent>
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+        <intent>
+            <action android:name="android.media.action.VIDEO_CAPTURE" />
+        </intent>
         <!-- Keyboards: an IME window must never count as leaving a locked app. -->
         <intent>
             <action android:name="android.view.InputMethod" />
