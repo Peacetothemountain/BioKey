@@ -49,6 +49,9 @@ class SecurityVault private constructor(private val context: Context) {
         private const val KEY_AUTO_SORT = "auto_sort_profiles_enabled"
         private const val KEY_AUTO_SORT_EXCLUDED = "auto_sort_excluded_packages"
         private const val KEY_SELF_PROTECTION = "accessibility_self_protection_enabled"
+        /** 2: profile membership no longer implies locked; [KEY_LOCKED] holds each app's own switch. */
+        private const val KEY_MODEL_VERSION = "lock_model_version"
+        private const val MODEL_VERSION = 2
 
         /** A timed pause restored after a reboot never runs longer than this (wall clock can lie). */
         private const val MAX_RESTORED_PAUSE_MS = 60 * 60_000L
@@ -76,8 +79,12 @@ class SecurityVault private constructor(private val context: Context) {
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val lock = Any()
 
+    private val _selectedAppsFlow = MutableStateFlow<Set<String>>(emptySet())
+    /** Apps whose own lock switch is on, whether or not their profile is on. */
+    val selectedAppsFlow: StateFlow<Set<String>> = _selectedAppsFlow.asStateFlow()
+
     private val _lockedAppsFlow = MutableStateFlow<Set<String>>(emptySet())
-    /** Every locked package, including those in profiles. */
+    /** Apps actually locked: their own switch is on and their profile, if any, is on. */
     val lockedAppsFlow: StateFlow<Set<String>> = _lockedAppsFlow.asStateFlow()
 
     private val _profilesFlow = MutableStateFlow<List<SecurityProfile>>(emptyList())
@@ -156,24 +163,23 @@ class SecurityVault private constructor(private val context: Context) {
     // ---------------------------------------------------------------------------------------
 
     /**
-     * Applies a change to the locked set and profiles, restores the invariants, then reacts to
+     * Applies a change to the app switches and profiles, restores the invariants, then reacts to
      * what actually changed: apps that just became locked lose any session, apps that just
      * stopped being locked get their notifications back.
      */
-    private fun mutate(change: (locked: MutableSet<String>, profiles: MutableList<SecurityProfile>) -> Unit) {
+    private fun mutate(change: (selected: MutableSet<String>, profiles: MutableList<SecurityProfile>) -> Unit) {
         synchronized(lock) {
             val before = _lockedAppsFlow.value
-            val locked = before.toMutableSet()
+            val selected = _selectedAppsFlow.value.toMutableSet()
             val profiles = _profilesFlow.value.toMutableList()
-            change(locked, profiles)
+            change(selected, profiles)
 
-            val seen = HashSet<String>()
-            val cleanProfiles = profiles.map { p ->
-                p.copy(packages = expand(p.packages).filterTo(HashSet()) { seen.add(it) })
-            }
-            locked += seen
+            val cleanProfiles = cleanProfiles(profiles)
+            val clean = expand(selected)
+            val locked = effectiveLocks(clean, cleanProfiles)
 
             _profilesFlow.value = cleanProfiles
+            _selectedAppsFlow.value = clean
             _lockedAppsFlow.value = locked
             rebuildProfileTimeouts()
 
@@ -195,25 +201,22 @@ class SecurityVault private constructor(private val context: Context) {
         if (i >= 0) this[i] = transform(this[i])
     }
 
-    /** Locks or unlocks an app. Unlocking also takes it out of its profile. */
+    /** An app's own lock switch. It stays in its profile either way. */
     fun setAppLock(packageName: String, locked: Boolean) {
         val targets = aliasesOf(packageName)
-        mutate { lockedSet, profiles ->
-            if (locked) {
-                lockedSet += targets
-            } else {
-                lockedSet -= targets
-                profiles.removePackages(targets)
-            }
-        }
-        synchronized(lock) { if (locked) autoSortExcluded -= targets else autoSortExcluded += targets }
+        mutate { selected, _ -> if (locked) selected += targets else selected -= targets }
     }
 
-    /** Puts a locked app in [profileId], or in no profile when null. The app stays locked either way. */
+    /** A profile's own switch: off, none of its apps are locked; on, each follows its own switch. */
+    fun setProfileEnabled(profileId: String, enabled: Boolean) {
+        mutate { _, profiles -> profiles.update(profileId) { it.copy(enabled = enabled) } }
+    }
+
+    /** Puts an app in [profileId], or in no profile when null, and switches its lock on. */
     fun moveAppToProfile(packageName: String, profileId: String?) {
         val targets = aliasesOf(packageName)
-        mutate { lockedSet, profiles ->
-            lockedSet += targets
+        mutate { selected, profiles ->
+            selected += targets
             profiles.removePackages(targets)
             if (profileId != null) profiles.update(profileId) { it.copy(packages = it.packages + targets) }
         }
@@ -221,11 +224,11 @@ class SecurityVault private constructor(private val context: Context) {
         synchronized(lock) { if (profileId == null) autoSortExcluded += targets else autoSortExcluded -= targets }
     }
 
-    /** Adds apps to a profile, moving them out of any other one. They become locked. */
+    /** Adds apps to a profile, moving them out of any other one, and switches their locks on. */
     fun addAppsToProfile(profileId: String, packages: Collection<String>) {
         val targets = expand(packages)
-        mutate { lockedSet, profiles ->
-            lockedSet += targets
+        mutate { selected, profiles ->
+            selected += targets
             profiles.removePackages(targets)
             profiles.update(profileId) { it.copy(packages = it.packages + targets) }
         }
@@ -255,15 +258,15 @@ class SecurityVault private constructor(private val context: Context) {
         }
     }
 
-    /** Deletes a profile. Its apps stay locked and use the default re-lock delay. */
+    /** Deletes a profile. Its apps keep their own switches and use the default re-lock delay. */
     fun deleteProfile(profileId: String) {
         mutate { _, profiles -> profiles.removeAll { it.id == profileId } }
     }
 
     fun onPackageUninstalled(packageName: String) {
         val targets = aliasesOf(packageName)
-        mutate { lockedSet, profiles ->
-            lockedSet -= targets
+        mutate { selected, profiles ->
+            selected -= targets
             profiles.removePackages(targets)
         }
         synchronized(lock) { autoSortExcluded -= targets }
@@ -307,9 +310,9 @@ class SecurityVault private constructor(private val context: Context) {
             }
         }
         if (assignments.isEmpty()) return
-        mutate { lockedSet, profiles ->
+        mutate { selected, profiles ->
             for ((profileId, pkgs) in assignments) {
-                lockedSet += pkgs
+                selected += pkgs
                 profiles.update(profileId) { it.copy(packages = it.packages + pkgs) }
             }
         }
@@ -391,6 +394,18 @@ class SecurityVault private constructor(private val context: Context) {
     // Persistence
     // ---------------------------------------------------------------------------------------
 
+    /** Profile memberships expanded to aliases, each app in at most one profile (the first). */
+    private fun cleanProfiles(profiles: List<SecurityProfile>): List<SecurityProfile> {
+        val seen = HashSet<String>()
+        return profiles.map { p -> p.copy(packages = expand(p.packages).filterTo(HashSet()) { seen.add(it) }) }
+    }
+
+    /** Switched-on apps whose profile, if they have one, is on. */
+    private fun effectiveLocks(selected: Set<String>, profiles: List<SecurityProfile>): Set<String> {
+        val off = profiles.filterNot { it.enabled }.flatMapTo(HashSet()) { it.packages }
+        return selected.filterTo(HashSet()) { it !in off }
+    }
+
     private fun rebuildProfileTimeouts() {
         profileTimeouts = buildMap { for (p in _profilesFlow.value) for (pkg in p.packages) put(pkg, p.timeoutMode) }
     }
@@ -403,9 +418,15 @@ class SecurityVault private constructor(private val context: Context) {
             }.getOrNull()
         } ?: SecurityProfile.DEFAULTS
         // Enforce the invariants on whatever was stored.
-        val seen = HashSet<String>()
-        _profilesFlow.value = profiles.map { p -> p.copy(packages = expand(p.packages).filterTo(HashSet()) { seen.add(it) }) }
-        _lockedAppsFlow.value = expand(prefs.getStringSet(KEY_LOCKED, emptySet()).orEmpty()) + seen
+        val clean = cleanProfiles(profiles)
+        var selected = expand(prefs.getStringSet(KEY_LOCKED, emptySet()).orEmpty())
+        // Before version 2 every app in a profile was locked: keep each of them switched on.
+        val migrating = prefs.getInt(KEY_MODEL_VERSION, 1) < MODEL_VERSION
+        if (migrating) selected = selected + clean.flatMap { it.packages }
+        _profilesFlow.value = clean
+        _selectedAppsFlow.value = selected
+        _lockedAppsFlow.value = effectiveLocks(selected, clean)
+        if (migrating) persist()
         autoSortExcluded += prefs.getStringSet(KEY_AUTO_SORT_EXCLUDED, emptySet()).orEmpty()
         rebuildProfileTimeouts()
 
@@ -439,7 +460,7 @@ class SecurityVault private constructor(private val context: Context) {
 
     /** Snapshot now, write on the vault's own thread. */
     private fun persist() {
-        val locked = _lockedAppsFlow.value
+        val selected = _selectedAppsFlow.value
         val excluded = synchronized(lock) { autoSortExcluded.toSet() }
         val profilesJson = JSONArray().apply { _profilesFlow.value.forEach { put(it.toJson()) } }.toString()
         val global = _globalLockEnabledFlow.value
@@ -451,7 +472,8 @@ class SecurityVault private constructor(private val context: Context) {
         val autoSort = _autoSortProfilesFlow.value
         io.execute {
             prefs.edit()
-                .putStringSet(KEY_LOCKED, locked)
+                .putStringSet(KEY_LOCKED, selected)
+                .putInt(KEY_MODEL_VERSION, MODEL_VERSION)
                 .putStringSet(KEY_AUTO_SORT_EXCLUDED, excluded)
                 .putString(KEY_PROFILES_JSON, profilesJson)
                 .putBoolean(KEY_GLOBAL, global)

@@ -19,7 +19,7 @@ An Android app lock modelled on Android 17's own App Lock: the apps you choose o
 
 | Feature | What it does |
 |---|---|
-| **Profiles** | Group apps (Finance, Social, Work, or your own) with their own re-lock delay. Each profile is edited from its own page. An app lives in at most one profile. Optional auto-sort puts recognised apps into the built-in profiles. |
+| **Profiles** | Group apps (Finance, Social, Work, or your own) with their own re-lock delay and their own on/off switch. An app is locked when its own switch is on and its profile is on; switching either off never takes it out of the profile. Each profile is edited from its own page. An app lives in at most one profile. Optional auto-sort puts recognised apps into the built-in profiles. |
 | **Notification shield** | Optional. A locked app's notifications are snoozed and replaced with "N hidden notifications" until you unlock it; tapping the stand-in unlocks and opens the original. Calls, alarms, media and navigation always show. |
 | **BioKey locks itself** | BioKey's own screens need authentication and lock again after 3 minutes of inactivity. |
 | **Self-protection** | Optional (off by default), accessibility engine only. BioKey's App info page (force stop, uninstall, clear storage), its accessibility switch, notification access and the uninstall dialog require authentication. Pages you open from inside BioKey are pre-authorised. |

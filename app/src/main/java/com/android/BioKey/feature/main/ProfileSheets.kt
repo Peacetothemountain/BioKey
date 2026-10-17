@@ -334,7 +334,11 @@ internal fun AppOptionsSheet(
                     Text(app.label, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = if (isLocked) (currentProfile?.timeoutMode ?: defaultTimeout).relockPhrase else "Not locked",
+                        text = when {
+                            !isLocked -> "Not locked"
+                            currentProfile?.enabled == false -> "Not locked while ${currentProfile.name} is off"
+                            else -> (currentProfile?.timeoutMode ?: defaultTimeout).relockPhrase
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -362,7 +366,7 @@ internal fun AppOptionsSheet(
                     title = "No profile",
                     subtitle = defaultTimeout.relockPhrase + " (default)",
                     iconKey = "lock",
-                    selected = isLocked && currentProfile == null,
+                    selected = currentProfile == null,
                     onClick = { onMoveToProfile(null) }
                 )
             }
@@ -371,9 +375,9 @@ internal fun AppOptionsSheet(
                     index = i + 1,
                     count = count,
                     title = profile.name,
-                    subtitle = profile.timeoutMode.relockPhrase,
+                    subtitle = if (profile.enabled) profile.timeoutMode.relockPhrase else "Off · its apps aren't locked",
                     iconKey = profile.iconKey,
-                    selected = isLocked && currentProfile?.id == profile.id,
+                    selected = currentProfile?.id == profile.id,
                     onClick = { onMoveToProfile(profile.id) }
                 )
             }
@@ -390,7 +394,7 @@ internal fun AppOptionsSheet(
                     )
                 }
                 Text(
-                    text = "Choosing a profile locks the app and uses that profile's re-lock delay.",
+                    text = "Choosing a profile turns the app's lock on and uses that profile's re-lock delay. Turning the lock off keeps it in its profile.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = GroupInset + 16.dp, end = GroupInset + 16.dp, top = 12.dp)

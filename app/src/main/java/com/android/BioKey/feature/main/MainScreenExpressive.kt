@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -125,6 +126,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
 
+    val selectedApps by vault.selectedAppsFlow.collectAsStateWithLifecycle()
     val lockedApps by vault.lockedAppsFlow.collectAsStateWithLifecycle()
     val globalLockEnabled by vault.globalLockEnabledFlow.collectAsStateWithLifecycle()
     val pausedUntil by vault.pausedUntilFlow.collectAsStateWithLifecycle()
@@ -181,7 +183,10 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         HashMap<String, SecurityProfile>().apply { for (p in profiles) for (pkg in p.packages) put(pkg, p) }
     }
     fun profileOf(pkg: String) = packageAliases(pkg).firstNotNullOfOrNull { profileByPackage[it] }
-    fun isLocked(pkg: String) = packageAliases(pkg).any { it in lockedApps } || profileOf(pkg) != null
+    /** The app's own lock switch. */
+    fun isOn(pkg: String) = packageAliases(pkg).any { it in selectedApps }
+    /** Actually locked: switched on, and its profile (if any) is on too. */
+    fun isLocked(pkg: String) = packageAliases(pkg).any { it in lockedApps }
 
 
     BackHandler(enabled = filter != FILTER_ALL && !showSettings) { filter = FILTER_ALL }
@@ -192,26 +197,22 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                 (searchQuery.isBlank() || app.label.contains(searchQuery.trim(), ignoreCase = true))
         }
     }
-    val (lockedShown, unlockedShown) = remember(matching, lockedApps, profiles) { matching.partition { isLocked(it.packageName) } }
+    val (lockedShown, unlockedShown) = remember(matching, selectedApps, profiles) { matching.partition { isOn(it.packageName) } }
     val appCountByProfile = remember(installedApps, profiles) {
         installedApps.mapNotNull { profileOf(it.packageName)?.id }.groupingBy { it }.eachCount()
     }
     val lockedCount = remember(installedApps, lockedApps, profiles) { installedApps.count { isLocked(it.packageName) } }
     val look = protectionLook(mode, globalLockEnabled, pausedUntil, lockedCount, defaultTimeout)
 
+    /** The app's own switch; it stays in its profile either way. */
     fun toggleLock(app: AppItem, locked: Boolean) {
         Haptics.toggle(view, locked)
-        val formerProfile = profileOf(app.packageName)
         vault.setAppLock(app.packageName, locked)
         if (!locked) {
             scope.launch {
                 snackbar.currentSnackbarData?.dismiss()
-                val text = if (formerProfile != null) "${app.label} unlocked and removed from ${formerProfile.name}" else "${app.label} unlocked"
-                val result = snackbar.showSnackbar(text, actionLabel = "Undo", duration = SnackbarDuration.Short)
-                if (result == SnackbarResult.ActionPerformed) {
-                    if (formerProfile != null) vault.moveAppToProfile(app.packageName, formerProfile.id)
-                    else vault.setAppLock(app.packageName, true)
-                }
+                val result = snackbar.showSnackbar("${app.label} unlocked", actionLabel = "Undo", duration = SnackbarDuration.Short)
+                if (result == SnackbarResult.ActionPerformed) vault.setAppLock(app.packageName, true)
             }
         }
     }
@@ -226,6 +227,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                 title = app.label,
                 subtitle = buildString {
                     append(profile?.name ?: app.category.label)
+                    if (profile != null && !profile.enabled) append(" · off")
                     if (app.isWorkProfile) append(" · Work")
                 },
                 subtitleColor = if (profile != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -236,7 +238,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                     .padding(horizontal = GroupInset)
                     .padding(top = if (i == 0) 0.dp else GroupGap)
             ) {
-                Switch(checked = isLocked(app.packageName), onCheckedChange = { toggleLock(app, it) })
+                Switch(checked = isOn(app.packageName), onCheckedChange = { toggleLock(app, it) })
             }
         }
     }
@@ -279,7 +281,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                         }
                         items(profiles, key = { it.id }) { profile ->
                             FilterChoice(
-                                label = "${profile.name} · ${appCountByProfile[profile.id] ?: 0}",
+                                label = "${profile.name} · " + if (profile.enabled) "${appCountByProfile[profile.id] ?: 0}" else "off",
                                 icon = profileIcon(profile.iconKey),
                                 selected = filter == profile.id
                             ) { filter = profile.id }
@@ -302,6 +304,10 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                     ProfileCard(
                         profile = currentProfile,
                         appCount = appCountByProfile[currentProfile.id] ?: 0,
+                        onEnabledChange = { on ->
+                            Haptics.toggle(view, on)
+                            vault.setProfileEnabled(currentProfile.id, on)
+                        },
                         onEdit = { showEditProfile = true },
                         onRelock = { showRelock = true },
                         onAddApps = { showAddApps = true }
@@ -390,7 +396,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         } else {
             AppOptionsSheet(
                 app = app,
-                isLocked = isLocked(pkg),
+                isLocked = isOn(pkg),
                 currentProfile = profileOf(pkg),
                 profiles = profiles,
                 defaultTimeout = defaultTimeout,
@@ -663,6 +669,7 @@ private fun FilterChoice(label: String, icon: ImageVector, selected: Boolean, on
 private fun ProfileCard(
     profile: SecurityProfile,
     appCount: Int,
+    onEnabledChange: (Boolean) -> Unit,
     onEdit: () -> Unit,
     onRelock: () -> Unit,
     onAddApps: () -> Unit
@@ -682,7 +689,8 @@ private fun ProfileCard(
                 Column(Modifier.weight(1f)) {
                     Text(profile.name, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
-                        text = (if (appCount == 1) "1 app" else "$appCount apps") + " · " + profile.timeoutMode.relockPhrase.lowercase(),
+                        text = (if (appCount == 1) "1 app" else "$appCount apps") + " · " +
+                            if (profile.enabled) profile.timeoutMode.relockPhrase.lowercase() else "off",
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
@@ -690,7 +698,27 @@ private fun ProfileCard(
                     Icon(Icons.Default.Edit, contentDescription = "Rename, change icon or delete ${profile.name}")
                 }
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
+            // The profile's own switch: off pauses every app in it; each keeps its own setting.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .toggleable(value = profile.enabled, role = Role.Switch, onValueChange = onEnabledChange)
+                    .padding(horizontal = 4.dp, vertical = 8.dp)
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Lock apps in ${profile.name}", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = if (profile.enabled) "Each app follows its own switch" else "Off: none of its apps are locked",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(checked = profile.enabled, onCheckedChange = null)
+            }
+            Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onAddApps, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
