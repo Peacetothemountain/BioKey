@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.GppMaybe
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PauseCircle
+import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Warning
@@ -396,6 +397,16 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                 defaultTimeout = defaultTimeout,
                 onLockedChange = { toggleLock(app, it) },
                 onMoveToProfile = { profileId -> vault.moveAppToProfile(pkg, profileId) },
+                onRemoveFromProfile = {
+                    val former = profileOf(pkg)
+                    vault.removeAppFromProfile(pkg)
+                    optionsForPackage = null
+                    if (former != null) {
+                        BioKeyMessages.show("Removed ${app.label} from ${former.name}", Icons.Default.RemoveCircleOutline, actionLabel = "Undo") {
+                            vault.moveAppToProfile(pkg, former.id, switchOn = false)
+                        }
+                    }
+                },
                 onNewProfile = {
                     newProfileForPackage = pkg
                     optionsForPackage = null

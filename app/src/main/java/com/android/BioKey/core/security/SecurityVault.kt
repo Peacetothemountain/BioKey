@@ -214,17 +214,23 @@ class SecurityVault private constructor(private val context: Context) {
         mutate { _, profiles -> profiles.update(profileId) { it.copy(enabled = enabled) } }
     }
 
-    /** Puts an app in [profileId], or in no profile when null, and switches its lock on. */
-    fun moveAppToProfile(packageName: String, profileId: String?) {
+    /**
+     * Puts an app in [profileId], switching its lock on (unless [switchOn] is false, as when undoing
+     * a removal), or takes it out of its profile when null, leaving its lock switch as it is.
+     */
+    fun moveAppToProfile(packageName: String, profileId: String?, switchOn: Boolean = true) {
         val targets = aliasesOf(packageName)
         mutate { selected, profiles ->
-            selected += targets
+            if (profileId != null && switchOn) selected += targets
             profiles.removePackages(targets)
             if (profileId != null) profiles.update(profileId) { it.copy(packages = it.packages + targets) }
         }
         // Taken out of a profile by hand: auto-sort must not put it straight back.
         synchronized(lock) { if (profileId == null) autoSortExcluded += targets else autoSortExcluded -= targets }
     }
+
+    /** Takes an app out of its profile. Its own lock switch stays as it is; auto-sort leaves it alone. */
+    fun removeAppFromProfile(packageName: String) = moveAppToProfile(packageName, null)
 
     /** Adds apps to a profile, moving them out of any other one, and switches their locks on. */
     fun addAppsToProfile(profileId: String, packages: Collection<String>) {

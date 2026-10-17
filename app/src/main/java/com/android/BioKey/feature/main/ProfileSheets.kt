@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Photo
+import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -313,6 +314,7 @@ internal fun AppOptionsSheet(
     defaultTimeout: LockTimeoutMode,
     onLockedChange: (Boolean) -> Unit,
     onMoveToProfile: (String?) -> Unit,
+    onRemoveFromProfile: () -> Unit,
     onNewProfile: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -357,6 +359,21 @@ internal fun AppOptionsSheet(
                     }
                 }
                 SectionHeader("Profile")
+            }
+            if (currentProfile != null) {
+                item(key = "remove") {
+                    Group(count = 1) {
+                        GroupRow(
+                            index = 0,
+                            count = 1,
+                            title = "Remove from ${currentProfile.name}",
+                            subtitle = if (isLocked) "Stays locked, with your default re-lock delay" else "Stays unlocked",
+                            icon = Icons.Default.RemoveCircleOutline,
+                            onClick = onRemoveFromProfile
+                        )
+                    }
+                    Spacer(Modifier.height(16.dp))
+                }
             }
             val count = profiles.size + 2
             item {
