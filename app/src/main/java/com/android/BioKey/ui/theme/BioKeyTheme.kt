@@ -11,7 +11,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MaterialExpressiveTheme
+import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -50,8 +51,8 @@ fun BioKeyTheme(content: @Composable () -> Unit) {
     val colors = remember(context, dark) {
         if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
     }
-    // Switch to MaterialExpressiveTheme (expressive spring motion) once material3 1.5 is stable.
-    MaterialTheme(colorScheme = colors) {
+    // Material 3 Expressive: the dynamic palette with expressive spring motion for components.
+    MaterialExpressiveTheme(colorScheme = colors, motionScheme = MotionScheme.expressive()) {
         Surface(color = colors.surface, contentColor = colors.onSurface) {
             Box(Modifier.fillMaxSize()) {
                 content()
