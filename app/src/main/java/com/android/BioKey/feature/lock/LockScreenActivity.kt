@@ -10,6 +10,7 @@ import android.util.Log
 import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
@@ -218,6 +219,7 @@ class LockScreenActivity : ComponentActivity() {
             packageName = pkg,
             onSuccess = { onAuthenticated(pkg, selfProtection) },
             onError = { code, message ->
+                if (!SecurityEngine.isUserCancel(code)) DiagnosticLog.log("Unlock prompt for $pkg: error $code")
                 isPermanentLockout = code == SecurityEngine.ERROR_LOCKOUT_PERMANENT
                 val text = when {
                     SecurityEngine.isUserCancel(code) -> null
@@ -293,6 +295,7 @@ class LockScreenActivity : ComponentActivity() {
 
     /** Bookkeeping when the user walks away from the lock without authenticating. */
     private fun abandon() {
+        DiagnosticLog.log("Lock screen for $lockedPackage left without unlocking")
         LockStateTracker.markLockAbandoned(lockedPackage)
         if (isSelfProtection) LockStateTracker.clearSelfProtection()
     }

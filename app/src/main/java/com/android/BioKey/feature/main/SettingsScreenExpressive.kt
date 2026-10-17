@@ -20,8 +20,12 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -34,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +55,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.rejectObscuredTouches
@@ -214,6 +220,45 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
         )
     )
 
+    val backupActions = rememberBackupActions()
+    val backup = listOf(
+        SettingItem(
+            icon = Icons.Default.Save,
+            title = "Back up settings",
+            subtitle = "Saves your locked apps, profiles and settings to a file protected by a password",
+            onClick = backupActions.backUp
+        ),
+        SettingItem(
+            icon = Icons.Default.Restore,
+            title = "Restore from a backup",
+            subtitle = "Replaces your locked apps, profiles and settings with a backup's, after a new phone or a reinstall",
+            onClick = backupActions.restore
+        )
+    )
+
+    var logEnabled by remember { mutableStateOf(DiagnosticLog.isEnabled()) }
+    var showLog by remember { mutableStateOf(false) }
+    val logVersion by DiagnosticLog.version.collectAsState()
+    val logCount = remember(logVersion) { DiagnosticLog.entries().size }
+    val diagnostics = listOf(
+        SettingItem(
+            icon = Icons.Default.BugReport,
+            title = "Diagnostic log",
+            subtitle = "Keeps BioKey's recent lock decisions on this phone, to help track down a problem",
+            checked = logEnabled,
+            onChange = { on ->
+                DiagnosticLog.setEnabled(context, on)
+                logEnabled = on
+            }
+        ),
+        SettingItem(
+            icon = Icons.Default.Description,
+            title = "View diagnostic log",
+            subtitle = if (logCount == 0) "Nothing recorded yet" else "$logCount entries from the last 3 days · share it when reporting a problem",
+            onClick = { showLog = true }
+        )
+    )
+
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
     Scaffold(
         modifier = Modifier
@@ -254,6 +299,8 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
             item { SettingsSection("App lock", appLock) { Haptics.toggle(view, it) } }
             item { SettingsSection("Privacy & protection", privacy) { Haptics.toggle(view, it) } }
             item { SettingsSection("Profiles", profiles) { Haptics.toggle(view, it) } }
+            item { SettingsSection("Backup", backup) { Haptics.toggle(view, it) } }
+            item { SettingsSection("Diagnostics", diagnostics) { Haptics.toggle(view, it) } }
             item {
                 Text(
                     text = "BioKey has no internet access. Nothing it sees leaves this phone.",
@@ -264,6 +311,8 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
             }
         }
     }
+
+    if (showLog) DiagnosticLogScreen(onDismiss = { showLog = false })
 
     if (showRelockSheet) {
         RelockSheet(

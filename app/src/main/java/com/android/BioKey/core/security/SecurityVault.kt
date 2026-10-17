@@ -6,6 +6,7 @@ import android.os.SystemClock
 import com.android.BioKey.core.data.AppClassifier
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.SecurityProfile
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.InstantShieldOverlay
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONArray
+import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.Executors
 
@@ -185,7 +187,7 @@ class SecurityVault private constructor(private val context: Context) {
 
             val newlyLocked = locked - before
             val newlyUnlocked = before - locked
-            newlyLocked.forEach(LockStateTracker::lockPackage)
+            newlyLocked.forEach { LockStateTracker.lockPackage(it, "lock switched on") }
             if (newlyLocked.isNotEmpty()) AppInfoCache.preWarm(context, newlyLocked)
             if (newlyUnlocked.isNotEmpty()) BioKeyNotificationShieldService.restoreNotificationsForPackages(newlyUnlocked)
             persist()
@@ -274,6 +276,50 @@ class SecurityVault private constructor(private val context: Context) {
     }
 
     // ---------------------------------------------------------------------------------------
+    // Backup ([VaultBackup])
+    // ---------------------------------------------------------------------------------------
+
+    /** Everything a backup holds: app switches, profiles and preferences; never sessions or a pause. */
+    fun exportState(): JSONObject = synchronized(lock) {
+        JSONObject()
+            .put("selected", JSONArray(_selectedAppsFlow.value.sorted()))
+            .put("profiles", JSONArray().apply { _profilesFlow.value.forEach { put(it.toJson()) } })
+            .put("defaultTimeout", _timeoutModeFlow.value.name)
+            .put("notificationShield", _notificationShieldFlow.value)
+            .put("selfProtection", _accessibilitySelfProtectionFlow.value)
+            .put("autoSort", _autoSortProfilesFlow.value)
+            .put("autoSortExcluded", JSONArray(autoSortExcluded.sorted()))
+    }
+
+    /** Replaces app switches, profiles and preferences with a backup's ([exportState]). */
+    fun restoreState(state: JSONObject) {
+        fun strings(key: String): Set<String> {
+            val array = state.optJSONArray(key) ?: return emptySet()
+            return buildSet { for (i in 0 until array.length()) add(array.getString(i)) }
+        }
+        val profiles = state.optJSONArray("profiles")?.let { array -> List(array.length()) { SecurityProfile.fromJson(array.getJSONObject(it)) } }
+            ?: throw IllegalArgumentException("No profiles in backup")
+        val selected = strings("selected")
+        mutate { sel, profs ->
+            sel.clear()
+            sel += selected
+            profs.clear()
+            profs += profiles
+        }
+        synchronized(lock) {
+            autoSortExcluded.clear()
+            autoSortExcluded += strings("autoSortExcluded")
+            _timeoutModeFlow.value = LockTimeoutMode.fromName(state.optString("defaultTimeout"))
+            _notificationShieldFlow.value = state.optBoolean("notificationShield", true)
+            _accessibilitySelfProtectionFlow.value = state.optBoolean("selfProtection", false)
+            _autoSortProfilesFlow.value = state.optBoolean("autoSort", true)
+            rebuildProfileTimeouts()
+            persist()
+        }
+        DiagnosticLog.log("Settings restored from a backup")
+    }
+
+    // ---------------------------------------------------------------------------------------
     // Auto-sort
     // ---------------------------------------------------------------------------------------
 
@@ -328,6 +374,7 @@ class SecurityVault private constructor(private val context: Context) {
 
     /** Pauses protection, for [durationMillis] or until resumed when null. */
     fun pauseProtection(durationMillis: Long?): Boolean {
+        DiagnosticLog.log(if (durationMillis == null) "Protection paused until turned back on" else "Protection paused for ${durationMillis / 60_000} min")
         synchronized(lock) {
             _globalLockEnabledFlow.value = false
             _pausedUntilFlow.value = durationMillis?.let { System.currentTimeMillis() + it } ?: 0L
@@ -351,7 +398,7 @@ class SecurityVault private constructor(private val context: Context) {
             persist()
         }
         // Nothing unlocked during the pause carries over.
-        LockStateTracker.lockAll(includeOwnApp = false)
+        LockStateTracker.lockAll(includeOwnApp = false, reason = "protection resumed")
         BioKeyTileService.requestTileUpdate(context)
     }
 

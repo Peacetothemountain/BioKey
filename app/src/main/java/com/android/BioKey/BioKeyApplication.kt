@@ -10,6 +10,7 @@ import android.os.UserManager
 import android.security.advancedprotection.AdvancedProtectionManager
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.AppInfoCache
@@ -59,6 +60,7 @@ class BioKeyApplication : Application() {
     }
 
     private fun initCredentialProtectedComponents() {
+        DiagnosticLog.init(this)
         val app = this
         initExecutor.execute {
             try {

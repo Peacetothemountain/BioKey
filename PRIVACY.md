@@ -10,7 +10,8 @@ This policy explains what BioKey can see on your phone and what it does with it.
 - **BioKey collects no data.** Nothing it sees is stored on a server, shared, sold or sent anywhere.
 - **BioKey has no internet access.** It does not request Android's `INTERNET` permission, so it
   cannot send anything off your phone.
-- **Backups are off.** BioKey's settings are excluded from cloud backup and device-to-device transfer.
+- **Cloud backups are off.** BioKey's settings are excluded from cloud backup and device-to-device
+  transfer. You can save them yourself, to a file protected by a password (see below).
 
 ## What BioKey can see, and why
 
@@ -31,7 +32,16 @@ BioKey never reads what you type, your messages, or what's on screen in other ap
 
 On your phone only, in BioKey's private storage (encrypted by Android with your screen lock):
 which apps you've locked, your profiles and their re-lock delays, and your BioKey settings.
-Unlock sessions live only in memory and are wiped when the screen turns off.
+Unlock sessions live only in memory and are wiped whenever the phone locks.
+
+**Diagnostic log** (on by default; Settings > Diagnostics): BioKey's own recent lock decisions,
+such as which app it covered and why, with the package names of your locked apps. At most 500
+entries from the last 3 days. It stays on your phone and leaves it only if you share it from
+Settings, through Android's share sheet, to wherever you choose. Turning it off deletes it.
+
+**Backup files** (only if you make one): your locked apps, profiles and BioKey settings, sealed
+with a password you choose (AES-256-GCM, key derived with PBKDF2). You choose where the file is
+saved; without the password it reveals nothing, not even which apps are locked.
 
 Uninstalling BioKey deletes all of it.
 

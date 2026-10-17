@@ -3,6 +3,7 @@ package com.android.BioKey.core.security
 import android.os.SystemClock
 import android.util.Log
 import com.android.BioKey.core.data.LockTimeoutMode
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -132,6 +133,7 @@ object LockStateTracker {
             abandonedAt.remove(pkg)
         }
         Log.i(TAG, "Session started for $packageName")
+        DiagnosticLog.log("Unlocked $packageName")
         appUnlockListeners.forEach { runCatching { it(packageName) } }
     }
 
@@ -157,8 +159,9 @@ object LockStateTracker {
         session.hopTarget = hopTarget
         for (pkg in aliasesOf(packageName)) leftAt[pkg] = session.awaySince
         Log.d(TAG, "$packageName left the screen (hop=$hopTarget)")
+        DiagnosticLog.log("$packageName left the screen" + (hopTarget?.let { " · hop to $it" } ?: " · re-lock: ${timeoutMode.name.lowercase()}"))
         when {
-            timeoutMode == LockTimeoutMode.IMMEDIATE && hopTarget == null -> lockPackage(packageName)
+            timeoutMode == LockTimeoutMode.IMMEDIATE && hopTarget == null -> lockPackage(packageName, "left, re-locks immediately")
             timeoutMode == LockTimeoutMode.ON_SCREEN_OFF -> Unit
             else -> scheduleExpiry(packageName, awayAllowanceMs(timeoutMode, hopTarget != null), timeoutMode)
         }
@@ -181,6 +184,7 @@ object LockStateTracker {
             session.hopTarget = null
             val mode = timeoutModeOf(pkg)
             Log.d(TAG, "Hop from $pkg ended at $foregroundPackage")
+            DiagnosticLog.log("Hop from $pkg ended at $foregroundPackage")
             if (!isAppUnlocked(pkg, mode)) continue
             if (mode.durationMillis > 0L) {
                 scheduleExpiry(pkg, (session.awaySince + mode.durationMillis - now()).coerceAtLeast(0L), mode)
@@ -211,22 +215,25 @@ object LockStateTracker {
         if (away == 0L || timeoutMode == LockTimeoutMode.ON_SCREEN_OFF) return true
         val hopping = session.hopTarget != null
         if (timeoutMode == LockTimeoutMode.IMMEDIATE && !hopping) {
-            lockPackage(packageName)
+            lockPackage(packageName, "left, re-locks immediately")
             return false
         }
         val stillUnlocked = now() - away < awayAllowanceMs(timeoutMode, hopping)
-        if (!stillUnlocked) lockPackage(packageName)
+        if (!stillUnlocked) lockPackage(packageName, "re-lock time passed")
         return stillUnlocked
     }
 
-    fun lockPackage(packageName: String) {
+    fun lockPackage(packageName: String, reason: String? = null) {
         cancelExpiry(packageName)
         var hadSession = false
         for (pkg in aliasesOf(packageName)) {
             if (sessions.remove(pkg) != null) hadSession = true
             pendingLocks.remove(pkg)
         }
-        if (hadSession) Log.i(TAG, "Session ended for $packageName")
+        if (hadSession) {
+            Log.i(TAG, "Session ended for $packageName")
+            DiagnosticLog.log("Session ended: $packageName" + (reason?.let { " ($it)" } ?: ""))
+        }
         appLockListeners.forEach { runCatching { it(packageName) } }
     }
 
@@ -234,7 +241,7 @@ object LockStateTracker {
      * Wipes every session, including BioKey's own unless [includeOwnApp] is false. Used on
      * screen-off, manual "lock all" and when protection resumes.
      */
-    fun lockAll(includeOwnApp: Boolean = true) {
+    fun lockAll(includeOwnApp: Boolean = true, reason: String? = null) {
         expiryJobs.values.forEach { it.cancel() }
         expiryJobs.clear()
         sessions.clear()
@@ -244,10 +251,11 @@ object LockStateTracker {
         clearSelfProtection()
         if (includeOwnApp) lockOwnApp()
         Log.i(TAG, "All sessions wiped")
+        if (reason != null) DiagnosticLog.log("All sessions ended ($reason)")
         lockAllListeners.forEach { runCatching(it) }
     }
 
-    fun onScreenTurnedOff() = lockAll()
+    fun onScreenTurnedOff() = lockAll(reason = "screen off")
 
     @Volatile private var deviceLocked = false
 
@@ -256,7 +264,7 @@ object LockStateTracker {
      * power menu's Lockdown, a lock with the screen still on) ends every session, every time.
      */
     fun onDeviceLockState(locked: Boolean) {
-        if (locked && !deviceLocked) lockAll()
+        if (locked && !deviceLocked) lockAll(reason = "phone locked")
         deviceLocked = locked
     }
 

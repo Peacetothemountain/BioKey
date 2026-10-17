@@ -23,6 +23,7 @@ import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.android.BioKey.R
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.SecurityEngine
@@ -99,7 +100,10 @@ class UsageWatchService : Service() {
                 }
                 Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> startPolling()
                 // Usage events carry wall-clock times: after a clock change, start afresh from now.
-                Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED -> resetCursor()
+                Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED -> {
+                    DiagnosticLog.log("Clock changed: re-reading app launches from now")
+                    resetCursor()
+                }
             }
         }
     }
@@ -145,6 +149,7 @@ class UsageWatchService : Service() {
         coverAppAlreadyInFront()
         if (isInteractive()) startPolling()
         Log.i(TAG, "Compatibility mode started")
+        DiagnosticLog.log("Compatibility engine started")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -156,7 +161,7 @@ class UsageWatchService : Service() {
         runCatching { unregisterReceiver(screenReceiver) }
         if (::shield.isInitialized) shield.destroy()
         // Nothing enforces sessions without an engine, so none may outlive it.
-        if (!BioKeyAccessibilityService.isRunning) LockStateTracker.lockAll()
+        if (!BioKeyAccessibilityService.isRunning) LockStateTracker.lockAll(reason = "compatibility engine stopped")
         Log.i(TAG, "Compatibility mode stopped")
         super.onDestroy()
     }
@@ -260,6 +265,7 @@ class UsageWatchService : Service() {
     }
 
     private fun lock(pkg: String) {
+        DiagnosticLog.log("Covered $pkg (opened)")
         LockStateTracker.setRegularLockPending(pkg)
         // The overlay goes up first: it hides the app and, being visible, lets Android start the lock screen.
         shield.show(pkg) { LockLauncher.launch(this, pkg, isSelfProtection = false) }

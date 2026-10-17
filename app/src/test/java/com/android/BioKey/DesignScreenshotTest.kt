@@ -90,6 +90,11 @@ class DesignScreenshotTest {
     @Test fun main() = shoot("main") { MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
     @Test fun mainOff() = shoot("main_off") { MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP, onPauseRequested = {}) }
     @Test fun settings() = shoot("settings") { SettingsScreenExpressive(onNavigateBack = {}) }
+    /** The whole Settings page, on a tall screen. */
+    @Test fun settingsFull() {
+        RuntimeEnvironment.setQualifiers("w412dp-h1900dp")
+        shoot("settings_full") { SettingsScreenExpressive(onNavigateBack = {}) }
+    }
     @Test fun message() = shoot("message") {
         androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
             MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {})

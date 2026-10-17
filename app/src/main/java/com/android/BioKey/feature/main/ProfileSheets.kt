@@ -520,7 +520,7 @@ internal fun AddAppsScreen(
 
 /** A full-screen dialog draws under the system bars: give their icons the right contrast. */
 @Composable
-private fun EdgeToEdgeDialogBars() {
+internal fun EdgeToEdgeDialogBars() {
     val view = LocalView.current
     val light = MaterialTheme.colorScheme.surface.luminance() > 0.5f
     DisposableEffect(view, light) {
