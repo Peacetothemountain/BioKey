@@ -38,7 +38,7 @@ import com.android.BioKey.feature.main.MainActivity
  * - The window *list* says which apps are actually on screen. Sessions are driven only by it
  *   ([reconcile]): an unlocked app stays unlocked while any of its windows is visible, whatever
  *   else pops up over it (dialogs, sheets, keyboards, chat heads, assistants, refreshes), and it
- *   only counts as left once its windows are gone for [LEAVE_CONFIRM_MS].
+ *   only counts as left once its windows are gone for [SessionRules.LEAVE_CONFIRM_MS].
  *
  * Also guards BioKey itself (self-protection): Settings/installer screens that could disable or
  * uninstall BioKey require authentication while self-protection is on.
@@ -51,17 +51,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
         /** Coalesces window churn (animations, transitions) into one visibility pass. */
         private const val RECONCILE_DELAY_MS = 150L
 
-        /** An app must be off screen this long before it counts as left (trampolines, relaunches). */
-        private const val LEAVE_CONFIRM_MS = 400L
-
         /** How long a cover raised by a tap waits for the tapped app's window (cold starts). */
         private const val PREDICTION_WAIT_MS = 3_000L
-
-        /** How long a just-left app's window must stay on screen with the launcher before it counts as back. */
-        private const val EXIT_SETTLE_MS = 500L
-
-        /** Stands for an app window whose owner can't be read; never locked, never a helper. */
-        private const val UNIDENTIFIED_APP = "biokey:unidentified-app"
 
         @Volatile
         var isRunning: Boolean = false
@@ -144,12 +135,15 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private val windowPackages = HashMap<Int, String>()
     /** Last activity class seen per package (to recognise custom tabs as helpers). */
     private val lastClassByPackage = HashMap<String, String>()
-    /** Locked apps last seen on screen while unlocked: the sessions [reconcile] watches. */
-    private val onScreenSessions = HashSet<String>()
-    /** Apps that have dropped off screen, and since when, awaiting [LEAVE_CONFIRM_MS]. */
-    private val pendingLeaves = HashMap<String, Long>()
-    /** Just-left apps seen on screen again alongside the launcher, and since when ([EXIT_SETTLE_MS]). */
-    private val returningSince = HashMap<String, Long>()
+    /** Which sessions are on screen, which have left, which locked apps to cover: see [SessionRules]. */
+    private val rules = SessionRules(object : SessionRules.Env {
+        override fun isLocked(pkg: String) = vault.isAppLocked(pkg)
+        override fun timeoutOf(pkg: String) = vault.getTimeoutMode(pkg)
+        override fun isLauncher(pkg: String) = this@BioKeyAccessibilityService.isLauncher(pkg)
+        override fun isHopTarget(pkg: String) = this@BioKeyAccessibilityService.isHopTarget(pkg)
+        override fun mayCover(pkg: String) = isCoverableByVisibility(pkg) && !isLauncher(pkg) &&
+            needsCover(pkg) && !LockStateTracker.isRegularLockPending(pkg)
+    })
 
     private var imePackages: Set<String> = emptySet()
     private var systemListsRefreshedAt = 0L
@@ -160,9 +154,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 Intent.ACTION_SCREEN_OFF -> {
                     watchRecents(false)
                     foregroundPackage = null
-                    onScreenSessions.clear()
-                    pendingLeaves.clear()
-                    returningSince.clear()
+                    rules.reset()
                     isConfirmingDeviceCredential = false
                     LockStateTracker.onScreenTurnedOff()
                 }
@@ -238,9 +230,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
      */
     private val onLockAll: () -> Unit = {
         mainHandler.post {
-            onScreenSessions.clear()
-            pendingLeaves.clear()
-            returningSince.clear()
+            rules.reset()
             if (isRunning && isInteractive()) reevaluateForeground()
         }
     }
@@ -541,7 +531,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
      * Going Home or dismissing an app's card in Recents animates the app's window away, and
      * Android can hand that window focus (and send its events) once more on the way out. Right
      * after an app left, its window turning up while the launcher is still on screen is that exit,
-     * not the app coming back. [reconcile] covers it if it stays ([EXIT_SETTLE_MS]); a real return
+     * not the app coming back. [reconcile] covers it if it stays ([SessionRules.EXIT_SETTLE_MS]); a real return
      * is covered at once anyway, by the tap on its icon or card ([predictLaunch]), or because
      * the launcher isn't on screen (switching straight back to it).
      */
@@ -553,7 +543,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         }
         if (launcherOnScreen) {
             Log.i(TAG, "$pkg surfaced while leaving; waiting for it to settle")
-            scheduleReconcile(EXIT_SETTLE_MS)
+            scheduleReconcile(SessionRules.EXIT_SETTLE_MS)
         }
         return launcherOnScreen
     }
@@ -588,7 +578,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
             // Windows that hide from non-tool accessibility services (accessibility-data-sensitive,
             // e.g. BioKey's own) can't be identified: count them as some other app.
-            val pkg = windowPackages[w.id] ?: windowPackage(w)?.also { windowPackages[w.id] = it } ?: UNIDENTIFIED_APP
+            val pkg = windowPackages[w.id] ?: windowPackage(w)?.also { windowPackages[w.id] = it } ?: SessionRules.UNIDENTIFIED_APP
             visible += pkg
             if (w.isInPictureInPictureMode) pip += pkg
             if (front == null && (w.isActive || w.isFocused)) front = pkg
@@ -603,91 +593,40 @@ class BioKeyAccessibilityService : AccessibilityService() {
         val frontApp = (front ?: visible.first()).let {
             if (it == PKG_GMS && foregroundPackage == VIRTUAL_PKG_GOOGLE_PASSWORDS) VIRTUAL_PKG_GOOGLE_PASSWORDS else it
         }
-        val now = SystemClock.elapsedRealtime()
-
-        // 1. On screen: in use, nothing ages.
-        for (pkg in visible) {
-            pendingLeaves.remove(pkg)
-            if (vault.isAppLocked(pkg)) LockStateTracker.onAppVisible(pkg)
-        }
-
-        // 2. Gone from the screen long enough: the user left.
-        for (pkg in onScreenSessions.toList()) {
-            if (pkg in visible) continue
-            // An app that hides its windows from accessibility services can't be seen: while the
-            // screen in front is unreadable and no other app has come forward, it is still in use.
-            if (frontApp == UNIDENTIFIED_APP && foregroundPackage == pkg) {
-                pendingLeaves.remove(pkg)
-                continue
-            }
-            val goneSince = pendingLeaves.getOrPut(pkg) { now }
-            if (now - goneSince < LEAVE_CONFIRM_MS) {
-                mainHandler.postDelayed({ scheduleReconcile(0L) }, LEAVE_CONFIRM_MS - (now - goneSince) + 20L)
-                continue
-            }
-            pendingLeaves.remove(pkg)
-            onScreenSessions.remove(pkg)
-            val hop = frontApp.takeIf { it != pkg && !isLauncher(it) && isHopTarget(it) }
-            LockStateTracker.onAppLeft(pkg, vault.getTimeoutMode(pkg), hop)
-        }
-
-        // 3. A helper hop that moved on to somewhere else ends.
-        LockStateTracker.onForegroundChanged(frontApp, vault::getTimeoutMode, ::isHopTarget)
-
-        // 4. Locked content on screen without a session (split screen, PiP, freeform, missed
-        // events): cover it.
-        if (vault.isGlobalLockEnabled() && !shield.isShowing && !LockScreenActivity.isLockScreenResumed &&
+        val coverAllowed = vault.isGlobalLockEnabled() && !shield.isShowing && !LockScreenActivity.isLockScreenResumed &&
             !SecurityEngine.INSTANCE.isAuthenticating()
-        ) {
+        val outcome = rules.reconcile(
+            SessionRules.Screen(
+                visible = visible,
+                pip = pip,
+                front = frontApp,
+                lastForeground = foregroundPackage,
+                now = SystemClock.elapsedRealtime(),
+                coverAllowed = coverAllowed
+            )
+        )
+        outcome.recheckInMs?.let { mainHandler.postDelayed({ scheduleReconcile(0L) }, it) }
+        val cover = outcome.cover
+        if (cover != null) {
+            if (outcome.coverInPip) {
+                Log.i(TAG, "Locked app $cover in picture-in-picture without unlock; leaving PiP")
+                performGlobalAction(GLOBAL_ACTION_HOME)
+            }
+            lock(cover)
+            return
+        }
+        // BioKey's own settings pages in split screen or a window event that was missed.
+        if (coverAllowed && visible.size > 1) {
             for (pkg in visible) {
-                if (!isCoverableByVisibility(pkg) || isLauncher(pkg) || !needsCover(pkg)) continue
-                if (LockStateTracker.isRegularLockPending(pkg)) continue
-                if (pkg !in pip && !hasSettled(pkg, visible, now)) continue
-                if (pkg in pip) {
-                    Log.i(TAG, "Locked app $pkg in picture-in-picture without unlock; leaving PiP")
-                    performGlobalAction(GLOBAL_ACTION_HOME)
-                }
-                lock(pkg)
-                return
-            }
-            if (visible.size > 1) {
-                for (pkg in visible) {
-                    if (selfProtection.isHost(pkg) && shouldGuardSelf() &&
-                        !LockStateTracker.isRecentlyAbandoned(SELF_PROTECTION_PENDING_KEY) &&
-                        selfProtection.isGuardedScreen(pkg, null)
-                    ) {
-                        triggerSelfProtection()
-                        return
-                    }
+                if (selfProtection.isHost(pkg) && shouldGuardSelf() &&
+                    !LockStateTracker.isRecentlyAbandoned(SELF_PROTECTION_PENDING_KEY) &&
+                    selfProtection.isGuardedScreen(pkg, null)
+                ) {
+                    triggerSelfProtection()
+                    return
                 }
             }
         }
-
-        // 5. Remember which unlocked apps are on screen so step 2 can notice them leave.
-        for (pkg in visible) {
-            if (vault.isAppLocked(pkg) && LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))) {
-                onScreenSessions += pkg
-            }
-        }
-        returningSince.keys.retainAll(visible)
-    }
-
-    /**
-     * Whether a locked app's window is really back rather than flickering on its way out (see
-     * [isExitTransition]): a just-left app next to the launcher must stay for [EXIT_SETTLE_MS].
-     */
-    private fun hasSettled(pkg: String, visible: Set<String>, now: Long): Boolean {
-        if (!LockStateTracker.justLeft(pkg) || visible.none(::isLauncher)) {
-            returningSince.remove(pkg)
-            return true
-        }
-        val since = returningSince.getOrPut(pkg) { now }
-        if (now - since >= EXIT_SETTLE_MS) {
-            returningSince.remove(pkg)
-            return true
-        }
-        mainHandler.postDelayed({ scheduleReconcile(0L) }, EXIT_SETTLE_MS - (now - since) + 20L)
-        return false
     }
 
     /** Fallback when a window appeared without a state event: ask the window itself (an IPC). */
@@ -698,7 +637,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     /** See [ForegroundRules.isHopTarget]; keyboards and unreadable windows also leave a hop running. */
     private fun isHopTarget(pkg: String): Boolean =
-        pkg == UNIDENTIFIED_APP || pkg in imePackages || ForegroundRules.isHopTarget(this, pkg, lastClassByPackage[pkg])
+        pkg == SessionRules.UNIDENTIFIED_APP || pkg in imePackages || ForegroundRules.isHopTarget(this, pkg, lastClassByPackage[pkg])
 
     private fun handleForeground(target: String, cls: String) {
         // BioKey's own windows (lock screen, main UI) have their own authentication.
@@ -756,8 +695,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
         if (LockStateTracker.isAppUnlocked(target, vault.getTimeoutMode(target))) {
             LockStateTracker.onAppVisible(target)
-            pendingLeaves.remove(target)
-            onScreenSessions += target
+            rules.noteOnScreen(target)
             shield.hide()
             return
         }

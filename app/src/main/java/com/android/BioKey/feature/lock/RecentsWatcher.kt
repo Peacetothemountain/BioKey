@@ -28,13 +28,22 @@ internal class RecentsWatcher(
     private val onClosed: (appName: String) -> Unit,
     private val onClearAll: () -> Unit
 ) {
-    private companion object {
+    internal companion object {
         /** Nodes of a Recents card that carry the app's name. */
         val CARD_IDS = listOf("snapshot", "task_thumbnail", "task_thumbnail_live_tile")
         /** How far up, as a share of the screen, a card must have gone to count as swiped away. */
         const val MIN_RISE = 0.12f
         /** A card tapped to open it is never "closed", however it animates. */
         const val TAP_GRACE_MS = 2_000L
+
+        /** Slid up, whole: both edges rose, it kept its size and stayed in its column. */
+        fun sweptAway(first: Rect, last: Rect, screenHeight: Int, screenWidth: Int): Boolean {
+            val rise = screenHeight * MIN_RISE
+            return first.top - last.top > rise &&
+                first.bottom - last.bottom > rise &&
+                abs(last.height() - first.height()) < first.height() * 0.15f &&
+                abs(last.left - first.left) < screenWidth * 0.15f
+        }
     }
 
     private class Card(val first: Rect) {
@@ -103,24 +112,13 @@ internal class RecentsWatcher(
             val recentlyTapped = tapped.takeIf { SystemClock.elapsedRealtime() - tappedAt < TAP_GRACE_MS }
             for ((name, card) in cards) {
                 if (name in now || name == recentlyTapped) continue
-                if (sweptAway(card, metrics.heightPixels, metrics.widthPixels)) onClosed(name)
+                if (sweptAway(card.first, card.last, metrics.heightPixels, metrics.widthPixels)) onClosed(name)
             }
             cards.keys.retainAll(now.keys)
             for ((name, rect) in now) cards.getOrPut(name) { Card(rect) }.last.set(rect)
         } finally {
             release(root)
         }
-    }
-
-    /** Slid up, whole: both edges rose, it kept its size and stayed in its column. */
-    private fun sweptAway(card: Card, screenHeight: Int, screenWidth: Int): Boolean {
-        val rise = screenHeight * MIN_RISE
-        val first = card.first
-        val last = card.last
-        return first.top - last.top > rise &&
-            first.bottom - last.bottom > rise &&
-            abs(last.height() - first.height()) < first.height() * 0.15f &&
-            abs(last.left - first.left) < screenWidth * 0.15f
     }
 
     /** "Clear all", lower-cased, as the launcher labels it in the phone's language (English too). */
