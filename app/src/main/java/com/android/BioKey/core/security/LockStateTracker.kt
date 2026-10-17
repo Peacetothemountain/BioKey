@@ -165,13 +165,19 @@ object LockStateTracker {
     }
 
     /**
-     * Something new is in front. Any hop that isn't the helper the user went to (or back to the
-     * app itself, which [onAppVisible] handles) is over: the app now ages as a normal exit.
+     * Something new is in front. A hop carries on through anything that [continuesHop] accepts
+     * (another helper, a system screen, BioKey's own lock screen: a sign-in sheet that sends the
+     * user to an authenticator, say); anywhere else ends it, and the app ages as a normal exit.
+     * Coming back to the app itself is [onAppVisible]'s job.
      */
-    fun onForegroundChanged(foregroundPackage: String, timeoutModeOf: (String) -> LockTimeoutMode) {
+    fun onForegroundChanged(
+        foregroundPackage: String,
+        timeoutModeOf: (String) -> LockTimeoutMode,
+        continuesHop: (String) -> Boolean = { false }
+    ) {
         for ((pkg, session) in sessions) {
             val hop = session.hopTarget ?: continue
-            if (hop == foregroundPackage || pkg in aliasesOf(foregroundPackage)) continue
+            if (hop == foregroundPackage || pkg in aliasesOf(foregroundPackage) || continuesHop(foregroundPackage)) continue
             session.hopTarget = null
             val mode = timeoutModeOf(pkg)
             Log.d(TAG, "Hop from $pkg ended at $foregroundPackage")

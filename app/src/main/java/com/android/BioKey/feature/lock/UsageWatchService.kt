@@ -286,10 +286,10 @@ class UsageWatchService : Service() {
         foreground = pkg
 
         if (previous != null && previous != pkg && previous != packageName && vault.isAppLocked(previous)) {
-            val hop = pkg.takeIf { !ForegroundRules.isLauncher(this, it) && ForegroundRules.isHopHelper(this, it, activityClass) }
+            val hop = pkg.takeIf { !ForegroundRules.isLauncher(this, it) && ForegroundRules.isHopTarget(this, it, activityClass) }
             LockStateTracker.onAppLeft(previous, vault.getTimeoutMode(previous), hop)
         }
-        LockStateTracker.onForegroundChanged(pkg, vault::getTimeoutMode)
+        LockStateTracker.onForegroundChanged(pkg, vault::getTimeoutMode) { ForegroundRules.isHopTarget(this, it, activityClass) }
 
         // BioKey's own screens (its lock screen, its main UI) authenticate on their own.
         if (pkg == packageName) return

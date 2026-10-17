@@ -68,7 +68,21 @@ object ForegroundRules {
         "com.google.android.GoogleCamera",
         "com.android.camera",
         "com.android.camera2",
-        "com.sec.android.app.camera"
+        "com.sec.android.app.camera",
+        // Interruptions the user returns from: calls, alarms and timers.
+        "com.google.android.dialer",
+        "com.android.dialer",
+        "com.android.incallui",
+        "com.samsung.android.incallui",
+        "com.android.server.telecom",
+        "com.google.android.deskclock",
+        "com.android.deskclock",
+        "com.sec.android.app.clockpackage",
+        // Pages apps send the user to and expect back from: Settings (notification or permission
+        // switches), the assistant and Circle to Search, Google Wallet.
+        "com.android.settings",
+        "com.google.android.googlequicksearchbox",
+        "com.google.android.apps.walletnfcrel"
     )
 
     /** Windows that float over apps without meaning the user switched apps. Exact names only. */
@@ -148,6 +162,14 @@ object ForegroundRules {
         }
         return pickers
     }
+
+    /**
+     * Anything that can come between leaving an unlocked app and coming straight back to it
+     * without ending its session: a helper, a system screen it opened (permission page, share
+     * sheet), or BioKey itself (the lock screen of a helper that is locked too).
+     */
+    fun isHopTarget(context: Context, pkg: String, activityClass: String?): Boolean =
+        pkg == context.packageName || pkg in SYSTEM_OVERLAYS || isHopHelper(context, pkg, activityClass)
 
     /** A helper app worth keeping the previous app's session for; [activityClass] spots custom tabs. */
     fun isHopHelper(context: Context, pkg: String, activityClass: String?): Boolean {

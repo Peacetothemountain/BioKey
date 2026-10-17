@@ -64,10 +64,35 @@ class PickerHopTest {
     }
 
     @Test
+    fun aSignInThatSendsYouToYourAuthenticatorKeepsTheSession() {
+        // App -> Google sign-in sheet -> the authenticator (locked too: BioKey's lock screen first) -> back.
+        LockStateTracker.onAppUnlocked(chat)
+        LockStateTracker.onAppLeft(chat, LockTimeoutMode.IMMEDIATE, hopTarget = "com.google.android.gms")
+        val continues: (String) -> Boolean = { ForegroundRules.isHopTarget(context, it, null) }
+        LockStateTracker.onForegroundChanged(context.packageName, { LockTimeoutMode.IMMEDIATE }, continues)
+        LockStateTracker.onForegroundChanged("com.google.android.apps.authenticator2", { LockTimeoutMode.IMMEDIATE }, continues)
+        assertTrue(LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.IMMEDIATE))
+        LockStateTracker.onAppVisible(chat)
+        assertTrue(LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.IMMEDIATE))
+    }
+
+    @Test
+    fun aCallOrAPermissionPageInTheMiddleIsNotLeaving() {
+        for (between in listOf("com.google.android.dialer", "com.google.android.permissioncontroller", "com.android.settings")) {
+            LockStateTracker.lockAll()
+            LockStateTracker.onAppUnlocked(chat)
+            assertTrue(ForegroundRules.isHopTarget(context, between, null))
+            LockStateTracker.onAppLeft(chat, LockTimeoutMode.IMMEDIATE, hopTarget = between)
+            LockStateTracker.onAppVisible(chat)
+            assertTrue(between, LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.IMMEDIATE))
+        }
+    }
+
+    @Test
     fun goingSomewhereElseFromThePickerEndsTheSession() {
         LockStateTracker.onAppUnlocked(chat)
         LockStateTracker.onAppLeft(chat, LockTimeoutMode.IMMEDIATE, hopTarget = "com.google.android.photopicker")
-        LockStateTracker.onForegroundChanged("com.example.game") { LockTimeoutMode.IMMEDIATE }
+        LockStateTracker.onForegroundChanged("com.example.game", { LockTimeoutMode.IMMEDIATE })
         assertFalse(LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.IMMEDIATE))
     }
 }

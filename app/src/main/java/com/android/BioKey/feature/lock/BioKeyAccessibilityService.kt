@@ -577,6 +577,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
         // 2. Gone from the screen long enough: the user left.
         for (pkg in onScreenSessions.toList()) {
             if (pkg in visible) continue
+            // An app that hides its windows from accessibility services can't be seen: while the
+            // screen in front is unreadable and no other app has come forward, it is still in use.
+            if (frontApp == UNIDENTIFIED_APP && foregroundPackage == pkg) {
+                pendingLeaves.remove(pkg)
+                continue
+            }
             val goneSince = pendingLeaves.getOrPut(pkg) { now }
             if (now - goneSince < LEAVE_CONFIRM_MS) {
                 mainHandler.postDelayed({ scheduleReconcile(0L) }, LEAVE_CONFIRM_MS - (now - goneSince) + 20L)
@@ -584,12 +590,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
             }
             pendingLeaves.remove(pkg)
             onScreenSessions.remove(pkg)
-            val hop = frontApp.takeIf { it != pkg && !isLauncher(it) && isHopHelper(it) }
+            val hop = frontApp.takeIf { it != pkg && !isLauncher(it) && isHopTarget(it) }
             LockStateTracker.onAppLeft(pkg, vault.getTimeoutMode(pkg), hop)
         }
 
         // 3. A helper hop that moved on to somewhere else ends.
-        LockStateTracker.onForegroundChanged(frontApp, vault::getTimeoutMode)
+        LockStateTracker.onForegroundChanged(frontApp, vault::getTimeoutMode, ::isHopTarget)
 
         // 4. Locked content on screen without a session (split screen, PiP, freeform, missed
         // events): cover it.
@@ -653,7 +659,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         return root.packageName?.toString().also { release(root) }
     }
 
-    private fun isHopHelper(pkg: String): Boolean = ForegroundRules.isHopHelper(this, pkg, lastClassByPackage[pkg])
+    /** See [ForegroundRules.isHopTarget]; keyboards and unreadable windows also leave a hop running. */
+    private fun isHopTarget(pkg: String): Boolean =
+        pkg == UNIDENTIFIED_APP || pkg in imePackages || ForegroundRules.isHopTarget(this, pkg, lastClassByPackage[pkg])
 
     private fun handleForeground(target: String, cls: String) {
         // BioKey's own windows (lock screen, main UI) have their own authentication.
