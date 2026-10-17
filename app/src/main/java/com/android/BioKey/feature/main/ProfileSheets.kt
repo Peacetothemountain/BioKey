@@ -4,19 +4,20 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
@@ -24,8 +25,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shield
@@ -35,8 +39,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -45,8 +49,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,16 +62,29 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.SecurityProfile
+import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.rejectObscuredTouches
+import com.android.BioKey.ui.theme.Group
+import com.android.BioKey.ui.theme.GroupGap
+import com.android.BioKey.ui.theme.GroupInset
+import com.android.BioKey.ui.theme.GroupRow
+import com.android.BioKey.ui.theme.SectionHeader
 
 internal val PROFILE_ICONS: List<Pair<String, ImageVector>> = listOf(
     "shield" to Icons.Default.Shield,
@@ -89,11 +110,15 @@ internal val LockTimeoutMode.shortLabel: String
         LockTimeoutMode.GRACE_15_MINUTES -> "After 15 minutes"
     }
 
-private val LockTimeoutMode.explanation: String
+/** "Re-locks immediately", "Re-locks after 5 minutes"… */
+internal val LockTimeoutMode.relockPhrase: String
+    get() = "Re-locks " + shortLabel.replaceFirstChar { it.lowercase() }
+
+private val LockTimeoutMode.explanation: String?
     get() = when (this) {
-        LockTimeoutMode.IMMEDIATE -> "As soon as you go Home, open Recents, or switch to another app"
+        LockTimeoutMode.IMMEDIATE -> "As soon as you go Home, open Recents or switch app"
         LockTimeoutMode.ON_SCREEN_OFF -> "Stays unlocked until the screen turns off"
-        else -> "Once the app has been out of sight this long"
+        else -> null
     }
 
 @Composable
@@ -121,12 +146,31 @@ internal fun AppIcon(app: AppItem, size: Dp = 40.dp) {
     } else {
         Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.size(size)) {
             Box(contentAlignment = Alignment.Center) {
-                Text(
-                    text = app.label.take(1).uppercase(),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
+                Text(app.label.take(1).uppercase(), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
             }
+        }
+    }
+}
+
+/** Title block at the top of every sheet. */
+@Composable
+private fun SheetTitle(title: String, subtitle: String? = null, action: @Composable (() -> Unit)? = null) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 28.dp, end = 20.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.headlineSmall)
+            if (subtitle != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (action != null) {
+            Spacer(Modifier.width(12.dp))
+            action()
         }
     }
 }
@@ -146,8 +190,12 @@ internal fun ProfileDetailsDialog(
     if (confirmDelete && existing != null && onDelete != null) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
+            icon = { Icon(profileIcon(existing.iconKey), contentDescription = null) },
             title = { Text("Delete “${existing.name}”?") },
-            text = { Text("Its apps stay locked and will use your default re-lock delay.") },
+            text = {
+                ProtectDialogWindow()
+                Text("Its apps stay locked and will use your default re-lock delay.")
+            },
             confirmButton = {
                 TextButton(onClick = { confirmDelete = false; onDelete() }) {
                     Text("Delete", color = MaterialTheme.colorScheme.error)
@@ -160,8 +208,10 @@ internal fun ProfileDetailsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        icon = { Icon(profileIcon(iconKey), contentDescription = null) },
         title = { Text(if (existing == null) "New profile" else "Edit profile") },
         text = {
+            ProtectDialogWindow()
             Column(modifier = Modifier.rejectObscuredTouches()) {
                 OutlinedTextField(
                     value = name,
@@ -173,15 +223,18 @@ internal fun ProfileDetailsDialog(
                 )
                 Spacer(Modifier.height(20.dp))
                 Text("Icon", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(10.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(PROFILE_ICONS, key = { it.first }) { (key, vector) ->
+                Spacer(Modifier.height(12.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    PROFILE_ICONS.forEach { (key, vector) ->
                         val selected = key == iconKey
                         Surface(
                             onClick = { iconKey = key },
                             shape = CircleShape,
                             color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest,
-                            modifier = Modifier.size(44.dp)
+                            modifier = Modifier.size(48.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
@@ -221,39 +274,25 @@ internal fun RelockSheet(
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
+        ProtectDialogWindow()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .rejectObscuredTouches()
                 .padding(bottom = 24.dp)
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(horizontal = 24.dp)
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "Apps stay unlocked while you're using them. This sets when they lock again after you leave.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 24.dp)
-            )
+            SheetTitle(title, "Apps stay unlocked while you use them. This sets when they lock again after you leave.")
             Spacer(Modifier.height(12.dp))
-            LockTimeoutMode.entries.forEach { mode ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .selectable(selected = mode == current, role = Role.RadioButton, onClick = { onSelect(mode) })
-                        .padding(horizontal = 24.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            val modes = LockTimeoutMode.entries
+            Group(count = modes.size) { i ->
+                val mode = modes[i]
+                GroupRow(
+                    index = i,
+                    count = modes.size,
+                    title = mode.shortLabel,
+                    subtitle = mode.explanation,
+                    interaction = Modifier.selectable(selected = mode == current, role = Role.RadioButton) { onSelect(mode) }
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(mode.shortLabel, style = MaterialTheme.typography.bodyLarge)
-                        if (mode == LockTimeoutMode.IMMEDIATE || mode == LockTimeoutMode.ON_SCREEN_OFF) {
-                            Text(mode.explanation, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
                     RadioButton(selected = mode == current, onClick = null)
                 }
             }
@@ -278,102 +317,116 @@ internal fun AppOptionsSheet(
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
+        ProtectDialogWindow()
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
                 .rejectObscuredTouches(),
-            contentPadding = PaddingValues(bottom = 24.dp)
+            contentPadding = PaddingValues(bottom = 28.dp)
         ) {
             item {
-                Row(
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    AppIcon(app, 48.dp)
-                    Spacer(Modifier.width(16.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(app.label, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        val relock = (currentProfile?.timeoutMode ?: defaultTimeout).shortLabel
-                        Text(
-                            text = if (isLocked) "Locked · re-locks ${relock.replaceFirstChar { it.lowercase() }}" else "Not locked",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    AppIcon(app, 64.dp)
+                    Spacer(Modifier.height(12.dp))
+                    Text(app.label, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = when {
+                            !isLocked -> "Not locked"
+                            currentProfile?.enabled == false -> "Not locked while ${currentProfile.name} is off"
+                            else -> (currentProfile?.timeoutMode ?: defaultTimeout).relockPhrase
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.height(20.dp))
+                Group(count = 1) {
+                    GroupRow(
+                        index = 0,
+                        count = 1,
+                        title = "Lock app",
+                        subtitle = if (isLocked) "Needs your face, fingerprint or screen lock to open" else "Opens without a check",
+                        icon = if (isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                        interaction = Modifier.toggleable(value = isLocked, role = Role.Switch, onValueChange = onLockedChange)
+                    ) {
+                        Switch(checked = isLocked, onCheckedChange = null)
                     }
                 }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .toggleable(value = isLocked, role = Role.Switch, onValueChange = onLockedChange)
-                        .padding(horizontal = 24.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Lock app", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                    Switch(checked = isLocked, onCheckedChange = null)
-                }
-                HorizontalDivider(Modifier.padding(horizontal = 24.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                Text(
-                    text = "Profile",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(start = 24.dp, top = 16.dp, bottom = 4.dp)
-                )
-                Text(
-                    text = "A profile groups apps and sets how soon they lock again. Choosing one locks the app.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 24.dp)
-                )
-                Spacer(Modifier.height(4.dp))
+                SectionHeader("Profile")
+            }
+            val count = profiles.size + 2
+            item {
                 ProfileChoiceRow(
+                    index = 0,
+                    count = count,
                     title = "No profile",
-                    subtitle = "Re-locks ${defaultTimeout.shortLabel.replaceFirstChar { it.lowercase() }} (default)",
+                    subtitle = defaultTimeout.relockPhrase + " (default)",
                     iconKey = "lock",
-                    selected = isLocked && currentProfile == null,
+                    selected = currentProfile == null,
                     onClick = { onMoveToProfile(null) }
                 )
             }
-            items(profiles, key = { it.id }) { profile ->
+            itemsIndexed(profiles, key = { _, p -> p.id }) { i, profile ->
                 ProfileChoiceRow(
+                    index = i + 1,
+                    count = count,
                     title = profile.name,
-                    subtitle = "Re-locks ${profile.timeoutMode.shortLabel.replaceFirstChar { it.lowercase() }}",
+                    subtitle = if (profile.enabled) profile.timeoutMode.relockPhrase else "Off · its apps aren't locked",
                     iconKey = profile.iconKey,
-                    selected = isLocked && currentProfile?.id == profile.id,
+                    selected = currentProfile?.id == profile.id,
                     onClick = { onMoveToProfile(profile.id) }
                 )
             }
             item {
-                TextButton(onClick = onNewProfile, modifier = Modifier.padding(horizontal = 12.dp)) {
-                    Text("+ New profile")
+                Box(Modifier.padding(horizontal = GroupInset).padding(top = GroupGap)) {
+                    GroupRow(
+                        index = count - 1,
+                        count = count,
+                        title = "New profile",
+                        icon = Icons.Default.Add,
+                        iconTint = MaterialTheme.colorScheme.onPrimary,
+                        iconContainer = MaterialTheme.colorScheme.primary,
+                        onClick = onNewProfile
+                    )
                 }
+                Text(
+                    text = "Choosing a profile turns the app's lock on and uses that profile's re-lock delay. Turning the lock off keeps it in its profile.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = GroupInset + 16.dp, end = GroupInset + 16.dp, top = 12.dp)
+                )
             }
         }
     }
 }
 
 @Composable
-private fun ProfileChoiceRow(title: String, subtitle: String, iconKey: String, selected: Boolean, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
-            .padding(horizontal = 24.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        ProfileBadge(iconKey, 36.dp, active = selected)
-        Spacer(Modifier.width(16.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun ProfileChoiceRow(index: Int, count: Int, title: String, subtitle: String, iconKey: String, selected: Boolean, onClick: () -> Unit) {
+    Box(Modifier.padding(horizontal = GroupInset).padding(top = if (index == 0) 0.dp else GroupGap)) {
+        GroupRow(
+            index = index,
+            count = count,
+            title = title,
+            subtitle = subtitle,
+            leading = { ProfileBadge(iconKey, 40.dp, active = selected) },
+            interaction = Modifier.selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+        ) {
+            RadioButton(selected = selected, onClick = null)
         }
-        RadioButton(selected = selected, onClick = null)
     }
 }
 
-/** Multi-select picker for adding apps to [profile]. */
+/**
+ * Multi-select picker for adding apps to [profile]: a full-screen page, as Material suggests for
+ * a long list with search (and a bottom sheet fights a long list over the overscroll at its end).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun AddAppsSheet(
+internal fun AddAppsScreen(
     profile: SecurityProfile,
     installedApps: List<AppItem>,
     profileOfApp: (String) -> SecurityProfile?,
@@ -382,7 +435,7 @@ internal fun AddAppsSheet(
     onDismiss: () -> Unit
 ) {
     var query by rememberSaveable { mutableStateOf("") }
-    var selected by remember { mutableStateOf(emptySet<String>()) }
+    var selected by rememberSaveable { mutableStateOf(emptySet<String>()) }
     // Only apps that aren't in any profile yet: an app lives in exactly one profile, and moving
     // it between profiles is done from the app's own options.
     val candidates = remember(installedApps, profile.packages, query) {
@@ -391,99 +444,117 @@ internal fun AddAppsSheet(
             .filter { query.isBlank() || it.label.contains(query.trim(), ignoreCase = true) }
     }
 
-    ModalBottomSheet(
+    Dialog(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.92f)
-                .rejectObscuredTouches()
-        ) {
-            Row(
-                modifier = Modifier.padding(start = 24.dp, end = 16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Add apps", style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        "to ${profile.name}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Button(onClick = { onAdd(selected) }, enabled = selected.isNotEmpty()) {
-                    Text(if (selected.isEmpty()) "Add" else "Add ${selected.size}")
-                }
-            }
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                placeholder = { Text("Search apps") },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                singleLine = true,
-                shape = CircleShape,
+        ProtectDialogWindow()
+        EdgeToEdgeDialogBars()
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-            )
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(bottom = 16.dp)
+                    .fillMaxSize()
+                    .systemBarsPadding()
+                    .imePadding()
+                    .rejectObscuredTouches()
             ) {
-                if (candidates.isEmpty()) {
-                    item(key = "none") {
-                        Text(
-                            text = if (query.isBlank()) "Every app is already in a profile. To move one here, tap it in the app list and pick ${profile.name}."
-                            else "No apps outside a profile match “${query.trim()}”",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 24.dp)
-                        )
-                    }
-                }
-                items(candidates, key = { it.packageName }) { app ->
-                    val checked = app.packageName in selected
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .toggleable(value = checked, role = Role.Checkbox) {
-                                selected = if (it) selected + app.packageName else selected - app.packageName
-                            }
-                            .padding(horizontal = 24.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        AppIcon(app)
-                        Spacer(Modifier.width(16.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(app.label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            val note = when {
-                                app.packageName in lockedApps -> "Locked"
-                                else -> app.category.label
-                            }
+                TopAppBar(
+                    title = { Text("Add to ${profile.name}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    navigationIcon = {
+                        IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close") }
+                    },
+                    actions = {
+                        Button(
+                            onClick = { onAdd(selected) },
+                            enabled = selected.isNotEmpty(),
+                            modifier = Modifier.padding(end = 8.dp)
+                        ) {
+                            Text(if (selected.isEmpty()) "Add" else "Add ${selected.size}")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+                )
+                Text(
+                    text = "Apps already in a profile aren't listed",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = GroupInset + 8.dp)
+                )
+                SearchPill(query, onChange = { query = it }, modifier = Modifier.padding(horizontal = GroupInset, vertical = 12.dp))
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(start = GroupInset, end = GroupInset, top = 4.dp, bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(GroupGap)
+                ) {
+                    if (candidates.isEmpty()) {
+                        item(key = "none") {
                             Text(
-                                note,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                text = if (query.isBlank()) "Every app is already in a profile. To move one here, tap it in the app list and pick ${profile.name}."
+                                else "No apps outside a profile match “${query.trim()}”",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(16.dp)
                             )
                         }
-                        Checkbox(checked = checked, onCheckedChange = null)
+                    }
+                    itemsIndexed(candidates, key = { _, app -> app.packageName }) { i, app ->
+                        val checked = app.packageName in selected
+                        GroupRow(
+                            index = i,
+                            count = candidates.size,
+                            title = app.label,
+                            subtitle = if (app.packageName in lockedApps) "Locked" else app.category.label,
+                            leading = { AppIcon(app) },
+                            interaction = Modifier.toggleable(value = checked, role = Role.Checkbox) {
+                                selected = if (it) selected + app.packageName else selected - app.packageName
+                            }
+                        ) {
+                            Checkbox(checked = checked, onCheckedChange = null)
+                        }
                     }
                 }
             }
-            Spacer(Modifier.navigationBarsPadding())
         }
     }
 }
 
+/** A full-screen dialog draws under the system bars: give their icons the right contrast. */
 @Composable
-internal fun SectionLabel(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelLarge,
-        fontWeight = FontWeight.Medium,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = modifier.padding(start = 24.dp, top = 20.dp, bottom = 8.dp)
+internal fun EdgeToEdgeDialogBars() {
+    val view = LocalView.current
+    val light = MaterialTheme.colorScheme.surface.luminance() > 0.5f
+    DisposableEffect(view, light) {
+        (view.parent as? DialogWindowProvider)?.window?.let { window ->
+            WindowCompat.getInsetsController(window, window.decorView).apply {
+                isAppearanceLightStatusBars = light
+                isAppearanceLightNavigationBars = light
+            }
+        }
+        onDispose { }
+    }
+}
+
+/** Filled, borderless search field shaped like a pill. */
+@Composable
+internal fun SearchPill(query: String, onChange: (String) -> Unit, modifier: Modifier = Modifier, placeholder: String = "Search apps") {
+    TextField(
+        value = query,
+        onValueChange = onChange,
+        placeholder = { Text(placeholder) },
+        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+        trailingIcon = if (query.isNotEmpty()) {
+            { TextButton(onClick = { onChange("") }) { Text("Clear") } }
+        } else null,
+        singleLine = true,
+        shape = CircleShape,
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            focusedIndicatorColor = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent
+        ),
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(CircleShape)
     )
 }

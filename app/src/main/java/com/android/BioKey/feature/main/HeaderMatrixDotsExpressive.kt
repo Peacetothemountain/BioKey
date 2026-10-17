@@ -1,6 +1,5 @@
 package com.android.BioKey.feature.main
 
-import android.provider.Settings
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -15,10 +14,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import com.android.BioKey.ui.theme.animationsEnabled
 import kotlinx.coroutines.isActive
 import kotlin.math.cos
 import kotlin.math.sin
@@ -95,10 +94,7 @@ fun HeaderMatrixDotsExpressive(
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val tertiary = MaterialTheme.colorScheme.tertiary
-    val context = LocalContext.current
-    val animationsOff = remember {
-        Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
-    }
+    val animationsOff = !animationsEnabled()
     val field = remember(particleCount) { Field(particleCount) }
     val wash = remember(primary, tertiary) {
         Brush.verticalGradient(listOf(primary.copy(alpha = 0.14f), tertiary.copy(alpha = 0.05f), Color.Transparent))

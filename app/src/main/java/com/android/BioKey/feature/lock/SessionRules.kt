@@ -1,0 +1,163 @@
+package com.android.BioKey.feature.lock
+
+import com.android.BioKey.core.data.LockTimeoutMode
+import com.android.BioKey.core.security.LockStateTracker
+
+/**
+ * The accessibility engine's session rules, kept apart from Android so they can be tested.
+ *
+ * Given what is on screen ([Screen]), [reconcile] decides which unlocked apps the user has left
+ * (their sessions then age, or end, in [LockStateTracker]) and whether a locked app on screen
+ * without a session needs covering. The service turns the window list into a [Screen] and
+ * acts on the [Outcome].
+ *
+ * The rules:
+ * 1. An app on screen is in use: nothing ages.
+ * 2. An app with a session counts as left once its windows have been gone for [LEAVE_CONFIRM_MS]
+ *    (rotations, an app restarting its own screen), unless the screen in front can't be read and
+ *    no other app has come forward (apps that hide their windows from accessibility services).
+ *    Left for a helper, a system screen it opened, or BioKey itself, it is a hop.
+ * 3. A hop ends when the user moves on to anything that isn't another hop target.
+ * 4. A locked app on screen without a session is covered, except a just-left app next to the
+ *    launcher, which must stay [EXIT_SETTLE_MS] first (its window flickers back as it leaves).
+ * 5. Unlocked apps on screen are remembered, so step 2 can notice them leave.
+ */
+internal class SessionRules(private val env: Env) {
+
+    companion object {
+        /** An app must be off screen this long before it counts as left. */
+        const val LEAVE_CONFIRM_MS = 400L
+        /** How long a just-left app's window must stay next to the launcher to count as back. */
+        const val EXIT_SETTLE_MS = 500L
+        /** A window that hides from accessibility services: its owner can't be read. */
+        const val UNIDENTIFIED_APP = "biokey:unidentified-app"
+    }
+
+    interface Env {
+        fun isLocked(pkg: String): Boolean
+        fun timeoutOf(pkg: String): LockTimeoutMode
+        fun isLauncher(pkg: String): Boolean
+        fun isHopTarget(pkg: String): Boolean
+        /** A locked app without a session that may be covered because it is on screen. */
+        fun mayCover(pkg: String): Boolean
+    }
+
+    /**
+     * What is on screen. [visible] is in z-order (top first); [lastForeground] is the app the
+     * latest window event brought to the front; [coverAllowed] is false while a cover, the lock
+     * screen or a prompt is already up.
+     */
+    data class Screen(
+        val visible: Set<String>,
+        val pip: Set<String> = emptySet(),
+        val front: String = visible.first(),
+        val lastForeground: String? = null,
+        val now: Long,
+        val coverAllowed: Boolean = true
+    )
+
+    data class Outcome(
+        /** A locked app to cover now, if any. */
+        val cover: String? = null,
+        /** It is in picture-in-picture: leave that before covering. */
+        val coverInPip: Boolean = false,
+        /** Look again after this long: something is waiting to be confirmed. */
+        val recheckInMs: Long? = null
+    )
+
+    private val onScreenSessions = HashSet<String>()
+    private val pendingLeaves = HashMap<String, Long>()
+    private val returningSince = HashMap<String, Long>()
+
+    /** A window event put [pkg], unlocked, in front: it is in use. */
+    fun noteOnScreen(pkg: String) {
+        pendingLeaves.remove(pkg)
+        onScreenSessions += pkg
+    }
+
+    /** Sessions just ended (screen off, lock-all): nothing on screen has one any more. */
+    fun reset() {
+        onScreenSessions.clear()
+        pendingLeaves.clear()
+        returningSince.clear()
+    }
+
+    fun reconcile(screen: Screen): Outcome {
+        val visible = screen.visible
+        val now = screen.now
+        var recheck: Long? = null
+        fun recheckIn(ms: Long) {
+            recheck = minOf(recheck ?: ms, ms)
+        }
+
+        // 1. On screen: in use, nothing ages.
+        for (pkg in visible) {
+            pendingLeaves.remove(pkg)
+            if (env.isLocked(pkg)) LockStateTracker.onAppVisible(pkg)
+        }
+
+        // 2. Gone from the screen long enough: the user left.
+        for (pkg in onScreenSessions.toList()) {
+            if (pkg in visible) continue
+            if (screen.front == UNIDENTIFIED_APP && screen.lastForeground == pkg) {
+                pendingLeaves.remove(pkg)
+                continue
+            }
+            val goneSince = pendingLeaves.getOrPut(pkg) { now }
+            if (now - goneSince < LEAVE_CONFIRM_MS) {
+                recheckIn(LEAVE_CONFIRM_MS - (now - goneSince) + 20L)
+                continue
+            }
+            pendingLeaves.remove(pkg)
+            onScreenSessions.remove(pkg)
+            val hop = screen.front.takeIf { it != pkg && !env.isLauncher(it) && env.isHopTarget(it) }
+            LockStateTracker.onAppLeft(pkg, env.timeoutOf(pkg), hop)
+        }
+
+        // 3. A helper hop that moved on to somewhere else ends.
+        LockStateTracker.onForegroundChanged(screen.front, env::timeoutOf, env::isHopTarget)
+
+        // 4. Locked content on screen without a session (split screen, PiP, freeform, missed
+        // events): cover it.
+        if (screen.coverAllowed) {
+            for (pkg in visible) {
+                if (!env.mayCover(pkg)) continue
+                val inPip = pkg in screen.pip
+                if (!inPip) {
+                    val wait = settleWait(pkg, visible, now)
+                    if (wait > 0L) {
+                        recheckIn(wait)
+                        continue
+                    }
+                }
+                return Outcome(cover = pkg, coverInPip = inPip, recheckInMs = recheck)
+            }
+        }
+
+        // 5. Remember which unlocked apps are on screen so step 2 can notice them leave.
+        for (pkg in visible) {
+            if (env.isLocked(pkg) && LockStateTracker.isAppUnlocked(pkg, env.timeoutOf(pkg))) {
+                onScreenSessions += pkg
+            }
+        }
+        returningSince.keys.retainAll(visible)
+        return Outcome(recheckInMs = recheck)
+    }
+
+    /**
+     * How much longer a just-left app's window must stay next to the launcher before it counts as
+     * back (0: it has settled, or there's nothing to wait for).
+     */
+    private fun settleWait(pkg: String, visible: Set<String>, now: Long): Long {
+        if (!LockStateTracker.justLeft(pkg) || visible.none(env::isLauncher)) {
+            returningSince.remove(pkg)
+            return 0L
+        }
+        val since = returningSince.getOrPut(pkg) { now }
+        if (now - since >= EXIT_SETTLE_MS) {
+            returningSince.remove(pkg)
+            return 0L
+        }
+        return EXIT_SETTLE_MS - (now - since) + 20L
+    }
+}

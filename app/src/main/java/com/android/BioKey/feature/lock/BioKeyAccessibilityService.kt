@@ -1,8 +1,7 @@
 package com.android.BioKey.feature.lock
 
 import android.accessibilityservice.AccessibilityService
-import android.app.ActivityOptions
-import android.app.PendingIntent
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -17,13 +16,16 @@ import android.os.SystemClock
 import android.os.UserManager
 import android.provider.Settings
 import android.util.Log
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.view.inputmethod.InputMethodManager
 import androidx.core.content.ContextCompat
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
+import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.main.MainActivity
@@ -37,7 +39,7 @@ import com.android.BioKey.feature.main.MainActivity
  * - The window *list* says which apps are actually on screen. Sessions are driven only by it
  *   ([reconcile]): an unlocked app stays unlocked while any of its windows is visible, whatever
  *   else pops up over it (dialogs, sheets, keyboards, chat heads, assistants, refreshes), and it
- *   only counts as left once its windows are gone for [LEAVE_CONFIRM_MS].
+ *   only counts as left once its windows are gone for [SessionRules.LEAVE_CONFIRM_MS].
  *
  * Also guards BioKey itself (self-protection): Settings/installer screens that could disable or
  * uninstall BioKey require authentication while self-protection is on.
@@ -49,9 +51,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
         /** Coalesces window churn (animations, transitions) into one visibility pass. */
         private const val RECONCILE_DELAY_MS = 150L
-
-        /** An app must be off screen this long before it counts as left (trampolines, relaunches). */
-        private const val LEAVE_CONFIRM_MS = 400L
 
         /** How long a cover raised by a tap waits for the tapped app's window (cold starts). */
         private const val PREDICTION_WAIT_MS = 3_000L
@@ -89,86 +88,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
         private const val PKG_GMS = "com.google.android.gms"
 
         const val SELF_PROTECTION_PENDING_KEY = "biokey:self-protection"
-
-        private val KNOWN_LAUNCHERS = setOf(
-            "com.google.android.apps.nexuslauncher",
-            "com.android.launcher",
-            "com.android.launcher3",
-            "com.sec.android.app.launcher",
-            "com.miui.home",
-            "com.oppo.launcher",
-            "com.oneplus.launcher",
-            "com.huawei.android.launcher"
-        )
-
-        /**
-         * Apps people hop to mid-task (authenticators, SMS/email for codes, account and file
-         * pickers, cameras for scanning). Going to one straight from an unlocked app and coming
-         * straight back keeps that app's session, even in "Immediately" mode.
-         */
-        private val HOP_HELPER_PACKAGES = setOf(
-            PKG_GMS,
-            "com.google.android.gsf",
-            "com.google.android.apps.credentialmanager",
-            "com.android.credentialmanager",
-            "com.google.android.apps.authenticator2",
-            "com.azure.authenticator",
-            "com.authy.authy",
-            "com.yubico.yubioath",
-            "com.duosecurity.duomobile",
-            "org.fedorahosted.freeotp",
-            "org.liberty.android.freeotpplus",
-            "com.beemdevelopment.aegis",
-            "com.twofasapp",
-            "io.ente.auth",
-            "com.bitwarden.authenticator",
-            "com.x8bit.bitwarden",
-            "com.onepassword.android",
-            "com.lastpass.authenticator",
-            "com.callpod.android_apps.keeper",
-            "com.dashlane",
-            "com.zoho.accounts.oneauth",
-            "com.google.android.apps.messaging",
-            "com.samsung.android.messaging",
-            "com.google.android.gm",
-            "com.microsoft.office.outlook",
-            "ch.protonmail.android",
-            "com.google.android.documentsui",
-            "com.android.documentsui",
-            "com.google.android.providers.media.module",
-            "com.android.providers.media.module",
-            "com.google.android.GoogleCamera",
-            "com.android.camera",
-            "com.android.camera2",
-            "com.sec.android.app.camera"
-        )
-
-        /** Windows that float over apps without meaning the user switched apps. Exact names only. */
-        private val SYSTEM_OVERLAYS = setOf(
-            "android",
-            "com.android.systemui",
-            "com.google.android.permissioncontroller",
-            "com.android.permissioncontroller",
-            "com.google.android.packageinstaller",
-            "com.android.packageinstaller",
-            "com.android.credentialmanager",
-            "com.google.android.webview",
-            "com.android.webview",
-            "com.google.android.as",
-            "com.google.android.apps.wellbeing",
-            "com.google.android.intentresolver",
-            "com.android.intentresolver",
-            "com.google.android.markup",
-            "com.android.companiondevicemanager"
-        )
-
-        private val KNOWN_BROWSERS = setOf(
-            "com.android.chrome", "com.chrome.beta", "com.chrome.canary", "com.chrome.dev",
-            "org.mozilla.firefox", "org.mozilla.firefox_beta", "org.mozilla.fenix", "org.mozilla.focus",
-            "com.microsoft.emmx", "com.duckduckgo.mobile.android", "com.opera.browser", "com.opera.gx",
-            "com.opera.mini.native", "com.brave.browser", "com.sec.android.app.sbrowser",
-            "com.sec.android.app.sbrowser.beta", "com.vivaldi.browser"
-        )
 
         private val GPM_IGNORED_CLASS_HINTS = listOf(
             "Autofill", "Credential", "ConfirmUser", "Authenticator", "SignIn", "OAuth", "Fido", "Passkey",
@@ -217,12 +136,16 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private val windowPackages = HashMap<Int, String>()
     /** Last activity class seen per package (to recognise custom tabs as helpers). */
     private val lastClassByPackage = HashMap<String, String>()
-    /** Locked apps last seen on screen while unlocked: the sessions [reconcile] watches. */
-    private val onScreenSessions = HashSet<String>()
-    /** Apps that have dropped off screen, and since when, awaiting [LEAVE_CONFIRM_MS]. */
-    private val pendingLeaves = HashMap<String, Long>()
+    /** Which sessions are on screen, which have left, which locked apps to cover: see [SessionRules]. */
+    private val rules = SessionRules(object : SessionRules.Env {
+        override fun isLocked(pkg: String) = vault.isAppLocked(pkg)
+        override fun timeoutOf(pkg: String) = vault.getTimeoutMode(pkg)
+        override fun isLauncher(pkg: String) = this@BioKeyAccessibilityService.isLauncher(pkg)
+        override fun isHopTarget(pkg: String) = this@BioKeyAccessibilityService.isHopTarget(pkg)
+        override fun mayCover(pkg: String) = isCoverableByVisibility(pkg) && !isLauncher(pkg) &&
+            needsCover(pkg) && !LockStateTracker.isRegularLockPending(pkg)
+    })
 
-    private var launcherPackages: Set<String> = KNOWN_LAUNCHERS
     private var imePackages: Set<String> = emptySet()
     private var systemListsRefreshedAt = 0L
 
@@ -230,9 +153,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> {
+                    watchRecents(false)
                     foregroundPackage = null
-                    onScreenSessions.clear()
-                    pendingLeaves.clear()
+                    rules.reset()
                     isConfirmingDeviceCredential = false
                     LockStateTracker.onScreenTurnedOff()
                 }
@@ -275,7 +198,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (!isRunning) return
         vault = SecurityVault.getInstance(this)
         AppInfoCache.preWarm(this, vault.getLockedPackages())
-        shield = InstantShieldOverlay(this, ::onShieldTimeout)
+        shield = InstantShieldOverlay(
+            this,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            goHome = { performGlobalAction(GLOBAL_ACTION_HOME) },
+            onTimeout = ::onShieldTimeout
+        )
         selfProtection = SelfProtectionDetector(this)
         refreshSystemLists(force = true)
         ContextCompat.registerReceiver(
@@ -289,9 +217,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
         )
         LockStateTracker.addLockAllListener(onLockAll)
         ProtectionAlerts.serviceRestored(this)
+        // The accessibility engine is the better one: compatibility mode stands down.
+        UsageWatchService.stop(this)
         // A locked app may already be in front (service restarted, or enabled over it).
         mainHandler.postDelayed(::reevaluateForeground, 250)
         Log.i(TAG, "Accessibility service connected & components initialized")
+        DiagnosticLog.log("Accessibility engine started")
     }
 
     /**
@@ -301,13 +232,14 @@ class BioKeyAccessibilityService : AccessibilityService() {
      */
     private val onLockAll: () -> Unit = {
         mainHandler.post {
-            onScreenSessions.clear()
-            pendingLeaves.clear()
+            rules.reset()
             if (isRunning && isInteractive()) reevaluateForeground()
         }
     }
 
     private fun isInteractive() = getSystemService(PowerManager::class.java)?.isInteractive == true
+
+    private fun isDeviceLocked() = getSystemService(KeyguardManager::class.java)?.isDeviceLocked == true
 
     // -------------------------------------------------------------------------------------------
     // Event handling
@@ -352,10 +284,35 @@ class BioKeyAccessibilityService : AccessibilityService() {
         }
     }
 
+    // Content-change events are costly, so they're on only while something needs them: a
+    // self-protection host to inspect, or the launcher in front (Recents, see [RecentsWatcher]).
+    private var contentForSelfProtection = false
+    private var contentForRecents = false
+
+    private val recents by lazy { RecentsWatcher(this, ::onClosedFromRecents, ::onClearAllRecents) }
+
     private fun updateContentMonitoring(enable: Boolean) {
-        if (contentMonitoringEnabled == enable) return
+        contentForSelfProtection = enable
+        applyContentMonitoring()
+    }
+
+    private fun watchRecents(enable: Boolean) {
+        if (!enable) recents.reset()
+        contentForRecents = enable
+        applyContentMonitoring()
+    }
+
+    private var appliedTimeout = 0L
+
+    private fun applyContentMonitoring() {
+        val enable = contentForSelfProtection || contentForRecents
+        // Batching delays every kind of event, taps included: only for self-protection, never while
+        // the launcher (where a tap on a locked app must be covered at once) is in front.
+        val timeout = if (contentForSelfProtection && !contentForRecents) 100L else 0L
+        if (contentMonitoringEnabled == enable && appliedTimeout == timeout) return
         val info = serviceInfo ?: return
         contentMonitoringEnabled = enable
+        appliedTimeout = timeout
         info.eventTypes = if (enable) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                 AccessibilityEvent.TYPE_WINDOWS_CHANGED or
@@ -366,7 +323,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 AccessibilityEvent.TYPE_WINDOWS_CHANGED or
                 AccessibilityEvent.TYPE_VIEW_CLICKED
         }
-        info.notificationTimeout = if (enable) 100L else 0L
+        info.notificationTimeout = timeout
         runCatching { serviceInfo = info }
     }
 
@@ -386,8 +343,14 @@ class BioKeyAccessibilityService : AccessibilityService() {
             val eventCls = event.className?.toString().orEmpty()
 
             if (type == AccessibilityEvent.TYPE_VIEW_CLICKED) {
-                if (eventPkg != null && isLauncher(eventPkg)) predictLaunch(event)
+                if (eventPkg != null && isLauncher(eventPkg)) {
+                    if (contentForRecents) recents.onLauncherClicked(event)
+                    predictLaunch(event)
+                }
                 return
+            }
+            if (type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && contentForRecents && eventPkg != null && isLauncher(eventPkg)) {
+                recents.onLauncherChanged(eventPkg)
             }
             if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
                 onWindowsChanged(event)
@@ -404,7 +367,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
                 // Fast path: cover a locked app before any other work.
                 val target = resolveForegroundPackage(event)
-                if (target != null && !isSystemOrOverlay(target, eventCls) && needsCover(target)) {
+                if (target != null && !isSystemOrOverlay(target, eventCls) && needsCover(target) && !isExitTransition(target)) {
                     shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
                 }
 
@@ -416,7 +379,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     eventPkg != "com.android.settings" &&
                     eventPkg != "com.android.systemui" &&
                     eventPkg !in imePackages &&
-                    eventPkg !in SYSTEM_OVERLAYS
+                    eventPkg !in ForegroundRules.SYSTEM_OVERLAYS
                 ) {
                     isConfirmingDeviceCredential = false
                 }
@@ -520,6 +483,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             if (name.isEmpty()) continue
             val target = (lockedPackagesForLabel(name) + lockedPackagesForLabel(name.removePrefix("work ").trim()))
                 .firstOrNull { needsCover(it) } ?: continue
+            DiagnosticLog.log("Tap on $target: covering it before it opens")
             shield.showPredicted(
                 targetPackage = target,
                 waitMs = PREDICTION_WAIT_MS,
@@ -537,23 +501,55 @@ class BioKeyAccessibilityService : AccessibilityService() {
         val front = rootInActiveWindow?.let { root -> root.packageName?.toString().also { release(root) } }
         val arrived = front == target ||
             (target == VIRTUAL_PKG_GOOGLE_PASSWORDS && (front == PKG_GMS || front == PKG_CREDENTIAL_MANAGER))
-        if (arrived && needsCover(target)) lock(target) else shield.hide()
+        if (arrived && needsCover(target)) lock(target, "opened after a tap") else shield.hide()
     }
 
     private fun onWindowsChanged(event: AccessibilityEvent) {
+        // The lock screen coming up (Lockdown, a lock with the screen on) is a window change too.
+        LockStateTracker.onDeviceLockState(isDeviceLocked())
         val changes = event.windowChanges
         val surfaced = AccessibilityEvent.WINDOWS_CHANGE_ADDED or
             AccessibilityEvent.WINDOWS_CHANGE_ACTIVE or
             AccessibilityEvent.WINDOWS_CHANGE_FOCUSED
         // A window we already know came (back) to the front, e.g. a locked app resumed from
-        // Recents: cover it now instead of waiting for its state event.
+        // Recents: cover it now instead of waiting for its state event. Only if it really is in
+        // front, though: a window can be "added" or "focused" for a moment on its way out.
         if (changes and surfaced != 0) {
             val pkg = windowPackages[event.windowId]
-            if (pkg != null && !isSystemOrOverlay(pkg, "") && !isLauncher(pkg) && isCoverableByVisibility(pkg) && needsCover(pkg)) {
-                lock(pkg)
+            if (pkg != null && !isSystemOrOverlay(pkg, "") && !isLauncher(pkg) && isCoverableByVisibility(pkg) &&
+                needsCover(pkg) && isFrontWindow(event.windowId) && !isExitTransition(pkg)
+            ) {
+                lock(pkg, "came to the front")
             }
         }
         scheduleReconcile()
+    }
+
+    private fun isFrontWindow(windowId: Int): Boolean {
+        val w = (try { windows } catch (_: Exception) { null })?.firstOrNull { it.id == windowId } ?: return false
+        return w.type == AccessibilityWindowInfo.TYPE_APPLICATION && (w.isActive || w.isFocused)
+    }
+
+    /**
+     * Going Home or dismissing an app's card in Recents animates the app's window away, and
+     * Android can hand that window focus (and send its events) once more on the way out. Right
+     * after an app left, its window turning up while the launcher is still on screen is that exit,
+     * not the app coming back. [reconcile] covers it if it stays ([SessionRules.EXIT_SETTLE_MS]); a real return
+     * is covered at once anyway, by the tap on its icon or card ([predictLaunch]), or because
+     * the launcher isn't on screen (switching straight back to it).
+     */
+    private fun isExitTransition(pkg: String): Boolean {
+        if (!LockStateTracker.justLeft(pkg)) return false
+        val list = try { windows } catch (_: Exception) { null } ?: return false
+        val launcherOnScreen = list.any { w ->
+            w.type == AccessibilityWindowInfo.TYPE_APPLICATION && windowPackages[w.id]?.let(::isLauncher) == true
+        }
+        if (launcherOnScreen) {
+            Log.i(TAG, "$pkg surfaced while leaving; waiting for it to settle")
+            DiagnosticLog.log("$pkg flickered back while leaving; waiting for it to settle")
+            scheduleReconcile(SessionRules.EXIT_SETTLE_MS)
+        }
+        return launcherOnScreen
     }
 
     private fun scheduleReconcile(delayMs: Long = RECONCILE_DELAY_MS) {
@@ -584,7 +580,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         for (w in windowList) {
             liveIds += w.id
             if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
-            val pkg = windowPackages[w.id] ?: windowPackage(w)?.also { windowPackages[w.id] = it } ?: continue
+            // Windows that hide from non-tool accessibility services (accessibility-data-sensitive,
+            // e.g. BioKey's own) can't be identified: count them as some other app.
+            val pkg = windowPackages[w.id] ?: windowPackage(w)?.also { windowPackages[w.id] = it } ?: SessionRules.UNIDENTIFIED_APP
             visible += pkg
             if (w.isInPictureInPictureMode) pip += pkg
             if (front == null && (w.isActive || w.isFocused)) front = pkg
@@ -599,63 +597,38 @@ class BioKeyAccessibilityService : AccessibilityService() {
         val frontApp = (front ?: visible.first()).let {
             if (it == PKG_GMS && foregroundPackage == VIRTUAL_PKG_GOOGLE_PASSWORDS) VIRTUAL_PKG_GOOGLE_PASSWORDS else it
         }
-        val now = SystemClock.elapsedRealtime()
-
-        // 1. On screen: in use, nothing ages.
-        for (pkg in visible) {
-            pendingLeaves.remove(pkg)
-            if (vault.isAppLocked(pkg)) LockStateTracker.onAppVisible(pkg)
-        }
-
-        // 2. Gone from the screen long enough: the user left.
-        for (pkg in onScreenSessions.toList()) {
-            if (pkg in visible) continue
-            val goneSince = pendingLeaves.getOrPut(pkg) { now }
-            if (now - goneSince < LEAVE_CONFIRM_MS) {
-                mainHandler.postDelayed({ scheduleReconcile(0L) }, LEAVE_CONFIRM_MS - (now - goneSince) + 20L)
-                continue
-            }
-            pendingLeaves.remove(pkg)
-            onScreenSessions.remove(pkg)
-            val hop = frontApp.takeIf { it != pkg && !isLauncher(it) && isHopHelper(it) }
-            LockStateTracker.onAppLeft(pkg, vault.getTimeoutMode(pkg), hop)
-        }
-
-        // 3. A helper hop that moved on to somewhere else ends.
-        LockStateTracker.onForegroundChanged(frontApp, vault::getTimeoutMode)
-
-        // 4. Locked content on screen without a session (split screen, PiP, freeform, missed
-        // events): cover it.
-        if (vault.isGlobalLockEnabled() && !shield.isShowing && !LockScreenActivity.isLockScreenResumed &&
+        val coverAllowed = vault.isGlobalLockEnabled() && !shield.isShowing && !LockScreenActivity.isLockScreenResumed &&
             !SecurityEngine.INSTANCE.isAuthenticating()
-        ) {
-            for (pkg in visible) {
-                if (!isCoverableByVisibility(pkg) || isLauncher(pkg) || !needsCover(pkg)) continue
-                if (LockStateTracker.isRegularLockPending(pkg)) continue
-                if (pkg in pip) {
-                    Log.i(TAG, "Locked app $pkg in picture-in-picture without unlock; leaving PiP")
-                    performGlobalAction(GLOBAL_ACTION_HOME)
-                }
-                lock(pkg)
-                return
+        val outcome = rules.reconcile(
+            SessionRules.Screen(
+                visible = visible,
+                pip = pip,
+                front = frontApp,
+                lastForeground = foregroundPackage,
+                now = SystemClock.elapsedRealtime(),
+                coverAllowed = coverAllowed
+            )
+        )
+        outcome.recheckInMs?.let { mainHandler.postDelayed({ scheduleReconcile(0L) }, it) }
+        val cover = outcome.cover
+        if (cover != null) {
+            if (outcome.coverInPip) {
+                Log.i(TAG, "Locked app $cover in picture-in-picture without unlock; leaving PiP")
+                performGlobalAction(GLOBAL_ACTION_HOME)
             }
-            if (visible.size > 1) {
-                for (pkg in visible) {
-                    if (selfProtection.isHost(pkg) && shouldGuardSelf() &&
-                        !LockStateTracker.isRecentlyAbandoned(SELF_PROTECTION_PENDING_KEY) &&
-                        selfProtection.isGuardedScreen(pkg, null)
-                    ) {
-                        triggerSelfProtection()
-                        return
-                    }
-                }
-            }
+            lock(cover, if (outcome.coverInPip) "in picture-in-picture without a session" else "on screen without a session")
+            return
         }
-
-        // 5. Remember which unlocked apps are on screen so step 2 can notice them leave.
-        for (pkg in visible) {
-            if (vault.isAppLocked(pkg) && LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))) {
-                onScreenSessions += pkg
+        // BioKey's own settings pages in split screen or a window event that was missed.
+        if (coverAllowed && visible.size > 1) {
+            for (pkg in visible) {
+                if (selfProtection.isHost(pkg) && shouldGuardSelf() &&
+                    !LockStateTracker.isRecentlyAbandoned(SELF_PROTECTION_PENDING_KEY) &&
+                    selfProtection.isGuardedScreen(pkg, null)
+                ) {
+                    triggerSelfProtection()
+                    return
+                }
             }
         }
     }
@@ -666,11 +639,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         return root.packageName?.toString().also { release(root) }
     }
 
-    private fun isHopHelper(pkg: String): Boolean {
-        if (pkg in HOP_HELPER_PACKAGES) return true
-        val cls = lastClassByPackage[pkg].orEmpty()
-        return pkg in KNOWN_BROWSERS && (cls.contains("CustomTab", ignoreCase = true) || cls.contains("AuthTab", ignoreCase = true))
-    }
+    /** See [ForegroundRules.isHopTarget]; keyboards and unreadable windows also leave a hop running. */
+    private fun isHopTarget(pkg: String): Boolean =
+        pkg == SessionRules.UNIDENTIFIED_APP || pkg in imePackages || ForegroundRules.isHopTarget(this, pkg, lastClassByPackage[pkg])
 
     private fun handleForeground(target: String, cls: String) {
         // BioKey's own windows (lock screen, main UI) have their own authentication.
@@ -685,6 +656,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (isSystemOrOverlay(target, cls)) return
 
         val isLauncher = isLauncher(target)
+        // Recents lives in the launcher: watch for apps being closed there while it's in front.
+        watchRecents(isLauncher)
         val isRecents = isLauncher && isRecentsOverviewClass(cls)
         val previous = foregroundPackage
 
@@ -726,8 +699,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
         if (LockStateTracker.isAppUnlocked(target, vault.getTimeoutMode(target))) {
             LockStateTracker.onAppVisible(target)
-            pendingLeaves.remove(target)
-            onScreenSessions += target
+            rules.noteOnScreen(target)
             shield.hide()
             return
         }
@@ -744,7 +716,24 @@ class BioKeyAccessibilityService : AccessibilityService() {
             }
             return
         }
-        lock(target)
+        if (isExitTransition(target)) return
+        lock(target, "opened")
+    }
+
+    /** A locked app was swiped away in Recents: its session ends now, whatever its re-lock delay. */
+    private fun onClosedFromRecents(appName: String) {
+        val name = appName.lineSequence().firstOrNull()?.substringBefore(',')?.trim()?.lowercase() ?: return
+        val closed = lockedPackagesForLabel(name) + lockedPackagesForLabel(name.removePrefix("work ").trim())
+        for (pkg in closed) {
+            Log.i(TAG, "$pkg closed from Recents; session ended")
+            LockStateTracker.lockPackage(pkg, "closed from Recents")
+        }
+    }
+
+    /** "Clear all" in Recents closes every app: every session ends. */
+    private fun onClearAllRecents() {
+        Log.i(TAG, "Recents cleared; all sessions ended")
+        LockStateTracker.lockAll(reason = "Recents cleared")
     }
 
     private fun isRecentsOverviewClass(cls: String): Boolean {
@@ -764,8 +753,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
             (lower.contains("quickstep") && !lower.contains("launcher"))
     }
 
-    private fun lock(target: String) {
+    private fun lock(target: String, why: String) {
         foregroundPackage = target
+        DiagnosticLog.log("Covered $target ($why)")
         if (LockStateTracker.isRegularLockPending(target) &&
             LockScreenActivity.isLockScreenResumed &&
             LockScreenActivity.activeLockedTarget == target
@@ -820,6 +810,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         ) return
         LockStateTracker.setRegularLockPending(SELF_PROTECTION_PENDING_KEY)
         Log.i(TAG, "Guarding a BioKey system settings screen")
+        DiagnosticLog.log("Guarding a page that could switch BioKey off")
         shield.show(SELF_PROTECTION_PENDING_KEY) {
             launchLockScreen(SELF_PROTECTION_PENDING_KEY, isSelfProtection = true)
         }
@@ -858,15 +849,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (!force && now - systemListsRefreshedAt < 30_000L) return
         systemListsRefreshedAt = now
         try {
-            val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
-            val homes = packageManager.queryIntentActivities(homeIntent, PackageManager.MATCH_ALL)
-                .mapNotNull { it.activityInfo?.packageName }
-                .filter { it != "com.android.settings" } // Settings' fallback home is not a launcher.
-            launcherPackages = KNOWN_LAUNCHERS + homes
-        } catch (e: Exception) {
-            Log.w(TAG, "Launcher query failed: ${e.message}")
-        }
-        try {
             imePackages = getSystemService(InputMethodManager::class.java).enabledInputMethodList
                 .map { it.packageName }
                 .toSet()
@@ -877,7 +859,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     private fun isLauncher(pkg: String): Boolean {
         refreshSystemLists()
-        return pkg in launcherPackages
+        return ForegroundRules.isLauncher(this, pkg)
     }
 
     private fun isDeviceCredentialScreen(pkg: String, cls: String): Boolean {
@@ -893,7 +875,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     private fun isSystemOrOverlay(pkg: String, cls: String): Boolean {
         if (pkg == VIRTUAL_PKG_GOOGLE_PASSWORDS) return false
-        if (pkg in SYSTEM_OVERLAYS) return true
+        if (pkg in ForegroundRules.SYSTEM_OVERLAYS) return true
         // Anything of Credential Manager's that isn't the password manager is a passkey/sign-in
         // sheet over another app.
         if (pkg == PKG_CREDENTIAL_MANAGER) return true
@@ -933,48 +915,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
     }
 
     private fun launchLockScreen(targetPkg: String, isSelfProtection: Boolean) {
-        val intent = Intent(this, LockScreenActivity::class.java).apply {
-            putExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE, targetPkg)
-            putExtra(LockScreenActivity.EXTRA_SELF_PROTECTION, isSelfProtection)
-            addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_NO_ANIMATION or
-                    Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS or
-                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-            )
-        }
-
-        // Primary path: PendingIntent with an explicit background-start grant and no animation
-        // (plain startActivity from a service can be silently blocked on Android 14+).
-        try {
-            val creatorOptions = ActivityOptions.makeCustomAnimation(this, 0, 0)
-            val sendOptions = ActivityOptions.makeCustomAnimation(this, 0, 0)
-            if (Build.VERSION.SDK_INT >= 36) {
-                creatorOptions.setPendingIntentCreatorBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS)
-                sendOptions.setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS)
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                @Suppress("DEPRECATION")
-                creatorOptions.setPendingIntentCreatorBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
-                @Suppress("DEPRECATION")
-                sendOptions.setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
-            }
-            PendingIntent.getActivity(
-                this,
-                targetPkg.hashCode(),
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                creatorOptions.toBundle()
-            ).send(this, 0, null, null, null, null, sendOptions.toBundle())
-            return
-        } catch (e: Exception) {
-            Log.w(TAG, "PendingIntent lock screen start failed, trying startActivity: ${e.message}")
-        }
-
-        try {
-            startActivity(intent, ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle())
-        } catch (e: Exception) {
+        if (!LockLauncher.launch(this, targetPkg, isSelfProtection)) {
             // Could not cover the app: fail closed by leaving it.
-            Log.e(TAG, "Lock screen launch failed; sending user home", e)
             performGlobalAction(GLOBAL_ACTION_HOME)
             shield.hide()
         }
@@ -1017,10 +959,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
         mainHandler.removeCallbacks(trailingSelfProtectionRunnable)
         LockStateTracker.removeLockAllListener(onLockAll)
         // Nothing enforces sessions while the service is gone, so none may outlive it.
-        LockStateTracker.lockAll()
+        LockStateTracker.lockAll(reason = "accessibility engine stopped")
         if (::shield.isInitialized) shield.destroy()
         if (::vault.isInitialized && vault.isSetupCompleted()) {
-            ProtectionAlerts.serviceStopped(this)
+            // Hand over to compatibility mode if it's set up (e.g. Advanced Protection was just turned on).
+            ProtectionEngine.refresh(this)
+            if (!UsageWatchService.isRunning) ProtectionAlerts.serviceStopped(this)
         }
         Log.w(TAG, "Accessibility service stopped")
     }

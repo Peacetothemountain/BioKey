@@ -3,14 +3,15 @@ package com.android.BioKey.core.security
 import android.os.SystemClock
 import android.util.Log
 import com.android.BioKey.core.data.LockTimeoutMode
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CopyOnWriteArraySet
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArraySet
 
 /**
  * In-memory lock session state.
@@ -31,15 +32,19 @@ object LockStateTracker {
 
     /**
      * Longest an unlocked app stays unlocked while the user hops straight to a helper app (2FA
-     * code, email link, file picker, camera) and back. Going anywhere else ends the hop.
+     * code, email link, photo or file picker, camera) and back: long enough to browse an album for
+     * the right photo. Going anywhere else ends the hop at once.
      */
-    const val HOP_MAX_MS = 120_000L
+    const val HOP_MAX_MS = 5 * 60_000L
 
     /** Suppresses duplicate lock-screen launches from bursts of accessibility events. */
     private const val PENDING_LOCK_DEBOUNCE_MS = 1_200L
 
     /** Suppresses immediate re-triggering while exiting an abandoned lock screen. */
     private const val ABANDONED_LOCK_COOLDOWN_MS = 900L
+
+    /** How long after an app left the screen its window may still flicker back during the exit animation. */
+    private const val JUST_LEFT_MS = 2_000L
 
     /** How long a successful self-protection challenge lets the user stay in BioKey's settings pages. */
     private const val SELF_PROTECTION_LEASE_MS = 120_000L
@@ -63,6 +68,7 @@ object LockStateTracker {
     private val sessions = ConcurrentHashMap<String, Session>()
     private val pendingLocks = ConcurrentHashMap<String, Long>()
     private val abandonedAt = ConcurrentHashMap<String, Long>()
+    private val leftAt = ConcurrentHashMap<String, Long>()
 
     @Volatile private var selfProtectionGrantedAt = 0L
     @Volatile private var selfProtectionVisitedGuardedScreen = false
@@ -127,6 +133,7 @@ object LockStateTracker {
             abandonedAt.remove(pkg)
         }
         Log.i(TAG, "Session started for $packageName")
+        DiagnosticLog.log("Unlocked $packageName")
         appUnlockListeners.forEach { runCatching { it(packageName) } }
     }
 
@@ -150,25 +157,34 @@ object LockStateTracker {
         if (session.awaySince != 0L) return
         session.awaySince = now()
         session.hopTarget = hopTarget
+        for (pkg in aliasesOf(packageName)) leftAt[pkg] = session.awaySince
         Log.d(TAG, "$packageName left the screen (hop=$hopTarget)")
+        DiagnosticLog.log("$packageName left the screen" + (hopTarget?.let { " · hop to $it" } ?: " · re-lock: ${timeoutMode.name.lowercase()}"))
         when {
-            timeoutMode == LockTimeoutMode.IMMEDIATE && hopTarget == null -> lockPackage(packageName)
+            timeoutMode == LockTimeoutMode.IMMEDIATE && hopTarget == null -> lockPackage(packageName, "left, re-locks immediately")
             timeoutMode == LockTimeoutMode.ON_SCREEN_OFF -> Unit
             else -> scheduleExpiry(packageName, awayAllowanceMs(timeoutMode, hopTarget != null), timeoutMode)
         }
     }
 
     /**
-     * Something new is in front. Any hop that isn't the helper the user went to (or back to the
-     * app itself, which [onAppVisible] handles) is over: the app now ages as a normal exit.
+     * Something new is in front. A hop carries on through anything that [continuesHop] accepts
+     * (another helper, a system screen, BioKey's own lock screen: a sign-in sheet that sends the
+     * user to an authenticator, say); anywhere else ends it, and the app ages as a normal exit.
+     * Coming back to the app itself is [onAppVisible]'s job.
      */
-    fun onForegroundChanged(foregroundPackage: String, timeoutModeOf: (String) -> LockTimeoutMode) {
+    fun onForegroundChanged(
+        foregroundPackage: String,
+        timeoutModeOf: (String) -> LockTimeoutMode,
+        continuesHop: (String) -> Boolean = { false }
+    ) {
         for ((pkg, session) in sessions) {
             val hop = session.hopTarget ?: continue
-            if (hop == foregroundPackage || pkg in aliasesOf(foregroundPackage)) continue
+            if (hop == foregroundPackage || pkg in aliasesOf(foregroundPackage) || continuesHop(foregroundPackage)) continue
             session.hopTarget = null
             val mode = timeoutModeOf(pkg)
             Log.d(TAG, "Hop from $pkg ended at $foregroundPackage")
+            DiagnosticLog.log("Hop from $pkg ended at $foregroundPackage")
             if (!isAppUnlocked(pkg, mode)) continue
             if (mode.durationMillis > 0L) {
                 scheduleExpiry(pkg, (session.awaySince + mode.durationMillis - now()).coerceAtLeast(0L), mode)
@@ -181,28 +197,43 @@ object LockStateTracker {
         return if (hopping) maxOf(grace, HOP_MAX_MS) else grace
     }
 
+    /**
+     * True for a short while after [packageName] left the screen. Going Home or dismissing an app
+     * in Recents animates its window away, and Android can hand that window focus once more on
+     * the way out: during this window, such a flicker is the exit, not the app coming back.
+     */
+    fun justLeft(packageName: String): Boolean {
+        val stamp = aliasesOf(packageName).firstNotNullOfOrNull { leftAt[it] } ?: return false
+        if (now() - stamp < JUST_LEFT_MS) return true
+        for (pkg in aliasesOf(packageName)) leftAt.remove(pkg)
+        return false
+    }
+
     fun isAppUnlocked(packageName: String, timeoutMode: LockTimeoutMode): Boolean {
         val session = sessionOf(packageName) ?: return false
         val away = session.awaySince
         if (away == 0L || timeoutMode == LockTimeoutMode.ON_SCREEN_OFF) return true
         val hopping = session.hopTarget != null
         if (timeoutMode == LockTimeoutMode.IMMEDIATE && !hopping) {
-            lockPackage(packageName)
+            lockPackage(packageName, "left, re-locks immediately")
             return false
         }
         val stillUnlocked = now() - away < awayAllowanceMs(timeoutMode, hopping)
-        if (!stillUnlocked) lockPackage(packageName)
+        if (!stillUnlocked) lockPackage(packageName, "re-lock time passed")
         return stillUnlocked
     }
 
-    fun lockPackage(packageName: String) {
+    fun lockPackage(packageName: String, reason: String? = null) {
         cancelExpiry(packageName)
         var hadSession = false
         for (pkg in aliasesOf(packageName)) {
             if (sessions.remove(pkg) != null) hadSession = true
             pendingLocks.remove(pkg)
         }
-        if (hadSession) Log.i(TAG, "Session ended for $packageName")
+        if (hadSession) {
+            Log.i(TAG, "Session ended for $packageName")
+            DiagnosticLog.log("Session ended: $packageName" + (reason?.let { " ($it)" } ?: ""))
+        }
         appLockListeners.forEach { runCatching { it(packageName) } }
     }
 
@@ -210,19 +241,32 @@ object LockStateTracker {
      * Wipes every session, including BioKey's own unless [includeOwnApp] is false. Used on
      * screen-off, manual "lock all" and when protection resumes.
      */
-    fun lockAll(includeOwnApp: Boolean = true) {
+    fun lockAll(includeOwnApp: Boolean = true, reason: String? = null) {
         expiryJobs.values.forEach { it.cancel() }
         expiryJobs.clear()
         sessions.clear()
         pendingLocks.clear()
         abandonedAt.clear()
+        leftAt.clear()
         clearSelfProtection()
         if (includeOwnApp) lockOwnApp()
         Log.i(TAG, "All sessions wiped")
+        if (reason != null) DiagnosticLog.log("All sessions ended ($reason)")
         lockAllListeners.forEach { runCatching(it) }
     }
 
-    fun onScreenTurnedOff() = lockAll()
+    fun onScreenTurnedOff() = lockAll(reason = "screen off")
+
+    @Volatile private var deviceLocked = false
+
+    /**
+     * The device's locked state, as last seen. Locking the device (screen off, screensaver, the
+     * power menu's Lockdown, a lock with the screen still on) ends every session, every time.
+     */
+    fun onDeviceLockState(locked: Boolean) {
+        if (locked && !deviceLocked) lockAll(reason = "phone locked")
+        deviceLocked = locked
+    }
 
     // ---------------------------------------------------------------------------------------
     // Lock-screen launch debouncing

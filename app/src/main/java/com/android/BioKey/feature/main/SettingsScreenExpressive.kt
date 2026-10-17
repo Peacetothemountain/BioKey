@@ -1,72 +1,111 @@
 package com.android.BioKey.feature.main
 
-import android.content.Intent
-import android.widget.Toast
-import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Column
+import androidx.activity.BackEventCompat
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.NotificationsOff
-import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.rejectObscuredTouches
-import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
+import com.android.BioKey.ui.theme.BioKeyMessages
+import com.android.BioKey.ui.theme.Group
+import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.Haptics
+import com.android.BioKey.ui.theme.MaxContentWidth
+import com.android.BioKey.ui.theme.SectionHeader
 import com.android.BioKey.ui.theme.springPress
+import kotlin.coroutines.cancellation.CancellationException
 
-/** [android.provider.Settings.ACTION_APP_LOCK_SETTINGS] (API 37.2), as a literal for older SDKs. */
-private const val SYSTEM_APP_LOCK_SETTINGS = "android.settings.APP_LOCK_SETTINGS"
+
+/** One row of a settings group. */
+private class SettingItem(
+    val icon: ImageVector,
+    val title: String,
+    val subtitle: String,
+    val checked: Boolean? = null,
+    val external: Boolean = false,
+    val onChange: (Boolean) -> Unit = {},
+    val onClick: () -> Unit = {}
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
-    BackHandler(onBack = onNavigateBack)
+    // Predictive back: the page follows the back gesture (shrinks, rounds, shifts) and reveals the
+    // home screen underneath; releasing completes it, swiping back cancels it.
+    var backProgress by remember { mutableFloatStateOf(0f) }
+    var backFromLeft by remember { mutableStateOf(true) }
+    PredictiveBackHandler { gesture ->
+        try {
+            gesture.collect { event ->
+                backProgress = event.progress
+                backFromLeft = event.swipeEdge == BackEventCompat.EDGE_LEFT
+            }
+            onNavigateBack()
+        } catch (e: CancellationException) {
+            backProgress = 0f
+            throw e
+        }
+    }
+    val shownProgress by animateFloatAsState(backProgress, label = "predictive_back")
 
     val context = LocalContext.current
+    val view = LocalView.current
     val vault = remember { SecurityVault.getInstance(context) }
 
     val globalLockEnabled by vault.globalLockEnabledFlow.collectAsStateWithLifecycle()
@@ -76,123 +115,211 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
     val notificationShieldEnabled by vault.notificationShieldFlow.collectAsStateWithLifecycle()
     val autoSortProfiles by vault.autoSortProfilesFlow.collectAsStateWithLifecycle()
 
-    var a11yActive by remember { mutableStateOf(BioKeyAccessibilityService.isServiceEnabled(context)) }
+    var mode by remember { mutableStateOf(ProtectionEngine.mode(context)) }
     var notifListenerActive by remember { mutableStateOf(BioKeyNotificationShieldService.isNotificationAccessGranted(context)) }
     var showRelockSheet by remember { mutableStateOf(false) }
-
-    // Android 17 QPR2 (API 37.2) ships its own App Lock. Only the launcher may switch it on per
-    // app (LOCK_APPS), but its settings page is open to everyone.
-    val systemAppLockAvailable = remember {
-        context.packageManager.resolveActivity(Intent(SYSTEM_APP_LOCK_SETTINGS), 0) != null
-    }
+    /** Sent to Android's notification access page: on coming back, say if it's still off. */
+    var awaitingNotificationAccess by remember { mutableStateOf(false) }
+    val disclosures = rememberDisclosureGate()
+    val protecting = mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.COMPATIBILITY
 
     LifecycleResumeEffect(Unit) {
-        a11yActive = BioKeyAccessibilityService.isServiceEnabled(context)
+        ProtectionEngine.refresh(context)
+        mode = ProtectionEngine.mode(context)
         notifListenerActive = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
+        if (awaitingNotificationAccess) {
+            awaitingNotificationAccess = false
+            if (!notifListenerActive) {
+                BioKeyMessages.show("Notification access is still off", Icons.Default.NotificationsOff, actionLabel = "Open settings") {
+                    awaitingNotificationAccess = true
+                    IntentNavigationHelper.openNotificationListenerSettings(context)
+                }
+            }
+        }
         onPauseOrDispose { }
     }
 
-    val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    /** Sends the user to whatever lets BioKey watch apps, after the matching disclosure. */
+    fun enableEngine() {
+        if (mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP) {
+            disclosures.request(Disclosure.COMPATIBILITY) { IntentNavigationHelper.openNextCompatibilityPermission(context) }
+        } else {
+            disclosures.request(Disclosure.ACCESSIBILITY) { IntentNavigationHelper.openAccessibilitySettings(context) }
+        }
+    }
 
-    Column(
+    val appLock = buildList {
+        add(
+            SettingItem(
+                icon = Icons.Default.Shield,
+                title = "App lock",
+                subtitle = when {
+                    mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP -> "Advanced Protection is on · tap to set up compatibility mode"
+                    !protecting -> "Off · turn on BioKey in Accessibility settings"
+                    !globalLockEnabled && pausedUntil > System.currentTimeMillis() ->
+                        "Paused until " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil))
+                    !globalLockEnabled -> "Paused"
+                    mode == ProtectionEngine.Mode.COMPATIBILITY -> "On · compatibility mode (works with Advanced Protection)"
+                    else -> "Locked apps need your face, fingerprint or screen lock"
+                },
+                checked = globalLockEnabled && protecting,
+                onChange = { on ->
+                    vault.setGlobalLockEnabled(on)
+                    if (on && !protecting) enableEngine()
+                }
+            )
+        )
+        add(
+            SettingItem(
+                icon = Icons.Default.LockClock,
+                title = "Default re-lock delay",
+                subtitle = "${defaultTimeout.shortLabel} · for apps not in a profile",
+                onClick = { showRelockSheet = true }
+            )
+        )
+    }
+    val privacy = listOf(
+        SettingItem(
+            icon = Icons.Default.NotificationsOff,
+            title = "Hide notification content",
+            subtitle = when {
+                !notifListenerActive -> "Needs notification access · tap to grant"
+                notificationShieldEnabled -> "Locked apps' notifications only say that something arrived"
+                else -> "Notifications from locked apps show in full"
+            },
+            checked = notificationShieldEnabled && notifListenerActive,
+            onChange = { on ->
+                vault.setNotificationShield(on)
+                if (on && !notifListenerActive) {
+                    disclosures.request(Disclosure.NOTIFICATIONS) {
+                        awaitingNotificationAccess = true
+                        IntentNavigationHelper.openNotificationListenerSettings(context)
+                    }
+                }
+            }
+        ),
+        SettingItem(
+            icon = Icons.Default.AdminPanelSettings,
+            title = "Protect BioKey's settings",
+            subtitle = when (mode) {
+                ProtectionEngine.Mode.ACCESSIBILITY ->
+                    "Optional. Ask for your authentication before BioKey can be switched off, force-stopped or uninstalled"
+                else -> "Optional. Needs the Accessibility service, so it isn't available in compatibility mode"
+            },
+            checked = selfProtectionEnabled && mode == ProtectionEngine.Mode.ACCESSIBILITY,
+            onChange = { on ->
+                vault.setAccessibilitySelfProtectionEnabled(on)
+                if (on && mode == ProtectionEngine.Mode.OFF) enableEngine()
+            }
+        )
+    )
+    val profiles = listOf(
+        SettingItem(
+            icon = Icons.Default.AutoAwesome,
+            title = "Auto-sort into profiles",
+            subtitle = "Puts recognised banking, social and work apps into matching profiles (which locks them)",
+            checked = autoSortProfiles,
+            onChange = vault::setAutoSortProfilesEnabled
+        )
+    )
+
+    val backupActions = rememberBackupActions()
+    val backup = listOf(
+        SettingItem(
+            icon = Icons.Default.Save,
+            title = "Back up settings",
+            subtitle = "Saves your locked apps, profiles and settings to a file protected by a password",
+            onClick = backupActions.backUp
+        ),
+        SettingItem(
+            icon = Icons.Default.Restore,
+            title = "Restore from a backup",
+            subtitle = "Replaces your locked apps, profiles and settings with a backup's, after a new phone or a reinstall",
+            onClick = backupActions.restore
+        )
+    )
+
+    var logEnabled by remember { mutableStateOf(DiagnosticLog.isEnabled()) }
+    var showLog by remember { mutableStateOf(false) }
+    val logVersion by DiagnosticLog.version.collectAsState()
+    val logCount = remember(logVersion) { DiagnosticLog.entries().size }
+    val diagnostics = listOf(
+        SettingItem(
+            icon = Icons.Default.BugReport,
+            title = "Diagnostic log",
+            subtitle = "Keeps BioKey's recent lock decisions on this phone, to help track down a problem",
+            checked = logEnabled,
+            onChange = { on ->
+                DiagnosticLog.setEnabled(context, on)
+                logEnabled = on
+            }
+        ),
+        SettingItem(
+            icon = Icons.Default.Description,
+            title = "View diagnostic log",
+            subtitle = if (logCount == 0) "Nothing recorded yet" else "$logCount entries from the last 3 days · share it when reporting a problem",
+            onClick = { showLog = true }
+        )
+    )
+
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
+    Scaffold(
         modifier = Modifier
             .fillMaxSize()
+            .graphicsLayer {
+                val p = shownProgress
+                scaleX = 1f - 0.1f * p
+                scaleY = 1f - 0.1f * p
+                translationX = (if (backFromLeft) 1f else -1f) * size.width * 0.04f * p
+                shape = RoundedCornerShape(32.dp * p)
+                clip = p > 0f
+            }
+            // Opaque to touches: taps on empty space must not reach the home screen underneath.
+            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
             .rejectObscuredTouches()
-            .statusBarsPadding()
-    ) {
-        TopAppBar(
-            title = { Text("Settings") },
-            navigationIcon = {
-                IconButton(onClick = onNavigateBack, modifier = Modifier.springPress()) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
-        )
-
+            .nestedScroll(scrollBehavior.nestedScrollConnection),
+        topBar = {
+            LargeTopAppBar(
+                title = { Text("Settings") },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack, modifier = Modifier.springPress()) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer
+                ),
+                scrollBehavior = scrollBehavior
+            )
+        }
+    ) { padding ->
+        val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 32.dp + navBottom)
+            // Phones use the full width; on tablets and in landscape the page keeps a readable width.
+            modifier = Modifier
+                .fillMaxSize()
+                .wrapContentWidth()
+                .widthIn(max = MaxContentWidth),
+            contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = 32.dp + navBottom)
         ) {
+            item { SettingsSection("App lock", appLock) { Haptics.toggle(view, it) } }
+            item { SettingsSection("Privacy & protection", privacy) { Haptics.toggle(view, it) } }
+            item { SettingsSection("Profiles", profiles) { Haptics.toggle(view, it) } }
+            item { SettingsSection("Backup", backup) { Haptics.toggle(view, it) } }
+            item { SettingsSection("Diagnostics", diagnostics) { Haptics.toggle(view, it) } }
             item {
-                SectionLabel("App lock")
-                SwitchRow(
-                    icon = Icons.Default.Shield,
-                    title = "App lock",
-                    subtitle = when {
-                        !a11yActive -> "Off · turn on BioKey in Accessibility settings"
-                        globalLockEnabled -> "Locked apps need your face, fingerprint or screen lock"
-                        pausedUntil > System.currentTimeMillis() ->
-                            "Paused until " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil))
-                        else -> "Paused"
-                    },
-                    checked = globalLockEnabled && a11yActive,
-                    onCheckedChange = { on ->
-                        vault.setGlobalLockEnabled(on)
-                        if (on && !a11yActive) IntentNavigationHelper.openAccessibilitySettings(context)
-                    }
-                )
-                ClickRow(
-                    icon = Icons.Default.LockClock,
-                    title = "Default re-lock delay",
-                    subtitle = "${defaultTimeout.shortLabel} · for apps not in a profile",
-                    onClick = { showRelockSheet = true }
-                )
-                SwitchRow(
-                    icon = Icons.Default.AdminPanelSettings,
-                    title = "Protect BioKey's settings",
-                    subtitle = "Ask for authentication before BioKey can be switched off, force-stopped or uninstalled",
-                    checked = selfProtectionEnabled && a11yActive,
-                    onCheckedChange = { on ->
-                        vault.setAccessibilitySelfProtectionEnabled(on)
-                        if (on && !a11yActive) IntentNavigationHelper.openAccessibilitySettings(context)
-                    }
-                )
-                if (systemAppLockAvailable) {
-                    ClickRow(
-                        icon = Icons.Default.Security,
-                        title = "Android App Lock",
-                        subtitle = "Android 17's built-in lock stops an app before it draws anything, so apps " +
-                            "locked there never flash on screen. Only Android can switch it on.",
-                        trailing = Icons.AutoMirrored.Filled.OpenInNew,
-                        onClick = { IntentNavigationHelper.launchFallbackCascade(context, listOf(Intent(SYSTEM_APP_LOCK_SETTINGS))) }
-                    )
-                }
-            }
-
-            item {
-                SectionLabel("Privacy")
-                SwitchRow(
-                    icon = Icons.Default.NotificationsOff,
-                    title = "Hide notification content",
-                    subtitle = when {
-                        !notifListenerActive -> "Needs notification access · tap to grant"
-                        notificationShieldEnabled -> "Locked apps' notifications only say that something arrived"
-                        else -> "Notifications from locked apps show in full"
-                    },
-                    checked = notificationShieldEnabled && notifListenerActive,
-                    onCheckedChange = { on ->
-                        vault.setNotificationShield(on)
-                        if (on && !notifListenerActive) {
-                            IntentNavigationHelper.openNotificationListenerSettings(context)
-                            Toast.makeText(context, "Turn on notification access for BioKey", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                )
-            }
-
-            item {
-                SectionLabel("Profiles")
-                SwitchRow(
-                    icon = Icons.Default.AutoAwesome,
-                    title = "Auto-sort into profiles",
-                    subtitle = "Puts recognised banking, social and work apps into matching profiles (which locks them)",
-                    checked = autoSortProfiles,
-                    onCheckedChange = vault::setAutoSortProfilesEnabled
+                Text(
+                    text = "BioKey has no internet access. Nothing it sees leaves this phone.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 32.dp, vertical = 24.dp)
                 )
             }
         }
     }
+
+    if (showLog) DiagnosticLogScreen(onDismiss = { showLog = false })
 
     if (showRelockSheet) {
         RelockSheet(
@@ -208,64 +335,44 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
 }
 
 @Composable
-private fun SwitchRow(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    val view = LocalView.current
-    SettingRow(
-        icon = icon,
-        title = title,
-        subtitle = subtitle,
-        modifier = Modifier.toggleable(value = checked, role = Role.Switch) { next ->
-            Haptics.toggle(view, next)
-            onCheckedChange(next)
+private fun SettingsSection(title: String, items: List<SettingItem>, onToggled: (Boolean) -> Unit) {
+    SectionHeader(title)
+    Group(count = items.size) { i ->
+        val item = items[i]
+        val checked = item.checked
+        if (checked != null) {
+            GroupRow(
+                index = i,
+                count = items.size,
+                title = item.title,
+                subtitle = item.subtitle,
+                icon = item.icon,
+                interaction = Modifier.toggleable(value = checked, role = Role.Switch) { next ->
+                    onToggled(next)
+                    item.onChange(next)
+                }
+            ) {
+                Switch(checked = checked, onCheckedChange = null)
+            }
+        } else {
+            GroupRow(
+                index = i,
+                count = items.size,
+                title = item.title,
+                subtitle = item.subtitle,
+                icon = item.icon,
+                onClick = item.onClick
+            ) {
+                if (item.external) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.OpenInNew,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
         }
-    ) {
-        Switch(checked = checked, onCheckedChange = null)
     }
-}
-
-@Composable
-private fun ClickRow(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit,
-    trailing: ImageVector? = null
-) {
-    SettingRow(icon, title, subtitle, Modifier.clickable(onClick = onClick)) {
-        if (trailing != null) {
-            Icon(trailing, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
-        }
-    }
-}
-
-@Composable
-private fun SettingRow(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    modifier: Modifier,
-    trailingContent: @Composable () -> Unit
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
-        Spacer(Modifier.width(20.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            Spacer(Modifier.height(2.dp))
-            Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Spacer(Modifier.width(16.dp))
-        trailingContent()
-    }
+    Spacer(Modifier.height(4.dp))
 }

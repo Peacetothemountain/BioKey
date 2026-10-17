@@ -37,15 +37,35 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
             "com.samsung.android.lool",
             "com.miui.securitycenter",
             "com.coloros.safecenter",
-            "com.oplus.battery"
+            "com.oplus.safecenter",
+            "com.oplus.battery",
+            // One UI keeps its Accessibility menu in an app of its own.
+            "com.samsung.accessibility",
+            "com.vivo.permissionmanager",
+            "com.iqoo.secure",
+            "com.huawei.systemmanager"
+        )
+
+        private const val SETTINGS_PKG = "com.android.settings"
+
+        /** AOSP Settings strings for App info actions; most manufacturers keep these names. */
+        private val SETTINGS_ACTION_STRINGS = listOf(
+            "force_stop", "uninstall_text", "uninstall_all_users_text", "clear_user_data_text",
+            "clear_cache_btn_text", "remove_device_admin"
+        )
+
+        /** AOSP Settings strings that name one accessibility service: its switch and its stop dialog. */
+        private val SETTINGS_SERVICE_PROMPTS = listOf(
+            "accessibility_service_primary_switch_title", "accessibility_service_primary_open_title",
+            "disable_service_title"
         )
 
         private const val CONTENT_CHECK_INTERVAL_MS = 120L
         private const val MAX_NODES_SCANNED = 400
 
         /**
-         * Exact standalone action labels that only appear on an App Info, App Storage, or Device
-         * Admin detail screen (never on Settings -> Apps, See all apps, or Accessibility lists).
+         * English fallback: exact standalone action labels that only appear on an App Info, App
+         * Storage, or Device Admin detail screen (never on Settings -> Apps, See all apps, or Accessibility lists).
          */
         private val EXACT_APP_DETAIL_ACTIONS = setOf(
             "force stop",
@@ -100,8 +120,35 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         notifLabel
     ).filter { it.isNotBlank() }.distinct()
 
-    /** Unique phrase from BioKey's accessibility description shown only on its A11y detail page. */
-    private val a11yDescriptionSnippet = "see which app is in the foreground"
+    /**
+     * The opening of BioKey's own accessibility description, shown only on its Accessibility
+     * detail page. Taken from the description itself, in BioKey's language, so it can't drift.
+     */
+    private val a11yDescriptionSnippet = service.getString(R.string.accessibility_service_description)
+        .take(48).trim().lowercase()
+
+    // The device's own Settings labels, in the phone's language (English kept as a fallback),
+    // re-read when the language changes.
+    private var labelsLocale: java.util.Locale? = null
+    private var appDetailActions: Set<String> = EXACT_APP_DETAIL_ACTIONS
+    private var serviceTogglePrompts: Set<String> = emptySet()
+    private var versionPrefix = "version "
+
+    private fun refreshSettingsLabels() {
+        val locale = service.resources.configuration.locales[0]
+        if (locale == labelsLocale) return
+        labelsLocale = locale
+        val res = runCatching { service.packageManager.getResourcesForApplication(SETTINGS_PKG) }.getOrNull()
+        fun string(name: String, vararg args: Any): String? = runCatching {
+            @Suppress("DiscouragedApi") // Another app's resources: only reachable by name.
+            val id = res?.getIdentifier(name, "string", SETTINGS_PKG) ?: 0
+            if (id == 0) null else res?.getString(id, *args)?.trim()?.lowercase()
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+        appDetailActions = EXACT_APP_DETAIL_ACTIONS + SETTINGS_ACTION_STRINGS.mapNotNull { string(it) }
+        serviceTogglePrompts = SETTINGS_SERVICE_PROMPTS.mapNotNull { string(it, a11yLabel) }.toSet()
+        // "Version %1$s" -> "version ": whatever comes before the number.
+        versionPrefix = string("version_text", "§§")?.substringBefore("§§")?.takeIf { it.isNotBlank() } ?: "version "
+    }
 
     private var lastContentCheck = 0L
     private var lastGuardedResult = false
@@ -122,6 +169,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         event: AccessibilityEvent? = null,
         onTrailingCheckNeeded: ((Long) -> Unit)? = null
     ): Boolean {
+        refreshSettingsLabels()
         if (pkg !in HOST_PACKAGES) {
             lastGuardedResult = false
             return false
@@ -259,7 +307,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
                     // Single node that names BioKey AND has a control/prompt verb
                     // e.g. "Use Bio Key App Lock Service", "Stop Bio Key App Lock Service?",
                     // "Bio Key App Lock Service shortcut", "Turn off notification access for Bio Key?"
-                    if (SAME_NODE_PROMPT_VERBS.any { lower.contains(it) } ||
+                    if (lower in serviceTogglePrompts || SAME_NODE_PROMPT_VERBS.any { lower.contains(it) } ||
                         lower.endsWith(" shortcut") ||
                         lower.endsWith("?")
                     ) {
@@ -268,10 +316,10 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
                 }
 
                 if (!matchedDirectBioKeyControl) {
-                    if (lowerText in EXACT_APP_DETAIL_ACTIONS || rawDesc.lowercase() in EXACT_APP_DETAIL_ACTIONS) {
+                    if (lowerText in appDetailActions || rawDesc.lowercase() in appDetailActions) {
                         hasAppDetailAction = true
                     }
-                    if (lowerText.startsWith("version ")) {
+                    if (lowerText.startsWith(versionPrefix) || lowerText.startsWith("version ")) {
                         hasVersionHeader = true
                     }
                     val cls = node.className?.toString().orEmpty()

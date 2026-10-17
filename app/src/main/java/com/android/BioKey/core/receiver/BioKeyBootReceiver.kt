@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.UserManager
 import android.util.Log
 import com.android.BioKey.core.security.ProtectionAlerts
+import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import java.util.concurrent.Executors
@@ -40,9 +41,9 @@ class BioKeyBootReceiver : BroadcastReceiver() {
             try {
                 val vault = SecurityVault.getInstance(appContext)
                 if (vault.isSetupCompleted()) {
-                    if (!BioKeyAccessibilityService.isServiceEnabled(appContext)) {
-                        ProtectionAlerts.serviceStopped(appContext)
-                    }
+                    // Compatibility mode may start here (boot is allowed to start it).
+                    ProtectionEngine.refresh(appContext)
+                    if (!ProtectionEngine.isProtecting(appContext)) ProtectionAlerts.serviceStopped(appContext)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to complete boot initialization", e)

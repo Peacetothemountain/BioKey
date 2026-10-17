@@ -4,15 +4,17 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * A named group of locked apps that share a re-lock delay. An app is in at most one profile, and
- * every app in a profile is locked.
+ * A named group of apps that share a re-lock delay, with its own on/off switch. An app is in at
+ * most one profile. An app is locked when its own switch is on and, if it is in a profile, that
+ * profile is [enabled]: turning a profile off keeps each app's own choice for when it's back on.
  */
 data class SecurityProfile(
     val id: String,
     val name: String,
     val iconKey: String = "shield",
     val packages: Set<String> = emptySet(),
-    val timeoutMode: LockTimeoutMode = LockTimeoutMode.IMMEDIATE
+    val timeoutMode: LockTimeoutMode = LockTimeoutMode.IMMEDIATE,
+    val enabled: Boolean = true
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
@@ -20,6 +22,7 @@ data class SecurityProfile(
         .put("iconKey", iconKey)
         .put("timeoutMode", timeoutMode.name)
         .put("packages", JSONArray(packages.sorted()))
+        .put("enabled", enabled)
 
     companion object {
         const val PRESET_PERSONAL = "profile_personal"
@@ -42,7 +45,8 @@ data class SecurityProfile(
                 name = json.optString("name", "Profile"),
                 iconKey = json.optString("iconKey", "shield"),
                 packages = packages,
-                timeoutMode = LockTimeoutMode.fromName(json.optString("timeoutMode"))
+                timeoutMode = LockTimeoutMode.fromName(json.optString("timeoutMode")),
+                enabled = json.optBoolean("enabled", true)
             )
         }
     }

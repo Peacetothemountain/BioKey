@@ -32,9 +32,9 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
             Intent.ACTION_SCREEN_OFF,
             Intent.ACTION_DREAMING_STARTED,
             Intent.ACTION_SHUTDOWN -> {
-                if (!BioKeyAccessibilityService.isRunning) {
-                    LockStateTracker.onScreenTurnedOff()
-                }
+                // Always: ending sessions twice is harmless, missing a lock is not (a screensaver
+                // never turns the screen off, so the engines' own screen-off handling misses it).
+                LockStateTracker.onScreenTurnedOff()
             }
         }
     }

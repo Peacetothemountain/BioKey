@@ -5,9 +5,13 @@ import android.os.Build
 import android.util.Log
 import android.view.MotionEvent
 import android.view.WindowManager
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInteropFilter
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.DialogWindowProvider
 
 /**
  * Window protection and anti-tapjacking utilities.
@@ -32,6 +36,18 @@ object WindowProtection {
             activity.setRecentsScreenshotEnabled(false)
         }
         window.decorView.filterTouchesWhenObscured = true
+        hideFromNonToolAccessibilityServices(window.decorView)
+    }
+
+    /**
+     * Only real accessibility tools (screen readers, switch/voice/Braille input) may read or
+     * operate this view and everything inside it. Accessibility malware can't read which apps are
+     * locked or tap "Pause protection"; TalkBack users are unaffected.
+     */
+    fun hideFromNonToolAccessibilityServices(view: android.view.View) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            view.setAccessibilityDataSensitive(android.view.View.ACCESSIBILITY_DATA_SENSITIVE_YES)
+        }
     }
 
     fun isMotionEventObscured(event: MotionEvent): Boolean {
@@ -58,3 +74,22 @@ fun Modifier.rejectObscuredTouches(onObscuredDetected: () -> Unit = {}): Modifie
             false
         }
     }
+
+/**
+ * Gives the window of the dialog or sheet this is called in the same protection as BioKey's
+ * main window ([WindowProtection.applyWindowProtections]): dialogs and bottom sheets are windows
+ * of their own, and don't inherit it.
+ */
+@Composable
+fun ProtectDialogWindow() {
+    val view = LocalView.current
+    DisposableEffect(view) {
+        (view.parent as? DialogWindowProvider)?.window?.let { window ->
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            runCatching { window.setHideOverlayWindows(true) }
+            window.decorView.filterTouchesWhenObscured = true
+            WindowProtection.hideFromNonToolAccessibilityServices(window.decorView)
+        }
+        onDispose { }
+    }
+}

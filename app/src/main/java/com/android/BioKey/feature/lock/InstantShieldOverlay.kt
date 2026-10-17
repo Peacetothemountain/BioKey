@@ -1,7 +1,7 @@
 package com.android.BioKey.feature.lock
 
-import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
+import android.content.Context
 import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
@@ -10,20 +10,21 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
 import com.android.BioKey.core.security.LockStateTracker
-import java.util.concurrent.Executors
 
 /**
  * Full-screen cover drawn the instant a locked app reaches the screen, before
- * [LockScreenActivity] has had time to start. It is an accessibility overlay, so it sits above
- * the app's first frames, and it draws the same [LockCoverView] as the activity, so the hand-off
- * is seamless.
+ * [LockScreenActivity] has had time to start. It sits above the app's first frames (as an
+ * accessibility overlay, or an application overlay in compatibility mode) and draws the same
+ * [LockCoverView] as the activity, so the hand-off is seamless.
  *
  * The window is attached once and kept (hidden) for the service's lifetime: showing it is a
  * visibility flip, never a window add. Nothing slow happens before it is visible; a missing icon is
  * loaded afterwards.
  */
 class InstantShieldOverlay(
-    private val service: AccessibilityService,
+    private val service: Context,
+    windowType: Int,
+    private val goHome: () -> Unit,
     private val onTimeout: (targetPackage: String, attempt: Int) -> Boolean
 ) {
 
@@ -32,8 +33,6 @@ class InstantShieldOverlay(
         private const val FAST_VERIFY_MS = 60L
         private const val TIMEOUT_MS = 700L
         private const val MAX_ATTEMPTS = 4
-
-        private val iconLoader = Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-shield-icons") }
 
         @SuppressLint("StaticFieldLeak")
         @Volatile
@@ -73,7 +72,7 @@ class InstantShieldOverlay(
             armTimeout()
         } else {
             Log.w(TAG, "Lock screen did not appear for $pkg; failing closed")
-            if (attempt >= MAX_ATTEMPTS) service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+            if (attempt >= MAX_ATTEMPTS) goHome()
             hide()
         }
     }
@@ -81,7 +80,7 @@ class InstantShieldOverlay(
     private val layoutParams = WindowManager.LayoutParams(
         WindowManager.LayoutParams.MATCH_PARENT,
         WindowManager.LayoutParams.MATCH_PARENT,
-        WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+        windowType,
         WindowManager.LayoutParams.FLAG_SECURE or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
@@ -196,7 +195,7 @@ class InstantShieldOverlay(
             if (targetPackage != BioKeyAccessibilityService.SELF_PROTECTION_PENDING_KEY ||
                 !BioKeyAccessibilityService.dismissSelfProtection()
             ) {
-                service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+                goHome()
             }
             hide()
         }
@@ -225,15 +224,12 @@ class InstantShieldOverlay(
         }
         val cached = AppInfoCache.get(target)
         if (cached != null) {
-            cover.bind(cached.label, cached.iconDrawable, isBioKey = false)
+            cover.bind(cached.label, cached.icon, isBioKey = false)
             return
         }
         cover.bind(AppInfoCache.quickLabel(service, target), null, isBioKey = false)
-        iconLoader.execute {
-            val loaded = AppInfoCache.loadAndCache(service, service.packageManager, target) ?: return@execute
-            mainHandler.post {
-                if (isShowing && targetPackage == target) cover.bind(loaded.label, loaded.iconDrawable, isBioKey = false)
-            }
+        AppInfoCache.load(service, target) { loaded ->
+            if (isShowing && targetPackage == target) cover.setIcon(loaded.icon)
         }
     }
 

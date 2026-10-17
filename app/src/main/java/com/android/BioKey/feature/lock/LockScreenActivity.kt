@@ -1,7 +1,5 @@
 package com.android.BioKey.feature.lock
 
-import androidx.activity.ComponentActivity
-import androidx.activity.OnBackPressedCallback
 import android.app.ActivityOptions
 import android.content.Intent
 import android.content.res.Configuration
@@ -10,10 +8,13 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.util.Log
 import android.view.MotionEvent
-import com.android.BioKey.core.security.WindowProtection
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 
 /**
@@ -118,8 +119,13 @@ class LockScreenActivity : ComponentActivity() {
         if (isSelfProtection) {
             cover.bind("BioKey", null, isBioKey = true)
         } else {
-            val cached = AppInfoCache.get(lockedPackage) ?: AppInfoCache.loadAndCache(this, packageManager, lockedPackage)
-            cover.bind(cached?.label ?: AppInfoCache.quickLabel(this, lockedPackage), cached?.iconDrawable, isBioKey = false)
+            val pkg = lockedPackage
+            val cached = AppInfoCache.get(pkg)
+            cover.bind(cached?.label ?: AppInfoCache.quickLabel(this, pkg), cached?.icon, isBioKey = false)
+            // Never load on the way to the prompt: the icon follows as soon as it's ready.
+            if (cached == null) AppInfoCache.load(this, pkg) { info ->
+                if (!isFinishing && lockedPackage == pkg) cover.setIcon(info.icon)
+            }
         }
         cover.setActionsVisible(false)
     }
@@ -213,6 +219,7 @@ class LockScreenActivity : ComponentActivity() {
             packageName = pkg,
             onSuccess = { onAuthenticated(pkg, selfProtection) },
             onError = { code, message ->
+                if (!SecurityEngine.isUserCancel(code)) DiagnosticLog.log("Unlock prompt for $pkg: error $code")
                 isPermanentLockout = code == SecurityEngine.ERROR_LOCKOUT_PERMANENT
                 val text = when {
                     SecurityEngine.isUserCancel(code) -> null
@@ -268,8 +275,12 @@ class LockScreenActivity : ComponentActivity() {
             launchApp(pkg)
             return
         }
+        // BioKey's lock screen is on screen while it forwards the app's own link: grant the
+        // launch only while visible (Android 17's hardened mode), never an open-ended grant.
         val options = ActivityOptions.makeBasic().apply {
-            if (Build.VERSION.SDK_INT >= 36) {
+            if (Build.VERSION.SDK_INT >= 37) {
+                pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE
+            } else if (Build.VERSION.SDK_INT >= 36) {
                 pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 @Suppress("DEPRECATION")
@@ -284,6 +295,7 @@ class LockScreenActivity : ComponentActivity() {
 
     /** Bookkeeping when the user walks away from the lock without authenticating. */
     private fun abandon() {
+        DiagnosticLog.log("Lock screen for $lockedPackage left without unlocking")
         LockStateTracker.markLockAbandoned(lockedPackage)
         if (isSelfProtection) LockStateTracker.clearSelfProtection()
     }

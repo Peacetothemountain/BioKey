@@ -9,10 +9,13 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import android.widget.Toast
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ErrorOutline
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
+import com.android.BioKey.ui.theme.BioKeyMessages
 
 /** Settings page for one accessibility service (Android 13+); not exposed as an SDK constant. */
 private const val ACCESSIBILITY_DETAILS_SETTINGS = "android.settings.ACCESSIBILITY_DETAILS_SETTINGS"
@@ -35,7 +38,7 @@ object IntentNavigationHelper {
             } catch (_: SecurityException) {
             }
         }
-        Toast.makeText(context, "Couldn't open settings on this device", Toast.LENGTH_SHORT).show()
+        BioKeyMessages.show("Couldn't open that settings page on this phone", Icons.Default.ErrorOutline)
         return false
     }
 
@@ -80,4 +83,23 @@ object IntentNavigationHelper {
     )
 
     fun openAppDetailsSettings(context: Context) = launchFallbackCascade(context, listOf(appDetails(context)))
+
+    /**
+     * Compatibility mode's next missing permission: BioKey's own usage-access page, then its
+     * display-over-other-apps page. Returns false when both are already granted.
+     */
+    fun openNextCompatibilityPermission(context: Context): Boolean {
+        val pkgUri = Uri.fromParts("package", context.packageName, null)
+        return when {
+            !ProtectionEngine.hasUsageAccess(context) -> launchFallbackCascade(
+                context,
+                listOf(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS, pkgUri), Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+            )
+            !ProtectionEngine.canDrawOverlays(context) -> launchFallbackCascade(
+                context,
+                listOf(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri), Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
+            )
+            else -> false
+        }
+    }
 }
