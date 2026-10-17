@@ -73,6 +73,28 @@ class ProfileLockRulesTest {
     }
 
     @Test
+    fun removingAnAppFromItsProfileKeepsItsLock() {
+        val vault = freshVault()
+        vault.addAppsToProfile(SecurityProfile.PRESET_FINANCE, listOf(bank, chat))
+        vault.setAppLock(chat, false)
+
+        vault.removeAppFromProfile(bank)
+        vault.removeAppFromProfile(chat)
+        assertEquals(null, vault.profileOf(bank))
+        assertTrue(vault.isAppLocked(bank)) // was on, stays on
+        assertFalse(vault.isAppLocked(chat)) // was off, stays off
+
+        // Auto-sort must not put it straight back.
+        vault.autoSortAppsIntoProfiles(listOf(bank to "Bank of Example"), null)
+        assertEquals(null, vault.profileOf(bank))
+
+        // Undo: back in the profile, lock untouched.
+        vault.moveAppToProfile(chat, SecurityProfile.PRESET_FINANCE, switchOn = false)
+        assertEquals(SecurityProfile.PRESET_FINANCE, vault.profileOf(chat)?.id)
+        assertFalse(vault.isAppLocked(chat))
+    }
+
+    @Test
     fun appsOutsideProfilesAreUnaffectedByProfileSwitches() {
         val vault = freshVault()
         vault.setAppLock(chat, true)
