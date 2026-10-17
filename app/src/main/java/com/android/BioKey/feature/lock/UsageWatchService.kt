@@ -1,6 +1,5 @@
 package com.android.BioKey.feature.lock
 
-import android.annotation.SuppressLint
 import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -14,16 +13,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
-import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
-import android.view.Gravity
-import android.view.MotionEvent
-import android.view.View
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -51,12 +46,8 @@ class UsageWatchService : Service() {
         private const val TAG = "UsageWatchService"
         private const val CHANNEL_ID = "biokey_compatibility_mode"
         private const val NOTIFICATION_ID = 2001
-        /** How often the foreground app is checked while nobody is touching the screen. */
-        private const val IDLE_POLL_MS = 200L
-        /** How often it's checked right after a touch, when an app is most likely to open. */
-        private const val TOUCH_POLL_MS = 40L
-        /** How long a touch keeps the fast checks going (a tap, then the app's launch). */
-        private const val TOUCH_WINDOW_MS = 1_200L
+        /** How often the foreground app is checked while the screen is on. */
+        private const val POLL_MS = 150L
         /** Re-read a little of the past each time, so no event slips between two polls. */
         private const val OVERLAP_MS = 2_000L
         /** How far back to look for the app already in front when the engine starts. */
@@ -90,21 +81,11 @@ class UsageWatchService : Service() {
     private var handledUntil = 0L
     private var polling = false
 
-    /**
-     * Apps open after a touch: a tap on an icon, a notification or a Recents card, or a gesture.
-     * A 1-pixel invisible overlay learns only *that* the screen was touched (Android reports
-     * neither where nor what for other apps' windows), and checks speed up until [fastUntil], so
-     * a locked app is covered within a frame or two of appearing while idle checks stay rare.
-     */
-    private var fastUntil = 0L
-    private var touchSensor: View? = null
-
     private val poll = object : Runnable {
         override fun run() {
             if (!polling) return
             checkForeground()
-            val fast = SystemClock.uptimeMillis() < fastUntil
-            handler.postDelayed(this, if (fast) TOUCH_POLL_MS else IDLE_POLL_MS)
+            handler.postDelayed(this, POLL_MS)
         }
     }
 
@@ -143,8 +124,7 @@ class UsageWatchService : Service() {
             this,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             goHome = ::goHome,
-            onTimeout = ::onShieldTimeout,
-            keepWindowShown = true
+            onTimeout = ::onShieldTimeout
         )
         AppInfoCache.preWarm(this, vault.getLockedPackages())
         ContextCompat.registerReceiver(
@@ -164,7 +144,6 @@ class UsageWatchService : Service() {
         // A locked app may already be in front (after a reboot or an update): find it first.
         coverAppAlreadyInFront()
         if (isInteractive()) startPolling()
-        attachTouchSensor()
         Log.i(TAG, "Compatibility mode started")
     }
 
@@ -175,46 +154,11 @@ class UsageWatchService : Service() {
         stopPolling()
         LockStateTracker.removeLockAllListener(onLockAll)
         runCatching { unregisterReceiver(screenReceiver) }
-        touchSensor?.let { runCatching { getSystemService(WindowManager::class.java).removeViewImmediate(it) } }
         if (::shield.isInitialized) shield.destroy()
         // Nothing enforces sessions without an engine, so none may outlive it.
         if (!BioKeyAccessibilityService.isRunning) LockStateTracker.lockAll()
         Log.i(TAG, "Compatibility mode stopped")
         super.onDestroy()
-    }
-
-    @SuppressLint("ClickableViewAccessibility") // Watches touches elsewhere; has nothing to click.
-    private fun attachTouchSensor() {
-        val sensor = View(this).apply {
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            setOnTouchListener { _, event ->
-                if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) onTouched()
-                false
-            }
-        }
-        val params = WindowManager.LayoutParams(
-            1, 1,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
-            PixelFormat.TRANSPARENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            title = "BioKeyTouchSensor"
-        }
-        runCatching { getSystemService(WindowManager::class.java).addView(sensor, params) }
-            .onSuccess { touchSensor = sensor }
-            .onFailure { Log.w(TAG, "Touch sensor unavailable; checking at the idle rate: ${it.message}") }
-    }
-
-    private fun onTouched() {
-        fastUntil = SystemClock.uptimeMillis() + TOUCH_WINDOW_MS
-        // Check now rather than at the end of a slow interval.
-        if (polling) {
-            handler.removeCallbacks(poll)
-            handler.post(poll)
-        }
     }
 
     private fun startPolling() {

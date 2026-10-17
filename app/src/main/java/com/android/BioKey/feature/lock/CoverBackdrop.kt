@@ -38,13 +38,6 @@ internal class CoverBackdrop(context: Context) : View(context) {
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val discPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    /** Holds the breathing still while the cover is on screen but transparent (see [InstantShieldOverlay]). */
-    var paused = false
-        set(value) {
-            field = value
-            if (!value) invalidate()
-        }
-
     private var primary = Color.GRAY
     private var accent = Color.GRAY
     private var appColor: Int? = null
@@ -106,7 +99,7 @@ internal class CoverBackdrop(context: Context) : View(context) {
         ringPaint.color = withAlpha(accent, 0.38f + 0.14f * breath)
         canvas.drawCircle(focusX, focusY, ringRadius, ringPaint)
 
-        if (animate && isShown && !paused) postInvalidateOnAnimation()
+        if (animate && isShown) postInvalidateOnAnimation()
     }
 
     private fun withAlpha(color: Int, alpha: Float): Int =

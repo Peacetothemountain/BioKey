@@ -69,6 +69,8 @@ An app lock running as a regular app can't defend against everything:
 - **Compatibility mode** (used under Advanced Protection) covers a locked app a little later than the accessibility engine (no tap prediction; about 0.15 s) and can't provide self-protection. It shows a low-priority notification, which Android requires for this kind of background work.
 - **Safe mode** disables third-party accessibility services, so locked apps open without a check until you reboot normally. The protection alert tells you the service stopped.
 - **Recents previews** of a locked app can't be blanked; only the system App Lock can do that.
+- **Closing an app from Recents** ends its session only with the accessibility engine (on launchers built on Android's own, like the Pixel's). Compatibility mode can't see it: Android doesn't tell apps when another app is closed, so the session ends by time.
+- **Compatibility mode on warm launches**: an app that was still in memory can show its last screen for about half a second before the cover. Android holds back app overlays while an app's opening animation runs; the accessibility engine's cover isn't held.
 - **Launches without a tap** (links from other apps, the quick-switch gesture) are covered when the app's window appears, which can be a frame later than a tap-started launch.
 - **Self-protection is heuristic.** There's no Android API for "this screen can disable app X", so BioKey recognises those screens by package and content. It's tested against Pixel layouts; other manufacturers' Settings may differ.
 

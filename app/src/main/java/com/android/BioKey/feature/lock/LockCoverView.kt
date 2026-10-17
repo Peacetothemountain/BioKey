@@ -322,11 +322,6 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         brandMark.visibility = if (visible || logo.visibility == VISIBLE) GONE else VISIBLE
     }
 
-    /** Stops the glow's motion while the cover is transparent, so it costs nothing. */
-    fun setMotionPaused(paused: Boolean) {
-        backdrop.paused = paused
-    }
-
     /** Overlay windows don't always get insets dispatched; the shield passes them in. */
     fun applySystemBarInsets(left: Int, top: Int, right: Int, bottom: Int) {
         setPadding(left, top, right, bottom)

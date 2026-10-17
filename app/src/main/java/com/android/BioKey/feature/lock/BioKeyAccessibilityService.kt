@@ -158,6 +158,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> {
+                    watchRecents(false)
                     foregroundPackage = null
                     onScreenSessions.clear()
                     pendingLeaves.clear()
@@ -291,10 +292,35 @@ class BioKeyAccessibilityService : AccessibilityService() {
         }
     }
 
+    // Content-change events are costly, so they're on only while something needs them: a
+    // self-protection host to inspect, or the launcher in front (Recents, see [RecentsWatcher]).
+    private var contentForSelfProtection = false
+    private var contentForRecents = false
+
+    private val recents by lazy { RecentsWatcher(this, ::onClosedFromRecents, ::onClearAllRecents) }
+
     private fun updateContentMonitoring(enable: Boolean) {
-        if (contentMonitoringEnabled == enable) return
+        contentForSelfProtection = enable
+        applyContentMonitoring()
+    }
+
+    private fun watchRecents(enable: Boolean) {
+        if (!enable) recents.reset()
+        contentForRecents = enable
+        applyContentMonitoring()
+    }
+
+    private var appliedTimeout = 0L
+
+    private fun applyContentMonitoring() {
+        val enable = contentForSelfProtection || contentForRecents
+        // Batching delays every kind of event, taps included: only for self-protection, never while
+        // the launcher (where a tap on a locked app must be covered at once) is in front.
+        val timeout = if (contentForSelfProtection && !contentForRecents) 100L else 0L
+        if (contentMonitoringEnabled == enable && appliedTimeout == timeout) return
         val info = serviceInfo ?: return
         contentMonitoringEnabled = enable
+        appliedTimeout = timeout
         info.eventTypes = if (enable) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                 AccessibilityEvent.TYPE_WINDOWS_CHANGED or
@@ -305,7 +331,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 AccessibilityEvent.TYPE_WINDOWS_CHANGED or
                 AccessibilityEvent.TYPE_VIEW_CLICKED
         }
-        info.notificationTimeout = if (enable) 100L else 0L
+        info.notificationTimeout = timeout
         runCatching { serviceInfo = info }
     }
 
@@ -325,8 +351,14 @@ class BioKeyAccessibilityService : AccessibilityService() {
             val eventCls = event.className?.toString().orEmpty()
 
             if (type == AccessibilityEvent.TYPE_VIEW_CLICKED) {
-                if (eventPkg != null && isLauncher(eventPkg)) predictLaunch(event)
+                if (eventPkg != null && isLauncher(eventPkg)) {
+                    if (contentForRecents) recents.onLauncherClicked(event)
+                    predictLaunch(event)
+                }
                 return
+            }
+            if (type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && contentForRecents && eventPkg != null && isLauncher(eventPkg)) {
+                recents.onLauncherChanged(eventPkg)
             }
             if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
                 onWindowsChanged(event)
@@ -681,6 +713,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (isSystemOrOverlay(target, cls)) return
 
         val isLauncher = isLauncher(target)
+        // Recents lives in the launcher: watch for apps being closed there while it's in front.
+        watchRecents(isLauncher)
         val isRecents = isLauncher && isRecentsOverviewClass(cls)
         val previous = foregroundPackage
 
@@ -742,6 +776,22 @@ class BioKeyAccessibilityService : AccessibilityService() {
         }
         if (isExitTransition(target)) return
         lock(target)
+    }
+
+    /** A locked app was swiped away in Recents: its session ends now, whatever its re-lock delay. */
+    private fun onClosedFromRecents(appName: String) {
+        val name = appName.lineSequence().firstOrNull()?.substringBefore(',')?.trim()?.lowercase() ?: return
+        val closed = lockedPackagesForLabel(name) + lockedPackagesForLabel(name.removePrefix("work ").trim())
+        for (pkg in closed) {
+            Log.i(TAG, "$pkg closed from Recents; session ended")
+            LockStateTracker.lockPackage(pkg)
+        }
+    }
+
+    /** "Clear all" in Recents closes every app: every session ends. */
+    private fun onClearAllRecents() {
+        Log.i(TAG, "Recents cleared; all sessions ended")
+        LockStateTracker.lockAll()
     }
 
     private fun isRecentsOverviewClass(cls: String): Boolean {
