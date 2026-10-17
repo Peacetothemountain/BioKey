@@ -1,6 +1,5 @@
 package com.android.BioKey.feature.main
 
-import android.widget.Toast
 import androidx.activity.BackEventCompat
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.animateFloatAsState
@@ -55,6 +54,7 @@ import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
+import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.Haptics
@@ -109,6 +109,8 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
     var mode by remember { mutableStateOf(ProtectionEngine.mode(context)) }
     var notifListenerActive by remember { mutableStateOf(BioKeyNotificationShieldService.isNotificationAccessGranted(context)) }
     var showRelockSheet by remember { mutableStateOf(false) }
+    /** Sent to Android's notification access page: on coming back, say if it's still off. */
+    var awaitingNotificationAccess by remember { mutableStateOf(false) }
     val disclosures = rememberDisclosureGate()
     val protecting = mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.COMPATIBILITY
 
@@ -116,6 +118,15 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
         ProtectionEngine.refresh(context)
         mode = ProtectionEngine.mode(context)
         notifListenerActive = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
+        if (awaitingNotificationAccess) {
+            awaitingNotificationAccess = false
+            if (!notifListenerActive) {
+                BioKeyMessages.show("Notification access is still off", Icons.Default.NotificationsOff, actionLabel = "Open settings") {
+                    awaitingNotificationAccess = true
+                    IntentNavigationHelper.openNotificationListenerSettings(context)
+                }
+            }
+        }
         onPauseOrDispose { }
     }
 
@@ -172,8 +183,8 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
                 vault.setNotificationShield(on)
                 if (on && !notifListenerActive) {
                     disclosures.request(Disclosure.NOTIFICATIONS) {
+                        awaitingNotificationAccess = true
                         IntentNavigationHelper.openNotificationListenerSettings(context)
-                        Toast.makeText(context, "Turn on notification access for BioKey", Toast.LENGTH_SHORT).show()
                     }
                 }
             }

@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.test.core.app.ApplicationProvider
@@ -89,6 +90,22 @@ class DesignScreenshotTest {
     @Test fun main() = shoot("main") { MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
     @Test fun mainOff() = shoot("main_off") { MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP, onPauseRequested = {}) }
     @Test fun settings() = shoot("settings") { SettingsScreenExpressive(onNavigateBack = {}) }
+    @Test fun message() = shoot("message") {
+        androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+            MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {})
+            val data = object : androidx.compose.material3.SnackbarData {
+                override val visuals = com.android.BioKey.ui.theme.BioKeyMessages.Message(
+                    "Chase unlocked", androidx.compose.material.icons.Icons.Default.LockOpen, "Undo", null,
+                    androidx.compose.material3.SnackbarDuration.Short
+                )
+                override fun performAction() {}
+                override fun dismiss() {}
+            }
+            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.align(androidx.compose.ui.Alignment.BottomCenter)) {
+                com.android.BioKey.ui.theme.MessageBar(data)
+            }
+        }
+    }
     @Test fun ownLock() = shoot("lock") {
         LockScreenUIExpressive(appName = "BioKey", appIcon = null, onUnlockClicked = {}, onCancelClicked = {}, isBioKeyLock = true)
     }

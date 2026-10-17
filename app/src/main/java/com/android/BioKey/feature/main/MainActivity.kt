@@ -3,7 +3,6 @@ package com.android.BioKey.feature.main
 import android.content.Intent
 import android.os.Bundle
 import android.view.MotionEvent
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -38,6 +37,7 @@ import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.lock.LockScreenUIExpressive
 import com.android.BioKey.feature.setup.SetupScreenExpressive
+import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.BioKeyTheme
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupRow
@@ -114,7 +114,7 @@ class MainActivity : ComponentActivity() {
                         onPause = { duration ->
                             pauseRequested = false
                             if (vault.pauseProtection(duration)) {
-                                Toast.makeText(this, "Protection paused", Toast.LENGTH_SHORT).show()
+                                BioKeyMessages.show("Protection paused", Icons.Default.PauseCircle)
                             }
                         },
                         onDismiss = { pauseRequested = false }

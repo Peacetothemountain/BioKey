@@ -35,9 +35,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GppMaybe
 import androidx.compose.material.icons.filled.LockClock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VerifiedUser
@@ -55,10 +57,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -68,7 +66,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -95,6 +92,7 @@ import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.AppInfoCache
+import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.GroupGap
 import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow
@@ -102,7 +100,6 @@ import com.android.BioKey.ui.theme.Haptics
 import com.android.BioKey.ui.theme.SectionHeader
 import com.android.BioKey.ui.theme.springPress
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val ICON_RENDER_DP = 40
@@ -123,8 +120,6 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     val view = LocalView.current
     val iconPx = with(LocalDensity.current) { ICON_RENDER_DP.dp.roundToPx() }
     val vault = remember { SecurityVault.getInstance(context) }
-    val scope = rememberCoroutineScope()
-    val snackbar = remember { SnackbarHostState() }
 
     val selectedApps by vault.selectedAppsFlow.collectAsStateWithLifecycle()
     val lockedApps by vault.lockedAppsFlow.collectAsStateWithLifecycle()
@@ -209,10 +204,8 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         Haptics.toggle(view, locked)
         vault.setAppLock(app.packageName, locked)
         if (!locked) {
-            scope.launch {
-                snackbar.currentSnackbarData?.dismiss()
-                val result = snackbar.showSnackbar("${app.label} unlocked", actionLabel = "Undo", duration = SnackbarDuration.Short)
-                if (result == SnackbarResult.ActionPerformed) vault.setAppLock(app.packageName, true)
+            BioKeyMessages.show("${app.label} unlocked", Icons.Default.LockOpen, actionLabel = "Undo") {
+                vault.setAppLock(app.packageName, true)
             }
         }
     }
@@ -347,13 +340,6 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
             }
         }
 
-        SnackbarHost(
-            snackbar,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(16.dp)
-        )
     }
 
     // Settings slides in over the home screen, which stays composed underneath so the
@@ -441,7 +427,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                 vault.deleteProfile(currentProfile.id)
                 showEditProfile = false
                 filter = FILTER_ALL
-                scope.launch { snackbar.showSnackbar("Deleted $name. Its apps are still locked.") }
+                BioKeyMessages.show("Deleted $name. Its apps are still locked.", Icons.Default.Delete)
             }
         )
     }
