@@ -10,19 +10,25 @@ import java.util.concurrent.Executors
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /**
- * A short record of BioKey's own lock decisions ("Covered com.chase…", "… left · hop to Phone",
- * "All sessions ended: phone locked"), so an unexpected lock, or a missing one, can be traced.
+ * A short on-phone log of BioKey's own lock decisions: which locked apps it locked or unlocked,
+ * and why ("Covered com.chase…", "… left the screen · hop to a helper app", "All sessions ended
+ * (phone locked)"), so an unexpected lock, or a missing one, can be traced. It names locked apps
+ * only: where a hop went is "a helper app" or "another app", never which.
  *
  * It stays on the phone, in BioKey's private storage, and leaves it only if the user shares it
- * from Settings. It keeps the last [MAX_ENTRIES] entries of the last [MAX_AGE_MS]; turning it
- * off deletes it. Release builds strip Android's own logging, so this is the only trace.
+ * from Settings. It keeps the last [MAX_ENTRIES] entries of the last 3 days ([MAX_AGE_MS]),
+ * checked whenever it is loaded, written or read; turning it off in Settings deletes it. Release
+ * builds strip Android's own logging, so this is the only trace.
  */
 object DiagnosticLog {
 
     private const val MAX_ENTRIES = 500
     private const val MAX_AGE_MS = 3 * 24 * 60 * 60_000L
+    /** Appending is cheap; once the file holds this many lines, it is written afresh. */
+    private const val REWRITE_AT_LINES = MAX_ENTRIES + 50
     private const val FILE_NAME = "diagnostics.log"
     private const val PREFS = "biokey_diagnostics"
     private const val KEY_ENABLED = "enabled"
@@ -34,24 +40,27 @@ object DiagnosticLog {
     @Volatile private var file: File? = null
     @Volatile private var enabled = true
     private var linesInFile = 0
+    /** Time of the oldest line in the file, or [Long.MAX_VALUE] when it has none. */
+    private var oldestInFile = Long.MAX_VALUE
 
     private val _version = MutableStateFlow(0)
     /** Changes whenever the log does, for screens showing it. */
     val version: StateFlow<Int> = _version.asStateFlow()
 
-    /** Loads the saved log; call once the user's storage is unlocked. Before that, entries stay in memory. */
+    /**
+     * Loads the saved log; call once the user's storage is unlocked. Before that, and before the
+     * on/off setting is read (on the log's own thread), entries stay in memory only.
+     */
     fun init(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        enabled = prefs.getBoolean(KEY_ENABLED, true)
         val f = File(context.filesDir, FILE_NAME)
         io.execute {
-            val cutoff = System.currentTimeMillis() - MAX_AGE_MS
+            enabled = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, true)
             val saved = runCatching {
                 if (!f.exists()) emptyList() else f.readLines().mapNotNull { line ->
                     val tab = line.indexOf('\t')
                     if (tab <= 0) null else line.substring(0, tab).toLongOrNull()?.let { Entry(it, line.substring(tab + 1)) }
                 }
-            }.getOrDefault(emptyList()).filter { it.at >= cutoff }
+            }.getOrDefault(emptyList())
             synchronized(entries) {
                 val early = entries.toList()
                 entries.clear()
@@ -59,11 +68,12 @@ object DiagnosticLog {
                     entries.addAll(saved.takeLast(MAX_ENTRIES))
                     entries.addAll(early)
                     while (entries.size > MAX_ENTRIES) entries.removeFirst()
+                    pruneOld()
                 }
                 file = f
                 rewrite()
             }
-            _version.value++
+            _version.update { it + 1 }
         }
     }
 
@@ -78,26 +88,30 @@ object DiagnosticLog {
             while (entries.size > MAX_ENTRIES) entries.removeFirst()
         }
         io.execute {
-            val f = file ?: return@execute
+            // Logged before init() found the log turned off: dropped there, never written.
+            val f = file?.takeIf { enabled } ?: return@execute
             synchronized(entries) {
-                // Appending is cheap; once the file holds twice what's kept, write it afresh.
-                if (linesInFile >= MAX_ENTRIES * 2) {
+                if (pruneOld() || linesInFile >= REWRITE_AT_LINES) {
                     rewrite()
                 } else {
                     runCatching { f.appendText("${entry.at}\t${entry.text}\n") }
                     linesInFile++
+                    oldestInFile = minOf(oldestInFile, entry.at)
                 }
             }
         }
-        _version.value++
+        _version.update { it + 1 }
     }
 
-    fun entries(): List<Entry> = synchronized(entries) { entries.toList() }
+    fun entries(): List<Entry> = synchronized(entries) {
+        if (pruneOld()) io.execute { synchronized(entries) { rewrite() } }
+        entries.toList()
+    }
 
     fun clear() {
         synchronized(entries) { entries.clear() }
         io.execute { synchronized(entries) { rewrite() } }
-        _version.value++
+        _version.update { it + 1 }
     }
 
     fun setEnabled(context: Context, on: Boolean) {
@@ -121,10 +135,21 @@ object DiagnosticLog {
         }
     }
 
+    /**
+     * Forgets entries older than [MAX_AGE_MS]. Returns whether the file still holds some, and so
+     * must be written afresh. Call holding the entries lock.
+     */
+    private fun pruneOld(): Boolean {
+        val cutoff = System.currentTimeMillis() - MAX_AGE_MS
+        entries.removeAll { it.at < cutoff }
+        return oldestInFile < cutoff
+    }
+
     /** Writes the kept entries over the file. Call holding the entries lock, on [io]. */
     private fun rewrite() {
         val f = file ?: return
         runCatching { f.writeText(entries.joinToString("") { "${it.at}\t${it.text}\n" }) }
         linesInFile = entries.size
+        oldestInFile = entries.minOfOrNull { it.at } ?: Long.MAX_VALUE
     }
 }

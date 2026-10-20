@@ -3,12 +3,14 @@ package com.android.BioKey.core.receiver
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import android.os.UserManager
 import android.util.Log
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
-import com.android.BioKey.feature.lock.BioKeyAccessibilityService
+import com.android.BioKey.feature.lock.UsageWatchService
 import java.util.concurrent.Executors
 
 /**
@@ -18,6 +20,9 @@ class BioKeyBootReceiver : BroadcastReceiver() {
 
     companion object {
         private const val TAG = "BioKeyBootReceiver"
+        /** How long compatibility mode gets to come up, well inside the broadcast's time limit. */
+        private const val START_WAIT_MS = 5_000L
+        private const val START_POLL_MS = 200L
         private val bootExecutor = Executors.newSingleThreadExecutor { r ->
             Thread(r, "biokey-boot-worker").apply { isDaemon = true }
         }
@@ -43,7 +48,13 @@ class BioKeyBootReceiver : BroadcastReceiver() {
                 if (vault.isSetupCompleted()) {
                     // Compatibility mode may start here (boot is allowed to start it).
                     ProtectionEngine.refresh(appContext)
-                    if (!ProtectionEngine.isProtecting(appContext)) ProtectionAlerts.serviceStopped(appContext, now = true)
+                    val protecting = when (ProtectionEngine.mode(appContext)) {
+                        ProtectionEngine.Mode.ACCESSIBILITY -> true
+                        // Its permissions don't mean it's running: the start can still fail.
+                        ProtectionEngine.Mode.COMPATIBILITY -> awaitCompatibilityMode()
+                        else -> false
+                    }
+                    if (!protecting) ProtectionAlerts.serviceStopped(appContext, now = true)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to complete boot initialization", e)
@@ -51,5 +62,18 @@ class BioKeyBootReceiver : BroadcastReceiver() {
                 pending.finish()
             }
         }
+    }
+
+    /** Whether compatibility mode is up within [START_WAIT_MS]. */
+    private fun awaitCompatibilityMode(): Boolean {
+        val until = SystemClock.elapsedRealtime() + START_WAIT_MS
+        while (!UsageWatchService.isRunning) {
+            if (SystemClock.elapsedRealtime() >= until) {
+                DiagnosticLog.log("Compatibility engine didn't start after boot or update")
+                return false
+            }
+            Thread.sleep(START_POLL_MS)
+        }
+        return true
     }
 }

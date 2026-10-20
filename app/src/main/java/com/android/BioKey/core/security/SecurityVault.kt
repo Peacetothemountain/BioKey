@@ -3,6 +3,9 @@ package com.android.BioKey.core.security
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.SystemClock
+import android.provider.Settings
+import androidx.annotation.VisibleForTesting
+import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.data.AppClassifier
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.PasswordManager
@@ -14,6 +17,7 @@ import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 import com.android.BioKey.feature.tile.BioKeyTileService
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -48,6 +52,10 @@ class SecurityVault private constructor(private val context: Context) {
         private const val KEY_NOTIFICATION_SHIELD = "notification_shield_enabled"
         private const val KEY_SETUP_COMPLETED = "setup_completed"
         private const val KEY_PAUSED_UNTIL = "paused_until_wall"
+        /** A timed pause's end on the monotonic clock, valid only within [KEY_PAUSED_BOOT]. */
+        private const val KEY_PAUSED_UNTIL_ELAPSED = "paused_until_elapsed"
+        private const val KEY_PAUSED_BOOT = "paused_boot_count"
+        private const val KEY_PAUSE_DURATION = "pause_duration_ms"
         private const val KEY_PROFILES_JSON = "security_profiles_json"
         private const val KEY_AUTO_SORT = "auto_sort_profiles_enabled"
         private const val KEY_AUTO_SORT_EXCLUDED = "auto_sort_excluded_packages"
@@ -59,6 +67,16 @@ class SecurityVault private constructor(private val context: Context) {
         /** A timed pause restored after a reboot never runs longer than this (wall clock can lie). */
         private const val MAX_RESTORED_PAUSE_MS = 60 * 60_000L
 
+        /**
+         * Every profile id starts with this (the presets, [createProfile]). Anything else in stored
+         * or restored data is replaced, so ids can't clash with the screens' own list keys.
+         */
+        private const val PROFILE_ID_PREFIX = "profile_"
+        private const val MAX_PROFILES = 64
+        private const val MAX_PROFILE_NAME = 40
+        private const val MAX_PACKAGES = 2_000
+        private val PACKAGE_NAME = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$")
+
         @Volatile
         private var INSTANCE: SecurityVault? = null
 
@@ -66,10 +84,16 @@ class SecurityVault private constructor(private val context: Context) {
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: SecurityVault(context.applicationContext).also { INSTANCE = it }
             }
+
+        /** The next [getInstance] reads storage afresh, as after a restart. */
+        @VisibleForTesting
+        internal fun resetForTests() {
+            INSTANCE = null
+        }
     }
 
     private val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-    private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "BioKeyVault") }
+    private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "BioKeyVault").apply { isDaemon = true } }
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val lock = Any()
 
@@ -107,12 +131,19 @@ class SecurityVault private constructor(private val context: Context) {
     private val _accessibilitySelfProtectionFlow = MutableStateFlow(false)
     val accessibilitySelfProtectionFlow: StateFlow<Boolean> = _accessibilitySelfProtectionFlow.asStateFlow()
 
-    /** Apps the owner took out of a profile by hand, which auto-sort must leave alone. */
-    private val autoSortExcluded = HashSet<String>()
+    /** Apps the owner took out of a profile by hand, which auto-sort must leave alone. Written under [lock]. */
+    @Volatile private var autoSortExcluded: Set<String> = emptySet()
 
     /** The timed pause's end on the monotonic clock, or 0. Survives wall-clock changes. */
     @Volatile private var pausedUntilElapsed = 0L
+    /** How long the timed pause was chosen for, or 0: after a reboot it never runs longer. */
+    @Volatile private var pauseDurationMs = 0L
     private var pauseExpiryJob: Job? = null
+
+    /** Which boot this is: [pausedUntilElapsed] means nothing in any other. -1 if unknown. */
+    private val bootCount: Int by lazy {
+        runCatching { Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, -1) }.getOrDefault(-1)
+    }
 
     /** Per-package re-lock delay for apps in a profile. */
     @Volatile private var profileTimeouts: Map<String, LockTimeoutMode> = emptyMap()
@@ -160,8 +191,14 @@ class SecurityVault private constructor(private val context: Context) {
      * Applies a change to the app switches and profiles, restores the invariants, then reacts to
      * what actually changed: apps that just became locked lose any session, apps that just
      * stopped being locked get their notifications back.
+     *
+     * [change] runs under [lock], before the save, so anything else it sets (auto-sort exclusions,
+     * preferences) is saved with it. Must not be called holding [lock]: the reactions run after it
+     * is released, as they are slow (notification rescans) and would block every other write.
      */
     private fun mutate(change: (selected: MutableSet<String>, profiles: MutableList<SecurityProfile>) -> Unit) {
+        val newlyLocked: Set<String>
+        val newlyUnlocked: Set<String>
         synchronized(lock) {
             val before = _lockedAppsFlow.value
             val selected = _selectedAppsFlow.value.toMutableSet()
@@ -171,19 +208,23 @@ class SecurityVault private constructor(private val context: Context) {
             val cleanProfiles = cleanProfiles(profiles)
             val clean = PasswordManager.expand(selected)
             val locked = effectiveLocks(clean, cleanProfiles)
+            newlyLocked = locked - before
+            newlyUnlocked = before - locked
 
+            // An old session must not outlive a lock switched back on: end it before anything
+            // can see the app locked.
+            LockStateTracker.endSessions(newlyLocked, "lock switched on")
             _profilesFlow.value = cleanProfiles
             _selectedAppsFlow.value = clean
             _lockedAppsFlow.value = locked
             rebuildProfileTimeouts()
-
-            val newlyLocked = locked - before
-            val newlyUnlocked = before - locked
-            newlyLocked.forEach { LockStateTracker.lockPackage(it, "lock switched on") }
-            if (newlyLocked.isNotEmpty()) AppInfoCache.preWarm(context, newlyLocked)
-            if (newlyUnlocked.isNotEmpty()) BioKeyNotificationShieldService.restoreNotificationsForPackages(newlyUnlocked)
             persist()
         }
+        if (newlyLocked.isNotEmpty()) {
+            LockStateTracker.notifyLocked(newlyLocked)
+            AppInfoCache.preWarm(context, newlyLocked)
+        }
+        if (newlyUnlocked.isNotEmpty()) BioKeyNotificationShieldService.restoreNotificationsForPackages(newlyUnlocked)
     }
 
     private fun MutableList<SecurityProfile>.removePackages(targets: Set<String>) {
@@ -216,9 +257,9 @@ class SecurityVault private constructor(private val context: Context) {
             if (profileId != null && switchOn) selected += targets
             profiles.removePackages(targets)
             if (profileId != null) profiles.update(profileId) { it.copy(packages = it.packages + targets) }
+            // Taken out of a profile by hand: auto-sort must not put it straight back.
+            autoSortExcluded = if (profileId == null) autoSortExcluded + targets else autoSortExcluded - targets
         }
-        // Taken out of a profile by hand: auto-sort must not put it straight back.
-        synchronized(lock) { if (profileId == null) autoSortExcluded += targets else autoSortExcluded -= targets }
     }
 
     /** Takes an app out of its profile. Its own lock switch stays as it is; auto-sort leaves it alone. */
@@ -231,13 +272,13 @@ class SecurityVault private constructor(private val context: Context) {
             selected += targets
             profiles.removePackages(targets)
             profiles.update(profileId) { it.copy(packages = it.packages + targets) }
+            autoSortExcluded = autoSortExcluded - targets
         }
-        synchronized(lock) { autoSortExcluded -= targets }
     }
 
     fun createProfile(name: String, iconKey: String, timeoutMode: LockTimeoutMode): SecurityProfile {
         val profile = SecurityProfile(
-            id = "profile_${UUID.randomUUID()}",
+            id = "$PROFILE_ID_PREFIX${UUID.randomUUID()}",
             name = name.trim().ifBlank { "New profile" },
             iconKey = iconKey,
             timeoutMode = timeoutMode
@@ -263,14 +304,21 @@ class SecurityVault private constructor(private val context: Context) {
         mutate { _, profiles -> profiles.removeAll { it.id == profileId } }
     }
 
+    /**
+     * [packageName] is gone from every profile of the phone (the caller checks: a work-profile
+     * copy or an archived app keeps its data, and so its lock).
+     */
     fun onPackageUninstalled(packageName: String) {
         val targets = PasswordManager.aliasesOf(packageName)
-        mutate { selected, profiles ->
-            selected -= targets
-            profiles.removePackages(targets)
+        // Google Password Manager is still there in Play services' settings without its own app.
+        if (packageName !in PasswordManager.ALIASES) {
+            mutate { selected, profiles ->
+                selected -= targets
+                profiles.removePackages(targets)
+                autoSortExcluded = autoSortExcluded - targets
+            }
         }
-        synchronized(lock) { autoSortExcluded -= targets }
-        targets.forEach(LockStateTracker::lockPackage)
+        LockStateTracker.lockPackages(targets, "uninstalled")
     }
 
     // ---------------------------------------------------------------------------------------
@@ -289,31 +337,40 @@ class SecurityVault private constructor(private val context: Context) {
             .put("autoSortExcluded", JSONArray(autoSortExcluded.sorted()))
     }
 
-    /** Replaces app switches, profiles and preferences with a backup's ([exportState]). */
+    /**
+     * Replaces app switches, profiles and preferences with a backup's ([exportState]). Throws
+     * [IllegalArgumentException], changing nothing, if it isn't shaped like one; odd contents
+     * (repeated profile ids, things that aren't package names) are repaired as on [load].
+     */
     fun restoreState(state: JSONObject) {
         fun strings(key: String): Set<String> {
             val array = state.optJSONArray(key) ?: return emptySet()
             return buildSet { for (i in 0 until array.length()) add(array.getString(i)) }
         }
-        val profiles = state.optJSONArray("profiles")?.let { array -> List(array.length()) { SecurityProfile.fromJson(array.getJSONObject(it)) } }
-            ?: throw IllegalArgumentException("No profiles in backup")
-        val selected = strings("selected")
+        val profiles = state.optJSONArray("profiles")?.let { array ->
+            List(array.length()) { i ->
+                SecurityProfile.fromJson(array.optJSONObject(i) ?: throw IllegalArgumentException("A profile in the backup isn't one"))
+            }
+        } ?: throw IllegalArgumentException("No profiles in backup")
+        val selected = validPackages(strings("selected"))
+        val excluded = PasswordManager.expand(validPackages(strings("autoSortExcluded")))
+        val shield = state.optBoolean("notificationShield", true)
+        val selfProtection = state.optBoolean("selfProtection", false)
         mutate { sel, profs ->
             sel.clear()
             sel += selected
             profs.clear()
-            profs += profiles
-        }
-        synchronized(lock) {
-            autoSortExcluded.clear()
-            autoSortExcluded += strings("autoSortExcluded")
+            profs += sanitizeProfiles(profiles)
+            // Set with the locks, so what reacts to them (the notification shield) follows these.
+            autoSortExcluded = excluded
             _timeoutModeFlow.value = LockTimeoutMode.fromName(state.optString("defaultTimeout"))
-            _notificationShieldFlow.value = state.optBoolean("notificationShield", true)
-            _accessibilitySelfProtectionFlow.value = state.optBoolean("selfProtection", false)
+            _notificationShieldFlow.value = shield
+            _accessibilitySelfProtectionFlow.value = selfProtection
             _autoSortProfilesFlow.value = state.optBoolean("autoSort", true)
-            rebuildProfileTimeouts()
-            persist()
         }
+        // As their own switches would.
+        if (!shield) BioKeyNotificationShieldService.restoreAllSnoozedNotifications()
+        if (!selfProtection) LockStateTracker.clearSelfProtection()
         DiagnosticLog.log("Settings restored from a backup")
     }
 
@@ -324,42 +381,58 @@ class SecurityVault private constructor(private val context: Context) {
     fun setAutoSortProfilesEnabled(enabled: Boolean) {
         synchronized(lock) {
             _autoSortProfilesFlow.value = enabled
-            if (enabled) autoSortExcluded.clear()
+            if (enabled) autoSortExcluded = emptySet()
             persist()
         }
     }
 
-    fun autoSortSinglePackage(pkg: String, label: String, pm: PackageManager?) =
-        autoSortAppsIntoProfiles(listOf(pkg to label), pm)
-
     /**
      * Puts recognised apps that aren't in any profile (and weren't taken out of one by hand) into
-     * the matching built-in profile, which locks them.
+     * the matching built-in profile, which locks them. [apps] come with their
+     * [AppClassifier.categorize] category, so nothing here asks the package manager.
      */
-    fun autoSortAppsIntoProfiles(apps: List<Pair<String, String>>, pm: PackageManager?) {
+    fun autoSortAppsIntoProfiles(apps: List<Pair<String, AppCategory>>) {
         if (!_autoSortProfilesFlow.value || apps.isEmpty()) return
-        val presets = _profilesFlow.value.mapTo(HashSet()) { it.id }
-        val assignments = HashMap<String, MutableSet<String>>()
-        synchronized(lock) {
-            val assigned = _profilesFlow.value.flatMapTo(HashSet()) { it.packages }
-            for ((pkg, label) in apps) {
-                if (pkg == context.packageName) continue
-                val aliases = PasswordManager.aliasesOf(pkg)
-                if (aliases.any { it in assigned || it in autoSortExcluded }) continue
-                val playCategory = runCatching { pm?.getApplicationInfo(pkg, 0)?.category }.getOrNull() ?: -1
-                val target = AppClassifier.presetProfileFor(AppClassifier.categorize(pkg, label, playCategory)) ?: continue
-                if (target !in presets) continue
-                assignments.getOrPut(target) { HashSet() } += aliases
-                assigned += aliases
-            }
-        }
-        if (assignments.isEmpty()) return
+        // Usually nothing is new: find that out without taking the lock or saving anything.
+        if (autoSortPlacements(apps, _profilesFlow.value).isEmpty()) return
         mutate { selected, profiles ->
-            for ((profileId, pkgs) in assignments) {
+            // Decided again under the lock, so a change made meanwhile (an app just taken out of
+            // its profile, auto-sort just turned off) wins.
+            if (!_autoSortProfilesFlow.value) return@mutate
+            for ((profileId, pkgs) in autoSortPlacements(apps, profiles)) {
                 selected += pkgs
                 profiles.update(profileId) { it.copy(packages = it.packages + pkgs) }
             }
         }
+    }
+
+    /** For callers that have only labels: looks up the Play category of apps auto-sort could place, outside the lock. */
+    fun autoSortAppsIntoProfiles(apps: List<Pair<String, String>>, pm: PackageManager?) {
+        if (!_autoSortProfilesFlow.value || apps.isEmpty()) return
+        val assigned = _profilesFlow.value.flatMapTo(HashSet()) { it.packages }
+        val excluded = autoSortExcluded
+        autoSortAppsIntoProfiles(apps.mapNotNull { (pkg, label) ->
+            if (pkg in assigned || pkg in excluded) return@mapNotNull null
+            val playCategory = runCatching { pm?.getApplicationInfo(pkg, 0)?.category }.getOrNull() ?: -1
+            pkg to AppClassifier.categorize(pkg, label, playCategory)
+        })
+    }
+
+    /** Which built-in profile (by id) each of [apps] that auto-sort may place goes in, given [profiles]. */
+    private fun autoSortPlacements(apps: List<Pair<String, AppCategory>>, profiles: List<SecurityProfile>): Map<String, Set<String>> {
+        val profileIds = profiles.mapTo(HashSet()) { it.id }
+        val assigned = profiles.flatMapTo(HashSet()) { it.packages }
+        val excluded = autoSortExcluded
+        val placements = HashMap<String, MutableSet<String>>()
+        for ((pkg, category) in apps) {
+            if (pkg == context.packageName) continue
+            val aliases = PasswordManager.aliasesOf(pkg)
+            if (aliases.any { it in assigned || it in excluded }) continue
+            val target = AppClassifier.presetProfileFor(category)?.takeIf { it in profileIds } ?: continue
+            placements.getOrPut(target) { HashSet() } += aliases
+            assigned += aliases
+        }
+        return placements
     }
 
     // ---------------------------------------------------------------------------------------
@@ -377,6 +450,7 @@ class SecurityVault private constructor(private val context: Context) {
             _globalLockEnabledFlow.value = false
             _pausedUntilFlow.value = durationMillis?.let { System.currentTimeMillis() + it } ?: 0L
             pausedUntilElapsed = durationMillis?.let { SystemClock.elapsedRealtime() + it } ?: 0L
+            pauseDurationMs = durationMillis ?: 0L
             schedulePauseExpiry(durationMillis ?: 0L)
             persist()
         }
@@ -393,6 +467,7 @@ class SecurityVault private constructor(private val context: Context) {
             _globalLockEnabledFlow.value = true
             _pausedUntilFlow.value = 0L
             pausedUntilElapsed = 0L
+            pauseDurationMs = 0L
             persist()
         }
         // Nothing unlocked during the pause carries over.
@@ -420,12 +495,17 @@ class SecurityVault private constructor(private val context: Context) {
         if (!enabled) LockStateTracker.clearSelfProtection()
     }
 
-    /** Written synchronously: setup must never be lost to a crash right after finishing it. */
+    /**
+     * Saved before this returns: setup must never be lost to a crash right after finishing it.
+     * The save goes through the vault's own thread, after any queued before it, so none of those
+     * older snapshots can land on top of it.
+     */
     fun setSetupCompletedSync(completed: Boolean) {
-        synchronized(lock) {
+        val saved = synchronized(lock) {
             _setupCompletedFlow.value = completed
-            prefs.edit().putBoolean(KEY_SETUP_COMPLETED, completed).commit()
+            persist()
         }
+        runCatching { saved.get() }
     }
 
     private inline fun setPreference(change: () -> Unit) {
@@ -455,24 +535,40 @@ class SecurityVault private constructor(private val context: Context) {
         profileTimeouts = buildMap { for (p in _profilesFlow.value) for (pkg in p.packages) put(pkg, p.timeoutMode) }
     }
 
+    /** What looks like a package name, but not BioKey's own, at most [MAX_PACKAGES]. */
+    private fun validPackages(packages: Collection<String>): Set<String> =
+        packages.asSequence().filter { it != context.packageName && PACKAGE_NAME.matches(it) }.take(MAX_PACKAGES).toSet()
+
+    /**
+     * Stored or restored profiles made safe to show: each id unique and prefixed (a repeated id
+     * crashes the screens' lists), names of a sane length, only package names inside.
+     */
+    private fun sanitizeProfiles(profiles: List<SecurityProfile>): List<SecurityProfile> {
+        val ids = HashSet<String>()
+        return profiles.take(MAX_PROFILES).map { p ->
+            val id = p.id.takeIf { it.length > PROFILE_ID_PREFIX.length && it.startsWith(PROFILE_ID_PREFIX) && ids.add(it) }
+                ?: "$PROFILE_ID_PREFIX${UUID.randomUUID()}".also { ids.add(it) }
+            p.copy(id = id, name = p.name.trim().take(MAX_PROFILE_NAME).ifBlank { "Profile" }, packages = validPackages(p.packages))
+        }
+    }
+
     private fun load() {
-        val profiles = prefs.getString(KEY_PROFILES_JSON, null)?.let { json ->
+        val stored = prefs.getString(KEY_PROFILES_JSON, null)?.let { json ->
             runCatching {
                 val array = JSONArray(json)
                 List(array.length()) { SecurityProfile.fromJson(array.getJSONObject(it)) }
             }.getOrNull()
         } ?: SecurityProfile.DEFAULTS
         // Enforce the invariants on whatever was stored.
-        val clean = cleanProfiles(profiles)
-        var selected = PasswordManager.expand(prefs.getStringSet(KEY_LOCKED, emptySet()).orEmpty())
+        val clean = cleanProfiles(sanitizeProfiles(stored))
+        var selected = PasswordManager.expand(validPackages(prefs.getStringSet(KEY_LOCKED, emptySet()).orEmpty()))
         // Before version 2 every app in a profile was locked: keep each of them switched on.
         val migrating = prefs.getInt(KEY_MODEL_VERSION, 1) < MODEL_VERSION
         if (migrating) selected = selected + clean.flatMap { it.packages }
         _profilesFlow.value = clean
         _selectedAppsFlow.value = selected
         _lockedAppsFlow.value = effectiveLocks(selected, clean)
-        if (migrating) persist()
-        autoSortExcluded += prefs.getStringSet(KEY_AUTO_SORT_EXCLUDED, emptySet()).orEmpty()
+        autoSortExcluded = PasswordManager.expand(validPackages(prefs.getStringSet(KEY_AUTO_SORT_EXCLUDED, emptySet()).orEmpty()))
         rebuildProfileTimeouts()
 
         _timeoutModeFlow.value = LockTimeoutMode.fromName(prefs.getString(KEY_TIMEOUT, null))
@@ -482,40 +578,70 @@ class SecurityVault private constructor(private val context: Context) {
         _accessibilitySelfProtectionFlow.value = prefs.getBoolean(KEY_SELF_PROTECTION, false)
         _autoSortProfilesFlow.value = prefs.getBoolean(KEY_AUTO_SORT, true)
 
-        // A pause survives a reboot only while its time is left (capped, as the wall clock can lie).
+        // A timed pause survives a restart only while its time is left.
         val enabled = prefs.getBoolean(KEY_GLOBAL, true)
         val pausedWall = prefs.getLong(KEY_PAUSED_UNTIL, 0L)
-        val remaining = pausedWall - System.currentTimeMillis()
+        var pauseExpired = false
+        var pauseRestored = false
         when {
             enabled -> _globalLockEnabledFlow.value = true
             pausedWall == 0L -> _globalLockEnabledFlow.value = false // paused until turned back on
-            remaining <= 0L -> {
-                _globalLockEnabledFlow.value = true
-                persist()
-            }
             else -> {
-                val left = minOf(remaining, MAX_RESTORED_PAUSE_MS)
-                _globalLockEnabledFlow.value = false
-                _pausedUntilFlow.value = System.currentTimeMillis() + left
-                pausedUntilElapsed = SystemClock.elapsedRealtime() + left
-                schedulePauseExpiry(left)
+                val left = restoredPauseLeft(pausedWall)
+                if (left <= 0L) {
+                    _globalLockEnabledFlow.value = true
+                    pauseExpired = true
+                } else {
+                    _globalLockEnabledFlow.value = false
+                    _pausedUntilFlow.value = System.currentTimeMillis() + left
+                    pausedUntilElapsed = SystemClock.elapsedRealtime() + left
+                    pauseDurationMs = prefs.getLong(KEY_PAUSE_DURATION, 0L)
+                    schedulePauseExpiry(left)
+                    // Saved with this boot's monotonic end, so a later restart in it is exact
+                    // rather than trusting the wall clock again.
+                    pauseRestored = true
+                }
             }
         }
+        // Only now is everything read: saving any earlier would write defaults over the owner's
+        // settings (setup, self-protection, re-lock delay, auto-sort and its exclusions).
+        if (migrating || pauseExpired || pauseRestored || clean != stored) persist()
     }
 
-    /** Snapshot now, write on the vault's own thread. */
-    private fun persist() {
+    /**
+     * How much of a stored timed pause is left. Within the same boot the monotonic end is exact.
+     * After a reboot only the wall clock is left, which can lie (set back while paused), so the
+     * pause never runs longer than it was chosen for, nor [MAX_RESTORED_PAUSE_MS].
+     */
+    private fun restoredPauseLeft(pausedWall: Long): Long {
+        val chosen = prefs.getLong(KEY_PAUSE_DURATION, 0L).takeIf { it > 0L } ?: MAX_RESTORED_PAUSE_MS
+        val elapsedEnd = prefs.getLong(KEY_PAUSED_UNTIL_ELAPSED, 0L)
+        if (bootCount >= 0 && elapsedEnd > 0L && prefs.getInt(KEY_PAUSED_BOOT, -1) == bootCount) {
+            // Capped too: should the boot count not move on a reboot, an end from the last boot's
+            // clock could be hours away on this one's.
+            return minOf(elapsedEnd - SystemClock.elapsedRealtime(), chosen)
+        }
+        return minOf(pausedWall - System.currentTimeMillis(), chosen, MAX_RESTORED_PAUSE_MS)
+    }
+
+    /**
+     * Snapshot now, write on the vault's own thread: committed there, so once it has run the
+     * change is on disk. The returned future completes then.
+     */
+    private fun persist(): Future<*> {
         val selected = _selectedAppsFlow.value
-        val excluded = synchronized(lock) { autoSortExcluded.toSet() }
+        val excluded = autoSortExcluded
         val profilesJson = JSONArray().apply { _profilesFlow.value.forEach { put(it.toJson()) } }.toString()
         val global = _globalLockEnabledFlow.value
         val pausedWall = _pausedUntilFlow.value
+        val pausedElapsed = pausedUntilElapsed
+        val pauseDuration = pauseDurationMs
         val timeout = _timeoutModeFlow.value.name
         val shield = _notificationShieldFlow.value
         val selfProtection = _accessibilitySelfProtectionFlow.value
         val setup = _setupCompletedFlow.value
         val autoSort = _autoSortProfilesFlow.value
-        io.execute {
+        return io.submit {
             prefs.edit()
                 .putStringSet(KEY_LOCKED, selected)
                 .putInt(KEY_MODEL_VERSION, MODEL_VERSION)
@@ -523,12 +649,21 @@ class SecurityVault private constructor(private val context: Context) {
                 .putString(KEY_PROFILES_JSON, profilesJson)
                 .putBoolean(KEY_GLOBAL, global)
                 .putLong(KEY_PAUSED_UNTIL, pausedWall)
+                .putLong(KEY_PAUSED_UNTIL_ELAPSED, pausedElapsed)
+                .putInt(KEY_PAUSED_BOOT, bootCount)
+                .putLong(KEY_PAUSE_DURATION, pauseDuration)
                 .putString(KEY_TIMEOUT, timeout)
                 .putBoolean(KEY_NOTIFICATION_SHIELD, shield)
                 .putBoolean(KEY_SELF_PROTECTION, selfProtection)
                 .putBoolean(KEY_SETUP_COMPLETED, setup)
                 .putBoolean(KEY_AUTO_SORT, autoSort)
-                .apply()
+                .commit()
         }
+    }
+
+    /** Waits until every write queued so far is on disk. */
+    @VisibleForTesting
+    internal fun awaitPendingWrites() {
+        io.submit {}.get()
     }
 }

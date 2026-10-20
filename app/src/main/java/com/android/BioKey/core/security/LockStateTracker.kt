@@ -97,6 +97,7 @@ object LockStateTracker {
     private val lockAllListeners = CopyOnWriteArraySet<() -> Unit>()
     private val appUnlockListeners = CopyOnWriteArraySet<(String) -> Unit>()
     private val appLockListeners = CopyOnWriteArraySet<(String) -> Unit>()
+    private val appsLockListeners = CopyOnWriteArraySet<(Set<String>) -> Unit>()
     private val lockAbandonedListeners = CopyOnWriteArraySet<(String) -> Unit>()
 
     /** Notified after every [lockAll] (screen-off, manual lock), e.g. to re-redact notifications. */
@@ -110,6 +111,14 @@ object LockStateTracker {
     /** Notified whenever an app's session ends, e.g. to re-mask notifications. */
     fun addAppLockListener(listener: (String) -> Unit) { appLockListeners += listener }
     fun removeAppLockListener(listener: (String) -> Unit) { appLockListeners -= listener }
+
+    /**
+     * Like [addAppLockListener], but told once per batch ([lockPackages]): turning on 40 locks
+     * from a backup is one call, so a listener that rescans everything (the notification shield)
+     * does it once rather than 40 times.
+     */
+    fun addAppsLockListener(listener: (Set<String>) -> Unit) { appsLockListeners += listener }
+    fun removeAppsLockListener(listener: (Set<String>) -> Unit) { appsLockListeners -= listener }
 
     /**
      * Notified when a lock screen is left without authenticating ([markLockAbandoned]). The app
@@ -154,11 +163,7 @@ object LockStateTracker {
      * is stale and no session starts. Returns whether one did.
      */
     fun onAppUnlocked(packageName: String, generation: Int = this.generation): Boolean {
-        if (generation != this.generation) {
-            Log.i(TAG, "Unlock of $packageName arrived after a lock-all; ignored")
-            DiagnosticLog.log("Unlock of $packageName ignored: the phone was locked meanwhile")
-            return false
-        }
+        if (generation != this.generation) return staleUnlock(packageName)
         cancelExpiry(packageName)
         val session = Session(unlockedAt = now())
         for (pkg in PasswordManager.aliasesOf(packageName)) {
@@ -166,10 +171,22 @@ object LockStateTracker {
             pendingLocks.remove(pkg)
             abandonedAt.remove(pkg)
         }
+        // A lock-all on another thread may have cleared the sessions just before these went in:
+        // it bumps the generation first, so looking again catches it.
+        if (generation != this.generation) {
+            for (pkg in PasswordManager.aliasesOf(packageName)) sessions.remove(pkg, session)
+            return staleUnlock(packageName)
+        }
         Log.i(TAG, "Session started for $packageName")
         DiagnosticLog.log("Unlocked $packageName")
         appUnlockListeners.forEach { runCatching { it(packageName) } }
         return true
+    }
+
+    private fun staleUnlock(packageName: String): Boolean {
+        Log.i(TAG, "Unlock of $packageName arrived after a lock-all; ignored")
+        DiagnosticLog.log("Unlock of $packageName ignored: the phone was locked meanwhile")
+        return false
     }
 
     /** The unlocked app is on screen: it is in use, so nothing ages. */
@@ -196,7 +213,8 @@ object LockStateTracker {
         session.hopTarget = hopTarget
         for (pkg in PasswordManager.aliasesOf(packageName)) leftAt[pkg] = session.awaySince
         Log.d(TAG, "$packageName left the screen (hop=$hopTarget)")
-        DiagnosticLog.log("$packageName left the screen" + (hopTarget?.let { " · hop to $it" } ?: " · re-lock: ${timeoutMode.name.lowercase()}"))
+        // The diagnostic log names locked apps only: a hop's destination is just "a helper app".
+        DiagnosticLog.log("$packageName left the screen" + if (hopTarget != null) " · hop to a helper app" else " · re-lock: ${timeoutMode.name.lowercase()}")
         when {
             timeoutMode == LockTimeoutMode.IMMEDIATE && hopTarget == null -> lockPackage(packageName, "left, re-locks immediately")
             timeoutMode == LockTimeoutMode.ON_SCREEN_OFF -> Unit
@@ -221,7 +239,7 @@ object LockStateTracker {
             session.hopTarget = null
             val mode = timeoutModeOf(pkg)
             Log.d(TAG, "Hop from $pkg ended at $foregroundPackage")
-            DiagnosticLog.log("Hop from $pkg ended at $foregroundPackage")
+            DiagnosticLog.log("Hop from $pkg ended: another app came to the front")
             if (!isAppUnlocked(pkg, mode)) continue
             if (mode.durationMillis > 0L) {
                 scheduleExpiry(pkg, (session.awaySince + mode.durationMillis - now()).coerceAtLeast(0L), mode)
@@ -264,18 +282,39 @@ object LockStateTracker {
         return stillUnlocked
     }
 
-    fun lockPackage(packageName: String, reason: String? = null) {
-        cancelExpiry(packageName)
-        var hadSession = false
-        for (pkg in PasswordManager.aliasesOf(packageName)) {
-            if (sessions.remove(pkg) != null) hadSession = true
-            pendingLocks.remove(pkg)
+    fun lockPackage(packageName: String, reason: String? = null) = lockPackages(setOf(packageName), reason)
+
+    /** Ends the sessions of [packages] together, then tells the listeners. */
+    fun lockPackages(packages: Set<String>, reason: String? = null) {
+        endSessions(packages, reason)
+        notifyLocked(packages)
+    }
+
+    /**
+     * The first half of [lockPackages]: ends the sessions without telling anyone. The vault does
+     * this under its own lock, before anything can see the apps locked, and calls [notifyLocked]
+     * once it has let go of it (the listeners are slow: they rescan notifications).
+     */
+    fun endSessions(packages: Set<String>, reason: String? = null) {
+        for (packageName in packages) {
+            cancelExpiry(packageName)
+            var hadSession = false
+            for (pkg in PasswordManager.aliasesOf(packageName)) {
+                if (sessions.remove(pkg) != null) hadSession = true
+                pendingLocks.remove(pkg)
+            }
+            if (hadSession) {
+                Log.i(TAG, "Session ended for $packageName")
+                DiagnosticLog.log("Session ended: $packageName" + (reason?.let { " ($it)" } ?: ""))
+            }
         }
-        if (hadSession) {
-            Log.i(TAG, "Session ended for $packageName")
-            DiagnosticLog.log("Session ended: $packageName" + (reason?.let { " ($it)" } ?: ""))
-        }
-        appLockListeners.forEach { runCatching { it(packageName) } }
+    }
+
+    /** The second half of [lockPackages]: tells the listeners that [packages] are locked again. */
+    fun notifyLocked(packages: Set<String>) {
+        if (packages.isEmpty()) return
+        for (pkg in packages) appLockListeners.forEach { runCatching { it(pkg) } }
+        appsLockListeners.forEach { runCatching { it(packages) } }
     }
 
     /**
@@ -283,6 +322,8 @@ object LockStateTracker {
      * screen-off, manual "lock all" and when protection resumes.
      */
     fun lockAll(includeOwnApp: Boolean = true, reason: String? = null) {
+        // First, so an unlock racing this from another thread sees it ([onAppUnlocked]).
+        generation++
         expiryJobs.values.forEach { it.cancel() }
         expiryJobs.clear()
         sessions.clear()
@@ -290,7 +331,6 @@ object LockStateTracker {
         abandonedAt.clear()
         leftAt.clear()
         clearSelfProtection()
-        generation++
         if (includeOwnApp) lockOwnApp()
         Log.i(TAG, "All sessions wiped")
         if (reason != null) DiagnosticLog.log("All sessions ended ($reason)")
