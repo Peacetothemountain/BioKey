@@ -1,8 +1,10 @@
-# BioKey's baseline profile: code Android compiles ahead of time when BioKey is installed or
-# updated, so the first covers and lock screens afterwards don't run interpreted. It covers the
-# lock path of both engines (accessibility events, compatibility mode, the cover, the lock screen)
-# and the session and settings state it reads on every event. Compose and the other libraries
-# bring their own profiles.
+# BioKey's baseline profile: code Android compiles ahead of time, so covers and lock screens don't
+# run interpreted after an install or update. Google Play compiles it at install; other installs
+# get it from ProfileInstaller on first launch, and it takes effect at the next background
+# optimisation (usually while the phone is idle and charging). It covers the lock path of both
+# engines (accessibility events, compatibility mode, the cover, the lock screen) and the session
+# and settings state it reads on every event. Compose and the other libraries bring their own
+# profiles.
 
 # Process start.
 HSPLcom/android/BioKey/BioKeyApplication**->**(**)**

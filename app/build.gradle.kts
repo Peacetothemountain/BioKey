@@ -99,12 +99,13 @@ android {
     }
 
     lint {
-        // Lint errors fail the build, here and in the quick check assembleRelease runs; warnings
-        // don't. These checks catch crashes on older Android versions and components or intents
-        // other apps could reach, so they count as errors.
+        // Lint errors fail lintDebug (which CI runs); warnings don't. The quick check inside
+        // assembleRelease only looks at fatal issues, so these are fatal: they catch crashes on
+        // older Android versions and components or intents other apps could reach, and a release
+        // built locally, without CI, mustn't ship one either.
         abortOnError = true
         checkReleaseBuilds = true
-        error += listOf(
+        fatal += listOf(
             "NewApi",
             "UnspecifiedRegisterReceiverFlag",
             "ExportedService",

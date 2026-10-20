@@ -54,10 +54,14 @@ class BackupAndExposureTest {
     @Test
     fun debugTestActivityIsNotExported() {
         // ui-test-manifest declares it exported; src/debug/AndroidManifest.xml overrides that.
-        // Release builds don't declare it at all.
+        // Release builds don't declare it at all, but a debug build must, or this checks nothing.
         val info = runCatching {
             context.packageManager.getActivityInfo(ComponentName(context, "androidx.activity.ComponentActivity"), 0)
-        }.getOrNull() ?: return
+        }.getOrNull()
+        if (info == null) {
+            assertEquals(0, context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE)
+            return
+        }
         assertFalse(info.exported)
     }
 }

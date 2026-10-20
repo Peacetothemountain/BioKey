@@ -26,7 +26,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Nothing after checkout talks to GitHub, so the token isn't left on disk for the build.
+          # No later step runs git against GitHub, so the token isn't left in .git/config, where
+          # the build could read it.
           persist-credentials: false
 
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
