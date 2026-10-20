@@ -2,6 +2,7 @@ package com.android.BioKey
 
 import android.graphics.Rect
 import com.android.BioKey.feature.lock.RecentsWatcher
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -43,5 +44,15 @@ class RecentsGestureTest {
     @Test
     fun aSmallNudgeIsNotClosed() {
         assertFalse(RecentsWatcher.sweptAway(card, moved(0, -120), h, w))
+    }
+
+    @Test
+    fun theHomeScreenIsLookedAtLessOftenThanRecents() {
+        // In Recents: as soon as a burst of changes settles.
+        assertEquals(RecentsWatcher.SETTLE_MS, RecentsWatcher.scanDelayMs(sinceLastScanMs = 0, lastFoundRecents = true))
+        // On the home screen (live widgets): no sooner than the interval after the last look...
+        assertEquals(RecentsWatcher.HOME_SCAN_INTERVAL_MS - 100, RecentsWatcher.scanDelayMs(sinceLastScanMs = 100, lastFoundRecents = false))
+        // ...and never sooner than a burst takes to settle.
+        assertEquals(RecentsWatcher.SETTLE_MS, RecentsWatcher.scanDelayMs(sinceLastScanMs = 10_000, lastFoundRecents = false))
     }
 }

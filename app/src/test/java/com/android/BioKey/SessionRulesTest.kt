@@ -37,6 +37,9 @@ class SessionRulesTest {
 
     private val locked = setOf(chat, bank)
     private val hopTargets = setOf(dialer, "com.google.android.permissioncontroller", UNIDENTIFIED_APP)
+    /** App names on this "phone" (one shared with a screen of the bank's), and the titles of the bank's own screens. */
+    private val names = mapOf("game" to game, "bank" to bank, "phone" to dialer, "transfers" to "com.example.transfers")
+    private val bankScreens = setOf("bank", "transfers")
 
     private val rules = SessionRules(object : SessionRules.Env {
         override fun isLocked(pkg: String) = pkg in locked
@@ -44,7 +47,10 @@ class SessionRulesTest {
         override fun isLauncher(pkg: String) = pkg == launcher
         override fun isHopTarget(pkg: String) = pkg in hopTargets
         override fun mayCover(pkg: String) =
-            pkg in locked && !LockStateTracker.isAppUnlocked(pkg, LockTimeoutMode.IMMEDIATE)
+            pkg in locked && !LockStateTracker.isAppUnlocked(pkg, LockTimeoutMode.IMMEDIATE) &&
+                !LockStateTracker.isRecentlyAbandoned(pkg)
+        override fun appTitled(title: String) = names[title.lowercase()]
+        override fun isTitleOf(pkg: String, title: String) = pkg == bank && title.lowercase() in bankScreens
     })
 
     @Before
@@ -55,8 +61,15 @@ class SessionRulesTest {
 
     private fun advance(ms: Long) = ShadowSystemClock.advanceBy(Duration.ofMillis(ms))
 
-    private fun screen(vararg visible: String, front: String = visible.first(), last: String? = null, pip: Set<String> = emptySet()) =
-        rules.reconcile(SessionRules.Screen(visible.toCollection(LinkedHashSet()), pip, front, last, SystemClock.elapsedRealtime()))
+    private fun screen(
+        vararg visible: String,
+        front: String = visible.first(),
+        last: String? = null,
+        pip: Set<String> = emptySet(),
+        title: String? = null
+    ) = rules.reconcile(
+        SessionRules.Screen(visible.toCollection(LinkedHashSet()), pip, front, last, SystemClock.elapsedRealtime(), frontTitle = title)
+    )
 
     private fun unlockAndUse(pkg: String) {
         LockStateTracker.onAppUnlocked(pkg)
@@ -95,6 +108,42 @@ class SessionRulesTest {
         screen(UNIDENTIFIED_APP, last = bank)
         advance(5_000)
         screen(UNIDENTIFIED_APP, last = bank)
+        assertTrue(unlocked(bank))
+    }
+
+    @Test
+    fun anUnreadableScreenTitledAfterAnotherAppIsLeaving() {
+        // A notification from the shade, or a quick switch, to another app that hides its windows.
+        unlockAndUse(bank)
+        screen(UNIDENTIFIED_APP, last = bank, title = "Game")
+        advance(LEAVE_CONFIRM_MS + 50)
+        screen(UNIDENTIFIED_APP, last = bank, title = "Game")
+        assertFalse(unlocked(bank))
+    }
+
+    @Test
+    fun anUnreadableScreenOfTheAppItselfIsStillTheApp() {
+        // Titled after the app or one of its own screens, or not titled at all.
+        for (title in listOf("Transfers", "Bank", null, " ")) {
+            LockStateTracker.lockAll()
+            rules.reset()
+            unlockAndUse(bank)
+            screen(UNIDENTIFIED_APP, last = bank, title = title)
+            advance(5_000)
+            screen(UNIDENTIFIED_APP, last = bank, title = title)
+            assertTrue("title $title", unlocked(bank))
+        }
+    }
+
+    @Test
+    fun anUnreadableHelperIsAHop() {
+        // Titled after a helper (here the phone app): the session waits for the user to come back.
+        unlockAndUse(bank)
+        screen(UNIDENTIFIED_APP, last = bank, title = "Phone")
+        advance(LEAVE_CONFIRM_MS + 50)
+        screen(UNIDENTIFIED_APP, last = bank, title = "Phone")
+        assertTrue(unlocked(bank))
+        screen(bank)
         assertTrue(unlocked(bank))
     }
 
@@ -149,6 +198,16 @@ class SessionRulesTest {
         screen(launcher, chat)
         advance(EXIT_SETTLE_MS + 50)
         assertEquals(chat, screen(launcher, chat).cover)
+    }
+
+    @Test
+    fun aLockScreenLeftAMomentAgoIsCoveredOnceItsCooldownEnds() {
+        // Cancel, then the app straight back in front (a fast tap, a quick switch): left alone
+        // while the lock screen leaves, covered when the engine looks again after the cooldown.
+        LockStateTracker.markLockAbandoned(bank)
+        assertNull(screen(bank).cover)
+        advance(LockStateTracker.ABANDONED_LOCK_COOLDOWN_MS + 20)
+        assertEquals(bank, screen(bank).cover)
     }
 
     @Test
