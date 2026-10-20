@@ -15,8 +15,10 @@ import androidx.core.graphics.scale
 import com.android.BioKey.R
 import java.lang.ref.WeakReference
 import java.util.concurrent.Callable
-import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -67,7 +69,11 @@ internal object LogoArt {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, Bitmap>?) = size > RECENT
     }
     private val preparing = HashMap<Key, Future<Bitmap?>>()
-    private val worker by lazy { Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-logo").apply { isDaemon = true } } }
+    // One thread, and only while there's work: the service's process keeps no idle thread for a logo.
+    private val worker by lazy {
+        ThreadPoolExecutor(1, 1, 5, TimeUnit.SECONDS, LinkedBlockingQueue()) { r -> Thread(r, "biokey-logo").apply { isDaemon = true } }
+            .apply { allowCoreThreadTimeOut(true) }
+    }
     private var sway: WeakReference<Bitmap>? = null
 
     /** The artwork's own size (read from the PNG header, nothing decoded), or null if unreadable. */

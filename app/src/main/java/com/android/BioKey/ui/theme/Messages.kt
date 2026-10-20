@@ -1,6 +1,7 @@
 package com.android.BioKey.ui.theme
 
-import android.app.Activity
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.Row
@@ -26,7 +27,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -35,6 +40,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.CancellationException
@@ -90,8 +96,15 @@ object BioKeyMessages {
         channel.trySend(Message(message, icon, actionLabel, onAction, duration))
     }
 
-    internal fun resend(message: Message) {
-        channel.trySend(message.again())
+    private val main by lazy { Handler(Looper.getMainLooper()) }
+
+    /**
+     * Raises [message] again if [carriesOn] still holds once the host giving it up is done with
+     * it. Checked then, not now: until its cancellation completes, that host is still in the stack
+     * and still listening, and would take the message back.
+     */
+    internal fun resend(message: Message, carriesOn: () -> Boolean) {
+        main.post { if (carriesOn()) channel.trySend(message.again()) }
     }
 }
 
@@ -114,25 +127,36 @@ internal fun MessageHost(modifier: Modifier, isScreen: Boolean) {
         BioKeyMessages.hosts.update { if (isScreen) listOf(token) + it else it + token }
         onDispose { BioKeyMessages.hosts.update { it - token } }
     }
+    // A message taken off this host, rather than replaced by a newer one or put away with BioKey,
+    // carries on: on the recreated screen after a rotation, or on whichever host is now on top
+    // (a sheet closing in the same tap that raised its Undo, a sheet opening over the screen).
+    val handOver = {
+        activity?.isChangingConfigurations == true ||
+            lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) &&
+            BioKeyMessages.hosts.value.lastOrNull().let { it != null && it !== token }
+    }
     LaunchedEffect(state, lifecycle) {
         // Only while BioKey is on screen: a message showing when it leaves (the screen turning
         // off, say) is gone when it comes back, behind its lock, rather than offering its action there.
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             BioKeyMessages.hosts.map { it.lastOrNull() === token }.distinctUntilChanged().collectLatest { onTop ->
-                if (onTop) BioKeyMessages.pending.collectLatest { message -> showOnce(state, message, activity) }
+                if (onTop) BioKeyMessages.pending.collectLatest { message -> showOnce(state, message, handOver) }
             }
         }
     }
-    SnackbarHost(state, modifier) { data -> MessageBar(data) }
+    // A fresh bar area after each stop: the bar it dismissed would otherwise fade out over the
+    // lock screen in the first frames back, still showing its text.
+    var stops by remember { mutableIntStateOf(0) }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { stops++ }
+    key(stops) { SnackbarHost(state, modifier) { data -> MessageBar(data) } }
 }
 
-private suspend fun showOnce(state: SnackbarHostState, message: BioKeyMessages.Message, activity: Activity?) {
+private suspend fun showOnce(state: SnackbarHostState, message: BioKeyMessages.Message, handOver: () -> Boolean) {
     if (message.isStale(SystemClock.uptimeMillis())) return
     try {
         if (state.showSnackbar(message) == SnackbarResult.ActionPerformed) message.onAction?.invoke()
     } catch (e: CancellationException) {
-        // A rotation recreates the screen: the message (an Undo, say) carries over to the new one.
-        if (activity?.isChangingConfigurations == true) BioKeyMessages.resend(message)
+        BioKeyMessages.resend(message, carriesOn = handOver)
         throw e
     }
 }

@@ -71,8 +71,10 @@ fun BioKeyLogo(modifier: Modifier = Modifier, animated: Boolean = true) {
     val vines = remember(resources) { VineSlither(resources) }
     val animate = animated && animationsEnabled()
     val slither = animate && VineSlither.canAnimate
-    val phase = remember { mutableFloatStateOf(STILL) }
-    val breath = remember { mutableFloatStateOf(STILL) }
+    // A logo that comes on screen moving starts where the shared clock is, rather than jumping
+    // there from the plain disc on its second frame.
+    val phase = remember { mutableFloatStateOf(if (slither) VineSlither.phaseAt(SystemClock.uptimeMillis()) else STILL) }
+    val breath = remember { mutableFloatStateOf(if (animate) breathAt(SystemClock.uptimeMillis()) else STILL) }
     LaunchedEffect(animate) {
         if (!animate) return@LaunchedEffect
         var last = 0L
