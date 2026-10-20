@@ -114,12 +114,12 @@ feature/lock       BioKeyAccessibilityService, UsageWatchService (compatibility 
                    LockScreenActivity, LockCoverView, SelfProtectionDetector, RecentsWatcher,
                    AppInfoCache, AppLabels, ScreenReceiver
 feature/main       MainActivity (BioKey's own lock), main screen, profile sheets, settings,
-                   backup and diagnostic log, disclosures, BioKeyLogo, header constellation
+                   backup and diagnostic log, disclosures
 feature/setup      First-run setup
 feature/notification  Notification shield
 feature/tile       Quick Settings tile
 ui                 AppIcons
-ui/brand           LogoArt/LogoLayer, VineSlither, WordmarkView
+ui/brand           BioKeyLogo, LogoArt/LogoLayer, VineSlither, WordmarkView, header constellation
 ui/theme           BioKeyTheme, components, messages, system haptics, press animation
 ```
 

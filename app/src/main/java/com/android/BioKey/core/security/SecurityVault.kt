@@ -2,7 +2,6 @@ package com.android.BioKey.core.security
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.SystemClock
 import android.provider.Settings
 import androidx.annotation.VisibleForTesting
@@ -167,8 +166,6 @@ class SecurityVault private constructor(private val context: Context) {
         }
         return false
     }
-
-    fun isGlobalLockEnabled(): Boolean = isProtectionActive()
 
     fun isAppLocked(packageName: String): Boolean = isProtectionActive() && packageName in _lockedAppsFlow.value
 
@@ -413,18 +410,6 @@ class SecurityVault private constructor(private val context: Context) {
                 profiles.update(profileId) { it.copy(packages = it.packages + pkgs) }
             }
         }
-    }
-
-    /** For callers that have only labels: looks up the Play category of apps auto-sort could place, outside the lock. */
-    fun autoSortAppsIntoProfiles(apps: List<Pair<String, String>>, pm: PackageManager?) {
-        if (!_autoSortProfilesFlow.value || apps.isEmpty()) return
-        val assigned = _profilesFlow.value.flatMapTo(HashSet()) { it.packages }
-        val excluded = autoSortExcluded
-        autoSortAppsIntoProfiles(apps.mapNotNull { (pkg, label) ->
-            if (pkg in assigned || pkg in excluded) return@mapNotNull null
-            val playCategory = runCatching { pm?.getApplicationInfo(pkg, 0)?.category }.getOrNull() ?: -1
-            pkg to AppClassifier.categorize(pkg, label, playCategory)
-        })
     }
 
     /** Which built-in profile (by id) each of [apps] that auto-sort may place goes in, given [profiles]. */

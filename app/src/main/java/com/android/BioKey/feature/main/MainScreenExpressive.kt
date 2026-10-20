@@ -98,6 +98,8 @@ import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.ForegroundRules
+import com.android.BioKey.ui.brand.BioKeyLogo
+import com.android.BioKey.ui.brand.HeaderMatrixDotsExpressive
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.GroupGap
 import com.android.BioKey.ui.theme.GroupInset

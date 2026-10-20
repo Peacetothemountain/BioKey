@@ -17,7 +17,7 @@ import kotlin.math.sin
  * Draws the vines of the BioKey logo (the tentacles layer), slithering: waves travel along each
  * vine like a snake, while the artwork itself is untouched.
  *
- * How: `logo_vine_field.png` (made from the artwork by `tools/logo/VineField.cs`) holds, for
+ * How: `logo_vine_field.webp` (made from the artwork by `tools/logo/VineField.cs`) holds, for
  * every pixel on or near a vine, the vine's sideways direction and how far along the vine it
  * is, pre-multiplied into two vectors U and V. A small shader moves each point by
  * A (U cos wt - V sin wt), a wave travelling along the vine; each cross-section moves as one

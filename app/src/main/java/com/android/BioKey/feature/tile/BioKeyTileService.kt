@@ -1,7 +1,6 @@
 package com.android.BioKey.feature.tile
 
 import android.app.PendingIntent
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -28,10 +27,6 @@ import kotlinx.coroutines.launch
 class BioKeyTileService : TileService() {
 
     companion object {
-        fun requestTileUpdate(context: Context) {
-            runCatching { requestListeningState(context, ComponentName(context, BioKeyTileService::class.java)) }
-        }
-
         internal fun status(setupCompleted: Boolean, enabled: Boolean, engineRunning: Boolean): Status = when {
             !setupCompleted -> Status.SETUP_REQUIRED
             !enabled -> Status.PAUSED

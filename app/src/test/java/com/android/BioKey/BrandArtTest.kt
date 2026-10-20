@@ -4,8 +4,8 @@ import android.content.Context
 import android.os.SystemClock
 import androidx.compose.material3.SnackbarDuration
 import androidx.test.core.app.ApplicationProvider
-import com.android.BioKey.feature.main.breathAt
 import com.android.BioKey.ui.brand.LogoArt
+import com.android.BioKey.ui.brand.breathAt
 import com.android.BioKey.ui.theme.BioKeyMessages
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals

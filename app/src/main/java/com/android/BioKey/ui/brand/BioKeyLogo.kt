@@ -1,4 +1,4 @@
-package com.android.BioKey.feature.main
+package com.android.BioKey.ui.brand
 
 import android.os.SystemClock
 import androidx.compose.animation.core.EaseInOutCubic

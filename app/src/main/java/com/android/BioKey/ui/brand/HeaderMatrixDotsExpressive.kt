@@ -1,4 +1,4 @@
-package com.android.BioKey.feature.main
+package com.android.BioKey.ui.brand
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.MaterialTheme
@@ -18,10 +18,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.android.BioKey.ui.theme.animationsEnabled
-import kotlinx.coroutines.isActive
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
+import kotlinx.coroutines.isActive
 
 /**
  * Ambient constellation behind the header: two depth layers of drifting, pulsing dots, joined by

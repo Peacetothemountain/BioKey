@@ -47,12 +47,12 @@ import com.android.BioKey.core.security.AdvancedProtection
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
-import com.android.BioKey.feature.main.BioKeyLogo
 import com.android.BioKey.feature.main.Disclosure
-import com.android.BioKey.feature.main.HeaderMatrixDotsExpressive
 import com.android.BioKey.feature.main.IntentNavigationHelper
 import com.android.BioKey.feature.main.rememberDisclosureGate
 import com.android.BioKey.feature.main.rememberNotificationPermission
+import com.android.BioKey.ui.brand.BioKeyLogo
+import com.android.BioKey.ui.brand.HeaderMatrixDotsExpressive
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.springPress

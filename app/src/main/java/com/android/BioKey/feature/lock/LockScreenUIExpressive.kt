@@ -38,7 +38,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.android.BioKey.core.security.rejectObscuredTouches
-import com.android.BioKey.feature.main.BioKeyLogo
+import com.android.BioKey.ui.brand.BioKeyLogo
 import com.android.BioKey.ui.theme.springPress
 
 /**

@@ -96,7 +96,7 @@ class ProfileLockRulesTest {
         assertFalse(vault.isAppLocked(chat)) // was off, stays off
 
         // Auto-sort must not put it straight back.
-        vault.autoSortAppsIntoProfiles(listOf(bank to "Bank of Example"), null)
+        vault.autoSortAppsIntoProfiles(listOf(bank to AppCategory.FINANCE))
         assertEquals(null, vault.profileOf(bank))
 
         // Undo: back in the profile, lock untouched.
