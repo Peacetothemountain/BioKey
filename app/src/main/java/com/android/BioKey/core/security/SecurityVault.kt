@@ -582,6 +582,7 @@ class SecurityVault private constructor(private val context: Context) {
         val enabled = prefs.getBoolean(KEY_GLOBAL, true)
         val pausedWall = prefs.getLong(KEY_PAUSED_UNTIL, 0L)
         var pauseExpired = false
+        var pauseRestored = false
         when {
             enabled -> _globalLockEnabledFlow.value = true
             pausedWall == 0L -> _globalLockEnabledFlow.value = false // paused until turned back on
@@ -596,12 +597,15 @@ class SecurityVault private constructor(private val context: Context) {
                     pausedUntilElapsed = SystemClock.elapsedRealtime() + left
                     pauseDurationMs = prefs.getLong(KEY_PAUSE_DURATION, 0L)
                     schedulePauseExpiry(left)
+                    // Saved with this boot's monotonic end, so a later restart in it is exact
+                    // rather than trusting the wall clock again.
+                    pauseRestored = true
                 }
             }
         }
         // Only now is everything read: saving any earlier would write defaults over the owner's
         // settings (setup, self-protection, re-lock delay, auto-sort and its exclusions).
-        if (migrating || pauseExpired || clean != stored) persist()
+        if (migrating || pauseExpired || pauseRestored || clean != stored) persist()
     }
 
     /**
@@ -610,11 +614,13 @@ class SecurityVault private constructor(private val context: Context) {
      * pause never runs longer than it was chosen for, nor [MAX_RESTORED_PAUSE_MS].
      */
     private fun restoredPauseLeft(pausedWall: Long): Long {
+        val chosen = prefs.getLong(KEY_PAUSE_DURATION, 0L).takeIf { it > 0L } ?: MAX_RESTORED_PAUSE_MS
         val elapsedEnd = prefs.getLong(KEY_PAUSED_UNTIL_ELAPSED, 0L)
         if (bootCount >= 0 && elapsedEnd > 0L && prefs.getInt(KEY_PAUSED_BOOT, -1) == bootCount) {
-            return elapsedEnd - SystemClock.elapsedRealtime()
+            // Capped too: should the boot count not move on a reboot, an end from the last boot's
+            // clock could be hours away on this one's.
+            return minOf(elapsedEnd - SystemClock.elapsedRealtime(), chosen)
         }
-        val chosen = prefs.getLong(KEY_PAUSE_DURATION, 0L).takeIf { it > 0L } ?: MAX_RESTORED_PAUSE_MS
         return minOf(pausedWall - System.currentTimeMillis(), chosen, MAX_RESTORED_PAUSE_MS)
     }
 

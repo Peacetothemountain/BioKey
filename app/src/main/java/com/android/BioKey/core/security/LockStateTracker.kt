@@ -163,11 +163,7 @@ object LockStateTracker {
      * is stale and no session starts. Returns whether one did.
      */
     fun onAppUnlocked(packageName: String, generation: Int = this.generation): Boolean {
-        if (generation != this.generation) {
-            Log.i(TAG, "Unlock of $packageName arrived after a lock-all; ignored")
-            DiagnosticLog.log("Unlock of $packageName ignored: the phone was locked meanwhile")
-            return false
-        }
+        if (generation != this.generation) return staleUnlock(packageName)
         cancelExpiry(packageName)
         val session = Session(unlockedAt = now())
         for (pkg in PasswordManager.aliasesOf(packageName)) {
@@ -175,10 +171,22 @@ object LockStateTracker {
             pendingLocks.remove(pkg)
             abandonedAt.remove(pkg)
         }
+        // A lock-all on another thread may have cleared the sessions just before these went in:
+        // it bumps the generation first, so looking again catches it.
+        if (generation != this.generation) {
+            for (pkg in PasswordManager.aliasesOf(packageName)) sessions.remove(pkg, session)
+            return staleUnlock(packageName)
+        }
         Log.i(TAG, "Session started for $packageName")
         DiagnosticLog.log("Unlocked $packageName")
         appUnlockListeners.forEach { runCatching { it(packageName) } }
         return true
+    }
+
+    private fun staleUnlock(packageName: String): Boolean {
+        Log.i(TAG, "Unlock of $packageName arrived after a lock-all; ignored")
+        DiagnosticLog.log("Unlock of $packageName ignored: the phone was locked meanwhile")
+        return false
     }
 
     /** The unlocked app is on screen: it is in use, so nothing ages. */
@@ -314,6 +322,8 @@ object LockStateTracker {
      * screen-off, manual "lock all" and when protection resumes.
      */
     fun lockAll(includeOwnApp: Boolean = true, reason: String? = null) {
+        // First, so an unlock racing this from another thread sees it ([onAppUnlocked]).
+        generation++
         expiryJobs.values.forEach { it.cancel() }
         expiryJobs.clear()
         sessions.clear()
@@ -321,7 +331,6 @@ object LockStateTracker {
         abandonedAt.clear()
         leftAt.clear()
         clearSelfProtection()
-        generation++
         if (includeOwnApp) lockOwnApp()
         Log.i(TAG, "All sessions wiped")
         if (reason != null) DiagnosticLog.log("All sessions ended ($reason)")

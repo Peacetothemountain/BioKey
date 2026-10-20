@@ -19,7 +19,7 @@ enum class AppCategory(val label: String) {
 object AppClassifier {
 
     private val FINANCE = listOf(
-        "bank", "crypto", "wallet", "pay", "cash", "venmo", "paypal", "zelle", "chime", "wise",
+        "bank", "crypto", "wallet", "pay", "cash", "venmo", "paypal", "paytm", "paypay", "zelle", "chime", "wise",
         "revolut", "robinhood", "coinbase", "binance", "kraken", "metamask", "trustwallet",
         "phantom", "ledger", "fidelity", "vanguard", "schwab", "etrade", "webull", "acorns",
         "stash", "ynab", "credit", "karma", "experian", "equifax", "transunion",

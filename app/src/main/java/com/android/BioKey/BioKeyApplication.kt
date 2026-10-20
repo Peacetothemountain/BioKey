@@ -125,11 +125,14 @@ class BioKeyApplication : Application() {
                                 }
                                 Intent.ACTION_PACKAGE_REMOVED -> {
                                     if (!replacing) {
-                                        // A copy in another profile (a work twin) or an archived
-                                        // app still has its data: it keeps its lock.
-                                        if (isArchival(intent) || isInstalledInAnyProfile(pkg)) {
+                                        // A copy in another profile (a work twin), an archived
+                                        // app, or one uninstalled with "keep app data" still has
+                                        // its data, which a reinstall would open: it keeps its lock.
+                                        if (isArchival(intent) || !intent.getBooleanExtra(Intent.EXTRA_DATA_REMOVED, true) ||
+                                            isInstalledInAnyProfile(pkg)
+                                        ) {
                                             if (pkg in vault.selectedAppsFlow.value) {
-                                                DiagnosticLog.log("Kept the lock on $pkg: still installed in another profile, or archived")
+                                                DiagnosticLog.log("Kept the lock on $pkg: its data is still on the phone")
                                             }
                                         } else {
                                             vault.onPackageUninstalled(pkg)
@@ -153,9 +156,10 @@ class BioKeyApplication : Application() {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && intent.getBooleanExtra(Intent.EXTRA_ARCHIVAL, false)
 
     /**
-     * Whether [pkg] still has a launchable copy in any of the user's profiles (personal, work,
-     * private space). When that can't be told it counts as installed: a lock kept too long only
-     * leaves a stale entry, one dropped too soon leaves an app open.
+     * Whether [pkg] still has a launchable copy in any profile BioKey can see (personal, work;
+     * Android hides a private space from apps other than the launcher). When that can't be told
+     * it counts as installed: a lock kept too long only leaves a stale entry, one dropped too
+     * soon leaves an app open.
      */
     private fun isInstalledInAnyProfile(pkg: String): Boolean {
         val launcherApps = getSystemService(LauncherApps::class.java) ?: return true

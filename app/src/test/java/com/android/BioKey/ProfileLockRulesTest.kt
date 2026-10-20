@@ -1,6 +1,7 @@
 package com.android.BioKey
 
 import android.content.Context
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.AppCategory
@@ -277,6 +278,38 @@ class ProfileLockRulesTest {
         advance(15 * 60_000L - 1_000L)
         assertFalse(vault.isProtectionActive())
         advance(2_000L)
+        assertTrue(vault.isProtectionActive())
+    }
+
+    @Test
+    fun aRestartAfterARebootKeepsTheRestoredPausesEnd() {
+        Settings.Global.putInt(context.contentResolver, Settings.Global.BOOT_COUNT, 7)
+        freshVault().pauseProtection(15 * 60_000L)
+        waitForWrites()
+        Settings.Global.putInt(context.contentResolver, Settings.Global.BOOT_COUNT, 8)
+        freshVault() // after the reboot: restored from the wall clock
+        waitForWrites()
+        advance(10 * 60_000L)
+        // The process dies and the wall clock is set back meanwhile.
+        prefs.edit().putLong("paused_until_wall", System.currentTimeMillis() + 3 * 60 * 60_000L).commit()
+
+        val vault = freshVault()
+        assertFalse(vault.isProtectionActive())
+        advance(5 * 60_000L + 1_000L)
+        assertTrue(vault.isProtectionActive())
+    }
+
+    @Test
+    fun aPauseNeverOutlastsItsChoiceShouldTheBootCountStandStill() {
+        Settings.Global.putInt(context.contentResolver, Settings.Global.BOOT_COUNT, 7)
+        freshVault().pauseProtection(15 * 60_000L)
+        waitForWrites()
+        // A reboot that left the boot count as it was: the stored end is on the last boot's clock.
+        prefs.edit().putLong("paused_until_elapsed", SystemClock.elapsedRealtime() + 10 * 60 * 60_000L).commit()
+
+        val vault = freshVault()
+        assertFalse(vault.isProtectionActive())
+        advance(15 * 60_000L + 1_000L)
         assertTrue(vault.isProtectionActive())
     }
 

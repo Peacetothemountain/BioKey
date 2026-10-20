@@ -21,6 +21,10 @@ class AppClassifierTest {
             Triple("com.wf.wellsfargomobile", "Wells Fargo", AppCategory.FINANCE),
             Triple("com.google.android.apps.walletnfcrel", "Google Wallet", AppCategory.FINANCE),
             Triple("com.squareup.cash", "Cash App", AppCategory.FINANCE),
+            Triple("com.google.android.apps.nbu.paisa.user", "Google Pay", AppCategory.FINANCE),
+            // "pay" counts only as a word, so the brands that run it into theirs are named.
+            Triple("net.one97.paytm", "Paytm", AppCategory.FINANCE),
+            Triple("jp.ne.paypay.android.app", "PayPay", AppCategory.FINANCE),
             Triple("com.google.android.apps.authenticator2", "Authenticator", AppCategory.AUTH),
             Triple("com.duosecurity.duomobile", "Duo Mobile", AppCategory.AUTH),
             Triple("com.whatsapp", "WhatsApp", AppCategory.SOCIAL),

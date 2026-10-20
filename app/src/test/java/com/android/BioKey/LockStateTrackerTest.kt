@@ -7,6 +7,7 @@ import com.android.BioKey.core.security.LockStateTracker.ABANDONED_LOCK_COOLDOWN
 import com.android.BioKey.core.security.LockStateTracker.ARRIVAL_GRACE_MS
 import com.android.BioKey.core.security.LockStateTracker.HOP_MAX_MS
 import java.time.Duration
+import kotlin.concurrent.thread
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -155,6 +156,17 @@ class LockStateTrackerTest {
 
         assertTrue(LockStateTracker.onAppUnlocked(chat, LockStateTracker.lockGeneration()))
         assertTrue(LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.GRACE_5_MINUTES))
+    }
+
+    @Test
+    fun anUnlockRacingALockAllOnAnotherThreadNeverOutlivesIt() {
+        repeat(500) {
+            val atPrompt = LockStateTracker.lockGeneration()
+            val locking = thread { LockStateTracker.lockAll() }
+            LockStateTracker.onAppUnlocked(chat, atPrompt)
+            locking.join()
+            assertFalse("round $it", LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.GRACE_5_MINUTES))
+        }
     }
 
     @Test
