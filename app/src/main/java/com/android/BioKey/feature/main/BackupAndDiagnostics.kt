@@ -132,7 +132,7 @@ internal fun rememberBackupActions(): BackupActions {
         val app = context.applicationContext
         if (password == null) {
             // The picker created the file, but the password is gone (BioKey was closed meanwhile).
-            discard(app, uri)
+            pending.viewModelScope.launch(Dispatchers.IO) { discard(app, uri) }
             BioKeyMessages.show("Backup cancelled, try again", Icons.Default.ErrorOutline)
             return@rememberLauncherForActivityResult
         }

@@ -52,6 +52,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.IconBadge
@@ -175,6 +176,7 @@ class NotificationPermission internal constructor(private val context: Context, 
     }
 
     internal fun onResult(granted: Boolean, resumed: Boolean) {
+        LockStateTracker.clearSelfProtection()
         allowed = notificationsAllowed(context)
         // Android answered without asking: it was turned down for good, and only Settings can change it.
         if (!granted && userAsked && !rationaleBefore && !rationale()) openSettings()
@@ -197,7 +199,14 @@ class NotificationPermission internal constructor(private val context: Context, 
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
 
     private fun ask() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        // Android's question names BioKey, so self-protection would take it for a page that could
+        // switch BioKey off and ask for authentication over it. Asked from inside BioKey's session,
+        // it's pre-authorised like the settings pages BioKey opens; the answer ends that.
+        if (LockStateTracker.hasActiveOwnerSession()) {
+            LockStateTracker.setSelfProtectionGranted(granted = true, visitedGuardedScreen = false)
+        }
+        launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     private fun rationale() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && activity != null &&

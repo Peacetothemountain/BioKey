@@ -2,6 +2,7 @@ package com.android.BioKey.feature.main
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -195,6 +196,9 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     }
 
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    // Settings' slide in and out, followed so the header holds still only once Settings covers it.
+    val settingsVisibility = remember { MutableTransitionState(showSettings) }
+    settingsVisibility.targetState = showSettings
     var filter by rememberSaveable { mutableStateOf(FILTER_ALL) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var optionsForPackage by rememberSaveable { mutableStateOf<String?>(null) }
@@ -216,8 +220,11 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         val pkg = optionsForPackage
         if (!isLoadingApps && pkg != null && installedApps.none { it.packageName == pkg }) optionsForPackage = null
     }
-    /** Home's decorations animate only while nothing covers them (Settings, the app picker). */
-    val headerActive = !showSettings && !(showAddApps && currentProfile != null)
+    /**
+     * Home's decorations animate only while nothing covers them: the app picker, or Settings once
+     * it has slid in (stopping as it starts would show them jump to a still frame).
+     */
+    val headerActive = !(settingsVisibility.currentState && settingsVisibility.isIdle) && !(showAddApps && currentProfile != null)
 
     val profileByPackage = remember(profiles) {
         HashMap<String, SecurityProfile>().apply { for (p in profiles) for (pkg in p.packages) put(pkg, p) }
@@ -441,7 +448,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     // Settings slides in over the home screen, which stays composed underneath so the
     // predictive back gesture can reveal it.
     AnimatedVisibility(
-        visible = showSettings,
+        visibleState = settingsVisibility,
         enter = slideInHorizontally { it / 3 } + fadeIn(),
         exit = slideOutHorizontally { it / 3 } + fadeOut()
     ) {
