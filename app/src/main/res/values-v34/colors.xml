@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The dynamic palette's page colour, as BioKey's screens and the lock cover draw it, so no seam shows. -->
+    <color name="splash_background">@android:color/system_surface_light</color>
+</resources>

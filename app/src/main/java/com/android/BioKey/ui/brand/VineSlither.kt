@@ -2,13 +2,8 @@ package com.android.BioKey.ui.brand
 
 import android.content.res.Resources
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.BitmapShader
 import android.graphics.Canvas
-import android.graphics.Matrix
-import android.graphics.Paint
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffColorFilter
 import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.os.Build
@@ -16,8 +11,6 @@ import androidx.annotation.RequiresApi
 import com.android.BioKey.R
 import kotlin.math.PI
 import kotlin.math.cos
-import kotlin.math.min
-import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
@@ -33,8 +26,9 @@ import kotlin.math.sin
  * setting two uniforms.
  *
  * Android 13+ (runtime shaders); earlier versions, and "Remove animations", draw the vines still.
- * Drawn fitted and centred in the given size, like `ContentScale.Fit`, so it lines up with the
- * letters layer drawn the same way. One per view; not thread-safe.
+ * Drawn fitted and centred in the given size, like `ContentScale.Fit`, from a copy sized to fit
+ * ([LogoLayer]), so it lines up with the letters layer drawn the same way. One per view; not
+ * thread-safe.
  */
 class VineSlither(private val resources: Resources) {
 
@@ -43,18 +37,6 @@ class VineSlither(private val resources: Resources) {
         private const val PERIOD_MS = 2_400L
         /** How far a vine sways to either side, in artwork pixels. */
         private const val AMPLITUDE = 18f
-
-        @Volatile private var vinesCache: Bitmap? = null
-        @Volatile private var fieldCache: Bitmap? = null
-
-        private fun decode(resources: Resources, id: Int): Bitmap =
-            BitmapFactory.decodeResource(resources, id, BitmapFactory.Options().apply { inScaled = false })
-
-        private fun vines(resources: Resources) =
-            vinesCache ?: decode(resources, R.drawable.ic_title_logo_tentacles).also { vinesCache = it }
-
-        private fun field(resources: Resources) =
-            fieldCache ?: decode(resources, R.drawable.logo_vine_field).also { fieldCache = it }
 
         /** The wave's position on the shared uptime clock, so every logo on screen moves in step. */
         fun phaseAt(uptimeMs: Long): Float = (uptimeMs % PERIOD_MS) / PERIOD_MS.toFloat()
@@ -81,84 +63,51 @@ half4 main(float2 p) {
 """
     }
 
-    private val vines = vines(resources)
-    // The artwork, scaled in [layout] to the size it is drawn at, so its fine ridges don't shimmer as they move.
-    private var content = BitmapShader(vines, Shader.TileMode.DECAL, Shader.TileMode.DECAL)
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-    private val matrix = Matrix()
+    private val vines = LogoLayer(resources, R.drawable.ic_title_logo_tentacles)
     // Built on the first moving frame, so a still logo never compiles the shader.
     private var wave: Wave? = null
-
-    private var lastWidth = -1f
-    private var lastHeight = -1f
-    private var left = 0f
-    private var top = 0f
-    private var scale = 1f
-    private var tint = 0
+    private var waveFailed = false
+    // The artwork the wave was last pointed at; a new size brings a new one.
+    private var waveContent: BitmapShader? = null
 
     /** Fills the vines with [color] (the theme's tertiary). */
-    fun setTint(color: Int) {
-        if (color == tint && paint.colorFilter != null) return
-        tint = color
-        paint.colorFilter = PorterDuffColorFilter(color, PorterDuff.Mode.SRC_IN)
-    }
+    fun setTint(color: Int) = vines.setTint(color)
+
+    /** Starts preparing the artwork for a [width] x [height] drawing ahead of its first frame. */
+    fun prepare(width: Int, height: Int) = vines.prepare(width, height)
 
     /** Draws the vines fitted into [width] x [height]; [phase] from [phaseAt], or null for still. */
     fun draw(canvas: Canvas, width: Float, height: Float, phase: Float?) {
-        if (width <= 0f || height <= 0f) return
-        if (width != lastWidth || height != lastHeight) layout(width, height)
-        val artW = vines.width * scale
-        val artH = vines.height * scale
-        val moving = if (phase != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) wave() else null
-        if (moving != null && phase != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val reach = AMPLITUDE * scale
-            paint.shader = moving.frame(phase)
-            canvas.drawRect(left - reach, top - reach, left + artW + reach, top + artH + reach, paint)
-        } else {
-            paint.shader = content
-            canvas.drawRect(left, top, left + artW, top + artH, paint)
+        if (!vines.layout(width, height)) return
+        if (phase != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val moving = wave()
+            if (moving != null) {
+                val fit = vines.fit
+                val reach = AMPLITUDE * fit.scale
+                vines.paint.shader = moving.frame(phase)
+                canvas.drawRect(fit.left - reach, fit.top - reach, fit.left + fit.width + reach, fit.top + fit.height + reach, vines.paint)
+                return
+            }
         }
+        vines.draw(canvas, width, height)
     }
 
-    private fun layout(width: Float, height: Float) {
-        lastWidth = width
-        lastHeight = height
-        scale = min(width / vines.width, height / vines.height)
-        left = (width - vines.width * scale) / 2f
-        top = (height - vines.height * scale) / 2f
-        val w = (vines.width * scale).roundToInt().coerceAtLeast(1)
-        val h = (vines.height * scale).roundToInt().coerceAtLeast(1)
-        // The previous one may still be in a recorded frame: leave it to the GC, never recycle it.
-        val sized = downscale(vines, w, h)
-        content = BitmapShader(sized, Shader.TileMode.DECAL, Shader.TileMode.DECAL)
-        matrix.setScale(vines.width * scale / w, vines.height * scale / h)
-        matrix.postTranslate(left, top)
-        content.setLocalMatrix(matrix)
-        wave?.let(::layoutWave)
-    }
-
+    /** The wave, laid out over the current artwork; null (draw still) if it can't be built. */
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
-    private fun wave(): Wave = wave ?: Wave(field(resources)).also {
-        wave = it
-        layoutWave(it)
-    }
-
-    private fun layoutWave(w: Wave) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            w.layout(content, left, top, vines.width * scale, vines.height * scale, AMPLITUDE * scale)
+    private fun wave(): Wave? {
+        val content = vines.content ?: return null
+        val w = wave ?: run {
+            if (waveFailed) return null
+            // Decorative: without the field or the shader, the vines just hold still.
+            runCatching { LogoArt.field(resources)?.let(::Wave) }.getOrNull()
+                .also { wave = it; waveFailed = it == null } ?: return null
         }
-    }
-
-    /** Halves with filtering until close, then scales the rest of the way: a clean box-like downscale. */
-    private fun downscale(src: Bitmap, w: Int, h: Int): Bitmap {
-        var b = src
-        while (b.width >= w * 2 && b.height >= h * 2) {
-            val half = Bitmap.createScaledBitmap(b, b.width / 2, b.height / 2, true)
-            if (b !== src) b.recycle()
-            b = half
+        if (content !== waveContent) {
+            waveContent = content
+            val fit = vines.fit
+            w.layout(content, fit.left, fit.top, fit.width, fit.height, AMPLITUDE * fit.scale)
         }
-        if (b.width == w && b.height == h) return b
-        return Bitmap.createScaledBitmap(b, w, h, true).also { if (b !== src) b.recycle() }
+        return w
     }
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
