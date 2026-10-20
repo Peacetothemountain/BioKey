@@ -6,6 +6,7 @@ import android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDEN
 import android.hardware.biometrics.BiometricPrompt
 import android.os.CancellationSignal
 import android.util.Log
+import com.android.BioKey.R
 import java.lang.ref.WeakReference
 
 /**
@@ -85,7 +86,7 @@ class SecurityEngine private constructor() {
 
         val attempt = Attempt(packageName, WeakReference(activity), CancellationSignal())
         active = attempt
-        val name = appName.ifBlank { "BioKey" }
+        val name = appName.ifBlank { activity.getString(R.string.brand_name) }
 
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
@@ -113,7 +114,7 @@ class SecurityEngine private constructor() {
                 .build()
                 .authenticate(attempt.cancel, activity.mainExecutor, callback)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed starting BiometricPrompt: ${e.message}")
+            Log.e(TAG, "Failed starting BiometricPrompt: ${e.javaClass.simpleName}")
             if (active === attempt) active = null
             onError(ERROR_HW_UNAVAILABLE, "Authentication unavailable")
         }

@@ -13,6 +13,7 @@ import android.view.WindowManager
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import androidx.annotation.RequiresApi
+import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 
@@ -282,7 +283,7 @@ class InstantShieldOverlay(
             activeInstance = this
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Could not show shield: ${e.message}")
+            Log.e(TAG, "Could not show shield: ${e.javaClass.simpleName}")
             false
         }
     }
@@ -297,7 +298,7 @@ class InstantShieldOverlay(
 
     private fun bindTarget(target: String) {
         if (target == BioKeyAccessibilityService.SELF_PROTECTION_PENDING_KEY) {
-            cover.bind("BioKey", null, isBioKey = true)
+            cover.bind(service.getString(R.string.brand_name), null, isBioKey = true)
             return
         }
         val cached = AppInfoCache.get(target)

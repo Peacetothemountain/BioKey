@@ -1,5 +1,6 @@
 package com.android.BioKey.feature.main
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.view.MotionEvent
@@ -25,9 +26,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.android.BioKey.R
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.ProtectionEngine
@@ -61,6 +64,10 @@ class MainActivity : ComponentActivity() {
         /** Whether [intent] asks for the pause sheet, which only BioKey's own tile can. */
         internal fun isPauseRequest(intent: Intent?): Boolean =
             intent?.action == ACTION_PAUSE_PROTECTION && intent.component?.className == PAUSE_PROTECTION_ALIAS
+
+        /** Opens the pause sheet (after BioKey's own check): the tile's way in, through the alias. */
+        internal fun pauseIntent(context: Context): Intent =
+            Intent(ACTION_PAUSE_PROTECTION).setClassName(context, PAUSE_PROTECTION_ALIAS)
     }
 
     private val vault by lazy { SecurityVault.getInstance(this) }
@@ -74,6 +81,8 @@ class MainActivity : ComponentActivity() {
     private var pauseRequested by mutableStateOf(false)
     private var isSetupAuthenticating by mutableStateOf(false)
     private var setupAuthError by mutableStateOf<String?>(null)
+    /** Setup's final check failed for want of a screen lock: setup offers to open its settings. */
+    private var setupNeedsScreenLock by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         WindowProtection.applyWindowProtections(this)
@@ -96,15 +105,17 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            BioKeyTheme {
+            // No messages behind BioKey's own lock (the idle lock comes up with BioKey on screen).
+            BioKeyTheme(showMessages = !setupCompleted || isAuthenticated) {
                 when {
                     !setupCompleted -> SetupScreenExpressive(
                         isAuthenticating = isSetupAuthenticating,
                         authError = setupAuthError,
+                        needsScreenLock = setupNeedsScreenLock,
                         onSetupComplete = ::completeSetup
                     )
                     !isAuthenticated -> LockScreenUIExpressive(
-                        appName = "BioKey",
+                        appName = stringResource(R.string.brand_name),
                         appIcon = null,
                         onUnlockClicked = { authenticate() },
                         onCancelClicked = { finishAffinity() },
@@ -122,9 +133,8 @@ class MainActivity : ComponentActivity() {
                     PauseProtectionDialog(
                         onPause = { duration ->
                             pauseRequested = false
-                            if (vault.pauseProtection(duration)) {
-                                BioKeyMessages.show("Protection paused", Icons.Default.PauseCircle)
-                            }
+                            vault.pauseProtection(duration)
+                            BioKeyMessages.show("Protection paused", Icons.Default.PauseCircle)
                         },
                         onDismiss = { pauseRequested = false }
                     )
@@ -236,28 +246,33 @@ class MainActivity : ComponentActivity() {
         refreshPermissions()
         isSetupAuthenticating = true
         setupAuthError = null
+        setupNeedsScreenLock = false
 
         engine.showBiometricPrompt(
             activity = this,
-            appName = "BioKey",
+            appName = getString(R.string.brand_name),
             packageName = packageName,
             promptTitle = "Confirm identity to finish setup",
             onSuccess = {
                 isSetupAuthenticating = false
                 setupAuthError = null
-                refreshPermissions()
+                setupNeedsScreenLock = false
                 Haptics.confirm(window.decorView)
                 vault.setSetupCompletedSync(true)
                 vault.resumeProtection()
+                // Only now, set up, does refresh start compatibility mode where it is the engine:
+                // waiting for the next resume would leave apps uncovered under "Protected".
+                refreshPermissions()
                 LockStateTracker.onOwnAppUnlocked()
                 isAuthenticated = true
             },
             onError = { code, message ->
                 isSetupAuthenticating = false
+                val noScreenLock = code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL || code == SecurityEngine.ERROR_NO_BIOMETRICS
+                setupNeedsScreenLock = noScreenLock
                 setupAuthError = when {
                     SecurityEngine.isUserCancel(code) -> "Biometric confirmation was cancelled. Tap to retry."
-                    code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL || code == SecurityEngine.ERROR_NO_BIOMETRICS ->
-                        "Set a screen lock (PIN, pattern, or password) in system settings first."
+                    noScreenLock -> "Set a screen lock (PIN, pattern, or password) in system settings first."
                     else -> message.toString()
                 }
             }
@@ -270,7 +285,7 @@ class MainActivity : ComponentActivity() {
         isPermanentLockout = false
         engine.showBiometricPrompt(
             activity = this,
-            appName = "BioKey",
+            appName = getString(R.string.brand_name),
             packageName = packageName,
             onSuccess = {
                 LockStateTracker.onOwnAppUnlocked()

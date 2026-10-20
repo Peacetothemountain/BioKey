@@ -1,7 +1,6 @@
 package com.android.BioKey.feature.lock
 
 import android.content.Context
-import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
@@ -296,7 +295,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
             lastResult = result
             return result
         } finally {
-            release(root)
+            root.release()
         }
     }
 
@@ -321,7 +320,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         val active = runCatching { service.rootInActiveWindow }.getOrNull()
         if (active != null) {
             if (active.packageName?.toString() == pkg && (windowId < 0 || active.windowId == windowId)) return active
-            release(active)
+            active.release()
         }
         // Split screen, or a window that isn't the active one yet: look it up in the window list.
         val windows = runCatching { service.windows }.getOrNull().orEmpty()
@@ -339,7 +338,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
     /** This node if it belongs to [pkg]; otherwise it is released. */
     private fun AccessibilityNodeInfo.ofPackage(pkg: String): AccessibilityNodeInfo? {
         if (packageName?.toString() == pkg) return this
-        release(this)
+        release()
         return null
     }
 
@@ -373,7 +372,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
             val match = nodes.any { node ->
                 headerNamesBioKey(node.text?.toString().orEmpty(), node.contentDescription?.toString().orEmpty())
             }
-            nodes.forEach(::release)
+            nodes.forEach { it.release() }
             if (match) return true
         }
 
@@ -385,7 +384,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
                 if (!barMatches && subtreeMentionsBioKey(bar, maxDepth = 3)) {
                     barMatches = true
                 }
-                release(bar)
+                bar.release()
             }
             if (barMatches) return true
         }
@@ -458,7 +457,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
                     for (i in 0 until node.childCount) node.getChild(i)?.let(queue::addLast)
                 }
             }
-            release(node)
+            node.release()
         }
 
         if (matchedDirectBioKeyControl) return Scan.GUARDED
@@ -492,7 +491,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
             if (!found && subtreeMentionsBioKey(child, maxDepth - 1)) {
                 found = true
             }
-            release(child)
+            child.release()
         }
         return found
     }
@@ -504,14 +503,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
     private fun AccessibilityNodeInfo.hasNodeNamingBioKey(): Boolean = labels.any { label ->
         val nodes = findAccessibilityNodeInfosByText(label).orEmpty()
         val found = nodes.any { mentionsBioKey(it.text) || mentionsBioKey(it.contentDescription) }
-        nodes.forEach(::release)
+        nodes.forEach { it.release() }
         found
-    }
-
-    private fun release(node: AccessibilityNodeInfo) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            @Suppress("DEPRECATION")
-            runCatching { node.recycle() }
-        }
     }
 }

@@ -15,6 +15,8 @@ import android.util.Log
 import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.core.view.WindowCompat
+import com.android.BioKey.R
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
@@ -23,6 +25,7 @@ import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 import java.lang.ref.WeakReference
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Covers a locked app (or a BioKey system-settings page) and hosts the system prompt until the
@@ -43,6 +46,12 @@ class LockScreenActivity : ComponentActivity() {
         const val EXTRA_SELF_PROTECTION = "extra_self_protection"
         /** Launch the locked app after a successful unlock (used by redacted notifications). */
         const val EXTRA_LAUNCH_AFTER_UNLOCK = "extra_launch_after_unlock"
+        /**
+         * The user asked for this lock again (tapped the patch over the app's picture-in-picture
+         * window, or over a window beside a smaller lock screen): a prompt they dismissed comes
+         * back, rather than the cover only being brought to the front.
+         */
+        const val EXTRA_REPROMPT = "extra_reprompt"
         /** How long a cover in a window waits to be given the whole display before failing closed. */
         private const val FULLSCREEN_WAIT_MS = 1_500L
         /**
@@ -107,6 +116,12 @@ class LockScreenActivity : ComponentActivity() {
     private var showsOverKeyguard = false
     /** Asked for the whole display ([askForWholeDisplay]); the shield stays up until it comes. */
     private var awaitingFullscreen = false
+    /**
+     * The newest shield this screen has taken over ([InstantShieldOverlay.currentGeneration]).
+     * Leaving without an unlock lowers no newer one: an engine raised that since, because the app
+     * came back (a quick switch, say), and it brings its own lock screen.
+     */
+    private var ownedShield = Long.MAX_VALUE
 
     private val isCurrent get() = current?.get() === this
 
@@ -135,6 +150,7 @@ class LockScreenActivity : ComponentActivity() {
         }
         bindCover()
         setContentView(cover)
+        applyBarAppearance()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() = goHomeAndFinish()
@@ -164,25 +180,44 @@ class LockScreenActivity : ComponentActivity() {
         launchAfterUnlock = intent.getBooleanExtra(EXTRA_LAUNCH_AFTER_UNLOCK, false)
         promptAutoLaunched = false
         isPermanentLockout = false
+        // The shield up now is the one that brought this lock screen.
+        ownedShield = InstantShieldOverlay.currentGeneration()
         return true
     }
 
     private fun isTargetUnlocked(pkg: String) =
-        !vault.isGlobalLockEnabled() || LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))
+        !vault.isProtectionActive() || LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))
+
+    /** What this screen covers needs it no more: its app is unlocked, or its settings page allowed. */
+    private fun isUnlocked() =
+        if (isSelfProtection) LockStateTracker.isSelfProtectionGranted() else isTargetUnlocked(lockedPackage)
 
     private fun bindCover() {
         if (isSelfProtection) {
-            cover.bind("BioKey", null, isBioKey = true)
+            cover.bind(getString(R.string.brand_name), null, isBioKey = true)
         } else {
             val pkg = lockedPackage
             val cached = AppInfoCache.get(pkg)
-            cover.bind(cached?.label ?: AppInfoCache.quickLabel(this, pkg), cached?.icon, isBioKey = false)
+            // The icon's colour comes worked out with it: nothing is computed here on the way to the prompt.
+            cover.bind(cached?.label ?: AppInfoCache.quickLabel(this, pkg), cached?.icon, isBioKey = false, accent = cached?.accent)
             // Never load on the way to the prompt: the icon follows as soon as it's ready.
             if (cached == null) AppInfoCache.load(this, pkg) { info ->
-                if (!isFinishing && lockedPackage == pkg) cover.setIcon(info.icon)
+                if (!isFinishing && lockedPackage == pkg) cover.setIcon(info.icon, info.accent)
             }
         }
         cover.setActionsVisible(false)
+    }
+
+    /**
+     * Dark or light status and navigation bar icons to match the cover. The theme sets them at
+     * launch; this screen handles dark-mode switches itself (configChanges), so it sets them again.
+     */
+    private fun applyBarAppearance() {
+        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        WindowCompat.getInsetsController(window, window.decorView).run {
+            isAppearanceLightStatusBars = !night
+            isAppearanceLightNavigationBars = !night
+        }
     }
 
     override fun onResume() {
@@ -212,13 +247,16 @@ class LockScreenActivity : ComponentActivity() {
         if (newPkg == lockedPackage && newSelfProt == isSelfProtection) {
             // Same target brought to front again (e.g. over a trampoline): keep the running prompt.
             launchAfterUnlock = launchAfterUnlock || intent.getBooleanExtra(EXTRA_LAUNCH_AFTER_UNLOCK, false)
+            // Asked for on purpose: the prompt comes up again if it isn't up (the next maybeAutoPrompt).
+            if (intent.getBooleanExtra(EXTRA_REPROMPT, false)) promptAutoLaunched = false
             if (firstFrameCommitted) whenCoverDrawn()
             return
         }
         engine.resetAuthenticatingStateFor(this)
         setIntent(intent)
         if (!readIntent(intent)) {
-            finishSilently()
+            // The new target needs no lock, but the one this screen covered is still locked.
+            finishSilently(abandoned = true)
             return
         }
         bindCover()
@@ -239,16 +277,15 @@ class LockScreenActivity : ComponentActivity() {
             showOverKeyguard(false)
             return
         }
-        val unlocked = if (isSelfProtection) LockStateTracker.isSelfProtectionGranted() else isTargetUnlocked(lockedPackage)
-        if (!unlocked) {
+        if (!isUnlocked()) {
             abandon()
             leftWithoutUnlock = true
             // An engine may have covered the app again since we were paused (it came straight
             // back, with the quick-switch gesture, say): that shield is newer than this lock and
-            // stays, and its own checks bring the lock screen back. Only a shield still waiting
-            // for our first frame, or for the whole display (its checks stop while we are
-            // resumed, so it would stay up), is ours to lower.
-            if (!firstFrameCommitted || awaitingFullscreen) dismissShield()
+            // stays, and its own checks bring the lock screen back. Ours is lowered: one still
+            // waiting for our first frame, or for the whole display (its checks stop while we are
+            // resumed, so it would stay up).
+            dismissShield(ownedShield)
             finish()
             noTransition(open = false)
         }
@@ -260,7 +297,7 @@ class LockScreenActivity : ComponentActivity() {
         if (isCurrent) {
             isLockScreenResumed = false
             if (activeLockedTarget == lockedPackage) activeLockedTarget = null
-            if (!isChangingConfigurations && !leftWithoutUnlock) dismissShield()
+            if (!isChangingConfigurations && !leftWithoutUnlock) dismissShield(if (isUnlocked()) Long.MAX_VALUE else ownedShield)
             current = null
         }
         engine.resetAuthenticatingStateFor(this)
@@ -269,7 +306,10 @@ class LockScreenActivity : ComponentActivity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        if (::cover.isInitialized) cover.refreshPalette()
+        if (::cover.isInitialized) {
+            cover.refreshPalette()
+            applyBarAppearance()
+        }
         onWindowingChanged()
     }
 
@@ -291,6 +331,8 @@ class LockScreenActivity : ComponentActivity() {
      */
     private fun onCoverShown() {
         if (isFinishing) return
+        // Whatever shield is over our target now waits for this cover: it is ours to lower.
+        ownedShield = InstantShieldOverlay.currentGeneration()
         if (!hasWholeDisplay()) {
             askForWholeDisplay()
             return
@@ -351,9 +393,10 @@ class LockScreenActivity : ComponentActivity() {
         leftWithoutUnlock = true
         goHome()
         val pkg = lockedPackage
-        // As in dismissShield: not if a newer lock screen has taken over by then.
+        val owned = ownedShield
+        // As in dismissShield: not if a newer lock screen, or a newer shield, has taken over by then.
         Handler(Looper.getMainLooper()).postDelayed({
-            if (current?.get().let { it == null || it === this }) InstantShieldOverlay.dismiss(pkg)
+            if (current?.get().let { it == null || it === this }) InstantShieldOverlay.dismiss(pkg, owned)
         }, HOME_SETTLE_MS)
         finish()
         noTransition(open = false)
@@ -375,7 +418,7 @@ class LockScreenActivity : ComponentActivity() {
         cover.setActionsVisible(false)
         engine.showBiometricPrompt(
             activity = this,
-            appName = if (selfProtection) "BioKey" else AppInfoCache.quickLabel(this, pkg),
+            appName = if (selfProtection) getString(R.string.brand_name) else AppInfoCache.quickLabel(this, pkg),
             packageName = pkg,
             onSuccess = { onAuthenticated(pkg, selfProtection, generation) },
             onError = { code, message ->
@@ -399,9 +442,10 @@ class LockScreenActivity : ComponentActivity() {
             LockStateTracker.setSelfProtectionGranted(granted = true, visitedGuardedScreen = true)
         } else {
             // Taken first: the unlock lets the notification shield restore (and forget) them.
-            val deepLinks = if (launchAfterUnlock) BioKeyNotificationShieldService.cachedPendingIntents.remove(pkg) else null
+            val deepLinks = if (launchAfterUnlock) BioKeyNotificationShieldService.takeDeepLinks(pkg) else null
             if (!LockStateTracker.onAppUnlocked(pkg, generation)) {
-                deepLinks?.let { BioKeyNotificationShieldService.cachedPendingIntents.putIfAbsent(pkg, it) }
+                // Still hidden: the stand-in keeps its links for the next unlock.
+                deepLinks?.let { BioKeyNotificationShieldService.cachedPendingIntents.putIfAbsent(pkg, ConcurrentHashMap(it)) }
                 return unlockVoided()
             }
             if (launchAfterUnlock) sendPendingDeepLink(pkg, deepLinks)
@@ -422,7 +466,7 @@ class LockScreenActivity : ComponentActivity() {
     private fun lockDeviceOrHome() {
         abandon()
         if (!BioKeyAccessibilityService.lockDevice()) goHome()
-        finishSilently()
+        finishSilently(abandoned = true)
     }
 
     private fun launchApp(pkg: String) {
@@ -435,7 +479,7 @@ class LockScreenActivity : ComponentActivity() {
         pkg: String,
         preExtractedMap: Map<String, BioKeyNotificationShieldService.CachedPendingIntent>? = null
     ) {
-        val pending = deepLinkFor(pkg, preExtractedMap ?: BioKeyNotificationShieldService.cachedPendingIntents.remove(pkg))
+        val pending = deepLinkFor(pkg, preExtractedMap ?: BioKeyNotificationShieldService.takeDeepLinks(pkg))
         if (pending == null) {
             launchApp(pkg)
             return
@@ -451,7 +495,8 @@ class LockScreenActivity : ComponentActivity() {
             }
         }.toBundle()
         runCatching { pending.send(this, 0, null, null, null, null, options) }.onFailure {
-            Log.w(TAG, "Deep link for $pkg failed, launching instead: ${it.message}")
+            // Not which app: logs mustn't tell which apps are locked.
+            Log.w(TAG, "Deep link failed, launching instead: ${it.javaClass.simpleName}")
             launchApp(pkg)
         }
     }
@@ -463,25 +508,28 @@ class LockScreenActivity : ComponentActivity() {
         if (isSelfProtection) LockStateTracker.clearSelfProtection()
     }
 
-    private fun goHome() {
-        startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    }
-
     private fun goHomeAndFinish() {
         abandon()
         if (!isSelfProtection || !BioKeyAccessibilityService.dismissSelfProtection()) goHome()
-        finishSilently()
+        finishSilently(abandoned = true)
     }
 
-    private fun finishSilently() {
-        dismissShield()
+    /**
+     * Closes without a transition. [abandoned]: left without an unlock, so a shield newer than
+     * [ownedShield] stays; after an unlock (or with nothing to unlock) any shield over the app goes.
+     */
+    private fun finishSilently(abandoned: Boolean = false) {
+        dismissShield(if (abandoned) ownedShield else Long.MAX_VALUE)
         finish()
         noTransition(open = false)
     }
 
-    /** Lowers the shield over our target, unless a newer lock screen has taken over from us. */
-    private fun dismissShield() {
-        if (isCurrent) InstantShieldOverlay.dismiss(lockedPackage)
+    /**
+     * Lowers the shield over our target if it is no newer than [upToGeneration], unless a newer
+     * lock screen has taken over from us.
+     */
+    private fun dismissShield(upToGeneration: Long = Long.MAX_VALUE) {
+        if (isCurrent) InstantShieldOverlay.dismiss(lockedPackage, upToGeneration)
     }
 
     /**

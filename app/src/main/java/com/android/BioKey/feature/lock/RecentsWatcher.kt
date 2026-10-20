@@ -2,12 +2,10 @@ package com.android.BioKey.feature.lock
 
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Rect
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
 import kotlin.math.abs
 
 /**
@@ -117,7 +115,7 @@ internal class RecentsWatcher(
         try {
             if (root.packageName?.toString() != pkg) return
             val panel = root.findAccessibilityNodeInfosByViewId("$pkg:id/overview_panel").orEmpty()
-            panel.forEach(::release)
+            panel.forEach { it.release() }
             inRecents = panel.isNotEmpty()
             // Not in Recents (the home screen): nothing was closed, whatever disappeared.
             if (!inRecents) {
@@ -129,7 +127,7 @@ internal class RecentsWatcher(
                 for (node in root.findAccessibilityNodeInfosByViewId("$pkg:id/$id").orEmpty()) {
                     val name = node.contentDescription?.toString()?.trim().orEmpty()
                     if (name.isNotEmpty() && name !in now) now[name] = Rect().also(node::getBoundsInScreen)
-                    release(node)
+                    node.release()
                 }
             }
             val metrics = service.resources.displayMetrics
@@ -141,7 +139,7 @@ internal class RecentsWatcher(
             cards.keys.retainAll(now.keys)
             for ((name, rect) in now) cards.getOrPut(name) { Card(rect) }.last.set(rect)
         } finally {
-            release(root)
+            root.release()
         }
     }
 
@@ -155,12 +153,5 @@ internal class RecentsWatcher(
             if (id == 0) null else res.getString(id).trim().lowercase()
         }.getOrNull()
         return (setOfNotNull("clear all", local)).also { clearAllLabels = pkg to it }
-    }
-
-    private fun release(node: AccessibilityNodeInfo) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            @Suppress("DEPRECATION")
-            runCatching { node.recycle() }
-        }
     }
 }
