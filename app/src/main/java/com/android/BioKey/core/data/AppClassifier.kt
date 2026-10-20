@@ -34,7 +34,7 @@ object AppClassifier {
     )
     private val SOCIAL = listOf(
         "whatsapp", "telegram", "signal", "messenger", "instagram", "facebook", "threads",
-        "twitter", "x.android", "snapchat", "tiktok", "musically", "discord", "reddit",
+        "twitter", "snapchat", "tiktok", "musically", "discord", "reddit",
         "pinterest", "tumblr", "linkedin", "mastodon", "bluesky", "wechat", "line", "viber",
         "kakaotalk", "hinge", "tinder", "bumble", "grindr", "badoo", "okcupid", "match",
         "messages", "messaging", "chat"
@@ -57,9 +57,27 @@ object AppClassifier {
         "edge", "tor", "vpn", "protonvpn", "nordvpn", "expressvpn", "mullvad", "tailscale", "wireguard"
     )
 
+    /**
+     * Keywords that count only as a whole word of the package name or label: short or common
+     * ones that turn up inside unrelated names ("tor" in "calculator" and "store", "line" in
+     * "lineageos", "duo" in "duolingo", "chrome" in "chromecast", "keeper" in "goalkeeper").
+     * Every other keyword is a distinctive name that may sit inside a word ("wellsfargo" in
+     * "wellsfargomobile", "photo" in "photos", "authenticator" in "authenticator2").
+     */
+    private val WHOLE_WORDS = setOf(
+        "pay", "cash", "wise", "ynab", "amex", "chase", "citi", "hsbc", "ally", "sofi", "irs", "discover",
+        "2fas", "totp", "okta", "duo", "keeper",
+        "line", "chat", "match",
+        "zoom", "meet", "mail", "drive", "docs", "sheets", "slides", "word", "adp", "xero",
+        "files", "notes", "keep", "flo", "clue", "cvs", "chrome", "brave", "opera", "edge", "tor"
+    )
+
+    private val LABEL_SEPARATORS = Regex("[^\\p{L}\\p{N}]+")
+
     fun categorize(packageName: String, label: String, playCategory: Int = ApplicationInfo.CATEGORY_UNDEFINED): AppCategory {
-        val haystack = "${packageName.lowercase()} ${label.lowercase()}"
-        fun matches(words: List<String>) = words.any(haystack::contains)
+        val words = (packageName.lowercase().split('.', '_', '-') + label.lowercase().split(LABEL_SEPARATORS))
+            .filterTo(HashSet()) { it.isNotEmpty() }
+        fun matches(keys: List<String>) = keys.any { key -> if (key in WHOLE_WORDS) key in words else words.any { it.contains(key) } }
         return when {
             matches(FINANCE) -> AppCategory.FINANCE
             matches(AUTH) -> AppCategory.AUTH

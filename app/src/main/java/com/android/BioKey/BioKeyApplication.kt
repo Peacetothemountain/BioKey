@@ -5,11 +5,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.LauncherApps
 import android.os.Build
 import android.os.UserManager
 import android.security.advancedprotection.AdvancedProtectionManager
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.android.BioKey.core.data.AppClassifier
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
@@ -20,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class BioKeyApplication : Application() {
 
@@ -32,34 +35,36 @@ class BioKeyApplication : Application() {
         val packageChangeVersion: StateFlow<Int> = _packageChangeVersion.asStateFlow()
     }
 
+    private val credentialInitDone = AtomicBoolean(false)
+    private var userUnlockedReceiver: BroadcastReceiver? = null
+
     override fun onCreate() {
         super.onCreate()
         ScreenReceiver.register(this)
 
-        val userManager = getSystemService(UserManager::class.java)
-        val isUnlocked = userManager?.isUserUnlocked ?: true
-
-        if (isUnlocked) {
+        if (isUserUnlocked()) {
             initCredentialProtectedComponents()
-        } else {
-            val filter = IntentFilter(Intent.ACTION_USER_UNLOCKED)
-            ContextCompat.registerReceiver(
-                this,
-                object : BroadcastReceiver() {
-                    override fun onReceive(context: Context?, intent: Intent?) {
-                        if (intent?.action == Intent.ACTION_USER_UNLOCKED) {
-                            runCatching { this@BioKeyApplication.unregisterReceiver(this) }
-                            initCredentialProtectedComponents()
-                        }
-                    }
-                },
-                filter,
-                ContextCompat.RECEIVER_NOT_EXPORTED
-            )
+            return
         }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == Intent.ACTION_USER_UNLOCKED) initCredentialProtectedComponents()
+            }
+        }
+        userUnlockedReceiver = receiver
+        ContextCompat.registerReceiver(this, receiver, IntentFilter(Intent.ACTION_USER_UNLOCKED), ContextCompat.RECEIVER_NOT_EXPORTED)
+        // Look again: an unlock between the first look and the registration sent its one
+        // broadcast to nobody, and nothing would load for the whole process.
+        if (isUserUnlocked()) initCredentialProtectedComponents()
     }
 
+    private fun isUserUnlocked(): Boolean = getSystemService(UserManager::class.java)?.isUserUnlocked ?: true
+
+    /** Runs once, whichever of [onCreate]'s two looks or the unlock broadcast gets here first. */
     private fun initCredentialProtectedComponents() {
+        if (!credentialInitDone.compareAndSet(false, true)) return
+        userUnlockedReceiver?.let { runCatching { unregisterReceiver(it) } }
+        userUnlockedReceiver = null
         DiagnosticLog.init(this)
         val app = this
         initExecutor.execute {
@@ -105,10 +110,9 @@ class BioKeyApplication : Application() {
                                 Intent.ACTION_PACKAGE_ADDED -> {
                                     if (!replacing && vault.isAutoSortProfilesEnabled()) {
                                         val pm = packageManager
-                                        val label = runCatching {
-                                            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
-                                        }.getOrDefault(pkg)
-                                        vault.autoSortSinglePackage(pkg, label, pm)
+                                        val info = runCatching { pm.getApplicationInfo(pkg, 0) }.getOrNull()
+                                        val label = info?.let { runCatching { pm.getApplicationLabel(it).toString() }.getOrNull() } ?: pkg
+                                        vault.autoSortAppsIntoProfiles(listOf(pkg to AppClassifier.categorize(pkg, label, info?.category ?: -1)))
                                     }
                                     if (pkg in vault.getLockedPackages()) {
                                         AppInfoCache.preWarm(this@BioKeyApplication, listOf(pkg))
@@ -121,13 +125,21 @@ class BioKeyApplication : Application() {
                                 }
                                 Intent.ACTION_PACKAGE_REMOVED -> {
                                     if (!replacing) {
-                                        vault.onPackageUninstalled(pkg)
+                                        // A copy in another profile (a work twin) or an archived
+                                        // app still has its data: it keeps its lock.
+                                        if (isArchival(intent) || isInstalledInAnyProfile(pkg)) {
+                                            if (pkg in vault.selectedAppsFlow.value) {
+                                                DiagnosticLog.log("Kept the lock on $pkg: still installed in another profile, or archived")
+                                            }
+                                        } else {
+                                            vault.onPackageUninstalled(pkg)
+                                        }
                                     }
                                 }
                             }
                             _packageChangeVersion.update { it + 1 }
                         } catch (e: Exception) {
-                            Log.w(TAG, "Error handling package change for $pkg: ${e.message}")
+                            Log.w(TAG, "Error handling a package change: ${e.javaClass.simpleName}")
                         }
                     }
                 }
@@ -135,5 +147,19 @@ class BioKeyApplication : Application() {
             filter,
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
+    }
+
+    private fun isArchival(intent: Intent): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && intent.getBooleanExtra(Intent.EXTRA_ARCHIVAL, false)
+
+    /**
+     * Whether [pkg] still has a launchable copy in any of the user's profiles (personal, work,
+     * private space). When that can't be told it counts as installed: a lock kept too long only
+     * leaves a stale entry, one dropped too soon leaves an app open.
+     */
+    private fun isInstalledInAnyProfile(pkg: String): Boolean {
+        val launcherApps = getSystemService(LauncherApps::class.java) ?: return true
+        val profiles = runCatching { launcherApps.profiles }.getOrNull() ?: return true
+        return profiles.any { user -> runCatching { launcherApps.getActivityList(pkg, user).isNotEmpty() }.getOrDefault(true) }
     }
 }
