@@ -15,6 +15,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.android.BioKey.R
+import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.AppInfoCache
@@ -49,7 +50,9 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
 
         /**
          * How often hidden notifications' snoozes are pushed back (at the next lock-all), so the
-         * 24 h snooze never runs out while the app stays locked.
+         * 24 h snooze doesn't run out while the app stays locked. Android saves its snooze list to
+         * disk after each push-back, hence not at every screen-off. A phone left unused for more
+         * than 18 h after a push-back can still see them re-posted once.
          */
         private const val EXTEND_SNOOZES_EVERY_MS = 6 * 60 * 60 * 1000L
 
@@ -130,12 +133,15 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     private var channelReady = false
 
     private val onLockAll: () -> Unit = { main.post(::onAllSessionsEnded) }
+    // Sessions are reported under the name the app was unlocked by: Google Password Manager's
+    // virtual package, while its notifications come from Credential Manager.
     private val onAppUnlocked: (String) -> Unit = { pkg ->
-        main.post { if (connected) restoreNotificationsForPackage(pkg) }
+        main.post { if (connected) PasswordManager.aliasesOf(pkg).forEach(::restoreNotificationsForPackage) }
     }
     private val onAppLocked: (String) -> Unit = { pkg ->
         main.post {
-            restoringKeys.entries.removeIf { it.value.packageName == pkg }
+            val aliases = PasswordManager.aliasesOf(pkg)
+            restoringKeys.entries.removeIf { it.value.packageName in aliases }
             requestSweep()
         }
     }
@@ -176,6 +182,13 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
      */
     private fun rehydrateSnoozed() {
         val snoozed = runCatching { snoozedNotifications }.getOrNull() ?: return
+        // Kept from before a reconnect but no longer snoozed: withdrawn, or back in the shade (where
+        // the sweep that follows hides them again if their app is still locked). Snoozing those
+        // again below would hide an unlocked app's notifications, or a locked app's without a stand-in.
+        val snoozedKeys = snoozed.mapTo(HashSet()) { it.key }
+        for (pkg in forgetWithdrawn(hiddenNotificationKeys, snoozedKeys) + forgetWithdrawn(hiddenSummaryKeys, snoozedKeys)) {
+            cachedPendingIntents[pkg]?.keys?.retainAll(snoozedKeys)
+        }
         // Our own stand-ins mark the apps we hid, even ones that have since been unlocked in BioKey.
         val standIns = runCatching { activeNotifications }.getOrNull().orEmpty()
             .filter { it.packageName == packageName && it.tag?.startsWith(TAG_PREFIX) == true }
