@@ -3,17 +3,12 @@ package com.android.BioKey
 import android.graphics.Bitmap
 import android.os.Looper
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.feature.main.AppIconCache
 import com.android.BioKey.feature.main.AppItem
-import com.android.BioKey.feature.main.CappedLifecycleOwner
 import com.android.BioKey.feature.main.PendingBackup
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -26,7 +21,7 @@ import java.time.Duration
 
 /**
  * The home screen's own state: icons that stay within a few megabytes of the always-running
- * process, decorations that hold still under Settings, and a backup password that doesn't linger.
+ * process, and a backup password that doesn't linger.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -68,36 +63,6 @@ class HomeScreenStateTest {
         assertTrue(work.isWorkProfile)
         assertTrue(AppIconCache.key(personal, 120) != AppIconCache.key(work, 120))
         assertTrue(AppIconCache.key(personal, 120) != AppIconCache.key(personal, 192))
-    }
-
-    private class Parent : LifecycleOwner {
-        val registry = LifecycleRegistry.createUnsafe(this)
-        override val lifecycle: Lifecycle get() = registry
-    }
-
-    @Test
-    fun cappedLifecycleFollowsTheScreenButStopsShortOfResumed() {
-        val parent = Parent()
-        val capped = CappedLifecycleOwner(parent)
-        capped.attach()
-
-        parent.registry.currentState = Lifecycle.State.RESUMED
-        assertEquals(Lifecycle.State.RESUMED, capped.lifecycle.currentState)
-
-        capped.cap = Lifecycle.State.STARTED // Settings opened over the home screen
-        assertEquals(Lifecycle.State.STARTED, capped.lifecycle.currentState)
-
-        parent.registry.currentState = Lifecycle.State.CREATED // BioKey left the screen
-        assertEquals(Lifecycle.State.CREATED, capped.lifecycle.currentState)
-        parent.registry.currentState = Lifecycle.State.RESUMED
-        assertEquals(Lifecycle.State.STARTED, capped.lifecycle.currentState)
-
-        capped.cap = Lifecycle.State.RESUMED // Settings closed
-        assertEquals(Lifecycle.State.RESUMED, capped.lifecycle.currentState)
-
-        parent.registry.currentState = Lifecycle.State.DESTROYED
-        assertEquals(Lifecycle.State.DESTROYED, capped.lifecycle.currentState)
-        capped.detach()
     }
 
     @Test

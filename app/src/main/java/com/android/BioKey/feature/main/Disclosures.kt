@@ -66,7 +66,9 @@ enum class Disclosure(
     val icon: ImageVector,
     val title: String,
     val reads: List<String>,
-    val usedFor: List<String>
+    val usedFor: List<String>,
+    /** How switching it off works, when that's more than Android's settings switch. */
+    val turningOff: String = "You can turn this off at any time in Android settings."
 ) {
     ACCESSIBILITY(
         Icons.Default.Accessibility,
@@ -74,7 +76,7 @@ enum class Disclosure(
         reads = listOf(
             "Which app is on screen",
             "The name of an app you tap on the home screen, in search or in Recents",
-            "The text of system Settings pages about BioKey itself (App info, Accessibility, uninstall)"
+            "The text of system Settings pages about BioKey itself (App info, Accessibility, notification access, uninstall)"
         ),
         usedFor = listOf(
             "Covering apps you've locked until you authenticate",
@@ -94,7 +96,11 @@ enum class Disclosure(
         Icons.Default.Notifications,
         "BioKey uses notification access",
         reads = listOf("Notifications from apps you've locked"),
-        usedFor = listOf("Hiding their content until you unlock the app, then putting them back")
+        usedFor = listOf("Hiding their content until you unlock the app, then putting them back"),
+        // Hidden notifications are snoozed for up to a day, and only BioKey's access can bring them back early.
+        turningOff = "You can turn this off at any time in Android settings. To bring hidden notifications back, " +
+            "switch off “Hide notification content” in BioKey's settings first: revoking notification access " +
+            "instead can leave them hidden for up to a day."
     );
 }
 
@@ -267,7 +273,7 @@ private fun DisclosureSheet(disclosure: Disclosure, onAgree: () -> Unit, onDecli
             DisclosureSection("What it never does", NEVER)
             Spacer(Modifier.height(8.dp))
             Text(
-                "You can turn this off at any time in Android settings.",
+                disclosure.turningOff,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

@@ -129,7 +129,9 @@ fun SetupScreenExpressive(
             add(
                 Step(
                     Icons.Default.Policy, "Allow restricted settings",
-                    "Android blocks this for apps installed outside the Play Store. In App info, tap ⋮ then “Allow restricted settings”.",
+                    // Android offers the ⋮ item only once its "restricted setting" dialog has been seen.
+                    "Android blocks this for apps installed outside the Play Store. Try the accessibility switch once; " +
+                        "then in App info tap ⋮ > “Allow restricted settings”.",
                     done = false
                 ) { IntentNavigationHelper.openAppDetailsSettings(context) }
             )
@@ -275,7 +277,7 @@ fun SetupScreenExpressive(
                 .widthIn(max = 360.dp)
                 .fillMaxWidth()
                 .height(56.dp)
-                .springPress()
+                .springPress(enabled = !isAuthenticating)
         ) {
             Icon(
                 if (ready) Icons.Default.Fingerprint else Icons.AutoMirrored.Filled.OpenInNew,

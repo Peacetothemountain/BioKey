@@ -63,6 +63,10 @@ class DesignScreenshotTest {
             }
         }.sortedBy { it.label }
         InstalledAppsCache.version = 0
+        // A vault of its own, whatever an earlier test class left: what's shown mustn't depend on test order.
+        SecurityVault.getInstance(context).awaitPendingWrites()
+        context.getSharedPreferences("biokey_vault", android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        SecurityVault.resetForTests()
         val vault = SecurityVault.getInstance(context)
         vault.setSetupCompletedSync(true)
         listOf("chase", "signal", "photos", "authenticator", "venmo").forEach { vault.setAppLock("com.example.$it", true) }
