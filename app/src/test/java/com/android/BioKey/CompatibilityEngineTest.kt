@@ -75,9 +75,7 @@ class CompatibilityEngineTest {
         engine.destroy()
         lockScreenFor(null)
         // The engine asked which apps are launchers and pickers: leave no cached answer to other tests.
-        for (name in listOf("launchersCheckedAt", "pickersCheckedAt")) {
-            ForegroundRules::class.java.getDeclaredField(name).apply { isAccessible = true }.setLong(null, 0L)
-        }
+        ForegroundRules.resetSystemLists()
     }
 
     /** Lets [ms] pass: polls run, and what they read is acted on. */
