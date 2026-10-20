@@ -24,6 +24,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -56,14 +58,16 @@ fun groupShape(index: Int, count: Int): Shape = RoundedCornerShape(
 val groupColor: Color
     @Composable get() = MaterialTheme.colorScheme.surfaceContainer
 
-/** Section title above a group. */
+/** Section title above a group; a heading for screen readers, so they can jump between sections. */
 @Composable
 fun SectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
-        modifier = modifier.padding(start = GroupInset + 16.dp, end = GroupInset + 16.dp, top = 24.dp, bottom = 10.dp)
+        modifier = modifier
+            .semantics { heading() }
+            .padding(start = GroupInset + 16.dp, end = GroupInset + 16.dp, top = 24.dp, bottom = 10.dp)
     )
 }
 

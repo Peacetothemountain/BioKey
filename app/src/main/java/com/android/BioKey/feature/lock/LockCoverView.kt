@@ -6,7 +6,6 @@ import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Outline
-import android.graphics.PorterDuff
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -26,7 +25,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.ui.graphics.toArgb
 import com.android.BioKey.R
 import com.android.BioKey.core.security.WindowProtection
-import com.android.BioKey.ui.brand.VineView
+import com.android.BioKey.ui.brand.WordmarkView
 
 /**
  * The lock cover, shared by [InstantShieldOverlay] (drawn the instant a locked app shows up) and
@@ -74,20 +73,11 @@ class LockCoverView(context: Context) : FrameLayout(context) {
 
     private val backdrop = CoverBackdrop(context)
 
-    /** BioKey's two-layer wordmark, held still: the cover is no place for motion. */
-    private fun wordmark() = FrameLayout(context).apply {
-        addView(ImageView(context).apply {
-            setImageResource(R.drawable.ic_title_logo_letters)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-        }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        addView(VineView(context, animated = false), LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-    }
-
     /** Large logo: the identity when BioKey itself is locked. */
-    private val logo = wordmark().apply { visibility = GONE }
+    private val logo = WordmarkView(context).apply { visibility = GONE }
 
     /** Small logo at the bottom while the system prompt is up: who is asking. */
-    private val brandMark = wordmark().apply { alpha = 0.55f }
+    private val brandMark = WordmarkView(context).apply { alpha = 0.55f }
 
     private val icon = ImageView(context).apply {
         scaleType = ImageView.ScaleType.FIT_CENTER
@@ -218,10 +208,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         cancelButton.background = ripple(Color.TRANSPARENT, p.primary)
         primaryButton.setTextColor(p.onPrimary)
         primaryButton.background = ripple(p.primary, p.onPrimary)
-        for (mark in listOf(logo, brandMark)) {
-            (mark.getChildAt(0) as ImageView).setColorFilter(p.primary, PorterDuff.Mode.SRC_IN)
-            (mark.getChildAt(1) as VineView).setTint(p.tertiary)
-        }
+        logo.setColors(p.primary, p.tertiary)
+        brandMark.setColors(p.primary, p.tertiary)
     }
 
     private fun ripple(fill: Int, rippleColor: Int): Drawable {

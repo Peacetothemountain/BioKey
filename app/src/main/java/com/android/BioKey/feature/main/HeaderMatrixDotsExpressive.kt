@@ -32,12 +32,16 @@ import kotlin.random.Random
  *   screen behind it.
  * - Frame state is read only in the draw phase: no recomposition or layout per frame.
  * - Capped at ~60 fps (motion is time-based, so it looks identical on 120 Hz panels at half the
- *   GPU work), paused whenever the screen isn't resumed, and frozen when the system's
- *   "Remove animations" setting is on.
+ *   GPU work), paused whenever the screen isn't resumed or the header is hidden behind another
+ *   page (`animated` false), and frozen when the system's "Remove animations" setting is on.
  * - Particle state lives in flat float arrays updated in place: no allocation while animating.
+ *
+ * Sizes, speeds and distances are in pixels of the 420 dpi phone the field was tuned on, scaled
+ * to the screen's density, so it looks the same on every phone.
  */
 private const val FRAME_INTERVAL_NANOS = 16_000_000L
 private const val MAX_STEP_SECONDS = 0.05f
+private const val TUNED_DENSITY = 2.625f
 private const val LINK_DIST = 220f
 private const val LINK_DIST_SQ = LINK_DIST * LINK_DIST
 private const val EDGE_MARGIN = 24f
@@ -74,15 +78,17 @@ private class Field(count: Int) {
         seeded = true
     }
 
-    fun step(dt: Float, t: Float, w: Float, h: Float) {
+    /** Moves every dot by [dt] seconds; [unit] converts the tuned pixels to this screen's. */
+    fun step(dt: Float, t: Float, w: Float, h: Float, unit: Float) {
+        val margin = EDGE_MARGIN * unit
         for (i in 0 until n) {
             // Smooth wander: the heading drifts on a slow per-particle wave instead of bouncing.
             heading[i] += sin(t * 0.35f + phase[i]) * 0.55f * dt
-            x[i] += cos(heading[i]) * speed[i] * dt
-            y[i] += sin(heading[i]) * speed[i] * dt
+            x[i] += cos(heading[i]) * speed[i] * unit * dt
+            y[i] += sin(heading[i]) * speed[i] * unit * dt
             // Wrap just outside the edges so dots glide in and out of view.
-            if (x[i] < -EDGE_MARGIN) x[i] = w + EDGE_MARGIN else if (x[i] > w + EDGE_MARGIN) x[i] = -EDGE_MARGIN
-            if (y[i] < -EDGE_MARGIN) y[i] = h + EDGE_MARGIN else if (y[i] > h + EDGE_MARGIN) y[i] = -EDGE_MARGIN
+            if (x[i] < -margin) x[i] = w + margin else if (x[i] > w + margin) x[i] = -margin
+            if (y[i] < -margin) y[i] = h + margin else if (y[i] > h + margin) y[i] = -margin
         }
     }
 }
@@ -90,11 +96,12 @@ private class Field(count: Int) {
 @Composable
 fun HeaderMatrixDotsExpressive(
     modifier: Modifier = Modifier,
-    particleCount: Int = 30
+    particleCount: Int = 30,
+    animated: Boolean = true
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val tertiary = MaterialTheme.colorScheme.tertiary
-    val animationsOff = !animationsEnabled()
+    val animationsOff = !animated || !animationsEnabled()
     val field = remember(particleCount) { Field(particleCount) }
     val wash = remember(primary, tertiary) {
         Brush.verticalGradient(listOf(primary.copy(alpha = 0.14f), tertiary.copy(alpha = 0.05f), Color.Transparent))
@@ -125,6 +132,8 @@ fun HeaderMatrixDotsExpressive(
         drawRect(wash)
         val w = size.width
         val h = size.height
+        val unit = density / TUNED_DENSITY
+        val linkDistSq = LINK_DIST_SQ * unit * unit
         val now = frameNanos
         if (w <= 0f || h <= 0f || now == 0L) return@Canvas
 
@@ -135,7 +144,7 @@ fun HeaderMatrixDotsExpressive(
         val dt = if (field.lastNanos == 0L) 0f else ((now - field.lastNanos) / 1e9f).coerceIn(0f, MAX_STEP_SECONDS)
         field.lastNanos = now
         val t = (now - field.startNanos) / 1e9f
-        field.step(dt, t, w, h)
+        field.step(dt, t, w, h, unit)
 
         val x = field.x
         val y = field.y
@@ -149,13 +158,13 @@ fun HeaderMatrixDotsExpressive(
                 val dx = x[i] - x[j]
                 val dy = y[i] - y[j]
                 val d2 = dx * dx + dy * dy
-                if (d2 >= LINK_DIST_SQ) continue
+                if (d2 >= linkDistSq) continue
                 val fade = depthFade((y[i] + y[j]) * 0.5f, h)
                 drawLine(
-                    color = primary.copy(alpha = (1f - d2 / LINK_DIST_SQ) * 0.30f * fade),
+                    color = primary.copy(alpha = (1f - d2 / linkDistSq) * 0.30f * fade),
                     start = Offset(x[i], y[i]),
                     end = Offset(x[j], y[j]),
-                    strokeWidth = 1.4f
+                    strokeWidth = 1.4f * unit
                 )
             }
         }
@@ -166,18 +175,18 @@ fun HeaderMatrixDotsExpressive(
             if (fade <= 0.01f) continue
             val center = Offset(x[i], y[i])
             if (!field.near[i]) {
-                drawCircle(color = tertiary.copy(alpha = 0.35f * fade), radius = field.radius[i], center = center)
+                drawCircle(color = tertiary.copy(alpha = 0.35f * fade), radius = field.radius[i] * unit, center = center)
                 continue
             }
             val pulse = (sin(t * 2.2f + field.phase[i]) + 1f) * 0.5f
             drawCircle(
                 color = tertiary.copy(alpha = (1f - pulse) * 0.16f * fade),
-                radius = field.radius[i] * 2.8f + 5f * pulse,
+                radius = (field.radius[i] * 2.8f + 5f * pulse) * unit,
                 center = center
             )
             drawCircle(
                 color = primary.copy(alpha = 0.78f * fade),
-                radius = field.radius[i] + 1.6f * pulse,
+                radius = (field.radius[i] + 1.6f * pulse) * unit,
                 center = center
             )
         }
