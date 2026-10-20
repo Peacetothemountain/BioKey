@@ -51,7 +51,16 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val ACTION_PAUSE_PROTECTION = "com.android.BioKey.action.PAUSE_PROTECTION"
+        /**
+         * The Quick Settings tile's way in to the pause sheet: an alias of this activity that isn't
+         * exported, so no other app can open the sheet (this activity is, as the launcher entry).
+         */
+        const val PAUSE_PROTECTION_ALIAS = "com.android.BioKey.feature.main.PauseProtection"
         private const val IDLE_CHECK_INTERVAL_MS = 5_000L
+
+        /** Whether [intent] asks for the pause sheet, which only BioKey's own tile can. */
+        internal fun isPauseRequest(intent: Intent?): Boolean =
+            intent?.action == ACTION_PAUSE_PROTECTION && intent.component?.className == PAUSE_PROTECTION_ALIAS
     }
 
     private val vault by lazy { SecurityVault.getInstance(this) }
@@ -70,15 +79,15 @@ class MainActivity : ComponentActivity() {
         WindowProtection.applyWindowProtections(this)
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        if (savedInstanceState == null) pauseRequested = intent?.action == ACTION_PAUSE_PROTECTION
+        if (savedInstanceState == null) {
+            pauseRequested = isPauseRequest(intent)
+            // As in onNewIntent: the sheet follows a fresh check unless BioKey is already open and unlocked.
+            if (pauseRequested && !LockStateTracker.hasActiveOwnerSession()) LockStateTracker.lockOwnApp()
+        }
+        WindowProtection.countAccessibilityInteractions(window.decorView)
 
         setContent {
             val setupCompleted by vault.setupCompletedFlow.collectAsStateWithLifecycle()
-
-            androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
-                refreshPermissions()
-                onPauseOrDispose { }
-            }
 
             LaunchedEffect(isAuthenticated) {
                 while (isAuthenticated) {
@@ -127,7 +136,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pauseRequested = intent.action == ACTION_PAUSE_PROTECTION
+        pauseRequested = isPauseRequest(intent)
         if (pauseRequested && !LockStateTracker.hasActiveOwnerSession()) {
             LockStateTracker.lockOwnApp()
             isAuthenticated = false
@@ -159,10 +168,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        if (isChangingConfigurations || BioKeyAccessibilityService.isConfirmingDeviceCredential) return
+        if (isChangingConfigurations) return
+        // BioKey's own prompt, still running, handed over to the phone's PIN screen (some phones
+        // open it as an activity): that isn't leaving BioKey. Never once BioKey is unlocked.
+        if (!isAuthenticated && engine.isAuthenticatingFor(packageName) && BioKeyAccessibilityService.isConfirmingDeviceCredential) return
         engine.resetAuthenticatingState(packageName)
+        // The cancelled prompt never reports back: nothing may wait for it.
+        isSetupAuthenticating = false
         promptAutoLaunched = false
-        if (LockStateTracker.isExternalNavigationActive()) {
+        // Leaving to lock the phone, as the lockout message asks, ends the lockout: the next
+        // visit prompts again.
+        isPermanentLockout = false
+        lockMessage = null
+        if (LockStateTracker.isExternalNavigationActive() || LockStateTracker.isOwnPickerActive()) {
             LockStateTracker.onOwnAppStopped()
         } else {
             LockStateTracker.lockOwnApp()
@@ -172,6 +190,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         if (isFinishing) LockStateTracker.lockOwnApp()
+        // Recreated (rotation, a fold, dark mode) with the prompt up: its answer would reach this
+        // destroyed instance. Cancel it; the new one asks again.
+        if (isChangingConfigurations) engine.resetAuthenticatingStateFor(this)
         super.onDestroy()
     }
 
@@ -179,11 +200,22 @@ class MainActivity : ComponentActivity() {
         if (WindowProtection.isMotionEventObscured(ev)) {
             return true
         }
-        if (ev.actionMasked == MotionEvent.ACTION_DOWN && isAuthenticated && !LockStateTracker.onOwnAppInteraction()) {
+        // A touch after BioKey's session ran out locks it rather than counting as activity.
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN && isAuthenticated && !LockStateTracker.isOwnAppUnlocked()) {
             lockForInactivity()
             return true
         }
         return super.dispatchTouchEvent(ev)
+    }
+
+    /**
+     * Touches and key presses keep BioKey's session alive. Dialogs and sheets count their own
+     * ([com.android.BioKey.core.security.ProtectDialogWindow]); screen readers are counted by
+     * [WindowProtection.countAccessibilityInteractions].
+     */
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        LockStateTracker.onOwnAppInteraction()
     }
 
     private fun lockForInactivity() {
@@ -223,7 +255,7 @@ class MainActivity : ComponentActivity() {
             onError = { code, message ->
                 isSetupAuthenticating = false
                 setupAuthError = when {
-                    isUserCancel(code) -> "Biometric confirmation was cancelled. Tap to retry."
+                    SecurityEngine.isUserCancel(code) -> "Biometric confirmation was cancelled. Tap to retry."
                     code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL || code == SecurityEngine.ERROR_NO_BIOMETRICS ->
                         "Set a screen lock (PIN, pattern, or password) in system settings first."
                     else -> message.toString()
@@ -248,11 +280,11 @@ class MainActivity : ComponentActivity() {
             onError = { code, message ->
                 if (code == SecurityEngine.ERROR_LOCKOUT_PERMANENT) {
                     isPermanentLockout = true
-                    lockMessage = "Too many attempts. Lock your phone, then unlock it with your PIN, pattern or password to use biometrics again."
+                    lockMessage = SecurityEngine.LOCKOUT_PERMANENT_MESSAGE
                 } else {
                     isPermanentLockout = false
                     lockMessage = when {
-                        isUserCancel(code) -> null
+                        SecurityEngine.isUserCancel(code) -> null
                         code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL || code == SecurityEngine.ERROR_NO_BIOMETRICS ->
                             "Set a screen lock (PIN, pattern, or password) in system settings to use BioKey."
                         else -> message.toString()
@@ -261,8 +293,6 @@ class MainActivity : ComponentActivity() {
             }
         )
     }
-
-    private fun isUserCancel(code: Int) = SecurityEngine.isUserCancel(code)
 }
 
 /** Pause choices, as a sheet matching the rest of BioKey. */

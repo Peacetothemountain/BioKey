@@ -1,8 +1,6 @@
 package com.android.BioKey.core.security
 
 import android.app.Activity
-import android.content.Context
-import android.hardware.biometrics.BiometricManager
 import android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG
 import android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import android.hardware.biometrics.BiometricPrompt
@@ -27,11 +25,14 @@ class SecurityEngine private constructor() {
 
         const val ERROR_CANCELED = BiometricPrompt.BIOMETRIC_ERROR_CANCELED
         const val ERROR_USER_CANCELED = BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED
-        const val ERROR_LOCKOUT = BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT
         const val ERROR_LOCKOUT_PERMANENT = BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT_PERMANENT
         const val ERROR_NO_BIOMETRICS = BiometricPrompt.BIOMETRIC_ERROR_NO_BIOMETRICS
         const val ERROR_NO_DEVICE_CREDENTIAL = BiometricPrompt.BIOMETRIC_ERROR_NO_DEVICE_CREDENTIAL
         const val ERROR_HW_UNAVAILABLE = BiometricPrompt.BIOMETRIC_ERROR_HW_UNAVAILABLE
+
+        /** What every lock tells the user after [ERROR_LOCKOUT_PERMANENT]. */
+        const val LOCKOUT_PERMANENT_MESSAGE =
+            "Too many attempts. Lock your phone, then unlock it with your PIN, pattern or password to use biometrics again."
 
         fun isUserCancel(code: Int) = code == ERROR_USER_CANCELED || code == ERROR_CANCELED
     }
@@ -52,10 +53,16 @@ class SecurityEngine private constructor() {
         runCatching { attempt.cancel.cancel() }
     }
 
-    fun canAuthenticate(context: Context): Int =
-        context.getSystemService(BiometricManager::class.java)
-            ?.canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
-            ?: BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE
+    /**
+     * Cancels the running prompt only if [host] is showing it. A screen that is going away uses
+     * this, so it can't cancel the prompt of a newer screen for the same app.
+     */
+    fun resetAuthenticatingStateFor(host: Activity) {
+        val attempt = active ?: return
+        if (attempt.host.get() !== host) return
+        active = null
+        runCatching { attempt.cancel.cancel() }
+    }
 
     /**
      * Shows the system prompt hosted by [activity], which must be resumed and on top: the system
