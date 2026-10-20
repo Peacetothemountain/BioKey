@@ -29,7 +29,12 @@ class PickerHopTest {
     private val chat = "com.example.chat"
 
     @Before
-    fun reset() = LockStateTracker.lockAll()
+    fun reset() {
+        LockStateTracker.lockAll()
+        // The picker list is cached process-wide: one read by another test, before these apps
+        // were registered, mustn't be the one asked here.
+        ForegroundRules.resetSystemLists()
+    }
 
     /** Registers [pkg] as handling [action] (with [mime], if any) on this "device". */
     private fun install(pkg: String, action: String, mime: String? = null) {

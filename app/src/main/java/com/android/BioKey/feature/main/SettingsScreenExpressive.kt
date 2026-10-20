@@ -130,7 +130,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     val notificationAccessTrip = remember(activity) { ViewModelProvider(activity)[NotificationAccessTrip::class.java] }
     val disclosures = rememberDisclosureGate()
     val notifications = rememberNotificationPermission()
-    val protecting = mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.COMPATIBILITY
+    val protecting = ProtectionEngine.isProtecting(mode)
 
     LifecycleResumeEffect(Unit) {
         notifListenerActive = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
@@ -155,10 +155,12 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
 
     /** Sends the user to whatever lets BioKey watch apps, after the matching disclosure. */
     fun enableEngine() {
-        if (mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP) {
-            disclosures.request(Disclosure.COMPATIBILITY) { IntentNavigationHelper.openNextCompatibilityPermission(context) }
-        } else {
-            disclosures.request(Disclosure.ACCESSIBILITY) { IntentNavigationHelper.openAccessibilitySettings(context) }
+        when (mode) {
+            ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP ->
+                disclosures.request(Disclosure.COMPATIBILITY) { IntentNavigationHelper.openNextCompatibilityPermission(context) }
+            // Already agreed to and switched on: straight to the switch, to turn it off and on.
+            ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> IntentNavigationHelper.openAccessibilitySettings(context)
+            else -> disclosures.request(Disclosure.ACCESSIBILITY) { IntentNavigationHelper.openAccessibilitySettings(context) }
         }
     }
 
@@ -169,6 +171,8 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 title = "App lock",
                 subtitle = when {
                     mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP -> "Advanced Protection is on · tap to set up compatibility mode"
+                    mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING ->
+                        "Not running · BioKey's accessibility service is on but stopped: turn it off and on again"
                     !protecting -> "Off · turn on BioKey in Accessibility settings"
                     !globalLockEnabled && pausedUntil > System.currentTimeMillis() ->
                         "Paused until " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil))
@@ -238,6 +242,9 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             subtitle = when {
                 mode == ProtectionEngine.Mode.ACCESSIBILITY ->
                     "Optional. Ask for your authentication before BioKey can be switched off, force-stopped or uninstalled"
+                mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING && selfProtectionEnabled ->
+                    "On · works once the Accessibility service runs again"
+                mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> "Optional. Needs the Accessibility service, which isn't running"
                 mode == ProtectionEngine.Mode.OFF && selfProtectionEnabled -> "On · works once the Accessibility service is on"
                 mode == ProtectionEngine.Mode.OFF -> "Optional. Needs the Accessibility service, which is off"
                 selfProtectionEnabled -> "On, but inactive in compatibility mode · tap to turn off"
@@ -246,11 +253,13 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             // Shows what's saved, so it's never on without the user seeing it. In compatibility
             // mode it can only be turned off; turning it on needs the Accessibility service.
             checked = selfProtectionEnabled,
-            enabled = mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.OFF || selfProtectionEnabled,
+            enabled = mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING ||
+                mode == ProtectionEngine.Mode.OFF || selfProtectionEnabled,
             onChange = { on ->
                 when {
                     !on -> vault.setAccessibilitySelfProtectionEnabled(false)
-                    mode == ProtectionEngine.Mode.ACCESSIBILITY -> {
+                    // Switched on already (running or not): saved now, guarding once it runs.
+                    mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> {
                         vault.setAccessibilitySelfProtectionEnabled(true)
                         shortcutAssigned = SelfProtectionDetector.isShortcutAssigned(context)
                     }

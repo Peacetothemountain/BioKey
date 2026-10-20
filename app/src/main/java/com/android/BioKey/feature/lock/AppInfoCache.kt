@@ -6,7 +6,6 @@ import android.content.pm.PackageManager
 import android.content.res.Resources
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
@@ -14,6 +13,7 @@ import android.os.UserHandle
 import android.os.UserManager
 import android.util.Log
 import androidx.core.graphics.createBitmap
+import androidx.core.graphics.drawable.toDrawable
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.ui.AppIcons
@@ -90,7 +90,7 @@ object AppInfoCache {
     /** Label only (no icon), for the first frame of a cover on a cache miss. */
     fun quickLabel(context: Context, pkg: String): String {
         cache[pkg]?.let { return it.label }
-        if (isPasswordManager(pkg)) return "Google Password Manager"
+        if (pkg in PasswordManager.ALIASES) return PasswordManager.LABEL
         return runCatching {
             val pm = context.packageManager
             pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
@@ -99,22 +99,18 @@ object AppInfoCache {
 
     /** Blocking: loads and caches [pkg]'s label and icon. */
     private fun loadAndCache(context: Context, pm: PackageManager, pkg: String): CachedAppInfo? = try {
-        val passwordManager = isPasswordManager(pkg)
+        val passwordManager = pkg in PasswordManager.ALIASES
         // Google Password Manager is a virtual app: show Credential Manager's (or Play services') icon.
-        val realPkg = if (!passwordManager) pkg else {
-            runCatching { pm.getApplicationInfo(PasswordManager.CREDENTIAL_MANAGER, 0) }
-                .map { PasswordManager.CREDENTIAL_MANAGER }
-                .getOrDefault(PasswordManager.GMS)
-        }
+        val realPkg = if (passwordManager) PasswordManager.iconSource(pm) else pkg
         val (label, raw, user) = runCatching {
             val info = pm.getApplicationInfo(realPkg, 0)
             Triple(pm.getApplicationLabel(info).toString(), pm.getApplicationIcon(info), null as UserHandle?)
         }.getOrNull() ?: fromOtherProfiles(context, realPkg) ?: return null
         // Drawn once at cover size (see [AppIcons]); a work app gets its badge after.
         val px = (ICON_DP * context.resources.displayMetrics.density).roundToInt()
-        val rendered: Drawable = BitmapDrawable(context.resources, AppIcons.render(raw, px))
+        val rendered: Drawable = AppIcons.render(raw, px).toDrawable(context.resources)
         val icon = if (user != null) pm.getUserBadgedIcon(rendered, user) else rendered
-        val name = if (passwordManager) "Google Password Manager" else label
+        val name = if (passwordManager) PasswordManager.LABEL else label
         CachedAppInfo(pkg, name, icon, accentOf(icon, context.resources)).also { cache[pkg] = it }
     } catch (e: Exception) {
         Log.w(TAG, "Couldn't load app info: ${e.message}")
@@ -168,7 +164,4 @@ object AppInfoCache {
         hsv[2] = hsv[2].coerceIn(0.65f, 0.95f)
         Color.HSVToColor(hsv)
     }.getOrNull()
-
-    private fun isPasswordManager(pkg: String) =
-        pkg == PasswordManager.VIRTUAL_PACKAGE || pkg == PasswordManager.CREDENTIAL_MANAGER
 }

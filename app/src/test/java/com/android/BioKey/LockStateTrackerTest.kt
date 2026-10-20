@@ -2,6 +2,7 @@ package com.android.BioKey
 
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.PasswordManager
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.LockStateTracker.ABANDONED_LOCK_COOLDOWN_MS
 import com.android.BioKey.core.security.LockStateTracker.ARRIVAL_GRACE_MS
@@ -283,5 +284,41 @@ class LockStateTrackerTest {
             LockStateTracker.removeAppsLockListener(batchListener)
             LockStateTracker.removeAppLockListener(singleListener)
         }
+    }
+
+    @Test
+    fun aScreenOffReportedByTwoReceiversIsLoggedOnce() {
+        DiagnosticLog.clear()
+        fun logged() = DiagnosticLog.entries().count { it.text == "All sessions ended (screen off)" }
+        LockStateTracker.onAppUnlocked(chat)
+        LockStateTracker.onScreenTurnedOff()
+        LockStateTracker.onScreenTurnedOff()
+        assertEquals(1, logged())
+        assertFalse(LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.ON_SCREEN_OFF))
+        // The next screen-off is logged again.
+        advance(5_000L)
+        LockStateTracker.onScreenTurnedOff()
+        assertEquals(2, logged())
+    }
+
+    @Test
+    fun aFilePickerTripThatRunsOutAwayEndsBioKeysSession() {
+        LockStateTracker.onOwnAppUnlocked()
+        LockStateTracker.beginOwnPicker()
+        LockStateTracker.onOwnAppStopped()
+        advance(2 * 60_000L + 1_000L)
+        // Its idle limit isn't reached yet: the trip's end ends it.
+        assertFalse(LockStateTracker.isOwnPickerActive())
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
+    }
+
+    @Test
+    fun aSettingsTripThatRunsOutAwayEndsBioKeysSession() {
+        LockStateTracker.onOwnAppUnlocked()
+        LockStateTracker.beginExternalNavigation(preAuthorizeSelfProtection = false)
+        LockStateTracker.onOwnAppStopped()
+        advance(2 * 60_000L + 1_000L)
+        assertFalse(LockStateTracker.isExternalNavigationActive())
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
     }
 }

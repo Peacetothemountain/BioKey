@@ -1,6 +1,5 @@
 package com.android.BioKey.feature.lock
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,9 +16,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Fingerprint
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -29,7 +26,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -42,26 +38,28 @@ import com.android.BioKey.ui.brand.BioKeyLogo
 import com.android.BioKey.ui.theme.springPress
 
 /**
- * Lock screen drawn in Compose: BioKey's own lock (when [isBioKeyLock]) or a locked app.
- * Same layout as [LockCoverView] (identity in the middle, actions at the bottom) so every lock
- * in BioKey looks like one product.
+ * BioKey's own lock, drawn in Compose. Laid out like [LockCoverView] showing BioKey (the logo,
+ * the same size, in the middle; a primary button and Cancel at the bottom), so every lock in
+ * BioKey looks like one product.
+ *
+ * After a permanent lockout the button locks the phone, so that the PIN can bring biometrics
+ * back; only the accessibility service can do that, so without it ([canLockPhone] false) Cancel
+ * is the way out and the message says what to do.
  */
 @Composable
-fun LockScreenUIExpressive(
-    appName: String,
-    appIcon: ImageBitmap?,
+fun BioKeyLockScreen(
     onUnlockClicked: () -> Unit,
-    onCancelClicked: (() -> Unit)? = null,
-    isBioKeyLock: Boolean = false,
+    onCancelClicked: () -> Unit,
     statusMessage: String? = null,
     isPermanentLockout: Boolean = false,
+    canLockPhone: Boolean = true,
     onLockDeviceClicked: () -> Unit = {}
 ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .rejectObscuredTouches()
-            .semantics { contentDescription = if (isBioKeyLock) "BioKey is locked" else "${appName.ifBlank { "This app" }} is locked" }
+            .semantics { contentDescription = "BioKey is locked" }
             .background(coverWash())
     ) {
 
@@ -74,19 +72,8 @@ fun LockScreenUIExpressive(
                 .padding(bottom = 200.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            when {
-                isBioKeyLock -> BioKeyLogo(Modifier.size(280.dp, 96.dp), animated = false)
-                appIcon != null -> Image(bitmap = appIcon, contentDescription = null, modifier = Modifier.size(72.dp))
-                else -> Box(
-                    Modifier
-                        .size(72.dp)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Default.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                }
-            }
-            // No "is locked" caption: the logo or icon says what is locked; screen readers get it below.
+            BioKeyLogo(Modifier.size(280.dp, 118.dp), animated = false)
+            // No "is locked" caption: the logo says what is locked; screen readers get it above.
             if (!statusMessage.isNullOrBlank()) {
                 Spacer(Modifier.height(16.dp))
                 Text(
@@ -109,27 +96,24 @@ fun LockScreenUIExpressive(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Button(
-                onClick = if (isPermanentLockout) onLockDeviceClicked else onUnlockClicked,
-                shape = CircleShape,
-                colors = if (isPermanentLockout) {
-                    ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError)
-                } else ButtonDefaults.buttonColors(),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .springPress()
-            ) {
-                if (!isPermanentLockout) {
-                    Icon(Icons.Default.Fingerprint, contentDescription = null, modifier = Modifier.size(22.dp))
-                    Spacer(Modifier.width(10.dp))
+            if (!isPermanentLockout || canLockPhone) {
+                Button(
+                    onClick = if (isPermanentLockout) onLockDeviceClicked else onUnlockClicked,
+                    shape = CircleShape,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .springPress()
+                ) {
+                    if (!isPermanentLockout) {
+                        Icon(Icons.Default.Fingerprint, contentDescription = null, modifier = Modifier.size(22.dp))
+                        Spacer(Modifier.width(10.dp))
+                    }
+                    Text(if (isPermanentLockout) "Lock screen" else "Unlock", style = MaterialTheme.typography.titleMedium)
                 }
-                Text(if (isPermanentLockout) "Lock screen" else "Unlock", style = MaterialTheme.typography.titleMedium)
             }
-            if (onCancelClicked != null) {
-                TextButton(onClick = onCancelClicked, modifier = Modifier.height(48.dp)) {
-                    Text("Cancel", style = MaterialTheme.typography.titleSmall)
-                }
+            TextButton(onClick = onCancelClicked, modifier = Modifier.height(48.dp)) {
+                Text("Cancel", style = MaterialTheme.typography.titleSmall)
             }
         }
     }

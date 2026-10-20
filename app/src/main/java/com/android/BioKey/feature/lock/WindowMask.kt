@@ -13,6 +13,8 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
+import androidx.annotation.VisibleForTesting
+import androidx.core.view.isVisible
 import com.android.BioKey.R
 import com.android.BioKey.core.security.WindowProtection
 
@@ -64,21 +66,31 @@ internal class WindowMask(
     }
 
     private val patches = HashMap<Int, Patch>()
-    private var hidden = false
+    /** Every patch is hidden: the screen is off or the phone locked. */
+    private var hiddenEverywhere = false
+    /** Displays whose patches are hidden: the ones a prompt can be on. */
+    private var hiddenOn: Set<Int> = emptySet()
     private val padding = (PADDING_DP * service.resources.displayMetrics.density).toInt()
 
     val isEmpty: Boolean get() = patches.isEmpty()
 
     fun isMasking(windowId: Int): Boolean = windowId in patches
 
+    /** Whether [windowId] has a patch that draws and takes taps (it isn't hidden). */
+    @VisibleForTesting
+    internal fun isShowing(windowId: Int): Boolean = patches[windowId]?.let { !isHidden(it) && it.view.isVisible } == true
+
     /**
      * Masks exactly [targets]: new windows get a patch, moved ones are followed, and windows not
-     * listed lose theirs. Returns the targets that couldn't be masked (the caller must cover them
-     * some other way).
+     * listed lose theirs, except on the displays in [keepOn] (where windows can be missing from
+     * the list for a while, under a prompt). Returns the targets that couldn't be masked (the
+     * caller must cover them some other way).
      */
-    fun show(targets: Collection<Target>): List<Target> {
+    fun show(targets: Collection<Target>, keepOn: Set<Int> = emptySet()): List<Target> {
         val wanted = targets.associateBy { it.windowId }
-        for (id in patches.keys - wanted.keys) remove(id)
+        for (id in patches.keys - wanted.keys) {
+            if (patches[id]?.target?.displayId !in keepOn) remove(id)
+        }
         return add(targets)
     }
 
@@ -97,12 +109,23 @@ internal class WindowMask(
         return failed
     }
 
-    /** Hidden patches keep their windows (showing them again is a visibility flip) but draw nothing and take no taps. */
-    fun setHidden(hidden: Boolean) {
-        if (this.hidden == hidden) return
-        this.hidden = hidden
+    /**
+     * Hidden patches keep their windows (showing them again is a visibility flip) but draw nothing
+     * and take no taps. [hidden]: every patch, on every display; false shows them all again.
+     */
+    fun setHidden(hidden: Boolean) = hide(everywhere = hidden, displays = emptySet())
+
+    /** Hides the patches on [displays] only, and shows every other one. */
+    fun setHiddenOn(displays: Set<Int>) = hide(everywhere = false, displays = displays)
+
+    private fun hide(everywhere: Boolean, displays: Set<Int>) {
+        if (hiddenEverywhere == everywhere && hiddenOn == displays) return
+        hiddenEverywhere = everywhere
+        hiddenOn = displays
         for (patch in patches.values) place(patch)
     }
+
+    private fun isHidden(patch: Patch) = hiddenEverywhere || patch.target.displayId in hiddenOn
 
     /** [pkg] has a session now: its windows are the user's again. */
     fun forget(pkg: String) {
@@ -176,6 +199,7 @@ internal class WindowMask(
         patch.params.y = area.top
         patch.params.width = area.width().coerceAtLeast(1)
         patch.params.height = area.height().coerceAtLeast(1)
+        val hidden = isHidden(patch)
         val touchable = !hidden && patch.target.touchable
         patch.params.flags = if (touchable) {
             patch.params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()

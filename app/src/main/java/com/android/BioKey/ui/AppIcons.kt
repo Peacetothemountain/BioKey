@@ -6,6 +6,7 @@ import android.graphics.Path
 import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
 import androidx.core.graphics.createBitmap
+import androidx.core.graphics.withClip
 
 /**
  * App icons, drawn the same everywhere in BioKey (lists, sheets, the lock cover).
@@ -26,14 +27,13 @@ object AppIcons {
         val clip = Path().apply { addCircle(size / 2f, size / 2f, size / 2f, Path.Direction.CW) }
         if (drawable is AdaptiveIconDrawable) {
             val extra = (size * ADAPTIVE_EXTRA).toInt()
-            canvas.save()
-            canvas.clipPath(clip)
-            for (layer in listOf(drawable.background, drawable.foreground)) {
-                layer ?: continue
-                layer.setBounds(-extra, -extra, size + extra, size + extra)
-                layer.draw(canvas)
+            canvas.withClip(clip) {
+                for (layer in listOf(drawable.background, drawable.foreground)) {
+                    layer ?: continue
+                    layer.setBounds(-extra, -extra, size + extra, size + extra)
+                    layer.draw(this)
+                }
             }
-            canvas.restore()
             return out
         }
         drawable.setBounds(0, 0, size, size)

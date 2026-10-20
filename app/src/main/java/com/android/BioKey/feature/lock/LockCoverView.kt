@@ -23,6 +23,7 @@ import android.widget.TextView
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.ui.graphics.toArgb
+import androidx.core.view.isVisible
 import com.android.BioKey.R
 import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.ui.brand.WordmarkView
@@ -39,8 +40,11 @@ import com.android.BioKey.ui.brand.WordmarkView
  *
  * Plain Views on purpose: no Compose start-up cost on the path between a locked app appearing and
  * the fingerprint/face prompt.
+ *
+ * Its words ("Unlock", "Cancel", "Lock screen") are in English like the rest of BioKey, which has
+ * no translations: they'd move to string resources together, never one alone.
  */
-@SuppressLint("ViewConstructor")
+@SuppressLint("ViewConstructor", "SetTextI18n")
 class LockCoverView(context: Context) : FrameLayout(context) {
 
     /** Material You roles, the same dynamic scheme as BioKey's own screens (Android 12+). */
@@ -74,7 +78,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     private val backdrop = CoverBackdrop(context)
 
     /** Large logo: the identity when BioKey itself is locked. */
-    private val logo = WordmarkView(context).apply { visibility = GONE }
+    private val logo = WordmarkView(context, releaseWhenHidden = true).apply { visibility = GONE }
 
     /** Small logo at the bottom while the system prompt is up: who is asking. */
     private val brandMark = WordmarkView(context).apply { alpha = 0.55f }
@@ -176,7 +180,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         // The glow and ring surround the app icon. Measured in the backdrop's own coordinates
         // (window positions, not parent offsets), so padding for system bars, margins and the
         // window type can't shift the ring away from the icon.
-        if (icon.visibility == VISIBLE && icon.width > 0) {
+        if (icon.isVisible && icon.width > 0) {
             icon.getLocationInWindow(iconLocation)
             backdrop.getLocationInWindow(backdropLocation)
             backdrop.setFocus(
@@ -240,7 +244,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         icon.visibility = if (isBioKey) GONE else VISIBLE
         name.visibility = icon.visibility
         name.text = label
-        brandMark.visibility = if (isBioKey || actions.visibility == VISIBLE) GONE else VISIBLE
+        brandMark.isVisible = !isBioKey && !actions.isVisible
         setIcon(appIcon, accent)
         contentDescription = if (isBioKey) "BioKey is locked" else "$label is locked"
         setStatus(null, permanentLockout = false)
@@ -269,14 +273,17 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     fun setStatus(message: String?, permanentLockout: Boolean) {
         lockoutMode = permanentLockout
         status.text = message
-        status.visibility = if (message.isNullOrBlank()) GONE else VISIBLE
+        status.isVisible = !message.isNullOrBlank()
         primaryButton.text = if (permanentLockout) "Lock screen" else "Unlock"
+        // After a lockout the button locks the phone, which only the accessibility service can
+        // do: in compatibility mode, Cancel is the way out (the message names the power button).
+        primaryButton.isVisible = !permanentLockout || BioKeyAccessibilityService.isRunning
     }
 
     /** Hides the buttons while the system prompt is up, like Android's own App Lock. */
     fun setActionsVisible(visible: Boolean) {
         actions.visibility = if (visible) VISIBLE else INVISIBLE
-        brandMark.visibility = if (visible || logo.visibility == VISIBLE) GONE else VISIBLE
+        brandMark.isVisible = !visible && !logo.isVisible
     }
 
     /** Overlay windows don't always get insets dispatched; the shield passes them in. */

@@ -73,12 +73,23 @@ half4 main(float2 p) {
     /** Fills the vines with [color] (the theme's tertiary). */
     fun setTint(color: Int) = vines.setTint(color)
 
-    /** Starts preparing the artwork for a [width] x [height] drawing ahead of its first frame. */
-    fun prepare(width: Int, height: Int) = vines.prepare(width, height)
+    /**
+     * Lays the vines out for a [width] x [height] drawing ahead of its first frame, without
+     * waiting: [onReady] runs once their copy, made in the background, is ready ([LogoLayer.layout]).
+     */
+    fun prepare(width: Float, height: Float, onReady: () -> Unit) {
+        vines.layout(width, height, onReady)
+    }
 
-    /** Draws the vines fitted into [width] x [height]; [phase] from [phaseAt], or null for still. */
-    fun draw(canvas: Canvas, width: Float, height: Float, phase: Float?) {
-        if (!vines.layout(width, height)) return
+    /** Lets the vines' copy go ([LogoLayer.release]). */
+    fun release() = vines.release()
+
+    /**
+     * Draws the vines fitted into [width] x [height]; [phase] from [phaseAt], or null for still.
+     * [onReady]: never wait for the copy (see [LogoLayer.layout]).
+     */
+    fun draw(canvas: Canvas, width: Float, height: Float, phase: Float?, onReady: (() -> Unit)? = null) {
+        if (!vines.layout(width, height, onReady)) return
         if (phase != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val moving = wave()
             if (moving != null) {

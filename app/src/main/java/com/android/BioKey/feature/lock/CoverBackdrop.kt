@@ -10,6 +10,7 @@ import android.graphics.Shader
 import android.os.Build
 import android.os.SystemClock
 import android.view.View
+import androidx.core.graphics.withScale
 import com.android.BioKey.ui.theme.animationsEnabled
 import kotlin.math.cos
 
@@ -109,10 +110,9 @@ internal class CoverBackdrop(context: Context) : View(context) {
         val breath = if (animate) ((1 - cos(2 * Math.PI * SystemClock.uptimeMillis() / BREATH_MS)) / 2).toFloat() else 0.5f
         val scale = 0.97f + 0.06f * breath
         glowPaint.alpha = (255 * (0.8f + 0.2f * breath)).toInt()
-        canvas.save()
-        canvas.scale(scale, scale, focusX, focusY)
-        canvas.drawCircle(focusX, focusY, focusRadius * GLOW_REACH, glowPaint)
-        canvas.restore()
+        canvas.withScale(scale, scale, focusX, focusY) {
+            drawCircle(focusX, focusY, focusRadius * GLOW_REACH, glowPaint)
+        }
 
         val ringRadius = focusRadius + RING_GAP_DP * density
         canvas.drawCircle(focusX, focusY, ringRadius, discPaint)

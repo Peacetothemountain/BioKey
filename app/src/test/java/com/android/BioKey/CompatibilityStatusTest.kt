@@ -34,8 +34,10 @@ class CompatibilityStatusTest {
 
     @Before
     fun freshVault() {
+        // As the other test classes do: whatever the last vault was writing lands first.
+        SecurityVault.getInstance(context).awaitPendingWrites()
         context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE).edit().clear().commit()
-        SecurityVault::class.java.getDeclaredField("INSTANCE").apply { isAccessible = true }.set(null, null)
+        SecurityVault.resetForTests()
         Settings.Secure.putString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, "")
         forgetStartRequest()
     }

@@ -26,7 +26,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -38,7 +37,7 @@ import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
-import com.android.BioKey.feature.lock.LockScreenUIExpressive
+import com.android.BioKey.feature.lock.BioKeyLockScreen
 import com.android.BioKey.feature.setup.SetupScreenExpressive
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.BioKeyTheme
@@ -97,6 +96,10 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val setupCompleted by vault.setupCompletedFlow.collectAsStateWithLifecycle()
+            // The accessibility service connecting (just after BioKey starts) or stopping changes
+            // what Home and Settings say, with no resume to show it.
+            val accessibilityRunning by BioKeyAccessibilityService.running.collectAsStateWithLifecycle()
+            LaunchedEffect(accessibilityRunning) { protectionMode = ProtectionEngine.mode(this@MainActivity) }
 
             LaunchedEffect(isAuthenticated) {
                 while (isAuthenticated) {
@@ -114,14 +117,14 @@ class MainActivity : ComponentActivity() {
                         needsScreenLock = setupNeedsScreenLock,
                         onSetupComplete = ::completeSetup
                     )
-                    !isAuthenticated -> LockScreenUIExpressive(
-                        appName = stringResource(R.string.brand_name),
-                        appIcon = null,
+                    !isAuthenticated -> BioKeyLockScreen(
                         onUnlockClicked = { authenticate() },
                         onCancelClicked = { finishAffinity() },
-                        isBioKeyLock = true,
                         statusMessage = lockMessage,
                         isPermanentLockout = isPermanentLockout,
+                        // Only the accessibility service can lock the phone: in compatibility
+                        // mode the lockout leaves Cancel, and the power button the message names.
+                        canLockPhone = accessibilityRunning,
                         onLockDeviceClicked = {
                             if (!BioKeyAccessibilityService.lockDevice()) finishAffinity()
                         }

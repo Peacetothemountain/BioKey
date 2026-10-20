@@ -8,12 +8,14 @@ import android.content.pm.PackageInstaller.PACKAGE_SOURCE_DOWNLOADED_FILE
 import android.content.pm.PackageInstaller.PACKAGE_SOURCE_LOCAL_FILE
 import android.content.pm.PackageInstaller.PACKAGE_SOURCE_OTHER
 import android.content.pm.PackageInstaller.PACKAGE_SOURCE_UNSPECIFIED
+import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 import com.android.BioKey.feature.setup.RestrictedSettingsHelper
 import com.android.BioKey.feature.tile.BioKeyTileService
 import com.android.BioKey.feature.tile.BioKeyTileService.Status
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -26,6 +28,19 @@ class GuardStatusTest {
         assertEquals(Status.NOT_PROTECTING, BioKeyTileService.status(setupCompleted = true, enabled = true, engineRunning = false))
         assertEquals(Status.PAUSED, BioKeyTileService.status(setupCompleted = true, enabled = false, engineRunning = true))
         assertEquals(Status.SETUP_REQUIRED, BioKeyTileService.status(setupCompleted = false, enabled = true, engineRunning = true))
+    }
+
+    @Test
+    fun aSwitchedOnServiceThatIsNotRunningIsNotProtecting() {
+        // Crashed, or not yet connected: the tile, the home screen and Settings all say so.
+        assertEquals(ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING, ProtectionEngine.accessibilityMode(switchedOn = true, running = false))
+        assertFalse(ProtectionEngine.isProtecting(ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING))
+        assertEquals(ProtectionEngine.Mode.ACCESSIBILITY, ProtectionEngine.accessibilityMode(switchedOn = true, running = true))
+        assertTrue(ProtectionEngine.isProtecting(ProtectionEngine.Mode.ACCESSIBILITY))
+        // Switched off: compatibility mode decides.
+        assertNull(ProtectionEngine.accessibilityMode(switchedOn = false, running = false))
+        assertFalse(ProtectionEngine.isProtecting(ProtectionEngine.Mode.OFF))
+        assertTrue(ProtectionEngine.isProtecting(ProtectionEngine.Mode.COMPATIBILITY))
     }
 
     @Test

@@ -75,11 +75,13 @@ enum class Disclosure(
         "BioKey uses the Accessibility service",
         reads = listOf(
             "Which app is on screen",
-            "The name of an app you tap on the home screen, in search or in Recents",
+            "The label of what you tap on the home screen, in its search or in Recents",
+            "The names of apps on Recents cards, while Recents is open and an app you've locked is unlocked",
             "The text of system Settings pages about BioKey itself (App info, Accessibility, notification access, uninstall)"
         ),
         usedFor = listOf(
-            "Covering apps you've locked until you authenticate",
+            "Covering apps you've locked until you authenticate, even before they open",
+            "Ending a locked app's session when you close it from Recents",
             "Asking for authentication before BioKey can be switched off, if you turn that on"
         )
     ),

@@ -56,8 +56,10 @@ class CompatibilityEngineTest {
 
     @Before
     fun start() {
+        // As the other test classes do: whatever the last vault was writing lands first.
+        SecurityVault.getInstance(context).awaitPendingWrites()
         context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE).edit().clear().commit()
-        SecurityVault::class.java.getDeclaredField("INSTANCE").apply { isAccessible = true }.set(null, null)
+        SecurityVault.resetForTests()
         Settings.Secure.putString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, "")
         ShadowSettings.setCanDrawOverlays(true)
         LockStateTracker.lockAll()
@@ -275,5 +277,131 @@ class CompatibilityEngineTest {
         val alert = shadowOf(context.getSystemService(NotificationManager::class.java)).allNotifications
             .map { it.extras.getCharSequence(NotificationCompat.EXTRA_TEXT).toString() }
         assertTrue(alert.toString(), alert.any { "lost display over other apps" in it })
+    }
+
+    /** The bank, unlocked and in front. */
+    private fun unlockBank() {
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        LockStateTracker.onAppUnlocked(bank)
+        event(ACTIVITY_RESUMED, bank) // Back from the lock screen.
+        step()
+    }
+
+    @Test
+    fun aTripToAPlayPageAndStraightBackKeepsTheSession() {
+        unlockBank()
+        // "Rate us" opens the bank's Play listing: a page of its own, so the bank stops.
+        val listing = "com.google.android.finsky.activities.MainActivity"
+        event(ACTIVITY_PAUSED, bank)
+        event(ACTIVITY_RESUMED, "com.android.vending", listing)
+        step()
+        event(ACTIVITY_STOPPED, bank)
+        repeat(3) { step() }
+        step(30_000)
+        event(ACTIVITY_PAUSED, "com.android.vending", listing)
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        assertEquals(listOf("Covered $bank (opened)"), covered(bank))
+        assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+    }
+
+    @Test
+    fun aLockedAppLeftInPictureInPictureIsCoveredOnceThePhoneIsUnlocked() {
+        unlockBank()
+        // Home: the bank goes into picture-in-picture (paused, never stopped) and keeps its session.
+        event(ACTIVITY_PAUSED, bank)
+        event(ACTIVITY_RESUMED, chat)
+        repeat(3) { step() }
+        assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+        // The phone locks: every session ends, and the keyguard stops the window.
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        step()
+        event(ACTIVITY_STOPPED, bank)
+        event(ACTIVITY_STOPPED, chat)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
+        step()
+        // Unlocked: the window is back, paused (it never resumes), over the app that was in front.
+        event(ACTIVITY_RESUMED, chat)
+        event(ACTIVITY_PAUSED, bank)
+        repeat(8) { step() }
+        assertEquals("Covered $bank (showing behind the app in front, as in picture-in-picture)", covered(bank).last())
+        assertTrue(shield().isShowing)
+        // Its lock screen comes up under the cover, and asks to take it down: it stays, as
+        // nothing else hides the window. Going Home doesn't take it down either.
+        lockScreenFor(bank)
+        InstantShieldOverlay.dismiss(bank)
+        shield().hide()
+        assertTrue(shield().isShowing)
+        // Unlocked: it goes.
+        LockStateTracker.onAppUnlocked(bank)
+        InstantShieldOverlay.dismiss(bank)
+        assertFalse(shield().isShowing)
+    }
+
+    @Test
+    fun aWindowThatComesBackPausedAndThenStopsIsNotCovered() {
+        // Under something that hid it after all (it stopped within the settle time): nothing showed.
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        step()
+        event(ACTIVITY_STOPPED, bank)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
+        step()
+        event(ACTIVITY_RESUMED, chat)
+        event(ACTIVITY_PAUSED, bank)
+        step()
+        event(ACTIVITY_STOPPED, bank)
+        repeat(8) { step() }
+        assertTrue(covered(bank).isEmpty())
+    }
+
+    @Test
+    fun anUnlockedAppInPictureInPictureIsCoveredWhenEverySessionEnds() {
+        unlockBank()
+        event(ACTIVITY_PAUSED, bank)
+        event(ACTIVITY_RESUMED, chat)
+        repeat(3) { step() }
+        // Protection resumed, or every app locked from the tile, with the screen on.
+        LockStateTracker.lockAll(reason = "test")
+        repeat(8) { step() }
+        assertEquals("Covered $bank (showing behind the app in front, as in picture-in-picture)", covered(bank).last())
+        assertTrue(shield().isShowing)
+    }
+
+    @Test
+    fun bioKeysFilePickerTripEndsWhereItGoesElsewhere() {
+        LockStateTracker.onOwnAppUnlocked()
+        LockStateTracker.beginOwnPicker()
+        LockStateTracker.onOwnAppStopped()
+        event(ACTIVITY_RESUMED, "com.google.android.documentsui", "com.android.documentsui.picker.PickActivity")
+        step()
+        assertTrue(LockStateTracker.isOwnAppUnlocked())
+        // Home, then another app, phone handed over: BioKey asks again.
+        event(ACTIVITY_RESUMED, chat)
+        step()
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
+    }
+
+    @Test
+    fun bioKeysSettingsTripEndsWhereItGoesElsewhere() {
+        LockStateTracker.onOwnAppUnlocked()
+        LockStateTracker.beginExternalNavigation(preAuthorizeSelfProtection = true)
+        LockStateTracker.onOwnAppStopped()
+        event(ACTIVITY_RESUMED, "com.android.settings", "com.android.settings.SubSettings")
+        step()
+        assertTrue(LockStateTracker.isOwnAppUnlocked())
+        event(ACTIVITY_RESUMED, chat)
+        step()
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
+    }
+
+    @Test
+    fun aLockedDigitalWellbeingIsCoveredLikeAnyApp() {
+        // It floats over apps unless the user locked it (its launcher icon turned on).
+        val wellbeing = "com.google.android.apps.wellbeing"
+        vault.setAppLock(wellbeing, true)
+        event(ACTIVITY_RESUMED, wellbeing, "com.google.android.apps.wellbeing.settings.TopLevelSettingsActivity")
+        step()
+        assertEquals(listOf("Covered $wellbeing (opened)"), covered(wellbeing))
     }
 }

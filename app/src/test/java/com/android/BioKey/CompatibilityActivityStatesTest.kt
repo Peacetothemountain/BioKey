@@ -89,6 +89,32 @@ class CompatibilityActivityStatesTest {
     }
 
     @Test
+    fun anActivityThatComesBackPausedIsShowingWithoutBeingInFront() {
+        // Picture-in-picture after the phone is unlocked: stopped under the keyguard, then paused, never resumed.
+        val states = ActivityStates()
+        val back = event(ACTIVITY_PAUSED, bank, 300)
+        assertNull(states.lastTypeOf(back))
+        states.apply(event(ACTIVITY_STOPPED, bank, 200))
+        assertEquals(ACTIVITY_STOPPED, states.lastTypeOf(back))
+        states.apply(back)
+        assertTrue(states.isPaused(back.activity))
+        assertEquals(listOf(back.activity), states.pausedActivitiesOf(bank))
+        assertFalse(states.isResumed(bank))
+        assertTrue(states.isVisible(bank))
+        states.apply(event(ACTIVITY_RESUMED, bank, 400))
+        assertFalse(states.isPaused(back.activity))
+        assertTrue(states.pausedActivitiesOf(bank).isEmpty())
+    }
+
+    @Test
+    fun aLockedFloatingAppIsAnApp() {
+        // Digital Wellbeing floats over apps, unless the user locked it (its icon turned on).
+        val wellbeing = "com.google.android.apps.wellbeing"
+        assertNull(UsageEvent(ACTIVITY_RESUMED, wellbeing, "$wellbeing.Settings", 100).app)
+        assertEquals(wellbeing, UsageEvent(ACTIVITY_RESUMED, wellbeing, "$wellbeing.Settings", 100, lockedOverlay = true).app)
+    }
+
+    @Test
     fun nothingKnownIsNeitherShowingNorGone() {
         val states = ActivityStates()
         assertFalse(states.knows(chat))

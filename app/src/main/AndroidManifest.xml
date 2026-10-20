@@ -69,7 +69,11 @@
         </intent>
     </queries>
 
+    <!-- enableOnBackInvokedCallback does nothing before Android 13, and is on by default from 16
+         (targetSdk 36+), but Android 13 to 15 need it: Back is Cancel on compatibility mode's
+         cover only through an OnBackInvokedCallback (InstantShieldOverlay.cancelOnBack). -->
     <application
+        tools:targetApi="33"
         android:name=".BioKeyApplication"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"

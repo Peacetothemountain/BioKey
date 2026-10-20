@@ -10,6 +10,8 @@ import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
 import android.graphics.Shader
+import android.os.Handler
+import android.os.Looper
 import androidx.annotation.DrawableRes
 import androidx.core.graphics.scale
 import com.android.BioKey.R
@@ -33,6 +35,9 @@ import kotlin.math.roundToInt
  *
  * Decorative and best-effort: if the artwork can't be loaded, the logo is left out, nothing
  * throws. Main thread only, apart from the background work behind [prepare].
+ *
+ * Covers never wait for a decode ([sizedIfReady]): their logo shows once its copy is ready. Other
+ * logos (BioKey's own screens) are drawn at once, decoding on the spot if they must ([sized]).
  */
 internal object LogoArt {
 
@@ -69,6 +74,11 @@ internal object LogoArt {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, Bitmap>?) = size > RECENT
     }
     private val preparing = HashMap<Key, Future<Bitmap?>>()
+    /** Logos waiting for a copy being made ([sizedIfReady]): told on the main thread once it is ready, or failed. */
+    private val waiting = HashMap<Key, MutableList<() -> Unit>>()
+    /** Copies that couldn't be made: a logo that doesn't wait isn't made to try again and again. */
+    private val failed = HashSet<Key>()
+    private val main by lazy { Handler(Looper.getMainLooper()) }
     // One thread, and only while there's work: the service's process keeps no idle thread for a logo.
     private val worker by lazy {
         ThreadPoolExecutor(1, 1, 5, TimeUnit.SECONDS, LinkedBlockingQueue()) { r -> Thread(r, "biokey-logo").apply { isDaemon = true } }
@@ -85,17 +95,43 @@ internal object LogoArt {
         return intArrayOf(bounds.outWidth, bounds.outHeight).also { artSizes[id] = it }
     }
 
-    /** Layer [id] scaled to exactly [width] x [height], or null if it couldn't be made. */
+    /** Layer [id] scaled to exactly [width] x [height], or null if it couldn't be made. Waits for it if need be. */
     fun sized(resources: Resources, @DrawableRes id: Int, width: Int, height: Int): Bitmap? {
         val key = Key(id, width, height)
         cached(key)?.let { return it }
         val made = preparing.remove(key)?.let { runCatching { it.get() }.getOrNull() } ?: make(resources, id, width, height)
-        return made?.also {
-            live.values.removeAll { ref -> ref.get() == null }
-            live[key] = WeakReference(it)
-            recent[key] = it
-        }
+        return made?.let { keep(key, it) }
     }
+
+    /**
+     * [sized]'s copy if it is ready now, never waiting for it: else null, and the copy is made in
+     * the background (if it isn't already), [onReady] running on the main thread once it is ready,
+     * or failed. For covers: drawn the moment a locked app is covered (or BioKey's settings
+     * pages), they mustn't hold that first frame back for a decode. Null, without [onReady] ever
+     * running, once the copy has failed.
+     */
+    fun sizedIfReady(resources: Resources, @DrawableRes id: Int, width: Int, height: Int, onReady: () -> Unit): Bitmap? {
+        val key = Key(id, width, height)
+        cached(key)?.let { return it }
+        if (key in failed) return null
+        val future = preparing[key]
+        if (future != null && future.isDone) {
+            preparing.remove(key)
+            val made = runCatching { future.get() }.getOrNull()
+            if (made == null) failed += key
+            return made?.let { keep(key, it) }
+        }
+        prepare(resources, id, width, height)
+        if (key !in preparing) {
+            failed += key // Couldn't even be started.
+            return null
+        }
+        waiting.getOrPut(key, ::ArrayList) += onReady
+        return null
+    }
+
+    /** Whether [sized]'s copy is being made in the background right now. */
+    fun isPreparing(@DrawableRes id: Int, width: Int, height: Int): Boolean = preparing[Key(id, width, height)]?.isDone == false
 
     /**
      * Starts making [sized]'s copy in the background, for a logo whose size is known before it
@@ -105,7 +141,30 @@ internal object LogoArt {
     fun prepare(resources: Resources, @DrawableRes id: Int, width: Int, height: Int) {
         val key = Key(id, width, height)
         if (key in preparing || cached(key) != null) return
-        preparing[key] = runCatching { worker.submit(Callable { make(resources, id, width, height) }) }.getOrNull() ?: return
+        preparing[key] = runCatching {
+            worker.submit(Callable { make(resources, id, width, height).also { main.post { ready(key) } } })
+        }.getOrNull() ?: return
+    }
+
+    /**
+     * BioKey's screens went to the background: the last few copies kept for them are let go.
+     * Logos still showing keep theirs (the shield's cover holds its own), so covers never wait
+     * for them again.
+     */
+    fun trim() {
+        recent.clear()
+        failed.clear()
+    }
+
+    private fun ready(key: Key) {
+        waiting.remove(key)?.forEach { runCatching(it) }
+    }
+
+    private fun keep(key: Key, bitmap: Bitmap): Bitmap {
+        live.values.removeAll { ref -> ref.get() == null }
+        live[key] = WeakReference(bitmap)
+        recent[key] = bitmap
+        return bitmap
     }
 
     /** The vines' sway field, for as long as a moving logo uses it; null if it couldn't be loaded. */
@@ -156,6 +215,8 @@ internal class LogoLayer(private val resources: Resources, @DrawableRes private 
 
     private var lastWidth = -1f
     private var lastHeight = -1f
+    /** Its copy is being made in the background ([LogoArt.sizedIfReady]): laid out again once it is ready. */
+    private var pending = false
     private var tint = 0
 
     fun setTint(color: Int) {
@@ -164,25 +225,36 @@ internal class LogoLayer(private val resources: Resources, @DrawableRes private 
         paint.colorFilter = PorterDuffColorFilter(color, PorterDuff.Mode.SRC_IN)
     }
 
-    /** Starts making the copy for a [width] x [height] drawing ahead of its first frame. */
-    fun prepare(width: Int, height: Int) {
-        val art = LogoArt.artSize(resources, id) ?: return
-        val f = LogoArt.fit(art[0], art[1], width.toFloat(), height.toFloat())
-        LogoArt.prepare(resources, id, f.pixelWidth, f.pixelHeight)
-    }
-
-    /** Fits the layer into [width] x [height]; false if there is nothing to draw. */
-    fun layout(width: Float, height: Float): Boolean {
+    /**
+     * Fits the layer into [width] x [height]; false if there is nothing to draw (yet). Without
+     * [onReady] the copy is decoded on the spot if it must be. With it, never: the copy is made in
+     * the background and [onReady] runs on the main thread once it is ready, for the caller to
+     * lay out (or draw) again.
+     */
+    fun layout(width: Float, height: Float, onReady: (() -> Unit)? = null): Boolean {
         if (width <= 0f || height <= 0f) return false
-        if (width == lastWidth && height == lastHeight) return content != null
-        lastWidth = width
-        lastHeight = height
-        // The previous copy may still be in a recorded frame: leave it to the GC, never recycle it.
-        content = null
+        val sameSize = width == lastWidth && height == lastHeight
+        if (sameSize && !pending) return content != null
         val art = LogoArt.artSize(resources, id) ?: return false
         val f = LogoArt.fit(art[0], art[1], width, height)
+        // Still on its way: [onReady] comes when it is there.
+        if (sameSize && LogoArt.isPreparing(id, f.pixelWidth, f.pixelHeight)) return false
+        lastWidth = width
+        lastHeight = height
+        pending = false
+        // The previous copy may still be in a recorded frame: leave it to the GC, never recycle it.
+        content = null
         fit = f
-        val sized = LogoArt.sized(resources, id, f.pixelWidth, f.pixelHeight) ?: return false
+        val sized = if (onReady == null) {
+            LogoArt.sized(resources, id, f.pixelWidth, f.pixelHeight)
+        } else {
+            LogoArt.sizedIfReady(resources, id, f.pixelWidth, f.pixelHeight, onReady)
+        }
+        if (sized == null) {
+            // Being made (asked again once ready), or failed (left out, not asked again).
+            pending = onReady != null && LogoArt.isPreparing(id, f.pixelWidth, f.pixelHeight)
+            return false
+        }
         content = BitmapShader(sized, Shader.TileMode.DECAL, Shader.TileMode.DECAL).apply {
             setLocalMatrix(Matrix().apply {
                 setScale(f.width / sized.width, f.height / sized.height)
@@ -192,9 +264,20 @@ internal class LogoLayer(private val resources: Resources, @DrawableRes private 
         return true
     }
 
-    /** Draws the layer, still, fitted into [width] x [height]. */
-    fun draw(canvas: Canvas, width: Float, height: Float) {
-        if (!layout(width, height)) return
+    /**
+     * Lets the copy go, by reference only: a recorded frame may still draw it, so it is never
+     * recycled. The next layout finds it again, or makes it.
+     */
+    fun release() {
+        content = null
+        pending = false
+        lastWidth = -1f
+        lastHeight = -1f
+    }
+
+    /** Draws the layer, still, fitted into [width] x [height]; [onReady]: see [layout]. */
+    fun draw(canvas: Canvas, width: Float, height: Float, onReady: (() -> Unit)? = null) {
+        if (!layout(width, height, onReady)) return
         paint.shader = content
         canvas.drawRect(fit.left, fit.top, fit.left + fit.width, fit.top + fit.height, paint)
     }

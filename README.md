@@ -13,7 +13,7 @@ An Android app lock modelled on Android 17's own App Lock: the apps you choose o
 
 1. **Covering.** BioKey watches which app is opening, with one of two engines (see [Two engines](#two-engines)). With the accessibility engine, when a locked app is about to open (a tap on its icon, a Recents card or a search result) or appears (any other way, including split screen and picture-in-picture), BioKey covers it at once with an opaque, screenshot-proof overlay.
 2. **Authenticating.** A lightweight lock screen takes over from the cover and shows the system `BiometricPrompt`: Class 3 face unlock first, fingerprint at the same time, then your PIN, pattern or password. Weak (Class 2) face unlock is never accepted.
-3. **Sessions.** An unlocked app stays unlocked for as long as it is on screen, whatever happens inside it (refreshes, dialogs, sign-in sheets, keyboards, chat heads, assistants). It counts as left only once its windows have gone. Then it locks again after its re-lock delay: immediately, after 30 s, 1, 5 or 15 min, or when the screen turns off. Going straight to a helper app (authenticator, email, the photo picker or a gallery, a file picker, the camera, Settings), a screen the app opened (permission request, share sheet), or an interruption (a call, an alarm) and back within 5 minutes doesn't end the session, even through several of them in a row; BioKey asks Android which apps on the phone pick or capture photos and files. Locking the phone always locks everything: the screen turning off, a screensaver starting, or Lockdown from the power menu.
+3. **Sessions.** An unlocked app stays unlocked for as long as it is on screen, whatever happens inside it (refreshes, dialogs, sign-in sheets, keyboards, chat heads, assistants). It counts as left only once its windows have gone. Then it locks again after its re-lock delay: immediately, after 30 s, 1, 5 or 15 min, or when the screen turns off. Going straight to a helper app (authenticator, email, the photo picker or a gallery, a file picker, the camera, Settings, a Play Store purchase, review or update page), a screen the app opened (permission request, share sheet), or an interruption (a call, an alarm) and back within 5 minutes doesn't end the session, even through several of them in a row; BioKey asks Android which apps on the phone pick or capture photos and files. Locking the phone always locks everything: the screen turning off, a screensaver starting, or Lockdown from the power menu.
 
 ## Features
 
@@ -21,7 +21,7 @@ An Android app lock modelled on Android 17's own App Lock: the apps you choose o
 |---|---|
 | **Profiles** | Group apps (Finance, Social, Work, or your own) with their own re-lock delay and their own on/off switch. An app is locked when its own switch is on and its profile is on; switching either off never takes it out of the profile. Each profile is edited from its own page. An app lives in at most one profile. Optional auto-sort puts recognised apps into the built-in profiles. |
 | **Notification shield** | Optional. A locked app's notifications are snoozed and replaced with "N hidden notifications" until you unlock it; tapping the stand-in unlocks and opens the original. Tapped on the phone's lock screen, a stand-in asks you to unlock the phone first. Calls, alarms, media and navigation always show. |
-| **BioKey locks itself** | BioKey's own screens need authentication and lock again after 3 minutes of inactivity. |
+| **BioKey locks itself** | BioKey's own screens need authentication, and lock again as soon as you leave them (except for the system settings pages and the backup file picker BioKey opens itself) or after 3 minutes of inactivity. |
 | **Self-protection** | Optional (off by default), accessibility engine only. BioKey's App info page (force stop, uninstall, clear storage), its accessibility switch, notification access and the uninstall dialog require authentication. Pages you open from inside BioKey are pre-authorised. |
 | **Protection alert** | A notification fires if protection stops (the accessibility service is switched off, or compatibility mode loses a permission or can't start). |
 | **Pause** | Pause for 15 minutes, 1 hour, or until turned back on, from the app or the Quick Settings tile (behind authentication). |
@@ -34,7 +34,7 @@ An Android app lock modelled on Android 17's own App Lock: the apps you choose o
 |---|---|---|
 | **Used when** | The accessibility service is on | Accessibility is unavailable, e.g. Android 17's Advanced Protection, which reserves accessibility for genuine accessibility tools |
 | **Sees** | Which app is on screen, tapped app names, BioKey's own Settings pages | Which app was just opened (usage access) |
-| **Covers locked apps** | From the tap, before the app has a window | As the app opens (~0.15 s), with an overlay |
+| **Covers locked apps** | From the tap, before the app has a window | As the app opens, with an overlay: it checks every 0.15 s, so a cold launch is covered as it opens, while a warm one can show for about half a second first (see [Limits](#limits)) |
 | **Self-protection** | Yes (optional) | No |
 | **Extra** | | A low-priority notification while running (required by Android) |
 
@@ -66,7 +66,7 @@ Android 17 QPR2 (API 37.2) adds a native App Lock (`PackageManager.getEnableAppL
 An app lock running as a regular app can't defend against everything:
 
 - **Root, ADB, or a modified OS** can bypass any app lock.
-- **Compatibility mode** (used under Advanced Protection) covers a locked app a little later than the accessibility engine (no tap prediction; about 0.15 s) and can't provide self-protection. It shows a low-priority notification, which Android requires for this kind of background work.
+- **Compatibility mode** (used under Advanced Protection) covers a locked app a little later than the accessibility engine (no tap prediction; it checks every 0.15 s) and can't provide self-protection. It shows a low-priority notification, which Android requires for this kind of background work.
 - **Compatibility mode needs both its permissions.** Turning off usage access or display over other apps stops it: BioKey ends every session and alerts you, but the app on screen at that moment can't be covered.
 - **Safe mode** turns off every downloaded app, BioKey included, until you restart normally: preinstalled locked apps (Photos, Gmail or Chrome, for example) open without a check, and no alert can be shown.
 - **Recents previews** of a locked app can't be blanked; only the system App Lock can do that.
@@ -76,7 +76,7 @@ An app lock running as a regular app can't defend against everything:
 - **Apps that hide other apps' overlays** (some banking and payment apps): in compatibility mode Android hides BioKey's cover over them, so their screen can show for a moment on each launch until the lock screen appears; the lock itself still applies.
 - **Launches without a tap** (links from other apps, the quick-switch gesture) are covered when the app's window appears, which can be a frame later than a tap-started launch.
 - **Apps that hide their windows from accessibility services** (Android 14 and later; many banking apps do): the accessibility engine covers them when they're opened by a tap on their icon or Recents card, or when a window of theirs it has already seen comes back. Opened another way (a link, a notification), they can open uncovered.
-- **Picture-in-picture**: a locked app's picture-in-picture window is covered by a patch of its own. The window can show for a moment right after the phone is unlocked or while it's being moved, and an app that won't leave picture-in-picture shows dimmed under the unlock prompt.
+- **Picture-in-picture**: with the accessibility engine, a locked app's picture-in-picture window is covered by a patch of its own. The window can show for a moment right after the phone is unlocked or while it's being moved, and an app that won't leave picture-in-picture shows dimmed under the unlock prompt. Compatibility mode can't see where that window is, or close it: a locked app left in picture-in-picture when the phone locks (or when every session ends) is covered about a second after the phone is unlocked, by BioKey opening it full screen where it can, and otherwise by a cover over the whole screen, which stays until you unlock the app.
 - **Split screen, desktop windows and other displays** (DeX, an external screen): a locked app's lock screen takes the whole display (desktop windows, Android 14 and later) or sends you Home, so the app is never usable beside the prompt. Windows of locked apps beside the lock screen, or on another display, are covered by patches.
 - **Work profile and other profiles**: compatibility mode can't see apps in a work profile or another profile, including the work copy of an app installed in both, because Android only shares app-launch information within one profile. They stay locked with the accessibility engine, and the notification shield still hides their notifications. While you're in a work app, compatibility mode counts you as still in the last personal app; locking the phone still locks everything.
 - **Notifications** of a locked app can flash as a heads-up or on a watch before BioKey hides them. With Notification history on, Settings > Notifications > Notification history lists the snoozed (hidden) notifications.
@@ -89,7 +89,7 @@ An app lock running as a regular app can't defend against everything:
 
 | Permission | Why |
 |---|---|
-| Accessibility service | Sees which app is on screen, reads the name of the app you tap on the home screen, in search or in Recents, and, with self-protection on, recognises BioKey's own settings pages. Doesn't read what you type. |
+| Accessibility service | Sees which app is on screen; reads the label of what you tap on the home screen, in its search or in Recents, and, while Recents is open and a locked app is unlocked, the app names on its cards; with self-protection on, recognises BioKey's own settings pages. Doesn't read what you type. |
 | `USE_BIOMETRIC` | Face and fingerprint authentication. |
 | `HIDE_OVERLAY_WINDOWS` | Hides other apps' overlays while BioKey's screens are showing. |
 | `POST_NOTIFICATIONS` | The protection alert and hidden-notification stand-ins. |
@@ -98,7 +98,7 @@ An app lock running as a regular app can't defend against everything:
 | Usage access (`PACKAGE_USAGE_STATS`), display over other apps (`SYSTEM_ALERT_WINDOW`), `FOREGROUND_SERVICE_SPECIAL_USE` | Compatibility mode only: which app was opened, covering it, and running while the screen is on. |
 | Notification access (optional) | The notification shield. |
 
-Package visibility is limited to launchable apps, launchers, keyboards and a few system settings pages (`<queries>`); BioKey doesn't request `QUERY_ALL_PACKAGES`.
+Package visibility is limited to launchable apps, launchers, keyboards, apps that pick or capture photos and files (galleries, file managers, cameras), Google Play services and Credential Manager, the Settings app and the settings pages BioKey opens (`<queries>`); BioKey doesn't request `QUERY_ALL_PACKAGES`.
 
 ## Architecture
 

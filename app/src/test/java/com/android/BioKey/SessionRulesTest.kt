@@ -1,8 +1,12 @@
 package com.android.BioKey
 
+import android.content.Context
 import android.os.SystemClock
+import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.LockStateTracker.ARRIVAL_GRACE_MS
+import com.android.BioKey.feature.lock.ForegroundRules
 import com.android.BioKey.feature.lock.SessionRules
 import com.android.BioKey.feature.lock.SessionRules.Companion.EXIT_SETTLE_MS
 import com.android.BioKey.feature.lock.SessionRules.Companion.LEAVE_CONFIRM_MS
@@ -29,6 +33,7 @@ import org.robolectric.shadows.ShadowSystemClock
 @Config(sdk = [34])
 class SessionRulesTest {
 
+    private val context: Context = ApplicationProvider.getApplicationContext()
     private val chat = "com.example.chat"
     private val bank = "com.example.bank"
     private val launcher = "com.example.launcher"
@@ -208,6 +213,54 @@ class SessionRulesTest {
         assertNull(screen(bank).cover)
         advance(LockStateTracker.ABANDONED_LOCK_COOLDOWN_MS + 20)
         assertEquals(bank, screen(bank).cover)
+    }
+
+    @Test
+    fun unlockingOntoAHelperTheAppHadOpenCountsAsArriving() {
+        // The bank opened a sign-in or a call over itself as it started: its lock screen closes onto that.
+        LockStateTracker.onAppUnlocked(bank)
+        assertTrue(rules.noteUnlockedOnto(bank, dialer))
+        screen(dialer)
+        advance(ARRIVAL_GRACE_MS + 1_000)
+        // Back in the bank (the engine asks about its session first): no second unlock.
+        assertTrue(unlocked(bank))
+        assertNull(screen(bank).cover)
+        assertTrue(unlocked(bank))
+    }
+
+    @Test
+    fun unlockingOntoAnythingElseStillNeedsTheAppToArrive() {
+        LockStateTracker.onAppUnlocked(bank)
+        assertFalse(rules.noteUnlockedOnto(bank, game))
+        assertFalse(rules.noteUnlockedOnto(bank, launcher))
+        assertFalse(rules.noteUnlockedOnto(bank, bank))
+        screen(game)
+        advance(ARRIVAL_GRACE_MS + 1_000)
+        assertFalse(unlocked(bank))
+        assertEquals(bank, screen(bank).cover)
+    }
+
+    @Test
+    fun aPlaySheetInTheMiddleKeepsTheSession() {
+        // With the real helper list: a purchase, review or update sheet hides the app it opened over.
+        val play = "com.android.vending"
+        val real = SessionRules(object : SessionRules.Env {
+            override fun isLocked(pkg: String) = pkg in locked
+            override fun timeoutOf(pkg: String) = LockTimeoutMode.IMMEDIATE
+            override fun isLauncher(pkg: String) = pkg == launcher
+            override fun isHopTarget(pkg: String) = ForegroundRules.isHopTarget(context, pkg, null)
+            override fun mayCover(pkg: String) = pkg in locked && !LockStateTracker.isAppUnlocked(pkg, LockTimeoutMode.IMMEDIATE)
+        })
+        fun show(vararg pkgs: String) = real.reconcile(SessionRules.Screen(pkgs.toCollection(LinkedHashSet()), now = SystemClock.elapsedRealtime()))
+        LockStateTracker.onAppUnlocked(bank)
+        real.noteOnScreen(bank)
+        show(bank)
+        show(play)
+        advance(LEAVE_CONFIRM_MS + 100)
+        show(play)
+        assertTrue(unlocked(bank))
+        assertNull(show(bank).cover)
+        assertTrue(unlocked(bank))
     }
 
     @Test

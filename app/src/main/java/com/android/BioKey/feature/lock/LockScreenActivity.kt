@@ -89,14 +89,10 @@ class LockScreenActivity : ComponentActivity() {
                 ?: intents?.values?.maxByOrNull { it.postTime }
             val pending = target?.pendingIntent ?: return null
             val creator = pending.creatorPackage ?: return null
-            val ownLink = creator == realPackageOf(pkg) || creator == pkg ||
+            val ownLink = creator == PasswordManager.launchPackage(pkg) || creator == pkg ||
                 (pkg == PasswordManager.VIRTUAL_PACKAGE && creator == PasswordManager.GMS)
             return pending.takeIf { ownLink && it.isActivity }
         }
-
-        /** The package that opens [pkg]: Google Password Manager's virtual one is Credential Manager. */
-        private fun realPackageOf(pkg: String) =
-            if (pkg == PasswordManager.VIRTUAL_PACKAGE) PasswordManager.CREDENTIAL_MANAGER else pkg
     }
 
     private val engine get() = SecurityEngine.INSTANCE
@@ -327,7 +323,9 @@ class LockScreenActivity : ComponentActivity() {
     /**
      * Our cover is on screen. If it has the whole display, the shield above it can go and the
      * prompt come up. In split screen or a freeform or desktop window, the locked app may be on
-     * screen beside it: the shield stays while the cover asks for the whole display.
+     * screen beside it: the shield stays while the cover asks for the whole display. A shield held
+     * over a window that floats above this screen ([InstantShieldOverlay.holdWhile]: picture-in-
+     * picture, in compatibility mode) refuses to go: the prompt comes up over it.
      */
     private fun onCoverShown() {
         if (isFinishing) return
@@ -416,6 +414,8 @@ class LockScreenActivity : ComponentActivity() {
         val generation = LockStateTracker.lockGeneration()
         cover.setStatus(null, permanentLockout = false)
         cover.setActionsVisible(false)
+        // A cover held over this screen (picture-in-picture in compatibility mode) follows suit.
+        InstantShieldOverlay.onPrompt(pkg, showing = true)
         engine.showBiometricPrompt(
             activity = this,
             appName = if (selfProtection) getString(R.string.brand_name) else AppInfoCache.quickLabel(this, pkg),
@@ -432,6 +432,7 @@ class LockScreenActivity : ComponentActivity() {
                 }
                 cover.setStatus(text, isPermanentLockout)
                 cover.setActionsVisible(true)
+                InstantShieldOverlay.onPrompt(pkg, showing = false)
             }
         )
     }
@@ -461,6 +462,7 @@ class LockScreenActivity : ComponentActivity() {
     private fun unlockVoided() {
         cover.setStatus(null, permanentLockout = false)
         cover.setActionsVisible(true)
+        InstantShieldOverlay.onPrompt(lockedPackage, showing = false)
     }
 
     private fun lockDeviceOrHome() {
@@ -470,7 +472,7 @@ class LockScreenActivity : ComponentActivity() {
     }
 
     private fun launchApp(pkg: String) {
-        packageManager.getLaunchIntentForPackage(realPackageOf(pkg))?.let { launch ->
+        packageManager.getLaunchIntentForPackage(PasswordManager.launchPackage(pkg))?.let { launch ->
             runCatching { startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         }
     }

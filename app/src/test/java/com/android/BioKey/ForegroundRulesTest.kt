@@ -12,6 +12,7 @@ import com.android.BioKey.feature.lock.ForegroundRules
 import java.io.File
 import java.time.Duration
 import javax.xml.parsers.DocumentBuilderFactory
+import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -35,7 +36,9 @@ class ForegroundRulesTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
 
+    // The lists are cached process-wide: none read here may be left to the next test, of this class or another.
     @Before
+    @After
     fun reset() = ForegroundRules.resetSystemLists()
 
     private class Query(val action: String, val categories: Set<String>, val mimeTypes: Set<String>)
@@ -84,6 +87,14 @@ class ForegroundRulesTest {
     fun aCustomTabIsAHelperButTheBrowserIsNot() {
         assertFalse(ForegroundRules.isHopHelper(context, "com.android.chrome", "org.chromium.chrome.browser.ChromeTabbedActivity"))
         assertTrue(ForegroundRules.isHopHelper(context, "com.android.chrome", "org.chromium.chrome.browser.customtabs.CustomTabActivity"))
+    }
+
+    @Test
+    fun aPlaySheetOrListingIsAHelperButNotAFloatingWindow() {
+        // Buying, rating or updating from inside an app keeps its session, in both engines.
+        assertTrue(ForegroundRules.isHopTarget(context, "com.android.vending", null))
+        // Still an app: a locked Play Store is covered like any other.
+        assertFalse("com.android.vending" in ForegroundRules.SYSTEM_OVERLAYS)
     }
 
     @Test

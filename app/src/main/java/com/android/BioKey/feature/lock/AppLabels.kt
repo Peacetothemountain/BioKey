@@ -105,7 +105,13 @@ internal class AppLabels(context: Context) {
         }.onFailure { building.set(false) }
     }
 
-    private fun realPackage(pkg: String) = if (pkg in PasswordManager.ALIASES) PasswordManager.CREDENTIAL_MANAGER else pkg
+    /**
+     * The package whose names and screen titles stand for [pkg]: Credential Manager for Google
+     * Password Manager, and never Play services, even where Credential Manager isn't installed.
+     * Play services' label and the titles of its many screens would make its sign-in and account
+     * sheets read as the password manager, and cover them inside unlocked apps.
+     */
+    private fun realPackage(pkg: String) = PasswordManager.launchPackage(pkg)
 
     private fun build(stamp: Stamp): Snapshot {
         val names = HashMap<String, MutableSet<String>>()

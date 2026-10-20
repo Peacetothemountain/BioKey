@@ -33,7 +33,7 @@ class SecurityEngine private constructor() {
 
         /** What every lock tells the user after [ERROR_LOCKOUT_PERMANENT]. */
         const val LOCKOUT_PERMANENT_MESSAGE =
-            "Too many attempts. Lock your phone, then unlock it with your PIN, pattern or password to use biometrics again."
+            "Too many attempts. Lock your phone with the power button, then unlock it with your PIN, pattern or password to use biometrics again."
 
         fun isUserCancel(code: Int) = code == ERROR_USER_CANCELED || code == ERROR_CANCELED
     }
@@ -45,6 +45,9 @@ class SecurityEngine private constructor() {
     fun isAuthenticating(): Boolean = active != null
 
     fun isAuthenticatingFor(packageName: String): Boolean = active?.packageName == packageName
+
+    /** The display of the screen showing the running prompt (a lock screen, BioKey), if one is and it is known. */
+    fun promptDisplayId(): Int? = runCatching { active?.host?.get()?.display?.displayId }.getOrNull()
 
     /** Cancels the running prompt (only if it belongs to [forPackage], when given). */
     fun resetAuthenticatingState(forPackage: String? = null) {

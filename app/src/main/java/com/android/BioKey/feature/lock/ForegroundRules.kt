@@ -90,8 +90,14 @@ object ForegroundRules {
         // switches), the assistant and Circle to Search, Google Wallet.
         "com.android.settings",
         "com.google.android.googlequicksearchbox",
-        "com.google.android.apps.walletnfcrel"
+        "com.google.android.apps.walletnfcrel",
+        // Play's purchase, review and update sheets, which open over the app that asked for them
+        // (in its task), and a Play listing the app sends the user to ("Rate us", "Update").
+        "com.android.vending"
     )
+
+    /** The system file picker: the one trip BioKey's own session survives ([com.android.BioKey.core.security.LockStateTracker.beginOwnPicker]). */
+    val DOCUMENTS_UI = setOf("com.android.documentsui", "com.google.android.documentsui")
 
     /** Windows that float over apps without meaning the user switched apps. Exact names only. */
     val SYSTEM_OVERLAYS = setOf(

@@ -20,8 +20,9 @@ import kotlinx.coroutines.launch
  * Sessions follow the Android App Lock model: once you unlock an app it stays unlocked for as long
  * as it is on screen, no matter what happens inside it (refreshes, dialogs, sign-in sheets,
  * keyboards, chat heads, assistant overlays). A session only starts ageing once the app has
- * actually left the screen, which [com.android.BioKey.feature.lock.BioKeyAccessibilityService]
- * decides from the window list rather than from individual window events.
+ * actually left the screen ([onAppLeft]), which each engine decides: the accessibility engine
+ * from the window list rather than from individual window events, compatibility mode once the
+ * app's activities have stopped.
  *
  * Nothing here is persisted: every unlock lives only in RAM and is wiped on screen-off, process
  * death, or lock-all, so a reboot or a killed process always fails closed. All times use
@@ -49,8 +50,11 @@ object LockStateTracker {
 
     /**
      * A new session must reach the screen within this long. One whose app never appears (its
-     * notification opened something else, it crashed, Home was pressed first) ends instead of
-     * waiting, unaged, for whoever opens the app next.
+     * notification opened another app, it crashed, Home was pressed first) ends instead of
+     * waiting, unaged, for whoever opens the app next. A session whose lock screen closed onto a
+     * helper the app had open over itself (a sign-in screen, a custom tab) has arrived, and is
+     * hopping there, in both engines: it then ages as a hop does ([HOP_MAX_MS], ended by going
+     * anywhere else), or, re-locking "when the screen turns off", only ends with the screen.
      */
     const val ARRIVAL_GRACE_MS = 15_000L
 
@@ -63,8 +67,19 @@ object LockStateTracker {
     /** How long a successful self-protection challenge lets the user stay in BioKey's settings pages. */
     private const val SELF_PROTECTION_LEASE_MS = 120_000L
 
-    /** BioKey's own session ends after this long without interaction, in BioKey or away from it. */
+    /**
+     * BioKey's own session ends after this long without interaction, in BioKey or away from it.
+     * Leaving BioKey ends it at once, except for the trips BioKey starts itself (a system settings
+     * page, the backup file picker), which this limits too.
+     */
     const val OWN_APP_IDLE_MS = 3 * 60_000L
+
+    /**
+     * The same lock-all reason within this long, with nothing unlocked in between, is logged
+     * once: the screen going off reaches both the process-wide receiver and the accessibility
+     * engine's own.
+     */
+    private const val LOCK_ALL_LOG_DEDUPE_MS = 2_000L
 
     /**
      * One unlocked app. [awaySince] is 0 while the app is on screen. [hopTarget] is set while the
@@ -93,6 +108,9 @@ object LockStateTracker {
 
     /** Bumped by every [lockAll], so an unlock that raced a device lock can be told apart. */
     @Volatile private var generation = 0
+
+    /** The last lock-all reason logged, and when (see [LOCK_ALL_LOG_DEDUPE_MS]). */
+    @Volatile private var lastLockAllLogged: Pair<String, Long>? = null
 
     private val lockAllListeners = CopyOnWriteArraySet<() -> Unit>()
     private val appUnlockListeners = CopyOnWriteArraySet<(String) -> Unit>()
@@ -179,6 +197,8 @@ object LockStateTracker {
         }
         Log.i(TAG, "Session started for $packageName")
         DiagnosticLog.log("Unlocked $packageName")
+        // A lock-all after this one ends something new: it is logged, whatever came just before.
+        lastLockAllLogged = null
         appUnlockListeners.forEach { runCatching { it(packageName) } }
         return true
     }
@@ -333,8 +353,21 @@ object LockStateTracker {
         clearSelfProtection()
         if (includeOwnApp) lockOwnApp()
         Log.i(TAG, "All sessions wiped")
-        if (reason != null) DiagnosticLog.log("All sessions ended ($reason)")
+        if (reason != null) logLockAll(reason)
         lockAllListeners.forEach { runCatching(it) }
+    }
+
+    /**
+     * One diagnostic line per lock-all, not one per receiver that reported it: a second "screen
+     * off" moments after the first says nothing new, and would halve how much history the log
+     * keeps. Every lock-all still ends every session and tells the listeners.
+     */
+    private fun logLockAll(reason: String) {
+        val t = now()
+        val last = lastLockAllLogged
+        if (last != null && last.first == reason && t - last.second in 0 until LOCK_ALL_LOG_DEDUPE_MS) return
+        lastLockAllLogged = reason to t
+        DiagnosticLog.log("All sessions ended ($reason)")
     }
 
     fun onScreenTurnedOff() = lockAll(reason = "screen off")
@@ -435,6 +468,7 @@ object LockStateTracker {
     // ---------------------------------------------------------------------------------------
 
     fun onOwnAppUnlocked() {
+        lastLockAllLogged = null
         val t = now()
         ownUnlockedAt = t
         ownLastActiveAt = t
@@ -486,6 +520,7 @@ object LockStateTracker {
         if (started == 0L) return false
         if (now() - started < SELF_PROTECTION_LEASE_MS && isOwnAppUnlocked()) return true
         externalNavigationAt = 0L
+        endTripAway()
         return false
     }
 
@@ -506,7 +541,20 @@ object LockStateTracker {
         if (started == 0L) return false
         if (now() - started < OWN_PICKER_LEASE_MS && isOwnAppUnlocked()) return true
         ownPickerAt = 0L
+        endTripAway()
         return false
+    }
+
+    /**
+     * A trip's lease ran out while BioKey was away: the session it kept ends with it, rather than
+     * carrying on until [OWN_APP_IDLE_MS] for whoever opens BioKey next. Back in BioKey, coming
+     * back already ended the trip ([onOwnAppResumed]).
+     */
+    private fun endTripAway() {
+        if (!ownInForeground && ownUnlockedAt != 0L) {
+            Log.i(TAG, "BioKey's trip away ran out; session ended")
+            lockOwnApp()
+        }
     }
 
     fun lockOwnApp() {

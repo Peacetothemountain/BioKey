@@ -10,7 +10,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.security.SecurityVault
-import com.android.BioKey.feature.lock.LockScreenUIExpressive
+import com.android.BioKey.feature.lock.BioKeyLockScreen
 import com.android.BioKey.feature.main.AppIconCache
 import com.android.BioKey.feature.main.AppItem
 import com.android.BioKey.feature.main.InstalledAppsCache
@@ -108,7 +108,7 @@ class DesignScreenshotTest {
         shoot("cover_land", cover(actions = true))
         RuntimeEnvironment.setQualifiers("w915dp-h412dp-land")
         shoot("lock_land") {
-            LockScreenUIExpressive(appName = "BioKey", appIcon = null, onUnlockClicked = {}, onCancelClicked = {}, isBioKeyLock = true)
+            BioKeyLockScreen(onUnlockClicked = {}, onCancelClicked = {})
         }
     }
 
@@ -134,17 +134,17 @@ class DesignScreenshotTest {
         }
     }
     @Test fun ownLock() = shoot("lock") {
-        LockScreenUIExpressive(appName = "BioKey", appIcon = null, onUnlockClicked = {}, onCancelClicked = {}, isBioKeyLock = true)
+        BioKeyLockScreen(onUnlockClicked = {}, onCancelClicked = {})
     }
     @Test fun setup() = shoot("setup") { SetupScreenExpressive(onSetupComplete = {}) }
 
     private fun cover(actions: Boolean) = @Composable {
-        val context = androidx.compose.ui.platform.LocalContext.current
+        val resources = androidx.compose.ui.platform.LocalResources.current
         androidx.compose.ui.viewinterop.AndroidView(
             factory = {
                 com.android.BioKey.feature.lock.LockCoverView(it).apply {
-                    val size = (88 * context.resources.displayMetrics.density).toInt()
-                    bind("Chase", android.graphics.drawable.BitmapDrawable(context.resources, icon("Chase", 0xFF1A73E8.toInt(), size)), isBioKey = false)
+                    val size = (88 * resources.displayMetrics.density).toInt()
+                    bind("Chase", android.graphics.drawable.BitmapDrawable(resources, icon("Chase", 0xFF1A73E8.toInt(), size)), isBioKey = false)
                     setActionsVisible(actions)
                 }
             },

@@ -2,6 +2,7 @@ package com.android.BioKey.core.diagnostics
 
 import android.content.Context
 import android.os.Build
+import androidx.core.content.edit
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -135,7 +136,7 @@ object DiagnosticLog {
 
     fun setEnabled(context: Context, on: Boolean) {
         enabled = on
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, on).apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putBoolean(KEY_ENABLED, on) }
         if (on) log("Diagnostic log turned on") else clear()
     }
 

@@ -500,6 +500,8 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                         disclosures.request(Disclosure.COMPATIBILITY) { IntentNavigationHelper.openNextCompatibilityPermission(context) }
                     ProtectionEngine.Mode.OFF ->
                         disclosures.request(Disclosure.ACCESSIBILITY) { IntentNavigationHelper.openAccessibilitySettings(context) }
+                    // Already agreed to and switched on: straight to the switch, to turn it off and on.
+                    ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> IntentNavigationHelper.openAccessibilitySettings(context)
                     else -> vault.resumeProtection()
                 }
             },
@@ -720,6 +722,13 @@ private fun protectionLook(
         mode == ProtectionEngine.Mode.OFF -> ProtectionLook(
             colors.errorContainer, colors.onErrorContainer, Icons.Default.Warning, "Off",
             "App lock is off", "Turn on BioKey in Accessibility settings to start locking apps.", "Turn on"
+        )
+        // Switched on, but not running (it crashed): saying "Protected" here would be the one lie that matters.
+        mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> ProtectionLook(
+            colors.errorContainer, colors.onErrorContainer, Icons.Default.Warning, "Not running",
+            "App lock isn't running",
+            "BioKey's accessibility service is switched on but isn't running, so locked apps open without a check. Turn it off and on again in Accessibility settings.",
+            "Open Accessibility settings"
         )
         !enabled -> ProtectionLook(
             colors.tertiaryContainer, colors.onTertiaryContainer, Icons.Default.PauseCircle, "Paused",

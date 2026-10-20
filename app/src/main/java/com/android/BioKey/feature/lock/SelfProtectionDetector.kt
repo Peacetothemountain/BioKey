@@ -52,6 +52,14 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
             "com.huawei.systemmanager"
         )
 
+        /**
+         * Settings, installers, permission and security apps: where BioKey's own pages are, and
+         * where a settings trip BioKey started may lead
+         * ([com.android.BioKey.core.security.LockStateTracker.beginExternalNavigation]).
+         * For both engines.
+         */
+        fun isHostPackage(pkg: String) = pkg in HOST_PACKAGES
+
         private const val SETTINGS_PKG = "com.android.settings"
         private const val PLAY_STORE_PKG = "com.android.vending"
 
@@ -238,7 +246,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
     private var recheck: ((Long) -> Unit)? = null
     private var unreadableRetries = 0
 
-    fun isHost(pkg: String) = pkg in HOST_PACKAGES
+    fun isHost(pkg: String) = isHostPackage(pkg)
 
     fun isCredentialConfirmationClass(className: String?): Boolean {
         if (className.isNullOrBlank()) return false

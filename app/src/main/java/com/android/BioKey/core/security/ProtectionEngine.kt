@@ -26,8 +26,14 @@ object ProtectionEngine {
     private const val TAG = "ProtectionEngine"
 
     enum class Mode {
-        /** The accessibility service is on. */
+        /** The accessibility service is on and running. */
         ACCESSIBILITY,
+        /**
+         * The accessibility service is switched on but isn't running: it crashed (Android stops
+         * restarting one that keeps crashing), or hasn't been connected yet. Nothing covers apps,
+         * and compatibility mode stays off while the switch is on.
+         */
+        ACCESSIBILITY_NOT_RUNNING,
         /**
          * Compatibility mode is running or starting (before setup is complete: its permissions are
          * granted, so it is the engine that will run).
@@ -73,19 +79,33 @@ object ProtectionEngine {
             !BioKeyAccessibilityService.isServiceEnabled(context) &&
             compatibilityPermissionsGranted(context)
 
-    fun mode(context: Context): Mode = when {
-        BioKeyAccessibilityService.isServiceEnabled(context) -> Mode.ACCESSIBILITY
-        compatibilityPermissionsGranted(context) && compatibilityUp(context) -> Mode.COMPATIBILITY
-        AdvancedProtection.blocksBioKey(context) -> Mode.NEEDS_COMPATIBILITY_SETUP
-        else -> Mode.OFF
+    fun mode(context: Context): Mode =
+        accessibilityMode(BioKeyAccessibilityService.isServiceEnabled(context), BioKeyAccessibilityService.isRunning) ?: when {
+            compatibilityPermissionsGranted(context) && compatibilityUp(context) -> Mode.COMPATIBILITY
+            AdvancedProtection.blocksBioKey(context) -> Mode.NEEDS_COMPATIBILITY_SETUP
+            else -> Mode.OFF
+        }
+
+    /**
+     * What the accessibility switch ([switchedOn]) and the service itself ([running]) say, or null
+     * while the switch is off (compatibility mode decides then). A switch left on doesn't mean
+     * protected: the tile, the home screen and Settings all answer from this.
+     */
+    internal fun accessibilityMode(switchedOn: Boolean, running: Boolean): Mode? = when {
+        running -> Mode.ACCESSIBILITY
+        switchedOn -> Mode.ACCESSIBILITY_NOT_RUNNING
+        else -> null
     }
 
     /** A failed start (refused in the background) must not read as protecting. */
     private fun compatibilityUp(context: Context): Boolean =
         !SecurityVault.getInstance(context).isSetupCompleted() || UsageWatchService.isRunning || UsageWatchService.startPending
 
+    /** Whether locked apps are being watched by an engine, in [mode]. */
+    fun isProtecting(mode: Mode): Boolean = mode == Mode.ACCESSIBILITY || mode == Mode.COMPATIBILITY
+
     /** Whether locked apps are currently being watched by either engine. */
-    fun isProtecting(context: Context): Boolean = mode(context).let { it == Mode.ACCESSIBILITY || it == Mode.COMPATIBILITY }
+    fun isProtecting(context: Context): Boolean = isProtecting(mode(context))
 
     /**
      * Starts compatibility mode when it's the engine that should run, stops it otherwise. Returns

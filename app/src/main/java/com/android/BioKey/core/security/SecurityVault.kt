@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.SystemClock
 import android.provider.Settings
 import androidx.annotation.VisibleForTesting
+import androidx.core.content.edit
 import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.data.AppClassifier
 import com.android.BioKey.core.data.LockTimeoutMode
@@ -634,22 +635,22 @@ class SecurityVault private constructor(private val context: Context) {
         val setup = _setupCompletedFlow.value
         val autoSort = _autoSortProfilesFlow.value
         return io.submit {
-            prefs.edit()
-                .putStringSet(KEY_LOCKED, selected)
-                .putInt(KEY_MODEL_VERSION, MODEL_VERSION)
-                .putStringSet(KEY_AUTO_SORT_EXCLUDED, excluded)
-                .putString(KEY_PROFILES_JSON, profilesJson)
-                .putBoolean(KEY_GLOBAL, global)
-                .putLong(KEY_PAUSED_UNTIL, pausedWall)
-                .putLong(KEY_PAUSED_UNTIL_ELAPSED, pausedElapsed)
-                .putInt(KEY_PAUSED_BOOT, bootCount)
-                .putLong(KEY_PAUSE_DURATION, pauseDuration)
-                .putString(KEY_TIMEOUT, timeout)
-                .putBoolean(KEY_NOTIFICATION_SHIELD, shield)
-                .putBoolean(KEY_SELF_PROTECTION, selfProtection)
-                .putBoolean(KEY_SETUP_COMPLETED, setup)
-                .putBoolean(KEY_AUTO_SORT, autoSort)
-                .commit()
+            prefs.edit(commit = true) {
+                putStringSet(KEY_LOCKED, selected)
+                putInt(KEY_MODEL_VERSION, MODEL_VERSION)
+                putStringSet(KEY_AUTO_SORT_EXCLUDED, excluded)
+                putString(KEY_PROFILES_JSON, profilesJson)
+                putBoolean(KEY_GLOBAL, global)
+                putLong(KEY_PAUSED_UNTIL, pausedWall)
+                putLong(KEY_PAUSED_UNTIL_ELAPSED, pausedElapsed)
+                putInt(KEY_PAUSED_BOOT, bootCount)
+                putLong(KEY_PAUSE_DURATION, pauseDuration)
+                putString(KEY_TIMEOUT, timeout)
+                putBoolean(KEY_NOTIFICATION_SHIELD, shield)
+                putBoolean(KEY_SELF_PROTECTION, selfProtection)
+                putBoolean(KEY_SETUP_COMPLETED, setup)
+                putBoolean(KEY_AUTO_SORT, autoSort)
+            }
         }
     }
 

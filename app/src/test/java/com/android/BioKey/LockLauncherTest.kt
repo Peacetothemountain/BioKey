@@ -1,6 +1,7 @@
 package com.android.BioKey
 
 import android.app.Application
+import android.view.Display
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.feature.lock.LockLauncher
 import com.android.BioKey.feature.lock.LockScreenActivity
@@ -30,8 +31,18 @@ class LockLauncherTest {
         assertEquals("com.example.bank", tapped.getStringExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE))
         assertTrue(tapped.getBooleanExtra(LockScreenActivity.EXTRA_REPROMPT, false))
 
-        // The app's PendingIntent is reused, with its extras replaced: the next start doesn't ask again.
+        // Each start has its own extras: the next one doesn't ask again.
         assertTrue(LockLauncher.launch(context, "com.example.bank", isSelfProtection = false))
         assertFalse(shadowOf(context).nextStartedActivity.getBooleanExtra(LockScreenActivity.EXTRA_REPROMPT, true))
+    }
+
+    @Test
+    fun aStartWithoutADisplayIsOnThePhonesOwnScreen() {
+        // After a start on another display, one that names none mustn't follow it there.
+        assertTrue(LockLauncher.launch(context, "com.example.bank", isSelfProtection = false, displayId = 2))
+        shadowOf(context).nextStartedActivityForResult
+        assertTrue(LockLauncher.launch(context, "com.example.bank", isSelfProtection = false))
+        val options = shadowOf(context).nextStartedActivityForResult.options
+        assertEquals(Display.DEFAULT_DISPLAY, options.getInt("android.activity.launchDisplayId", Display.INVALID_DISPLAY))
     }
 }

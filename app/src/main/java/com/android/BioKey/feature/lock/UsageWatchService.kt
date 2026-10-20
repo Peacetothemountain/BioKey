@@ -43,8 +43,10 @@ import com.android.BioKey.feature.main.MainActivity
  * locked app that shows up with an application overlay, and shows the same [LockScreenActivity]
  * and system prompt as the accessibility engine. Sessions follow the same rules via
  * [LockStateTracker] and [ForegroundRules]; an app has left once its activities have stopped, so
- * one beside another in split screen, or in picture-in-picture, is still in use. Polls, on its
- * own thread, only while the screen is on and no screensaver is up.
+ * one beside another in split screen, or in picture-in-picture, is still in use. A locked app
+ * showing without a session and without coming to the front (picture-in-picture once the phone
+ * is unlocked) is covered too, by the whole screen if need be ([coverShowingPaused]). Polls, on
+ * its own thread, only while the screen is on and no screensaver is up.
  *
  * Runs as a foreground service with a low-priority notification, which Android requires for
  * work like this. If usage access or display over other apps is withdrawn it stops, ends every
@@ -77,6 +79,11 @@ class UsageWatchService : Service() {
          * hasn't stopped by then (the one in front is see-through): it is covered.
          */
         private const val PAUSED_SETTLE_MS = 1_000L
+        /**
+         * How long a locked app found showing behind the one in front (in picture-in-picture, say)
+         * has to come to the front once opened, before its lock screen goes up under the cover.
+         */
+        private const val PIP_EXPAND_WAIT_MS = 1_000L
         /** Nothing new for this long: the app in front is what usage access last said. */
         private const val RECHECK_SETTLE_MS = 300L
         /** Play Store's review and update sheets float, see-through, over the app that asked for them. */
@@ -149,6 +156,18 @@ class UsageWatchService : Service() {
     private val sideVisible = HashMap<String, Boolean>()
     /** Locked apps without a session that opened and were paused at once behind another app, and since when. */
     private val pausedBehind = HashMap<String, Long>()
+    /**
+     * Activities ([UsageEvent.activity]) that are showing without having come to the front: they
+     * came back paused, from stopped or from nothing known, never resumed. That is a window in
+     * picture-in-picture once the phone is unlocked (it floats above every app and never
+     * resumes), or an app under a see-through one. Each with its app, and since when. Also the
+     * paused activities of apps beside the one in front whose sessions ended. See [coverShowingPaused].
+     */
+    private val pausedShowing = HashMap<String, Pair<String, Long>>()
+    /** The app and the activity of it the cover is held over ([coverShowingPaused], [isHeldOpen]). */
+    private var held: Pair<String, String>? = null
+    /** The app being brought out of picture-in-picture, until [PIP_EXPAND_WAIT_MS] has passed. */
+    private var expanding: String? = null
     /** The app in front lets the one below show: a floating window, or one that didn't stop it. */
     private var frontSeeThrough = false
     /** The app BioKey's lock screen was last brought up for. */
@@ -225,7 +244,12 @@ class UsageWatchService : Service() {
                 if (!activities.knows(fg) || activities.isVisible(fg)) handleForeground(fg, foregroundClass)
             }
             for (pkg in sideVisible.keys.toList()) {
-                if (!shield.isShowing && activities.isResumed(pkg)) recover(pkg, "on screen when every session ended")
+                if (activities.isResumed(pkg)) {
+                    if (!shield.isShowing) recover(pkg, "on screen when every session ended")
+                } else {
+                    // Paused beside it (picture-in-picture, say), which a lock screen can't cover.
+                    noteShowingPaused(pkg)
+                }
             }
         }
     }
@@ -234,7 +258,7 @@ class UsageWatchService : Service() {
         // Not covered again during the cooldown: once it ends, look again, in case the app is
         // still (or again) in front.
         handler.postDelayed({
-            if (isRunning && polling) recheck(keyguard.isDeviceLocked || keyguard.isKeyguardLocked)
+            if (isRunning && polling) recheck(lazy { keyguard.isDeviceLocked || keyguard.isKeyguardLocked })
         }, LockStateTracker.abandonCooldownRemainingMs(pkg) + 50L)
     }
 
@@ -288,7 +312,8 @@ class UsageWatchService : Service() {
             goHome = { goHome() },
             onTimeout = ::onShieldTimeout,
             keepCoverWhile = ::isExposed,
-            takeFocus = true
+            takeFocus = true,
+            holdWhile = ::isHeldOpen
         )
         AppInfoCache.preWarm(this, vault.getLockedPackages())
         AppInfoCache.follow(vault)
@@ -394,6 +419,9 @@ class UsageWatchService : Service() {
         activities.clear()
         sideVisible.clear()
         pausedBehind.clear()
+        pausedShowing.clear()
+        held = null
+        expanding = null
         frontSeeThrough = false
     }
 
@@ -401,12 +429,14 @@ class UsageWatchService : Service() {
     // Reading (worker thread)
     // -------------------------------------------------------------------------------------------
 
-    /** What one look at the screen found ([readScreen]). */
+    /**
+     * What one look at the screen found ([readScreen]). Whether the keyguard is up as well is
+     * asked only where a cover depends on it ([onBatch]): another binder call, needless on the
+     * many looks that find nothing to act on.
+     */
     private class Batch(
         val epoch: Int,
         val deviceLocked: Boolean,
-        /** The device is locked or the keyguard is up. */
-        val screenLocked: Boolean,
         /** What compatibility mode lacks, when this look checked and found something missing. */
         val missing: String?,
         /** Nothing to protect (paused, or no app locked): nothing was read. */
@@ -423,8 +453,8 @@ class UsageWatchService : Service() {
     /** One look at the screen: the device's lock state and the activity events since the last look. */
     private fun readScreen(): Batch {
         val current = epoch
+        // Every look: locking the phone must end every session.
         val deviceLocked = keyguard.isDeviceLocked
-        val screenLocked = deviceLocked || keyguard.isKeyguardLocked
         val missing = if (++pollsSincePermissionCheck < PERMISSION_CHECK_POLLS) null else {
             pollsSincePermissionCheck = 0
             ProtectionEngine.missingCompatibilityPermissions(this)
@@ -435,14 +465,14 @@ class UsageWatchService : Service() {
         if (!vault.globalLockEnabledFlow.value || vault.getLockedPackages().isEmpty()) {
             wasIdle = true
             queriedUntil = now
-            return Batch(current, deviceLocked, screenLocked, missing, idle = true)
+            return Batch(current, deviceLocked, missing, idle = true)
         }
         if (lookBackNext || wasIdle) {
             lookBackNext = false
             wasIdle = false
             val (from, events) = lookBack(now)
             queriedUntil = now
-            return Batch(current, deviceLocked, screenLocked, missing, fresh = true, from = from, events = events)
+            return Batch(current, deviceLocked, missing, fresh = true, from = from, events = events)
         }
         // The clock was changed, or went backwards (by hand, or corrected): nothing would look new any more.
         var rebasedFrom: Long? = null
@@ -454,7 +484,7 @@ class UsageWatchService : Service() {
         val from = queriedUntil - OVERLAP_MS
         val events = query(from, now)
         queriedUntil = now
-        return Batch(current, deviceLocked, screenLocked, missing, rebasedFrom = rebasedFrom, from = from, events = events)
+        return Batch(current, deviceLocked, missing, rebasedFrom = rebasedFrom, from = from, events = events)
     }
 
     /**
@@ -489,11 +519,13 @@ class UsageWatchService : Service() {
         } ?: return emptyList()
         val found = ArrayList<UsageEvent>()
         val event = UsageEvents.Event()
+        val locked = vault.getLockedPackages()
         while (events.hasNextEvent()) {
             events.getNextEvent(event)
             if (event.eventType !in ACTIVITY_EVENTS) continue
             val pkg = event.packageName ?: continue
-            found += UsageEvent(event.eventType, pkg, event.className, event.timeStamp)
+            val lockedOverlay = pkg in ForegroundRules.SYSTEM_OVERLAYS && pkg in locked
+            found += UsageEvent(event.eventType, pkg, event.className, event.timeStamp, lockedOverlay)
         }
         return found
     }
@@ -510,7 +542,11 @@ class UsageWatchService : Service() {
             return
         }
         if (batch.idle) {
-            if (!idle) forgetScreen()
+            if (!idle) {
+                forgetScreen()
+                // Nothing to protect (paused, or nothing locked): no cover either, held or not.
+                shield.hide()
+            }
             idle = true
             // Ends a timed pause that has run out (its own timer doesn't count deep sleep).
             vault.isProtectionActive()
@@ -529,8 +565,12 @@ class UsageWatchService : Service() {
         val resumed = LinkedHashSet<String>()
         var newest: UsageEvent? = null
         for (e in batch.events) {
+            val before = activities.lastTypeOf(e)
             val isNew = activities.apply(e)
-            if (isNew) lastChangeAt = SystemClock.elapsedRealtime()
+            if (isNew) {
+                lastChangeAt = SystemClock.elapsedRealtime()
+                notePaused(e, before, batch.fresh)
+            }
             if (e.type != UsageEvents.Event.ACTIVITY_RESUMED) continue
             if (isNew) e.app?.let(resumed::add)
             if (e.time > handledUntil && e.time >= (newest?.time ?: Long.MIN_VALUE)) newest = e
@@ -540,12 +580,45 @@ class UsageWatchService : Service() {
             frontSeeThrough = isFloating(newest)
         }
         activities.prune(batch.from)
+        // Whether the keyguard is up is asked only once something would be covered (a binder call).
+        val screenLocked = lazy(LazyThreadSafetyMode.NONE) { batch.deviceLocked || keyguard.isKeyguardLocked }
         // A look back from behind the keyguard is about before the phone was locked: nothing to cover.
-        if (batch.fresh && batch.screenLocked) return
+        if (batch.fresh && screenLocked.value) return
         newest?.let(::handleForeground)
         for (pkg in resumed) if (pkg != newest?.app) handleOtherResume(pkg)
-        reconcile(batch.screenLocked)
+        reconcile(screenLocked)
+        releaseHeld()
     }
+
+    /**
+     * Keeps [pausedShowing] up to date with [e], news for its activity, whose event before was
+     * [before] (null: none known). Paused straight from stopped, or from nothing seen, is showing
+     * without having come to the front; so is anything left paused in a [fresh] look back, where
+     * nothing older is known. Anything else about the activity ends that.
+     */
+    private fun notePaused(e: UsageEvent, before: Int?, fresh: Boolean) {
+        val app = e.app ?: return
+        val cameBackPaused = e.type == UsageEvents.Event.ACTIVITY_PAUSED &&
+            (fresh || before == null || before == UsageEvents.Event.ACTIVITY_STOPPED)
+        if (cameBackPaused) {
+            pausedShowing.putIfAbsent(e.activity, app to SystemClock.elapsedRealtime())
+        } else {
+            pausedShowing.remove(e.activity)
+        }
+    }
+
+    /**
+     * [pkg] is still showing beside the app in front, but only paused (picture-in-picture, say),
+     * and its session just ended: its paused activities are covered like any found showing so.
+     */
+    private fun noteShowingPaused(pkg: String) {
+        if (!lockedWithoutSession(pkg)) return
+        val now = SystemClock.elapsedRealtime()
+        for (activity in activities.pausedActivitiesOf(pkg)) pausedShowing.putIfAbsent(activity, pkg to now)
+    }
+
+    private fun lockedWithoutSession(pkg: String): Boolean =
+        pkg != packageName && vault.isAppLocked(pkg) && !LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))
 
     /** A window that floats over the app below: a system dialog or sheet, a sign-in sheet, a Play sheet. */
     private fun isFloating(event: UsageEvent) = event.app == null || event.pkg == PKG_PLAY_STORE
@@ -553,6 +626,7 @@ class UsageWatchService : Service() {
     private fun handleForeground(event: UsageEvent) = handleForeground(event.app, event.cls, isFloating(event))
 
     private fun handleForeground(pkg: String?, activityClass: String?, floating: Boolean = false) {
+        if (pkg != null && pkg != packageName) endOwnTrips(pkg)
         if (!vault.isProtectionActive()) {
             if (pkg != null) {
                 foreground = pkg
@@ -623,6 +697,16 @@ class UsageWatchService : Service() {
     }
 
     /**
+     * [pkg], another app, came to the front. BioKey's own session survives only the trips it
+     * starts itself, and only as far as they go: its backup file picker, or the settings pages it
+     * opened. Anything else ends them, and the session with them, as in the accessibility engine.
+     */
+    private fun endOwnTrips(pkg: String) {
+        if (LockStateTracker.isOwnPickerActive() && pkg !in ForegroundRules.DOCUMENTS_UI) LockStateTracker.lockOwnApp()
+        if (!SelfProtectionDetector.isHostPackage(pkg) && LockStateTracker.isExternalNavigationActive()) LockStateTracker.lockOwnApp()
+    }
+
+    /**
      * BioKey's lock screen just closed onto something ([pkg]) the app it unlocked had open over
      * itself: a dialog or sheet ([floating]), such as a permission request, or a helper, such as a
      * Play services sign-in screen. The app is right behind it, so its session has arrived (or it
@@ -660,9 +744,11 @@ class UsageWatchService : Service() {
 
     /**
      * After each look: apps beside the one in front that have now left, apps left showing under
-     * another, and a cover that went missing.
+     * another or found showing without coming to the front, and a cover that went missing.
+     * [screenLocked] (the phone locked, or the keyguard up) is only asked once something would be
+     * covered.
      */
-    private fun reconcile(screenLocked: Boolean) {
+    private fun reconcile(screenLocked: Lazy<Boolean>) {
         for ((pkg, mayHop) in sideVisible.toList()) {
             if (pkg == foreground) {
                 sideVisible -= pkg
@@ -681,7 +767,17 @@ class UsageWatchService : Service() {
             } else if (now - since >= PAUSED_SETTLE_MS) {
                 pausedBehind -= pkg
                 frontSeeThrough = true
-                if (!screenLocked) recover(pkg, "still showing under another app")
+                if (!screenLocked.value) recover(pkg, "still showing under another app")
+            }
+        }
+        for ((activity, entry) in pausedShowing.toList()) {
+            val (pkg, since) = entry
+            if (!activities.isPaused(activity) || !lockedWithoutSession(pkg)) {
+                pausedShowing -= activity // Resumed (and covered there), stopped, or unlocked.
+            } else if (now - since >= PAUSED_SETTLE_MS && mayCoverShowingPaused(pkg) && !screenLocked.value) {
+                // Kept until then: under the keyguard nothing shows, and the cover waits for its turn.
+                pausedShowing -= activity
+                coverShowingPaused(pkg, activity)
             }
         }
         recheck(screenLocked)
@@ -692,22 +788,105 @@ class UsageWatchService : Service() {
      * way out took its cover down, or it came back during the abandon cooldown. Covers it again,
      * once usage access has had [RECHECK_SETTLE_MS] to report anything newer in front.
      */
-    private fun recheck(screenLocked: Boolean) {
-        if (screenLocked || !polling || dreaming || shield.isShowing) return
+    private fun recheck(screenLocked: Lazy<Boolean>) {
+        if (!polling || dreaming || shield.isShowing) return
         if (SystemClock.elapsedRealtime() - lastChangeAt < RECHECK_SETTLE_MS) return
         val fg = foreground
-        if (fg != null && (!activities.knows(fg) || activities.isVisible(fg)) && recover(fg, "still in front, uncovered")) return
+        if (fg != null && (!activities.knows(fg) || activities.isVisible(fg)) && recover(fg, "still in front, uncovered", screenLocked)) return
         for (pkg in sideVisible.keys.toList()) {
-            if (activities.isResumed(pkg) && recover(pkg, "still on screen, uncovered")) return
+            if (activities.isResumed(pkg)) {
+                if (recover(pkg, "still on screen, uncovered", screenLocked)) return
+            } else {
+                // Its session ended while it was paused beside the app in front (in picture-in-picture, say).
+                noteShowingPaused(pkg)
+            }
         }
     }
 
-    /** Covers [pkg] if it is locked, has no session, and nothing is covering or asking for it yet. True if it did. */
-    private fun recover(pkg: String, why: String): Boolean {
+    /**
+     * Covers [pkg] if it is locked, has no session, nothing is covering or asking for it yet, and
+     * [screenLocked] (when given) says the phone is unlocked. True if it did.
+     */
+    private fun recover(pkg: String, why: String, screenLocked: Lazy<Boolean>? = null): Boolean {
         if (pkg == packageName || !vault.isAppLocked(pkg)) return false
         if (LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg)) || !mayCover(pkg)) return false
+        if (screenLocked?.value == true) return false
         lock(pkg, why)
         return true
+    }
+
+    /** Whether [pkg], found showing without being in front, may be covered now ([coverShowingPaused]). */
+    private fun mayCoverShowingPaused(pkg: String): Boolean {
+        if (LockStateTracker.isRecentlyAbandoned(pkg)) return false
+        // Its lock screen may already be up, under its picture-in-picture window: the cover goes over both.
+        if (LockScreenActivity.isLockScreenResumed && LockScreenActivity.activeLockedTarget == pkg) return held?.first != pkg
+        if (LockStateTracker.isRegularLockPending(pkg)) return false
+        return !shield.isShowing
+    }
+
+    /**
+     * [pkg] shows, without a session, without being in front: in picture-in-picture, which floats
+     * above every app, its lock screen included, or under a see-through app. The cover goes up over
+     * everything, then the app is opened: where that brings it out of picture-in-picture (it is its
+     * app's own task), it is in front and locked as usual. Where [activity] still floats after
+     * [PIP_EXPAND_WAIT_MS] (a call screen in a task of its own, say), its lock screen comes up
+     * under the cover, the prompt over both. Either way the cover stays while [activity] shows and
+     * the app has no session ([isHeldOpen]): compatibility mode can't see where that window is,
+     * nor close it, so until the owner authenticates it covers the whole screen (fail closed).
+     */
+    private fun coverShowingPaused(pkg: String, activity: String) {
+        DiagnosticLog.log("Covered $pkg (showing behind the app in front, as in picture-in-picture)")
+        held = pkg to activity
+        pausedBehind -= pkg
+        // A tap on the cover asks for the prompt again, as its lock screen may be up under it.
+        val shown = shield.show(pkg) { LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = true) }
+        if (!shown && !checkPermissions()) return
+        if (LockScreenActivity.isLockScreenResumed && LockScreenActivity.activeLockedTarget == pkg) {
+            // Its lock screen is up already, under the window, and won't ask the cover to go: it
+            // is held from now on (Unlock and Cancel on it whenever no prompt is up).
+            shield.hide()
+            return
+        }
+        LockStateTracker.setRegularLockPending(pkg)
+        expanding = pkg
+        LockLauncher.launchApp(this, PasswordManager.launchPackage(pkg))
+        handler.postDelayed({ onExpandWaitOver(pkg) }, PIP_EXPAND_WAIT_MS)
+    }
+
+    /** [pkg] had its time to come out of picture-in-picture ([coverShowingPaused]). */
+    private fun onExpandWaitOver(pkg: String) {
+        if (!isRunning || expanding != pkg) return
+        expanding = null
+        // In front now (and locked as usual), gone, or unlocked: nothing more to do.
+        if (!isHeldOpen(pkg)) return
+        if (LockScreenActivity.isLockScreenResumed && LockScreenActivity.activeLockedTarget == pkg) return
+        // Still floating: its lock screen goes up under the cover, which stays over both.
+        LockStateTracker.setRegularLockPending(pkg)
+        if (!LockLauncher.launch(this, pkg, isSelfProtection = false)) goHome()
+    }
+
+    /**
+     * The cover must stay up for [pkg]: its [held] activity still shows without being in front,
+     * and the app has no session. Asked by the cover before anything takes it down.
+     */
+    private fun isHeldOpen(pkg: String): Boolean {
+        val (app, activity) = held ?: return false
+        return app == pkg && isRunning && !permissionLost && vault.isProtectionActive() &&
+            activities.isPaused(activity) && lockedWithoutSession(pkg)
+    }
+
+    /**
+     * The app the cover was held over needs it no more: unlocked, gone, or in front (and covered
+     * there as usual). The cover goes too, unless that app is still exposed and its lock screen
+     * isn't up yet.
+     */
+    private fun releaseHeld() {
+        val pkg = held?.first ?: return
+        if (isHeldOpen(pkg)) return
+        held = null
+        if (!shield.isShowing || shield.targetPackage != pkg) return
+        val lockScreenUp = LockScreenActivity.isLockScreenResumed && LockScreenActivity.activeLockedTarget == pkg
+        if (lockScreenUp || !isExposed(pkg)) shield.hide()
     }
 
     /** Nothing is already covering or asking for [pkg], and it wasn't just walked away from. */
@@ -727,14 +906,21 @@ class UsageWatchService : Service() {
         if (target == pkg || !LockStateTracker.isRegularLockPending(target)) shield.hide()
     }
 
-    /** [pkg] is in front, beside it, or under something that lets it show. */
+    /** [pkg] is in front, beside it, under something that lets it show, or showing where only the cover hides it. */
     private fun isOnScreen(pkg: String): Boolean =
-        pkg == foreground || activities.isResumed(pkg) || (frontSeeThrough && activities.isVisible(pkg))
+        pkg == foreground || activities.isResumed(pkg) || (frontSeeThrough && activities.isVisible(pkg)) || isHeldOpen(pkg)
 
     private fun lock(pkg: String, why: String = "opened") {
         DiagnosticLog.log("Covered $pkg ($why)")
         LockStateTracker.setRegularLockPending(pkg)
         pausedBehind -= pkg
+        // The cover is held over another app's window (see isHeldOpen), and already hides this
+        // one: its lock screen comes up under it, its prompt over it, and the cover stays.
+        val heldFor = held?.first
+        if (heldFor != null && heldFor != pkg && shield.isShowing && shield.targetPackage == heldFor && isHeldOpen(heldFor)) {
+            if (!LockLauncher.launch(this, pkg, isSelfProtection = false)) goHome()
+            return
+        }
         // The overlay goes up first and hides the app. The lock screen may start from the
         // background because the user let BioKey display over other apps.
         if (!shield.show(pkg) { LockLauncher.launch(this, pkg, isSelfProtection = false) }) {
@@ -747,6 +933,8 @@ class UsageWatchService : Service() {
 
     private fun onShieldTimeout(target: String, attempt: Int): Boolean {
         if (!isExposed(target)) return false
+        // Still being brought out of picture-in-picture: its lock screen follows then (onExpandWaitOver).
+        if (target == expanding) return true
         if (attempt > 0) DiagnosticLog.log("Lock screen for $target not up yet; asking again ($attempt)")
         LockStateTracker.setRegularLockPending(target)
         return LockLauncher.launch(this, target, isSelfProtection = false)
@@ -815,10 +1003,14 @@ class UsageWatchService : Service() {
 /**
  * One activity event from usage access. [app] is what it means for locking: the package, Google
  * Password Manager's virtual one ([PasswordManager.resolve]), or null for a window that floats over
- * whichever app is below (a system dialog or sheet, a sign-in or passkey sheet).
+ * whichever app is below (a system dialog or sheet, a sign-in or passkey sheet). [lockedOverlay]:
+ * [pkg] floats like those but the user locked it (Digital Wellbeing, with its icon turned on), so
+ * every screen of it is that app's.
  */
-internal class UsageEvent(val type: Int, val pkg: String, val cls: String?, val time: Long) {
-    val app: String? = if (pkg in ForegroundRules.SYSTEM_OVERLAYS) null else PasswordManager.resolve(pkg, cls)
+internal class UsageEvent(val type: Int, val pkg: String, val cls: String?, val time: Long, lockedOverlay: Boolean = false) {
+    val app: String? = if (pkg in ForegroundRules.SYSTEM_OVERLAYS && !lockedOverlay) null else PasswordManager.resolve(pkg, cls)
+    /** Which activity this is about. */
+    val activity: String get() = pkg + '/' + cls.orEmpty()
 }
 
 /**
@@ -842,7 +1034,7 @@ internal class ActivityStates {
     /** Records [event]. True if it is news, not an event already recorded. */
     fun apply(event: UsageEvent): Boolean {
         val app = event.app ?: return false
-        val key = event.pkg + '/' + event.cls.orEmpty()
+        val key = event.activity
         val known = byActivity[key]
         if (known == null) {
             byActivity[key] = State(app, event.type, event.time)
@@ -854,6 +1046,15 @@ internal class ActivityStates {
         known.time = event.time
         return true
     }
+
+    /** The latest event recorded for [event]'s activity (resumed, paused or stopped), or null if none is. */
+    fun lastTypeOf(event: UsageEvent): Int? = byActivity[event.activity]?.type
+
+    /** Whether [activity] ([UsageEvent.activity]) is paused: showing, but not in front. */
+    fun isPaused(activity: String): Boolean = byActivity[activity]?.type == PAUSED
+
+    /** [app]'s activities that are paused. */
+    fun pausedActivitiesOf(app: String): List<String> = byActivity.filter { (_, s) -> s.app == app && s.type == PAUSED }.keys.toList()
 
     fun isResumed(app: String): Boolean = byActivity.values.any { it.app == app && it.type == RESUMED }
 

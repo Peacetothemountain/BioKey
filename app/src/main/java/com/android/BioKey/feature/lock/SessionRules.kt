@@ -24,6 +24,9 @@ import com.android.BioKey.core.security.LockStateTracker
  * 4. A locked app on screen without a session is covered, except a just-left app next to the
  *    launcher, which must stay [EXIT_SETTLE_MS] first (its window flickers back as it leaves).
  * 5. Unlocked apps on screen are remembered, so step 2 can notice them leave.
+ *
+ * And, outside a pass: an app whose lock screen closed onto a helper it had open has arrived,
+ * and hopped there ([noteUnlockedOnto]).
  */
 internal class SessionRules(private val env: Env) {
 
@@ -82,6 +85,22 @@ internal class SessionRules(private val env: Env) {
     fun noteOnScreen(pkg: String) {
         pendingLeaves.remove(pkg)
         onScreenSessions += pkg
+    }
+
+    /**
+     * [unlocked] was just unlocked and its lock screen closed onto [front]. If that is a helper
+     * it had open over itself (a sign-in screen or custom tab it opened as it started, a call),
+     * the app is right behind it: its session has arrived, and it has hopped there, rather than
+     * ending as never on screen ([LockStateTracker.ARRIVAL_GRACE_MS]) while the user is still
+     * busy in the helper. Compatibility mode does the same. Returns whether it did.
+     */
+    fun noteUnlockedOnto(unlocked: String, front: String): Boolean {
+        if (front in PasswordManager.aliasesOf(unlocked) || env.isLauncher(front) || !env.isHopTarget(front)) return false
+        val mode = env.timeoutOf(unlocked)
+        if (!env.isLocked(unlocked) || !LockStateTracker.isAppUnlocked(unlocked, mode)) return false
+        LockStateTracker.onAppVisible(unlocked)
+        LockStateTracker.onAppLeft(unlocked, mode, hopTarget = front)
+        return true
     }
 
     /** Sessions just ended (screen off, lock-all): nothing on screen has one any more. */

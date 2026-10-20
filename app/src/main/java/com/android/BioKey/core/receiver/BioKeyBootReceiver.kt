@@ -10,6 +10,7 @@ import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.lock.UsageWatchService
 import java.util.concurrent.Executors
 
@@ -20,7 +21,7 @@ class BioKeyBootReceiver : BroadcastReceiver() {
 
     companion object {
         private const val TAG = "BioKeyBootReceiver"
-        /** How long compatibility mode gets to come up, well inside the broadcast's time limit. */
+        /** How long an engine gets to come up, well inside the broadcast's time limit. */
         private const val START_WAIT_MS = 5_000L
         private const val START_POLL_MS = 200L
         private val bootExecutor = Executors.newSingleThreadExecutor { r ->
@@ -50,8 +51,12 @@ class BioKeyBootReceiver : BroadcastReceiver() {
                     ProtectionEngine.refresh(appContext)
                     val protecting = when (ProtectionEngine.mode(appContext)) {
                         ProtectionEngine.Mode.ACCESSIBILITY -> true
+                        // Switched on: Android connects it moments after a boot or an update. An alert
+                        // only if it still isn't running then, withdrawn as soon as it is.
+                        ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING ->
+                            awaitRunning("Accessibility engine") { BioKeyAccessibilityService.isRunning }
                         // Its permissions don't mean it's running: the start can still fail.
-                        ProtectionEngine.Mode.COMPATIBILITY -> awaitCompatibilityMode()
+                        ProtectionEngine.Mode.COMPATIBILITY -> awaitRunning("Compatibility engine") { UsageWatchService.isRunning }
                         else -> false
                     }
                     if (!protecting) ProtectionAlerts.serviceStopped(appContext, now = true)
@@ -64,12 +69,12 @@ class BioKeyBootReceiver : BroadcastReceiver() {
         }
     }
 
-    /** Whether compatibility mode is up within [START_WAIT_MS]. */
-    private fun awaitCompatibilityMode(): Boolean {
+    /** Whether an engine ([engine], for the log) is up within [START_WAIT_MS], as [isRunning] tells. */
+    private fun awaitRunning(engine: String, isRunning: () -> Boolean): Boolean {
         val until = SystemClock.elapsedRealtime() + START_WAIT_MS
-        while (!UsageWatchService.isRunning) {
+        while (!isRunning()) {
             if (SystemClock.elapsedRealtime() >= until) {
-                DiagnosticLog.log("Compatibility engine didn't start after boot or update")
+                DiagnosticLog.log("$engine didn't start after boot or update")
                 return false
             }
             Thread.sleep(START_POLL_MS)

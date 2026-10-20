@@ -2,9 +2,9 @@
 # run interpreted after an install or update. Google Play compiles it at install; other installs
 # get it from ProfileInstaller on first launch, and it takes effect at the next background
 # optimisation (usually while the phone is idle and charging). It covers the lock path of both
-# engines (accessibility events, compatibility mode, the cover, the lock screen) and the session
-# and settings state it reads on every event. Compose and the other libraries bring their own
-# profiles.
+# engines (accessibility events, compatibility mode, the cover and what it draws with, the lock
+# screen), the notification shield, and the session and settings state they read on every
+# event. Compose and the other libraries bring their own profiles.
 
 # Process start.
 HSPLcom/android/BioKey/BioKeyApplication**->**(**)**
@@ -36,6 +36,20 @@ Lcom/android/BioKey/core/data/LockTimeoutMode**;
 Lcom/android/BioKey/core/data/SecurityProfile**;
 HSPLcom/android/BioKey/core/diagnostics/DiagnosticLog**->**(**)**
 Lcom/android/BioKey/core/diagnostics/DiagnosticLog**;
+
+# What the cover draws with: the wordmark (WordmarkView, LogoLayer, LogoArt, VineSlither), the
+# icon renderer, and the "Remove animations" check of its glow.
+HSPLcom/android/BioKey/ui/brand/**->**(**)**
+Lcom/android/BioKey/ui/brand/**;
+HSPLcom/android/BioKey/ui/AppIcons**->**(**)**
+Lcom/android/BioKey/ui/AppIcons**;
+HSPLcom/android/BioKey/ui/theme/BioKeyThemeKt;->animationsEnabled(Landroid/content/Context;)Z
+Lcom/android/BioKey/ui/theme/BioKeyThemeKt;
+
+# The notification shield: it hides a locked app's notifications as they arrive, and at every
+# lock-all.
+HSPLcom/android/BioKey/feature/notification/**->**(**)**
+Lcom/android/BioKey/feature/notification/**;
 
 # BioKey's own lock, which MainActivity shows when BioKey opens.
 HSPLcom/android/BioKey/feature/main/MainActivity**->**(**)**

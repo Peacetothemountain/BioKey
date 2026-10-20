@@ -15,6 +15,7 @@ import android.util.LruCache
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.graphics.createBitmap
+import androidx.core.graphics.drawable.toDrawable
 import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.data.AppClassifier
 import com.android.BioKey.core.data.PasswordManager
@@ -80,7 +81,7 @@ internal object AppIconCache {
     private fun render(context: Context, app: AppItem, sizePx: Int): Bitmap {
         val pm = context.packageManager
         if (app.packageName == PasswordManager.VIRTUAL_PACKAGE) {
-            val source = if (isInstalled(pm, PasswordManager.CREDENTIAL_MANAGER)) PasswordManager.CREDENTIAL_MANAGER else PasswordManager.GMS
+            val source = PasswordManager.iconSource(pm)
             return AppIcons.render(pm.getApplicationIcon(source), sizePx)
         }
         val user = app.user ?: Process.myUserHandle()
@@ -153,7 +154,7 @@ private fun passwordManagerItem(pm: PackageManager): AppItem? {
     if (!present) return null
     return AppItem(
         packageName = PasswordManager.VIRTUAL_PACKAGE,
-        label = "Google Password Manager",
+        label = PasswordManager.LABEL,
         category = AppCategory.AUTH
     )
 }
@@ -161,7 +162,7 @@ private fun passwordManagerItem(pm: PackageManager): AppItem? {
 private fun isInstalled(pm: PackageManager, pkg: String) = runCatching { pm.getPackageInfo(pkg, 0) }.isSuccess
 
 private fun badged(context: Context, icon: Bitmap, user: UserHandle, sizePx: Int): Bitmap {
-    val drawable = context.packageManager.getUserBadgedIcon(BitmapDrawable(context.resources, icon), user)
+    val drawable = context.packageManager.getUserBadgedIcon(icon.toDrawable(context.resources), user)
     if (drawable is BitmapDrawable && drawable.bitmap != null) return drawable.bitmap
     return createBitmap(sizePx, sizePx).also { out ->
         drawable.setBounds(0, 0, sizePx, sizePx)

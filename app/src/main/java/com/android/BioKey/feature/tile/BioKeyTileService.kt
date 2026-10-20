@@ -10,7 +10,6 @@ import com.android.BioKey.R
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
-import com.android.BioKey.feature.lock.UsageWatchService
 import com.android.BioKey.feature.main.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,7 +44,10 @@ class BioKeyTileService : TileService() {
         super.onStartListening()
         listening?.cancel()
         listening = CoroutineScope(Dispatchers.Main.immediate).launch {
-            combine(vault.setupCompletedFlow, vault.globalLockEnabledFlow, ::Pair).collect { (setupCompleted, enabled) ->
+            // The accessibility service connecting or stopping changes the answer too.
+            combine(vault.setupCompletedFlow, vault.globalLockEnabledFlow, BioKeyAccessibilityService.running) { setupCompleted, enabled, _ ->
+                setupCompleted to enabled
+            }.collect { (setupCompleted, enabled) ->
                 render(status(setupCompleted, enabled, isEngineRunning()))
             }
         }
@@ -75,11 +77,11 @@ class BioKeyTileService : TileService() {
     }
 
     /**
-     * An engine is running and still has what it needs. A switch left on in Settings isn't enough:
-     * the accessibility service may have crashed, or compatibility mode may not have started.
+     * An engine is running and still has what it needs, by the same rule as BioKey's home screen
+     * and Settings ([ProtectionEngine.mode]). A switch left on in Settings isn't enough: the
+     * accessibility service may have crashed, or compatibility mode may not have started.
      */
-    private fun isEngineRunning(): Boolean =
-        (BioKeyAccessibilityService.isRunning || UsageWatchService.isRunning) && ProtectionEngine.isProtecting(this)
+    private fun isEngineRunning(): Boolean = ProtectionEngine.isProtecting(this)
 
     private fun launch(intent: Intent) {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)

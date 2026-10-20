@@ -17,6 +17,7 @@ import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.ScreenReceiver
+import com.android.BioKey.ui.brand.LogoArt
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,6 +57,15 @@ class BioKeyApplication : Application() {
         // Look again: an unlock between the first look and the registration sent its one
         // broadcast to nobody, and nothing would load for the whole process.
         if (isUserUnlocked()) initCredentialProtectedComponents()
+    }
+
+    /**
+     * BioKey's screens went to the background: the logo copies kept for them go. The process
+     * keeps running (a protection engine lives in it), and the shield's cover keeps its own.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= TRIM_MEMORY_UI_HIDDEN) LogoArt.trim()
     }
 
     private fun isUserUnlocked(): Boolean = getSystemService(UserManager::class.java)?.isUserUnlocked ?: true

@@ -16,6 +16,7 @@ import androidx.annotation.RequiresApi
 import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.SecurityEngine
 
 /**
  * Full-screen cover drawn the instant a locked app reaches the screen, before
@@ -44,7 +45,16 @@ class InstantShieldOverlay(
      * soft keyboard stop reaching it. Not for the accessibility engine, which reads the screen
      * through the focused window. Covers predicted from a tap never take focus.
      */
-    private val takeFocus: Boolean = false
+    private val takeFocus: Boolean = false,
+    /**
+     * Asked whenever the cover is to be taken down (by a lock screen, the engine, a Cancel):
+     * whether its target still shows where only this cover hides it. Compatibility mode's case:
+     * a locked app in picture-in-picture, which floats above every app, the lock screen included,
+     * and which it can neither see the bounds of nor close. While it does, the cover stays, with
+     * Unlock and Cancel once no prompt is up; only an unlock, the window going, the screen going
+     * off or protection stopping lets it go.
+     */
+    private val holdWhile: ((targetPackage: String) -> Boolean)? = null
 ) {
 
     companion object {
@@ -75,6 +85,23 @@ class InstantShieldOverlay(
                 current.hide()
             }
         }
+
+        /**
+         * A lock screen's prompt for [targetPackage] came up ([showing]) or went. A cover held over
+         * that lock screen ([holdWhile]) hides its buttons while the prompt is up, and shows them
+         * again after, as the lock screen's own cover does under it.
+         */
+        fun onPrompt(targetPackage: String, showing: Boolean) {
+            val current = activeInstance ?: return
+            if (!current.isShowing || current.targetPackage != targetPackage) return
+            if (current.isHeld) {
+                current.cover.setActionsVisible(!showing)
+            } else if (!showing && current.holdWhile?.invoke(targetPackage) == true) {
+                // Held without ever being asked to go (put up over a lock screen already there):
+                // the prompt went, so the cover offers what the lock screen under it does.
+                current.hold(targetPackage)
+            }
+        }
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -88,6 +115,8 @@ class InstantShieldOverlay(
     private var generation = 0L
     private var attempt = 0
     private var isDestroyed = false
+    /** Kept up when asked to go, because [holdWhile] said so; until the next cover or a real hide. */
+    private var isHeld = false
     /** The window has been added (a view only counts as attached after its first traversal). */
     private var windowAdded = false
 
@@ -253,6 +282,7 @@ class InstantShieldOverlay(
     private fun showCover(targetPackage: String, onTapped: () -> Unit, focusable: Boolean): Boolean {
         this.targetPackage = targetPackage
         attempt = 0
+        isHeld = false
         generation = ++coversShown
         bindTarget(targetPackage)
         // Same look as the lock activity while its prompt comes up: identity only, no buttons.
@@ -330,16 +360,37 @@ class InstantShieldOverlay(
         mainHandler.postDelayed(timeoutRunnable, TIMEOUT_MS)
     }
 
-    fun hide() {
+    /** Takes the cover down, unless [holdWhile] says its target still needs it. */
+    fun hide() = hide(force = false)
+
+    /**
+     * Asked to go while [target] still shows where only this cover hides it ([holdWhile]): it
+     * stays, without the checks that would bring the lock screen up again by themselves (the
+     * owner may have just cancelled it), and with Unlock and Cancel unless a prompt is up.
+     */
+    private fun hold(target: String) {
+        if (!isHeld) DiagnosticLog.log("Kept $target covered: it is still on screen")
+        isHeld = true
+        cover.setStatus("Still on screen (in picture-in-picture, say). Unlock it to carry on.", permanentLockout = false)
+        cover.setActionsVisible(!SecurityEngine.INSTANCE.isAuthenticatingFor(target))
+    }
+
+    private fun hide(force: Boolean) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            mainHandler.post(::hide)
+            mainHandler.post { hide(force) }
             return
         }
         mainHandler.removeCallbacks(fastVerifyRunnable)
         mainHandler.removeCallbacks(timeoutRunnable)
         endPrediction()
         if (!isShowing) return
+        val target = targetPackage
+        if (!force && !isDestroyed && target != null && holdWhile?.invoke(target) == true) {
+            hold(target)
+            return
+        }
         isShowing = false
+        isHeld = false
         targetPackage = null
         if (activeInstance === this) activeInstance = null
         try {
@@ -359,7 +410,7 @@ class InstantShieldOverlay(
             return
         }
         isDestroyed = true
-        hide()
+        hide(force = true)
         if (windowAdded) {
             runCatching { windowManager.removeViewImmediate(cover) }
             windowAdded = false

@@ -1,6 +1,7 @@
 package com.android.BioKey
 
 import android.content.Context
+import android.os.Looper
 import android.os.SystemClock
 import androidx.compose.material3.SnackbarDuration
 import androidx.test.core.app.ApplicationProvider
@@ -11,11 +12,13 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
@@ -70,6 +73,24 @@ class BrandArtTest {
         assertEquals(300, sized!!.width)
         assertEquals(133, sized.height)
         assertSame(sized, LogoArt.sized(res, R.drawable.ic_title_logo_tentacles, 300, 133))
+    }
+
+    @Test
+    fun aCoverNeverWaitsForItsLogo() {
+        val res = context.resources
+        var ready = 0
+        // Not there yet: nothing to draw, nothing decoded on the spot, the copy made in the background.
+        assertNull(LogoArt.sizedIfReady(res, R.drawable.ic_title_logo_letters, 271, 120) { ready++ })
+        val deadline = System.currentTimeMillis() + 10_000L
+        while (ready == 0 && System.currentTimeMillis() < deadline) {
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(10L)
+        }
+        // The cover is told, and finds it.
+        assertEquals(1, ready)
+        val copy = LogoArt.sizedIfReady(res, R.drawable.ic_title_logo_letters, 271, 120) { ready++ }
+        assertEquals(271, copy!!.width)
+        assertSame(copy, LogoArt.sized(res, R.drawable.ic_title_logo_letters, 271, 120))
     }
 
     @Test

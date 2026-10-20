@@ -1,5 +1,7 @@
 package com.android.BioKey.core.data
 
+import android.content.pm.PackageManager
+
 /**
  * Google Password Manager: one app to the owner, but reachable through two packages, the
  * standalone Credential Manager app and its screens inside Play services. BioKey gives the latter
@@ -16,11 +18,27 @@ object PasswordManager {
     const val CREDENTIAL_MANAGER = "com.google.android.apps.credentialmanager"
     const val GMS = "com.google.android.gms"
 
+    /** Its name wherever BioKey shows it: neither package's own label is it. */
+    const val LABEL = "Google Password Manager"
+
     val ALIASES: Set<String> = setOf(VIRTUAL_PACKAGE, CREDENTIAL_MANAGER)
 
     fun aliasesOf(pkg: String): Set<String> = if (pkg in ALIASES) ALIASES else setOf(pkg)
 
     fun expand(packages: Collection<String>): Set<String> = packages.flatMapTo(HashSet(), ::aliasesOf)
+
+    /**
+     * The real package that opens [pkg] (and whose launcher names it): Credential Manager for
+     * Google Password Manager, never Play services, which has no launch page of its own for it.
+     */
+    fun launchPackage(pkg: String): String = if (pkg in ALIASES) CREDENTIAL_MANAGER else pkg
+
+    /**
+     * Where Google Password Manager's icon comes from: Credential Manager when it is installed,
+     * else Play services, which hosts it then. For the icon only: see [launchPackage].
+     */
+    fun iconSource(pm: PackageManager): String =
+        if (runCatching { pm.getApplicationInfo(CREDENTIAL_MANAGER, 0) }.isSuccess) CREDENTIAL_MANAGER else GMS
 
     /** Activities of Play services that are the password manager itself. */
     private val MANAGER_ACTIVITY_HINTS = listOf(
