@@ -104,8 +104,14 @@ class UsageWatchService : Service() {
             // A stop still on its way (onDestroy hasn't run yet) mustn't swallow this start, or
             // neither engine would be left.
             if (isRunning && !stopRequested) return
-            ContextCompat.startForegroundService(context, Intent(context, UsageWatchService::class.java))
+            // Set first: called off the main thread, the service can be created before this returns.
             startPending = true
+            try {
+                ContextCompat.startForegroundService(context, Intent(context, UsageWatchService::class.java))
+            } catch (e: Exception) {
+                startPending = false
+                throw e
+            }
         }
 
         fun stop(context: Context) {
@@ -191,7 +197,9 @@ class UsageWatchService : Service() {
                 Intent.ACTION_DREAMING_STARTED -> {
                     dreaming = true
                     stopPolling()
-                    forgetScreen()
+                    // The app in front is there again when it ends: kept, so it is covered then
+                    // even if it doesn't report opening again (see recheck).
+                    forgetScreen(keepFront = true)
                     shield.hide()
                 }
                 Intent.ACTION_DREAMING_STOPPED -> {
@@ -272,7 +280,7 @@ class UsageWatchService : Service() {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             goHome = ::goHome,
             onTimeout = ::onShieldTimeout,
-            keepCoverOnGiveUp = true,
+            keepCoverWhile = ::isExposed,
             takeFocus = true
         )
         AppInfoCache.preWarm(this, vault.getLockedPackages())
@@ -347,9 +355,13 @@ class UsageWatchService : Service() {
 
     private fun startPolling(lookBack: Boolean = false) {
         polling = true
-        workerHandler.removeCallbacks(pollTask)
-        if (lookBack) workerHandler.post { lookBackNext = true }
-        workerHandler.post(pollTask)
+        // Rescheduled on the worker, so a poll running there right now can't leave a second chain
+        // of polls behind (the screen coming on, then the phone being unlocked).
+        workerHandler.post {
+            if (lookBack) lookBackNext = true
+            workerHandler.removeCallbacks(pollTask)
+            pollTask.run()
+        }
     }
 
     private fun stopPolling() {
@@ -365,15 +377,17 @@ class UsageWatchService : Service() {
         startPolling()
     }
 
-    /** Nothing known about the screen holds any more. */
-    private fun forgetScreen() {
-        foreground = null
-        foregroundClass = null
+    /** Nothing known about the screen holds any more, except, with [keepFront], which app is in front. */
+    private fun forgetScreen(keepFront: Boolean = false) {
+        if (!keepFront) {
+            foreground = null
+            foregroundClass = null
+            lockScreenTarget = null
+        }
         activities.clear()
         sideVisible.clear()
         pausedBehind.clear()
         frontSeeThrough = false
-        lockScreenTarget = null
     }
 
     // -------------------------------------------------------------------------------------------
@@ -540,10 +554,16 @@ class UsageWatchService : Service() {
             shield.hide()
             return
         }
-        if (floating && backFromLockScreen(pkg)) return
+        val unlockedBehind = unlockedBehindLockScreen(pkg, activityClass, floating)
+        if (floating && unlockedBehind != null) {
+            foreground = unlockedBehind
+            foregroundClass = null
+            return
+        }
         // Permission dialogs, share and sign-in sheets etc. float over the current app: not an app switch.
         if (pkg == null) return
-        val previous = foreground
+        // Behind a helper it had open (see above), the app just unlocked hops to it rather than leaving.
+        val previous = unlockedBehind ?: foreground
         foreground = pkg
         foregroundClass = activityClass
         sideVisible -= pkg
@@ -566,7 +586,12 @@ class UsageWatchService : Service() {
 
         // BioKey's own screens (its lock screen, its main UI) authenticate on their own.
         if (pkg == packageName) {
-            if (activityClass == LOCK_SCREEN_CLASS) lockScreenTarget = LockScreenActivity.activeLockedTarget
+            if (activityClass == LOCK_SCREEN_CLASS) {
+                lockScreenTarget = LockScreenActivity.activeLockedTarget
+            } else {
+                // Not a lock screen on its way: a cover kept up after the retries (isExposed) goes.
+                hideShieldUnlessLocking(pkg)
+            }
             return
         }
 
@@ -591,18 +616,18 @@ class UsageWatchService : Service() {
     }
 
     /**
-     * BioKey's lock screen just closed onto a dialog or sheet ([pkg]) the app had open, such as a
-     * permission request: the app, unlocked now, is right behind it, on screen, so its session has
-     * arrived. True if so.
+     * BioKey's lock screen just closed onto something ([pkg]) the app it unlocked had open over
+     * itself: a dialog or sheet ([floating]), such as a permission request, or a helper, such as a
+     * Play services sign-in screen. The app is right behind it, so its session has arrived (or it
+     * would end, as never on screen, while the user is still busy there). Returns that app, if so.
      */
-    private fun backFromLockScreen(pkg: String?): Boolean {
-        if (foreground != packageName || foregroundClass != LOCK_SCREEN_CLASS) return false
-        val target = lockScreenTarget?.takeIf { it != pkg } ?: return false
-        if (!vault.isAppLocked(target) || !LockStateTracker.isAppUnlocked(target, vault.getTimeoutMode(target))) return false
-        foreground = target
-        foregroundClass = null
+    private fun unlockedBehindLockScreen(pkg: String?, activityClass: String?, floating: Boolean): String? {
+        if (foreground != packageName || foregroundClass != LOCK_SCREEN_CLASS || pkg == packageName) return null
+        val target = lockScreenTarget?.takeIf { it != pkg } ?: return null
+        if (!floating && hopTo(pkg, activityClass, target) == null) return null
+        if (!vault.isAppLocked(target) || !LockStateTracker.isAppUnlocked(target, vault.getTimeoutMode(target))) return null
         LockStateTracker.onAppVisible(target)
-        return true
+        return target
     }
 
     /**
@@ -714,12 +739,15 @@ class UsageWatchService : Service() {
     }
 
     private fun onShieldTimeout(target: String, attempt: Int): Boolean {
-        if (!checkPermissions()) return false
-        if (!isOnScreen(target) || LockStateTracker.isAppUnlocked(target, vault.getTimeoutMode(target))) return false
+        if (!isExposed(target)) return false
         if (attempt > 0) DiagnosticLog.log("Lock screen for $target not up yet; asking again ($attempt)")
         LockStateTracker.setRegularLockPending(target)
         return LockLauncher.launch(this, target, isSelfProtection = false)
     }
+
+    /** [target] still shows without a session, and compatibility mode can still cover it. */
+    private fun isExposed(target: String): Boolean =
+        checkPermissions() && isOnScreen(target) && !LockStateTracker.isAppUnlocked(target, vault.getTimeoutMode(target))
 
     /** Whether compatibility mode still has its permissions. Once it hasn't, it stops, with an alert. */
     private fun checkPermissions(): Boolean {

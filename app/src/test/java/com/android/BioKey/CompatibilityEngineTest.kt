@@ -20,6 +20,7 @@ import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.ForegroundRules
 import com.android.BioKey.feature.lock.InstantShieldOverlay
+import com.android.BioKey.feature.lock.LockScreenActivity
 import com.android.BioKey.feature.lock.UsageWatchService
 import java.time.Duration
 import org.junit.After
@@ -72,6 +73,7 @@ class CompatibilityEngineTest {
     @After
     fun stop() {
         engine.destroy()
+        lockScreenFor(null)
         // The engine asked which apps are launchers and pickers: leave no cached answer to other tests.
         for (name in listOf("launchersCheckedAt", "pickersCheckedAt")) {
             ForegroundRules::class.java.getDeclaredField(name).apply { isAccessible = true }.setLong(null, 0L)
@@ -97,6 +99,14 @@ class CompatibilityEngineTest {
     }
 
     private fun covered(pkg: String) = DiagnosticLog.entries().map { it.text }.filter { it.startsWith("Covered $pkg ") }
+
+    /** The app BioKey's lock screen is up for, as the real activity reports it. */
+    private fun lockScreenFor(pkg: String?) {
+        LockScreenActivity::class.java.getDeclaredField("activeLockedTarget").apply { isAccessible = true }.set(null, pkg)
+    }
+
+    private fun shield() =
+        UsageWatchService::class.java.getDeclaredField("shield").apply { isAccessible = true }.get(engine.get()) as InstantShieldOverlay
 
     @Test
     fun aLockedAppIsCovered() {
@@ -185,6 +195,60 @@ class CompatibilityEngineTest {
         InstantShieldOverlay.dismiss(bank)
         LockStateTracker.markLockAbandoned(bank)
         step(LockStateTracker.ABANDONED_LOCK_COOLDOWN_MS + 100)
+        repeat(3) { step() }
+        assertEquals(listOf("Covered $bank (opened)", "Covered $bank (still in front, uncovered)"), covered(bank))
+    }
+
+    @Test
+    fun whenTheLockScreenNeverAppearsTheAppStaysCoveredUntilSomethingElseIsInFront() {
+        event(ACTIVITY_RESUMED, bank)
+        repeat(16) { step() } // Every retry, and the give-up.
+        val log = DiagnosticLog.entries().map { it.text }
+        assertTrue(log.toString(), "Lock screen for $bank didn't appear; kept it covered" in log)
+        // The last look before giving up only looks: it doesn't ask for the lock screen again.
+        assertTrue(log.toString(), log.none { it.endsWith("asking again (4)") })
+        assertTrue(shield().isShowing)
+        // BioKey's own screen coming to the front (from its notification, say) takes it down too.
+        event(ACTIVITY_RESUMED, context.packageName, "${context.packageName}.feature.main.MainActivity")
+        step()
+        assertFalse(shield().isShowing)
+    }
+
+    @Test
+    fun unlockingOntoASignInScreenTheAppHadOpenCountsAsArriving() {
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        lockScreenFor(bank)
+        event(ACTIVITY_PAUSED, bank)
+        event(ACTIVITY_RESUMED, context.packageName, LockScreenActivity::class.java.name)
+        event(ACTIVITY_STOPPED, bank)
+        step()
+        LockStateTracker.onAppUnlocked(bank)
+        // The lock screen closes onto the Play services sign-in screen the bank had open over itself.
+        event(ACTIVITY_PAUSED, context.packageName, LockScreenActivity::class.java.name)
+        event(ACTIVITY_RESUMED, PasswordManager.GMS, "com.google.android.gms.auth.uiflows.addaccount.SignInActivity")
+        step()
+        // Signing in takes a while; back in the bank, nothing asks to unlock it again.
+        step(LockStateTracker.ARRIVAL_GRACE_MS + 1_000)
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        assertEquals(listOf("Covered $bank (opened)"), covered(bank))
+        assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+    }
+
+    @Test
+    fun theAppInFrontWhenAScreensaverStartsIsCoveredWhenItEnds() {
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        LockStateTracker.onAppUnlocked(bank)
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        context.sendBroadcast(Intent(Intent.ACTION_DREAMING_STARTED))
+        step()
+        // A long screensaver: what came before it is too old to be read again when it ends, and
+        // the app under it reports nothing new.
+        shadowOf(context.getSystemService(UsageStatsManager::class.java)).simulateTimeChange(-60_000)
+        context.sendBroadcast(Intent(Intent.ACTION_DREAMING_STOPPED))
         repeat(3) { step() }
         assertEquals(listOf("Covered $bank (opened)", "Covered $bank (still in front, uncovered)"), covered(bank))
     }

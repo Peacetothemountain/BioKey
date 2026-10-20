@@ -32,12 +32,12 @@ class InstantShieldOverlay(
     private val goHome: () -> Unit,
     private val onTimeout: (targetPackage: String, attempt: Int) -> Boolean,
     /**
-     * When the lock screen still hasn't appeared after every retry and the app is still in front,
-     * keep covering it (with the cover's own Unlock and Cancel) instead of going Home and hiding:
-     * Home can be refused as well, and nothing else would cover the app again. For compatibility
-     * mode, whose engine hides the cover once something else is in front.
+     * Asked when the lock screen still hasn't appeared after every retry: whether the app is still
+     * exposed. If so the cover stays up (with its own Unlock and Cancel) instead of going Home and
+     * hiding: Home can be refused as well, and nothing else would cover the app again. For
+     * compatibility mode, whose engine hides the cover once something else is in front.
      */
-    private val keepCoverOnGiveUp: Boolean = false,
+    private val keepCoverWhile: ((targetPackage: String) -> Boolean)? = null,
     /**
      * Take input focus while covering a locked app, so a hardware keyboard, Back and the app's
      * soft keyboard stop reaching it. Not for the accessibility engine, which reads the screen
@@ -103,11 +103,11 @@ class InstantShieldOverlay(
         attempt++
         if (attempt < MAX_ATTEMPTS && onTimeout(pkg, attempt)) {
             armTimeout()
-        } else if (attempt < MAX_ATTEMPTS || !keepCoverOnGiveUp) {
+        } else if (attempt < MAX_ATTEMPTS || keepCoverWhile == null) {
             Log.w(TAG, "Lock screen did not appear; failing closed")
             if (attempt >= MAX_ATTEMPTS) goHome()
             hide()
-        } else if (onTimeout(pkg, attempt)) {
+        } else if (keepCoverWhile(pkg)) {
             keepCovering(pkg)
         } else {
             hide() // It has left the screen meanwhile.

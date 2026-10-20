@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.UsageWatchService
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -30,6 +31,13 @@ class CompatibilityStatusTest {
         context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE).edit().clear().commit()
         SecurityVault::class.java.getDeclaredField("INSTANCE").apply { isAccessible = true }.set(null, null)
         Settings.Secure.putString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, "")
+        forgetStartRequest()
+    }
+
+    /** A start asked for here is never followed by the service being created: none may outlive a test. */
+    @After
+    fun forgetStartRequest() {
+        UsageWatchService::class.java.getDeclaredField("startPending").apply { isAccessible = true }.setBoolean(null, false)
     }
 
     @Test
