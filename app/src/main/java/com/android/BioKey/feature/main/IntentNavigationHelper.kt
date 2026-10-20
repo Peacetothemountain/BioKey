@@ -38,6 +38,9 @@ object IntentNavigationHelper {
             } catch (_: SecurityException) {
             }
         }
+        // Nothing opened and BioKey is still in front: take back the leave pass and the settings
+        // pre-authorisation, which would otherwise stay usable by anyone for 2 minutes.
+        LockStateTracker.onOwnAppResumed()
         BioKeyMessages.show("Couldn't open that settings page on this phone", Icons.Default.ErrorOutline)
         return false
     }
