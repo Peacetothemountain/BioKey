@@ -67,11 +67,14 @@ An app lock running as a regular app can't defend against everything:
 
 - **Root, ADB, or a modified OS** can bypass any app lock.
 - **Compatibility mode** (used under Advanced Protection) covers a locked app a little later than the accessibility engine (no tap prediction; about 0.15 s) and can't provide self-protection. It shows a low-priority notification, which Android requires for this kind of background work.
-- **Safe mode** disables third-party accessibility services, so locked apps open without a check until you reboot normally. The protection alert tells you the service stopped.
+- **Safe mode** turns off every downloaded app, BioKey included, until you restart normally: preinstalled locked apps (Photos, Gmail or Chrome, for example) open without a check, and no alert can be shown.
 - **Recents previews** of a locked app can't be blanked; only the system App Lock can do that.
 - **Closing an app from Recents** ends its session only with the accessibility engine (on launchers built on Android's own, like the Pixel's). Compatibility mode can't see it: Android doesn't tell apps when another app is closed, so the session ends by time.
 - **Compatibility mode on warm launches**: an app that was still in memory can show its last screen for about half a second before the cover. Android holds back app overlays while an app's opening animation runs; the accessibility engine's cover isn't held.
 - **Launches without a tap** (links from other apps, the quick-switch gesture) are covered when the app's window appears, which can be a frame later than a tap-started launch.
+- **Apps that hide their windows from accessibility services** can only be recognised by the accessibility engine from the tap that opens them.
+- **Work profile and other profiles**: compatibility mode can't see apps in a work profile or another profile, including the work copy of an app installed in both, because Android only shares app-launch information within one profile. They stay locked with the accessibility engine, and the notification shield still hides their notifications.
+- **Notifications** of a locked app can flash as a heads-up or on a watch before BioKey hides them. With Notification history on, Settings > Notifications > Notification history lists the snoozed (hidden) notifications.
 - **Self-protection is heuristic.** There's no Android API for "this screen can disable app X", so BioKey recognises those screens by package and content. It's tested against Pixel layouts; other manufacturers' Settings may differ.
 
 ## Permissions
@@ -117,7 +120,9 @@ Requirements: JDK 17 and the Android SDK (compileSdk 37.2; Gradle downloads it i
 
 ### Release builds
 
-Release builds use R8 (minify and resource shrinking). `Log.d/i/v` calls are stripped.
+Release builds use R8 (minify and resource shrinking). `Log.v/d/i/w` calls are stripped, since their messages can name locked apps; `Log.e` stays and never names an app. Keep `app/build/outputs/mapping/release/mapping.txt` from every release you publish: it's the only way to read that build's stack traces.
+
+Lint errors fail the build (`:app:lintDebug`, and the quick check inside `assembleRelease`); warnings don't.
 
 To sign a release, copy the example config and point it at your keystore (keep the keystore out of the repo and backed up offline: losing it means you can never update the installed app):
 
@@ -126,11 +131,13 @@ cp key.properties.example key.properties   # git-ignored
 ./gradlew :app:assembleRelease
 ```
 
-Without `key.properties`, the release APK is left **unsigned**. It never silently falls back to the public debug key. For local testing only, you can opt in explicitly:
+A relative `storeFile` path is resolved from the project root. Without `key.properties`, the release APK is left **unsigned**. It never silently falls back to the public debug key. For local testing only, you can opt in explicitly:
 
 ```bash
 ./gradlew :app:assembleRelease -Pbiokey.allowDebugSignedRelease=true
 ```
+
+Its version name ends in `-debugsigned`, so it can't be mistaken for a real release.
 
 ## License
 

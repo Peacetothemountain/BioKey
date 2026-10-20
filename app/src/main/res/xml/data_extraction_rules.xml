@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Nothing is backed up or transferred to a new device. BioKey's settings are sealed with a
-    hardware key that can't leave this device, and intruder photos are encrypted with one, so a
-    copy would be useless at best and a way to replay old settings at worst.
+    Nothing is backed up or transferred to a new device. BioKey's settings (locked apps, profiles)
+    and its diagnostic log sit in its private storage without encryption of their own, and a
+    restored copy would replay an old lock state. On Android 12 and later allowBackup="false"
+    doesn't stop device-to-device transfer, so every domain is excluded here. Settings move only
+    through the password-encrypted backup in BioKey's Settings.
 -->
 <data-extraction-rules>
     <cloud-backup>
@@ -11,6 +13,10 @@
         <exclude domain="database" />
         <exclude domain="sharedpref" />
         <exclude domain="external" />
+        <exclude domain="device_root" />
+        <exclude domain="device_file" />
+        <exclude domain="device_database" />
+        <exclude domain="device_sharedpref" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="root" />
@@ -18,5 +24,9 @@
         <exclude domain="database" />
         <exclude domain="sharedpref" />
         <exclude domain="external" />
+        <exclude domain="device_root" />
+        <exclude domain="device_file" />
+        <exclude domain="device_database" />
+        <exclude domain="device_sharedpref" />
     </device-transfer>
 </data-extraction-rules>

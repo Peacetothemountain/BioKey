@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    ui-test-manifest (debug only, for the screenshot tests) declares an exported empty
+    ComponentActivity. Keep it private, so other apps can't open a blank BioKey window in a
+    debug build. The tests start it from inside the app, which doesn't need it exported.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application>
+        <activity
+            android:name="androidx.activity.ComponentActivity"
+            android:exported="false"
+            tools:replace="android:exported" />
+    </application>
+
+</manifest>

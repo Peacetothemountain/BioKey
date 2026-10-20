@@ -14,15 +14,15 @@
 bin/
 gen/
 out/
-app/build/
-build/
 .kotlin/
-.gradle/
-.gradle-worker2/
 
 # Gradle files
 .gradle/
+.gradle-worker2/
 build/
+
+# Signed builds from Android Studio's Generate Signed App Bundle / APK
+app/release/
 
 # Local configuration file (sdk path, etc)
 local.properties
@@ -49,10 +49,17 @@ captures/
 .idea/libraries
 .idea/caches
 
-# Keystore files
+# Keystore files and exported keys
 *.jks
 *.keystore
+*.p12
+*.pk8
+*.pem
+*.pepk
 key.properties
+
+# Heap dumps: they hold whatever was in memory, such as the list of locked apps
+*.hprof
 
 # External native build folder generated in Android Studio 2.2 and later
 .externalNativeBuild
