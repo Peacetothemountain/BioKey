@@ -6,6 +6,7 @@ import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -52,6 +53,20 @@ class DiagnosticLogTest {
         awaitEntry("from this morning")
         assertTrue(DiagnosticLog.entries().none { it.text == "from last week" })
         assertFalse(file.readText().contains("from last week"))
+    }
+
+    @Test
+    fun everyEntryIsWrittenOnceThroughARewrite() {
+        // More than a rewrite's worth, logged faster than the log's own thread writes them: the
+        // rewrite already holds the later ones, which mustn't then be appended again.
+        DiagnosticLog.clear()
+        repeat(600) { DiagnosticLog.log("line $it") }
+        waitUntil("the last line on disk") { file.exists() && file.readLines().any { it.endsWith("\tline 599") } }
+
+        val numbers = file.readLines().filter { "\tline " in it }.map { it.substringAfterLast(' ').toInt() }
+        assertEquals(599, numbers.last())
+        assertEquals(numbers.size, numbers.toSet().size)
+        assertEquals(numbers.sorted(), numbers)
     }
 
     @Test

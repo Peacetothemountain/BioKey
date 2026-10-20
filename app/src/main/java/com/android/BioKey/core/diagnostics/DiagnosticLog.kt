@@ -35,13 +35,23 @@ object DiagnosticLog {
 
     data class Entry(val at: Long, val text: String)
 
+    /**
+     * The kept entries. Their lock is held only to change or copy them, never for the file, which
+     * is read and written on [io] outside it: [log] runs on the main thread just before a cover
+     * goes up, and must not wait for the disk.
+     */
     private val entries = ArrayDeque<Entry>()
+    /** How many entries have been logged so far: the newest one's number. Under the entries lock. */
+    private var logged = 0L
     private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-diagnostics").apply { isDaemon = true } }
     @Volatile private var file: File? = null
     @Volatile private var enabled = true
+    /** Only touched on [io]. */
     private var linesInFile = 0
-    /** Time of the oldest line in the file, or [Long.MAX_VALUE] when it has none. */
-    private var oldestInFile = Long.MAX_VALUE
+    /** The number ([logged]) of the newest entry the file holds. Only touched on [io]. */
+    private var written = 0L
+    /** Time of the oldest line in the file, or [Long.MAX_VALUE] when it has none. Written only on [io]. */
+    @Volatile private var oldestInFile = Long.MAX_VALUE
 
     private val _version = MutableStateFlow(0)
     /** Changes whenever the log does, for screens showing it. */
@@ -61,18 +71,18 @@ object DiagnosticLog {
                     if (tab <= 0) null else line.substring(0, tab).toLongOrNull()?.let { Entry(it, line.substring(tab + 1)) }
                 }
             }.getOrDefault(emptyList())
-            synchronized(entries) {
+            val (kept, through) = synchronized(entries) {
                 val early = entries.toList()
                 entries.clear()
                 if (enabled) {
                     entries.addAll(saved.takeLast(MAX_ENTRIES))
                     entries.addAll(early)
                     while (entries.size > MAX_ENTRIES) entries.removeFirst()
-                    pruneOld()
                 }
-                file = f
-                rewrite()
+                keptEntries()
             }
+            file = f
+            write(kept, through)
             _version.update { it + 1 }
         }
     }
@@ -86,16 +96,19 @@ object DiagnosticLog {
         synchronized(entries) {
             entries.addLast(entry)
             while (entries.size > MAX_ENTRIES) entries.removeFirst()
-        }
-        io.execute {
-            // Logged before init() found the log turned off: dropped there, never written.
-            val f = file?.takeIf { enabled } ?: return@execute
-            synchronized(entries) {
-                if (pruneOld() || linesInFile >= REWRITE_AT_LINES) {
+            val number = ++logged
+            // Queued under the lock, so entries reach the file in the order they are numbered.
+            io.execute {
+                // Logged before init() found the log turned off: dropped there, never written.
+                val f = file?.takeIf { enabled } ?: return@execute
+                // Already in the file: a rewrite since it was logged wrote it.
+                if (number <= written) return@execute
+                if (oldestInFile < cutoff() || linesInFile >= REWRITE_AT_LINES) {
                     rewrite()
                 } else {
                     runCatching { f.appendText("${entry.at}\t${entry.text}\n") }
                     linesInFile++
+                    written = number
                     oldestInFile = minOf(oldestInFile, entry.at)
                 }
             }
@@ -103,14 +116,20 @@ object DiagnosticLog {
         _version.update { it + 1 }
     }
 
-    fun entries(): List<Entry> = synchronized(entries) {
-        if (pruneOld()) io.execute { synchronized(entries) { rewrite() } }
-        entries.toList()
+    fun entries(): List<Entry> {
+        val cutoff = cutoff()
+        val kept = synchronized(entries) {
+            entries.removeAll { it.at < cutoff }
+            entries.toList()
+        }
+        // The file still holds lines that old: written afresh, on the log's own thread.
+        if (oldestInFile < cutoff) io.execute { if (oldestInFile < cutoff()) rewrite() }
+        return kept
     }
 
     fun clear() {
         synchronized(entries) { entries.clear() }
-        io.execute { synchronized(entries) { rewrite() } }
+        io.execute(::rewrite)
         _version.update { it + 1 }
     }
 
@@ -135,21 +154,31 @@ object DiagnosticLog {
         }
     }
 
+    /** Entries logged before this are older than [MAX_AGE_MS]. */
+    private fun cutoff(): Long = System.currentTimeMillis() - MAX_AGE_MS
+
     /**
-     * Forgets entries older than [MAX_AGE_MS]. Returns whether the file still holds some, and so
-     * must be written afresh. Call holding the entries lock.
+     * Forgets entries older than [MAX_AGE_MS] and copies the rest, with the number ([logged]) of
+     * the newest entry logged so far. Call holding the entries lock.
      */
-    private fun pruneOld(): Boolean {
-        val cutoff = System.currentTimeMillis() - MAX_AGE_MS
+    private fun keptEntries(): Pair<List<Entry>, Long> {
+        val cutoff = cutoff()
         entries.removeAll { it.at < cutoff }
-        return oldestInFile < cutoff
+        return entries.toList() to logged
     }
 
-    /** Writes the kept entries over the file. Call holding the entries lock, on [io]. */
+    /** Writes the kept entries over the file. Call on [io]; the lock is held only to copy them. */
     private fun rewrite() {
+        val (kept, through) = synchronized(entries) { keptEntries() }
+        write(kept, through)
+    }
+
+    /** Writes [kept], every entry up to number [through], over the file. On [io], outside the entries lock. */
+    private fun write(kept: List<Entry>, through: Long) {
         val f = file ?: return
-        runCatching { f.writeText(entries.joinToString("") { "${it.at}\t${it.text}\n" }) }
-        linesInFile = entries.size
-        oldestInFile = entries.minOfOrNull { it.at } ?: Long.MAX_VALUE
+        runCatching { f.writeText(kept.joinToString("") { "${it.at}\t${it.text}\n" }) }
+        linesInFile = kept.size
+        written = through
+        oldestInFile = kept.minOfOrNull { it.at } ?: Long.MAX_VALUE
     }
 }
