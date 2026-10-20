@@ -3,6 +3,9 @@ package com.android.BioKey.feature.main
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -54,7 +57,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
@@ -65,7 +72,9 @@ import com.android.BioKey.ui.theme.GroupInset
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -81,35 +90,71 @@ private sealed interface BackupStep {
 internal class BackupActions(val backUp: () -> Unit, val restore: () -> Unit)
 
 /**
+ * The password chosen for a backup, held while the user picks where to save it, so a rotation or
+ * a theme change meanwhile doesn't lose it. Never saved; wiped if BioKey's screen goes for good.
+ * The backup is sealed and written in its scope too, so leaving Settings meanwhile doesn't stop it.
+ */
+internal class PendingBackup : ViewModel() {
+    var password: CharArray? = null
+
+    override fun onCleared() {
+        password?.fill(' ')
+        password = null
+    }
+}
+
+/**
  * Backing up: a password (twice), then where to save the file. Restoring: the file, its
  * password, then a confirmation, since it replaces the current setup. The sealing and opening
  * run off the main thread ([VaultBackup] is slow on purpose).
+ *
+ * The system file picker covers BioKey, which would end BioKey's session; each launch is
+ * announced first ([LockStateTracker.beginOwnPicker]) so the session survives that one trip.
  */
 @Composable
 internal fun rememberBackupActions(): BackupActions {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val vault = remember { SecurityVault.getInstance(context) }
+    val activity = LocalActivity.current as ComponentActivity
+    val pending = remember(activity) { ViewModelProvider(activity)[PendingBackup::class.java] }
     var step by remember { mutableStateOf<BackupStep?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    // Held only until the file is chosen; never saved.
-    var pendingPassword by remember { mutableStateOf<CharArray?>(null) }
 
     val createFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
-        val password = pendingPassword
-        pendingPassword = null
-        if (uri == null || password == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            val saved = runCatching {
+        val password = pending.password
+        pending.password = null
+        if (uri == null) {
+            password?.fill(' ')
+            return@rememberLauncherForActivityResult
+        }
+        val app = context.applicationContext
+        if (password == null) {
+            // The picker created the file, but the password is gone (BioKey was closed meanwhile).
+            discard(app, uri)
+            BioKeyMessages.show("Backup cancelled, try again", Icons.Default.ErrorOutline)
+            return@rememberLauncherForActivityResult
+        }
+        pending.viewModelScope.launch {
+            val saved = try {
                 val file = withContext(Dispatchers.Default) { VaultBackup.seal(vault.exportState(), password) }
-                withContext(Dispatchers.IO) { write(context, uri, file) }
+                withContext(Dispatchers.IO) { write(app, uri, file) }
+                true
+            } catch (e: CancellationException) {
+                // BioKey's screen closed for good meanwhile: leave no empty file behind.
+                withContext(NonCancellable + Dispatchers.IO) { discard(app, uri) }
+                throw e
+            } catch (_: Exception) {
+                false
+            } finally {
+                password.fill(' ')
             }
-            password.fill(' ')
-            if (saved.isSuccess) {
+            if (saved) {
                 DiagnosticLog.log("Settings backed up")
                 BioKeyMessages.show("Backup saved", Icons.Default.CheckCircle)
             } else {
+                withContext(Dispatchers.IO) { discard(app, uri) }
                 BioKeyMessages.show("Couldn't save the backup there", Icons.Default.ErrorOutline)
             }
         }
@@ -136,10 +181,15 @@ internal fun rememberBackupActions(): BackupActions {
             busy = false,
             error = null,
             onConfirm = { password ->
-                pendingPassword = password
+                pending.password?.fill(' ')
+                pending.password = password
                 step = null
                 val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                createFile.launch("BioKey backup $date.${VaultBackup.FILE_EXTENSION}")
+                openPicker { createFile.launch("BioKey backup $date.${VaultBackup.FILE_EXTENSION}") }
+                    .onFailure {
+                        pending.password?.fill(' ')
+                        pending.password = null
+                    }
             },
             onDismiss = { step = null }
         )
@@ -153,8 +203,15 @@ internal fun rememberBackupActions(): BackupActions {
             onConfirm = { password ->
                 busy = true
                 scope.launch {
-                    val opened = runCatching { withContext(Dispatchers.Default) { VaultBackup.open(current.file, password) } }
-                    password.fill(' ')
+                    val opened = try {
+                        Result.success(withContext(Dispatchers.Default) { VaultBackup.open(current.file, password) })
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Result.failure(e)
+                    } finally {
+                        password.fill(' ')
+                    }
                     busy = false
                     opened.onSuccess { step = BackupStep.ConfirmRestore(it) }
                     opened.onFailure { e ->
@@ -181,8 +238,13 @@ internal fun rememberBackupActions(): BackupActions {
                 TextButton(onClick = {
                     val restored = runCatching { vault.restoreState(current.state) }
                     step = null
-                    if (restored.isSuccess) BioKeyMessages.show("Backup restored", Icons.Default.CheckCircle)
-                    else BioKeyMessages.show("That backup couldn't be restored", Icons.Default.ErrorOutline)
+                    if (restored.isSuccess) {
+                        // Let auto-sort go through the restored profiles on the next unlock.
+                        InstalledAppsCache.autoSortedVersion = -1
+                        BioKeyMessages.show("Backup restored", Icons.Default.CheckCircle)
+                    } else {
+                        BioKeyMessages.show("That backup couldn't be restored", Icons.Default.ErrorOutline)
+                    }
                 }) { Text("Restore") }
             },
             dismissButton = { TextButton(onClick = { step = null }) { Text("Cancel") } }
@@ -193,9 +255,24 @@ internal fun rememberBackupActions(): BackupActions {
     return remember {
         BackupActions(
             backUp = { step = BackupStep.ChoosePassword },
-            restore = { openFile.launch(arrayOf("*/*")) }
+            restore = { openPicker { openFile.launch(arrayOf("*/*")) } }
         )
     }
+}
+
+/** Opens the system file picker, keeping BioKey's session for the trip. */
+private fun openPicker(launch: () -> Unit): Result<Unit> {
+    LockStateTracker.beginOwnPicker()
+    return runCatching(launch).onFailure {
+        // No file picker on this phone (or it's disabled).
+        LockStateTracker.onOwnAppResumed()
+        BioKeyMessages.show("Couldn't open the file picker", Icons.Default.ErrorOutline)
+    }
+}
+
+/** Deletes the file the picker created for a backup that wasn't written. */
+private fun discard(context: Context, uri: Uri) {
+    runCatching { DocumentsContract.deleteDocument(context.contentResolver, uri) }
 }
 
 private fun write(context: Context, uri: Uri, bytes: ByteArray) {
@@ -324,7 +401,7 @@ internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
                 )
                 Text(
-                    text = "BioKey's recent lock decisions, kept on this phone. Share it with whoever is helping you with a problem; it lists the package names of your locked apps.",
+                    text = "BioKey's lock decisions about your locked apps over the last 3 days, kept on this phone. Nothing about other apps. Share it with whoever is helping you with a problem; it lists your locked apps by package name.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = GroupInset + 8.dp)

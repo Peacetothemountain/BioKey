@@ -1,5 +1,17 @@
 package com.android.BioKey.feature.main
 
+import android.Manifest
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.activity.compose.LocalActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -32,7 +44,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.IconBadge
@@ -79,8 +98,9 @@ enum class Disclosure(
 }
 
 private val NEVER = listOf(
-    "Nothing BioKey sees is stored, shared or sent anywhere. BioKey has no internet access.",
-    "BioKey never reads what you type, your messages or your screen's content in other apps."
+    "Nothing BioKey sees leaves this phone: it has no internet access. It keeps a short on-phone log of its own " +
+        "lock decisions (which locked apps it locked or unlocked) for 3 days, which you can turn off in Settings.",
+    "BioKey never reads what you type, your messages, or the content of the apps you use."
 )
 
 @Stable
@@ -108,6 +128,107 @@ fun rememberDisclosureGate(): DisclosureGate {
         )
     }
     return gate
+}
+
+/**
+ * Android 13+'s permission to post notifications, which protection alerts and the notification
+ * shield's stand-ins need; without it both are silently dropped. A normal runtime permission, so
+ * no disclosure: just Android's own question. [allowed] follows Android's setting, rechecked on
+ * every resume.
+ */
+@Stable
+class NotificationPermission internal constructor(private val context: Context, private val activity: Activity?) {
+    var allowed by mutableStateOf(notificationsAllowed(context))
+        private set
+
+    internal lateinit var launcher: ActivityResultLauncher<String>
+    private var then: (() -> Unit)? = null
+    private var thenOnResume: (() -> Unit)? = null
+    private var userAsked = false
+    private var rationaleBefore = false
+
+    /**
+     * Asks Android's question if it still may, then runs [then] once BioKey is back on screen.
+     * For moments BioKey chooses (end of setup, notification access just granted): never opens Settings.
+     */
+    fun request(then: () -> Unit = {}) {
+        if (allowed || !canAsk()) {
+            then()
+            return
+        }
+        this.then = then
+        userAsked = false
+        ask()
+    }
+
+    /** The user tapped "allow": asks, or opens BioKey's notification settings once Android won't ask any more. */
+    fun requestOrOpenSettings() {
+        if (allowed) return
+        if (!canAsk()) {
+            openSettings()
+            return
+        }
+        then = null
+        userAsked = true
+        rationaleBefore = rationale()
+        ask()
+    }
+
+    internal fun onResult(granted: Boolean, resumed: Boolean) {
+        allowed = notificationsAllowed(context)
+        // Android answered without asking: it was turned down for good, and only Settings can change it.
+        if (!granted && userAsked && !rationaleBefore && !rationale()) openSettings()
+        userAsked = false
+        val next = then ?: return
+        then = null
+        if (resumed) next() else thenOnResume = next
+    }
+
+    internal fun onResume() {
+        allowed = notificationsAllowed(context)
+        thenOnResume?.let {
+            thenOnResume = null
+            it()
+        }
+    }
+
+    /** Android 13+ and not granted yet. Earlier versions, or a granted one switched off, only change in Settings. */
+    private fun canAsk() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+
+    private fun ask() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun rationale() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && activity != null &&
+        ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.POST_NOTIFICATIONS)
+
+    private fun openSettings() = IntentNavigationHelper.launchFallbackCascade(
+        context,
+        listOf(
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+        )
+    )
+}
+
+private fun notificationsAllowed(context: Context) = NotificationManagerCompat.from(context).areNotificationsEnabled()
+
+@Composable
+fun rememberNotificationPermission(): NotificationPermission {
+    val context = LocalContext.current
+    val activity = LocalActivity.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val permission = remember { NotificationPermission(context, activity) }
+    permission.launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        // The answer can arrive just before BioKey resumes; a follow-up prompt has to wait for that.
+        permission.onResult(granted, resumed = lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
+    LifecycleResumeEffect(permission) {
+        permission.onResume()
+        onPauseOrDispose { }
+    }
+    return permission
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
