@@ -1,6 +1,8 @@
 package com.android.BioKey.feature.main
 
 import androidx.activity.BackEventCompat
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.Box
@@ -29,6 +31,7 @@ import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,17 +55,23 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.rejectObscuredTouches
+import com.android.BioKey.feature.lock.SelfProtectionDetector
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.Group
+import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.Haptics
 import com.android.BioKey.ui.theme.MaxContentWidth
@@ -80,8 +89,20 @@ private class SettingItem(
     /** False greys the switch out: it can't be changed right now. */
     val enabled: Boolean = true,
     val onChange: (Boolean) -> Unit = {},
-    val onClick: (() -> Unit)? = null
+    val onClick: (() -> Unit)? = null,
+    /** Something the user should fix: drawn in the error colours. */
+    val warning: Boolean = false
 )
+
+/**
+ * Settings' trip to Android's notification access page, kept with the activity rather than the
+ * screen: a message's "Open settings" can be tapped after a rotation, once the screen that raised
+ * it is gone, and the screen on view then must still know to check on coming back.
+ */
+internal class NotificationAccessTrip : ViewModel() {
+    /** Sent to Android's notification access page: on coming back, say if it's still off. */
+    var awaiting = false
+}
 
 /**
  * BioKey's settings, over the home screen. [mode] is the engine protecting apps, as the home
@@ -102,21 +123,26 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     val autoSortProfiles by vault.autoSortProfilesFlow.collectAsStateWithLifecycle()
 
     var notifListenerActive by remember { mutableStateOf(BioKeyNotificationShieldService.isNotificationAccessGranted(context)) }
+    /** An accessibility shortcut switches BioKey's service off without passing any screen self-protection guards. */
+    var shortcutAssigned by remember { mutableStateOf(SelfProtectionDetector.isShortcutAssigned(context)) }
     var showRelockSheet by remember { mutableStateOf(false) }
-    /** Sent to Android's notification access page: on coming back, say if it's still off. */
-    var awaitingNotificationAccess by remember { mutableStateOf(false) }
+    val activity = LocalActivity.current as ComponentActivity
+    val notificationAccessTrip = remember(activity) { ViewModelProvider(activity)[NotificationAccessTrip::class.java] }
     val disclosures = rememberDisclosureGate()
     val notifications = rememberNotificationPermission()
     val protecting = mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.COMPATIBILITY
 
     LifecycleResumeEffect(Unit) {
         notifListenerActive = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
-        if (awaitingNotificationAccess) {
-            awaitingNotificationAccess = false
+        shortcutAssigned = SelfProtectionDetector.isShortcutAssigned(context)
+        if (notificationAccessTrip.awaiting) {
+            notificationAccessTrip.awaiting = false
             if (!notifListenerActive) {
+                // The action may run after a rotation, once this screen and its activity are gone.
+                val appContext = context.applicationContext
                 BioKeyMessages.show("Notification access is still off", Icons.Default.NotificationsOff, actionLabel = "Open settings") {
-                    awaitingNotificationAccess = true
-                    IntentNavigationHelper.openNotificationListenerSettings(context)
+                    notificationAccessTrip.awaiting = true
+                    IntentNavigationHelper.openNotificationListenerSettings(if (activity.isDestroyed) appContext else activity)
                 }
             } else {
                 // The shield is on by default, so this may be the only moment to ask: without the
@@ -181,7 +207,8 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             )
         )
     }
-    val privacy = listOf(
+    val serviceLabel = stringResource(R.string.accessibility_service_label)
+    val privacy = listOfNotNull(
         SettingItem(
             icon = Icons.Default.NotificationsOff,
             title = "Hide notification content",
@@ -197,7 +224,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 vault.setNotificationShield(on)
                 if (on && !notifListenerActive) {
                     disclosures.request(Disclosure.NOTIFICATIONS) {
-                        awaitingNotificationAccess = true
+                        notificationAccessTrip.awaiting = true
                         IntentNavigationHelper.openNotificationListenerSettings(context)
                     }
                 } else if (on) {
@@ -223,7 +250,10 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             onChange = { on ->
                 when {
                     !on -> vault.setAccessibilitySelfProtectionEnabled(false)
-                    mode == ProtectionEngine.Mode.ACCESSIBILITY -> vault.setAccessibilitySelfProtectionEnabled(true)
+                    mode == ProtectionEngine.Mode.ACCESSIBILITY -> {
+                        vault.setAccessibilitySelfProtectionEnabled(true)
+                        shortcutAssigned = SelfProtectionDetector.isShortcutAssigned(context)
+                    }
                     // Saved only on Agree: "Not now" leaves it off.
                     mode == ProtectionEngine.Mode.OFF -> disclosures.request(Disclosure.ACCESSIBILITY) {
                         vault.setAccessibilitySelfProtectionEnabled(true)
@@ -231,7 +261,17 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                     }
                 }
             }
-        )
+        ),
+        // The shortcut only matters while the service is on: it switches it off at once.
+        if (selfProtectionEnabled && mode == ProtectionEngine.Mode.ACCESSIBILITY && shortcutAssigned) {
+            SettingItem(
+                icon = Icons.Default.Warning,
+                title = "An accessibility shortcut can switch BioKey off",
+                subtitle = "Without authentication. Remove it in Accessibility > $serviceLabel > shortcut · tap to open",
+                warning = true,
+                onClick = { IntentNavigationHelper.openAccessibilitySettings(context) }
+            )
+        } else null
     )
     val profiles = listOf(
         SettingItem(
@@ -317,7 +357,17 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = 32.dp + navBottom)
             ) {
                 item { SettingsSection("App lock", appLock) { Haptics.toggle(view, it) } }
-                item { SettingsSection("Privacy & protection", privacy) { Haptics.toggle(view, it) } }
+                item {
+                    SettingsSection(
+                        "Privacy & protection",
+                        privacy,
+                        // Snoozed notifications can only be brought back while BioKey still has access.
+                        footer = if (notifListenerActive) {
+                            "To bring hidden notifications back, switch off “Hide notification content” here. " +
+                                "Revoking notification access instead can leave them hidden for up to a day."
+                        } else null
+                    ) { Haptics.toggle(view, it) }
+                }
                 item { SettingsSection("Profiles", profiles) { Haptics.toggle(view, it) } }
                 item { SettingsSection("Backup", backup) { Haptics.toggle(view, it) } }
                 item { SettingsSection("Diagnostics", diagnostics) { Haptics.toggle(view, it) } }
@@ -348,8 +398,9 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     }
 }
 
+/** A titled group of settings, with an optional [footer] note under it. */
 @Composable
-private fun SettingsSection(title: String, items: List<SettingItem>, onToggled: (Boolean) -> Unit) {
+private fun SettingsSection(title: String, items: List<SettingItem>, footer: String? = null, onToggled: (Boolean) -> Unit) {
     SectionHeader(title)
     Group(count = items.size) { i ->
         val item = items[i]
@@ -375,9 +426,19 @@ private fun SettingsSection(title: String, items: List<SettingItem>, onToggled: 
                 title = item.title,
                 subtitle = item.subtitle,
                 icon = item.icon,
+                iconTint = if (item.warning) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                iconContainer = if (item.warning) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
                 onClick = item.onClick
             )
         }
+    }
+    if (footer != null) {
+        Text(
+            text = footer,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = GroupInset + 16.dp, end = GroupInset + 16.dp, top = 12.dp)
+        )
     }
     Spacer(Modifier.height(4.dp))
 }

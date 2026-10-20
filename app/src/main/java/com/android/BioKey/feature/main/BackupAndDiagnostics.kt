@@ -9,6 +9,7 @@ import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -48,6 +50,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -67,6 +70,7 @@ import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.VaultBackup
 import com.android.BioKey.core.security.rejectObscuredTouches
+import com.android.BioKey.ui.theme.BioKeyMessageHost
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.GroupInset
 import java.text.SimpleDateFormat
@@ -92,7 +96,8 @@ internal class BackupActions(val backUp: () -> Unit, val restore: () -> Unit)
 /**
  * The password chosen for a backup, held while the user picks where to save it, so a rotation or
  * a theme change meanwhile doesn't lose it. Never saved; wiped if BioKey's screen goes for good.
- * The backup is sealed and written in its scope too, so leaving Settings meanwhile doesn't stop it.
+ * The backup is sealed and written in its scope too, and a confirmed restore applied there, so
+ * leaving Settings meanwhile doesn't stop either.
  */
 internal class PendingBackup : ViewModel() {
     var password: CharArray? = null
@@ -105,8 +110,8 @@ internal class PendingBackup : ViewModel() {
 
 /**
  * Backing up: a password (twice), then where to save the file. Restoring: the file, its
- * password, then a confirmation, since it replaces the current setup. The sealing and opening
- * run off the main thread ([VaultBackup] is slow on purpose).
+ * password, then a confirmation, since it replaces the current setup. The sealing, opening and
+ * restoring run off the main thread ([VaultBackup] is slow on purpose).
  *
  * The system file picker covers BioKey, which would end BioKey's session; each launch is
  * announced first ([LockStateTracker.beginOwnPicker]) so the session survives that one trip.
@@ -215,11 +220,16 @@ internal fun rememberBackupActions(): BackupActions {
                     busy = false
                     opened.onSuccess { step = BackupStep.ConfirmRestore(it) }
                     opened.onFailure { e ->
-                        if (e is VaultBackup.WrongPasswordException) {
-                            error = "That password doesn't open this backup"
-                        } else {
-                            step = null
-                            BioKeyMessages.show("That file isn't a BioKey backup", Icons.Default.ErrorOutline)
+                        when (e) {
+                            is VaultBackup.WrongPasswordException -> error = "That password doesn't open this backup"
+                            is VaultBackup.UnsupportedVersionException -> {
+                                step = null
+                                BioKeyMessages.show("That backup was made by a newer version of BioKey. Update BioKey to restore it", Icons.Default.ErrorOutline)
+                            }
+                            else -> {
+                                step = null
+                                BioKeyMessages.show("That file isn't a BioKey backup", Icons.Default.ErrorOutline)
+                            }
                         }
                     }
                 }
@@ -236,14 +246,26 @@ internal fun rememberBackupActions(): BackupActions {
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val restored = runCatching { vault.restoreState(current.state) }
+                    // Closed first, so a second tap can't restore twice.
                     step = null
-                    if (restored.isSuccess) {
-                        // Let auto-sort go through the restored profiles on the next unlock.
-                        InstalledAppsCache.autoSortedVersion = -1
-                        BioKeyMessages.show("Backup restored", Icons.Default.CheckCircle)
-                    } else {
-                        BioKeyMessages.show("That backup couldn't be restored", Icons.Default.ErrorOutline)
+                    // Off the main thread (restoring sweeps notifications), and in the backup's
+                    // scope, so leaving Settings meanwhile doesn't stop it halfway to its message.
+                    pending.viewModelScope.launch {
+                        val restored = try {
+                            withContext(Dispatchers.Default) { vault.restoreState(current.state) }
+                            true
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            false
+                        }
+                        if (restored) {
+                            // Let auto-sort go through the restored profiles on the next unlock.
+                            InstalledAppsCache.autoSortedVersion = -1
+                            BioKeyMessages.show("Backup restored", Icons.Default.CheckCircle)
+                        } else {
+                            BioKeyMessages.show("That backup couldn't be restored", Icons.Default.ErrorOutline)
+                        }
                     }
                 }) { Text("Restore") }
             },
@@ -323,7 +345,12 @@ private fun PasswordDialog(
                 Text(text)
                 OutlinedTextField(
                     value = password,
-                    onValueChange = { password = it },
+                    onValueChange = {
+                        // Typing counts as using BioKey: the soft keyboard's input never passes
+                        // through its own touch handling, so a long password could hit the idle lock.
+                        LockStateTracker.onOwnAppInteraction()
+                        password = it
+                    },
                     label = { Text("Password") },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
@@ -338,7 +365,10 @@ private fun PasswordDialog(
                 if (creating) {
                     OutlinedTextField(
                         value = again,
-                        onValueChange = { again = it },
+                        onValueChange = {
+                            LockStateTracker.onOwnAppInteraction()
+                            again = it
+                        },
                         label = { Text("Password again") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
@@ -378,56 +408,60 @@ internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
         ProtectDialogWindow()
         EdgeToEdgeDialogBars()
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .systemBarsPadding()
-                    .imePadding()
-                    .rejectObscuredTouches()
-            ) {
-                TopAppBar(
-                    title = { Text("Diagnostic log") },
-                    navigationIcon = {
-                        IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close") }
-                    },
-                    actions = {
-                        IconButton(onClick = { share(context) }, enabled = entries.isNotEmpty()) {
-                            Icon(Icons.Default.Share, contentDescription = "Share the log")
-                        }
-                        IconButton(onClick = { confirmDelete = true }, enabled = entries.isNotEmpty()) {
-                            Icon(Icons.Default.Delete, contentDescription = "Delete the log")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
-                )
-                Text(
-                    text = "BioKey's lock decisions about your locked apps over the last 3 days, kept on this phone. Nothing about other apps. Share it with whoever is helping you with a problem; it lists your locked apps by package name.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = GroupInset + 8.dp)
-                )
-                Spacer(Modifier.height(8.dp))
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(start = GroupInset + 8.dp, end = GroupInset + 8.dp, top = 8.dp, bottom = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+            Box(Modifier.fillMaxSize()) {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .systemBarsPadding()
+                        .imePadding()
+                        .rejectObscuredTouches()
                 ) {
-                    if (entries.isEmpty()) {
-                        item {
-                            Text(
-                                text = if (DiagnosticLog.isEnabled()) "Nothing recorded yet" else "The diagnostic log is off",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                    TopAppBar(
+                        title = { Text("Diagnostic log") },
+                        navigationIcon = {
+                            IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close") }
+                        },
+                        actions = {
+                            IconButton(onClick = { share(context) }, enabled = entries.isNotEmpty()) {
+                                Icon(Icons.Default.Share, contentDescription = "Share the log")
+                            }
+                            IconButton(onClick = { confirmDelete = true }, enabled = entries.isNotEmpty()) {
+                                Icon(Icons.Default.Delete, contentDescription = "Delete the log")
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+                    )
+                    Text(
+                        text = "BioKey's lock decisions about your locked apps over the last 3 days, kept on this phone. It never names apps you haven't locked. Share it with whoever is helping you with a problem; it lists your locked apps by package name.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = GroupInset + 8.dp)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(start = GroupInset + 8.dp, end = GroupInset + 8.dp, top = 8.dp, bottom = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        if (entries.isEmpty()) {
+                            item {
+                                Text(
+                                    text = if (DiagnosticLog.isEnabled()) "Nothing recorded yet" else "The diagnostic log is off",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
-                    }
-                    items(entries) { entry ->
-                        Column {
-                            Text(time.format(Date(entry.at)), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                            Text(entry.text, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
+                        items(entries) { entry ->
+                            Column {
+                                Text(time.format(Date(entry.at)), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                Text(entry.text, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
+                            }
                         }
                     }
                 }
+                // Share's "Couldn't open sharing" shows here: the screen's own bar is behind this page.
+                BioKeyMessageHost(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().imePadding())
             }
         }
     }

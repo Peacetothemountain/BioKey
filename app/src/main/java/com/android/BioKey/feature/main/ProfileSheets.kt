@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -83,8 +84,10 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.SecurityProfile
+import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.rejectObscuredTouches
+import com.android.BioKey.ui.theme.BioKeyMessageHost
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupGap
 import com.android.BioKey.ui.theme.GroupInset
@@ -234,7 +237,12 @@ internal fun ProfileDetailsDialog(
             Column(modifier = Modifier.rejectObscuredTouches()) {
                 OutlinedTextField(
                     value = name,
-                    onValueChange = { if (it.length <= 24) name = it },
+                    onValueChange = {
+                        // Typing on the soft keyboard never passes through BioKey's own touch
+                        // handling, so it's counted here: a long edit doesn't hit the idle lock.
+                        LockStateTracker.onOwnAppInteraction()
+                        if (it.length <= 24) name = it
+                    },
                     label = { Text("Name") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
@@ -325,12 +333,16 @@ internal fun RelockSheet(
 
 /**
  * Per-app settings, opened by tapping an app anywhere: lock it, and choose its profile.
+ *
+ * [isHomeScreen]: a home screen BioKey never covers. Its lock can only be turned off, and it
+ * isn't offered a profile (choosing one switches the lock on); one it's already in can be left.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun AppOptionsSheet(
     app: AppItem,
     isLocked: Boolean,
+    isHomeScreen: Boolean,
     currentProfile: SecurityProfile?,
     profiles: List<SecurityProfile>,
     defaultTimeout: LockTimeoutMode,
@@ -342,104 +354,126 @@ internal fun AppOptionsSheet(
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         ProtectDialogWindow()
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .rejectObscuredTouches(),
-            contentPadding = PaddingValues(bottom = 28.dp)
-        ) {
-            item {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    AppIcon(app, 64.dp)
-                    Spacer(Modifier.height(12.dp))
-                    Text(app.label, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = when {
-                            !isLocked -> "Not locked"
-                            currentProfile?.enabled == false -> "Not locked while ${currentProfile.name} is off"
-                            else -> (currentProfile?.timeoutMode ?: defaultTimeout).relockPhrase
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Spacer(Modifier.height(20.dp))
-                Group(count = 1) {
-                    GroupRow(
-                        index = 0,
-                        count = 1,
-                        title = "Lock app",
-                        subtitle = if (isLocked) "Needs your face, fingerprint or screen lock to open" else "Opens without a check",
-                        icon = if (isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                        interaction = Modifier.toggleable(value = isLocked, role = Role.Switch, onValueChange = onLockedChange)
+        // The lock switch's "unlocked · Undo" comes up while the sheet stays open: shown here,
+        // not behind the sheet's scrim.
+        Box {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .rejectObscuredTouches(),
+                contentPadding = PaddingValues(bottom = 28.dp)
+            ) {
+                item {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Switch(checked = isLocked, onCheckedChange = null)
+                        AppIcon(app, 64.dp)
+                        Spacer(Modifier.height(12.dp))
+                        Text(app.label, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = when {
+                                isHomeScreen -> HOME_SCREEN_NOTE
+                                !isLocked -> "Not locked"
+                                currentProfile?.enabled == false -> "Not locked while ${currentProfile.name} is off"
+                                else -> (currentProfile?.timeoutMode ?: defaultTimeout).relockPhrase
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
-                }
-                SectionHeader("Profile")
-            }
-            if (currentProfile != null) {
-                item(key = "remove") {
+                    Spacer(Modifier.height(20.dp))
                     Group(count = 1) {
+                        val canChange = !isHomeScreen || isLocked
                         GroupRow(
                             index = 0,
                             count = 1,
-                            title = "Remove from ${currentProfile.name}",
-                            subtitle = if (isLocked) "Stays locked, with your default re-lock delay" else "Stays unlocked",
-                            icon = Icons.Default.RemoveCircleOutline,
-                            onClick = onRemoveFromProfile
-                        )
+                            title = "Lock app",
+                            subtitle = when {
+                                isHomeScreen -> "BioKey never covers the home screen you use or your phone's own, so you can always get Home"
+                                isLocked -> "Needs your face, fingerprint or screen lock to open"
+                                else -> "Opens without a check"
+                            },
+                            icon = if (isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                            interaction = Modifier.toggleable(value = isLocked, enabled = canChange, role = Role.Switch, onValueChange = onLockedChange)
+                        ) {
+                            Switch(checked = isLocked, onCheckedChange = null, enabled = canChange)
+                        }
                     }
-                    Spacer(Modifier.height(16.dp))
+                    if (!isHomeScreen || currentProfile != null) SectionHeader("Profile")
                 }
-            }
-            val count = profiles.size + 2
-            item {
-                ProfileChoiceRow(
-                    index = 0,
-                    count = count,
-                    title = "No profile",
-                    subtitle = defaultTimeout.relockPhrase + " (default)",
-                    iconKey = "lock",
-                    selected = currentProfile == null,
-                    onClick = { onMoveToProfile(null) }
-                )
-            }
-            itemsIndexed(profiles, key = { _, p -> p.id }) { i, profile ->
-                ProfileChoiceRow(
-                    index = i + 1,
-                    count = count,
-                    title = profile.name,
-                    subtitle = if (profile.enabled) profile.timeoutMode.relockPhrase else "Off · its apps aren't locked",
-                    iconKey = profile.iconKey,
-                    selected = currentProfile?.id == profile.id,
-                    onClick = { onMoveToProfile(profile.id) }
-                )
-            }
-            item {
-                Box(Modifier.padding(horizontal = GroupInset).padding(top = GroupGap)) {
-                    GroupRow(
-                        index = count - 1,
-                        count = count,
-                        title = "New profile",
-                        icon = Icons.Default.Add,
-                        iconTint = MaterialTheme.colorScheme.onPrimary,
-                        iconContainer = MaterialTheme.colorScheme.primary,
-                        onClick = onNewProfile
-                    )
+                if (currentProfile != null) {
+                    item(key = "remove") {
+                        Group(count = 1) {
+                            GroupRow(
+                                index = 0,
+                                count = 1,
+                                title = "Remove from ${currentProfile.name}",
+                                subtitle = if (isLocked) "Stays locked, with your default re-lock delay" else "Stays unlocked",
+                                icon = Icons.Default.RemoveCircleOutline,
+                                onClick = onRemoveFromProfile
+                            )
+                        }
+                        Spacer(Modifier.height(16.dp))
+                    }
                 }
-                Text(
-                    text = "Choosing a profile turns the app's lock on and uses that profile's re-lock delay. Turning the lock off keeps it in its profile.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = GroupInset + 16.dp, end = GroupInset + 16.dp, top = 12.dp)
-                )
+                if (!isHomeScreen) profileChoices(profiles, currentProfile, defaultTimeout, onMoveToProfile, onNewProfile)
             }
+            BioKeyMessageHost(Modifier.align(Alignment.BottomCenter))
         }
+    }
+}
+
+/** The app's profile: none, one of [profiles], or a new one. */
+private fun LazyListScope.profileChoices(
+    profiles: List<SecurityProfile>,
+    currentProfile: SecurityProfile?,
+    defaultTimeout: LockTimeoutMode,
+    onMoveToProfile: (String?) -> Unit,
+    onNewProfile: () -> Unit
+) {
+    val count = profiles.size + 2
+    item {
+        ProfileChoiceRow(
+            index = 0,
+            count = count,
+            title = "No profile",
+            subtitle = defaultTimeout.relockPhrase + " (default)",
+            iconKey = "lock",
+            selected = currentProfile == null,
+            onClick = { onMoveToProfile(null) }
+        )
+    }
+    itemsIndexed(profiles, key = { _, p -> p.id }) { i, profile ->
+        ProfileChoiceRow(
+            index = i + 1,
+            count = count,
+            title = profile.name,
+            subtitle = if (profile.enabled) profile.timeoutMode.relockPhrase else "Off · its apps aren't locked",
+            iconKey = profile.iconKey,
+            selected = currentProfile?.id == profile.id,
+            onClick = { onMoveToProfile(profile.id) }
+        )
+    }
+    item {
+        Box(Modifier.padding(horizontal = GroupInset).padding(top = GroupGap)) {
+            GroupRow(
+                index = count - 1,
+                count = count,
+                title = "New profile",
+                icon = Icons.Default.Add,
+                iconTint = MaterialTheme.colorScheme.onPrimary,
+                iconContainer = MaterialTheme.colorScheme.primary,
+                onClick = onNewProfile
+            )
+        }
+        Text(
+            text = "Choosing a profile turns the app's lock on and uses that profile's re-lock delay. Turning the lock off keeps it in its profile.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = GroupInset + 16.dp, end = GroupInset + 16.dp, top = 12.dp)
+        )
     }
 }
 
@@ -472,6 +506,8 @@ internal fun AddAppsScreen(
     profiles: List<SecurityProfile>,
     profileOfApp: (String) -> SecurityProfile?,
     lockedApps: Set<String>,
+    /** Home screens BioKey never covers: adding one would switch on a lock that does nothing. */
+    homeScreens: Set<String>,
     onAdd: (Set<String>) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -479,7 +515,9 @@ internal fun AddAppsScreen(
     var selected by rememberSaveable { mutableStateOf(emptySet<String>()) }
     // Only apps that aren't in any profile yet: an app lives in exactly one profile, and moving
     // it between profiles is done from the app's own options.
-    val outside = remember(installedApps, profiles) { installedApps.filter { app -> profileOfApp(app.packageName) == null } }
+    val outside = remember(installedApps, profiles, homeScreens) {
+        installedApps.filter { app -> profileOfApp(app.packageName) == null && app.packageName !in homeScreens }
+    }
     val candidates = remember(outside, query) {
         outside.filter { query.isBlank() || it.label.contains(query.trim(), ignoreCase = true) }
     }
@@ -517,7 +555,7 @@ internal fun AddAppsScreen(
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
                 )
                 Text(
-                    text = "Apps already in a profile aren't listed",
+                    text = "Apps already in a profile, and home screens, aren't listed",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = GroupInset + 8.dp)
@@ -576,12 +614,19 @@ internal fun EdgeToEdgeDialogBars() {
     }
 }
 
-/** Filled, borderless search field shaped like a pill. */
+/**
+ * Filled, borderless search field shaped like a pill. Typing counts as using BioKey: the soft
+ * keyboard's input never passes through BioKey's own touch handling, so a long search would
+ * otherwise hit the idle lock.
+ */
 @Composable
 internal fun SearchPill(query: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
     TextField(
         value = query,
-        onValueChange = onChange,
+        onValueChange = {
+            LockStateTracker.onOwnAppInteraction()
+            onChange(it)
+        },
         placeholder = { Text("Search apps") },
         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
         trailingIcon = if (query.isNotEmpty()) {

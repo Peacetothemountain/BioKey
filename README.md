@@ -20,12 +20,12 @@ An Android app lock modelled on Android 17's own App Lock: the apps you choose o
 | Feature | What it does |
 |---|---|
 | **Profiles** | Group apps (Finance, Social, Work, or your own) with their own re-lock delay and their own on/off switch. An app is locked when its own switch is on and its profile is on; switching either off never takes it out of the profile. Each profile is edited from its own page. An app lives in at most one profile. Optional auto-sort puts recognised apps into the built-in profiles. |
-| **Notification shield** | Optional. A locked app's notifications are snoozed and replaced with "N hidden notifications" until you unlock it; tapping the stand-in unlocks and opens the original. Calls, alarms, media and navigation always show. |
+| **Notification shield** | Optional. A locked app's notifications are snoozed and replaced with "N hidden notifications" until you unlock it; tapping the stand-in unlocks and opens the original. Tapped on the phone's lock screen, a stand-in asks you to unlock the phone first. Calls, alarms, media and navigation always show. |
 | **BioKey locks itself** | BioKey's own screens need authentication and lock again after 3 minutes of inactivity. |
 | **Self-protection** | Optional (off by default), accessibility engine only. BioKey's App info page (force stop, uninstall, clear storage), its accessibility switch, notification access and the uninstall dialog require authentication. Pages you open from inside BioKey are pre-authorised. |
-| **Protection alert** | A notification fires if protection stops (for example the accessibility service is switched off). |
+| **Protection alert** | A notification fires if protection stops (the accessibility service is switched off, or compatibility mode loses a permission or can't start). |
 | **Pause** | Pause for 15 minutes, 1 hour, or until turned back on, from the app or the Quick Settings tile (behind authentication). |
-| **Window hardening** | `FLAG_SECURE`, no Recents thumbnails of BioKey, other apps' overlays hidden, touches through obscuring windows rejected (tapjacking), and BioKey's screens marked accessibility-data-sensitive so only genuine accessibility tools (e.g. TalkBack) can read or operate them; accessibility malware can't see your locked apps or tap "Pause". |
+| **Window hardening** | `FLAG_SECURE`, no Recents thumbnails of BioKey, other apps' overlays hidden, touches through obscuring windows rejected (tapjacking), and BioKey's screens marked accessibility-data-sensitive (Android 14 and later), so only genuine accessibility tools (e.g. TalkBack) can read or operate them there: accessibility malware can't see your locked apps or tap "Pause". |
 | **No network access** | No `INTERNET` permission. Backup and device-to-device transfer are disabled. |
 
 ## Two engines
@@ -67,21 +67,29 @@ An app lock running as a regular app can't defend against everything:
 
 - **Root, ADB, or a modified OS** can bypass any app lock.
 - **Compatibility mode** (used under Advanced Protection) covers a locked app a little later than the accessibility engine (no tap prediction; about 0.15 s) and can't provide self-protection. It shows a low-priority notification, which Android requires for this kind of background work.
+- **Compatibility mode needs both its permissions.** Turning off usage access or display over other apps stops it: BioKey ends every session and alerts you, but the app on screen at that moment can't be covered.
 - **Safe mode** turns off every downloaded app, BioKey included, until you restart normally: preinstalled locked apps (Photos, Gmail or Chrome, for example) open without a check, and no alert can be shown.
 - **Recents previews** of a locked app can't be blanked; only the system App Lock can do that.
+- **Home screens** can't be locked: BioKey never covers the home screen in use or the phone's own (which also shows Recents), so you can always get Home. Their lock switches can't be turned on.
 - **Closing an app from Recents** ends its session only with the accessibility engine (on launchers built on Android's own, like the Pixel's). Compatibility mode can't see it: Android doesn't tell apps when another app is closed, so the session ends by time.
 - **Compatibility mode on warm launches**: an app that was still in memory can show its last screen for about half a second before the cover. Android holds back app overlays while an app's opening animation runs; the accessibility engine's cover isn't held.
+- **Apps that hide other apps' overlays** (some banking and payment apps): in compatibility mode Android hides BioKey's cover over them, so their screen can show for a moment on each launch until the lock screen appears; the lock itself still applies.
 - **Launches without a tap** (links from other apps, the quick-switch gesture) are covered when the app's window appears, which can be a frame later than a tap-started launch.
-- **Apps that hide their windows from accessibility services**: the accessibility engine can only recognise them from the tap that opens them.
-- **Work profile and other profiles**: compatibility mode can't see apps in a work profile or another profile, including the work copy of an app installed in both, because Android only shares app-launch information within one profile. They stay locked with the accessibility engine, and the notification shield still hides their notifications.
+- **Apps that hide their windows from accessibility services** (Android 14 and later; many banking apps do): the accessibility engine covers them when they're opened by a tap on their icon or Recents card, or when a window of theirs it has already seen comes back. Opened another way (a link, a notification), they can open uncovered.
+- **Picture-in-picture**: a locked app's picture-in-picture window is covered by a patch of its own. The window can show for a moment right after the phone is unlocked or while it's being moved, and an app that won't leave picture-in-picture shows dimmed under the unlock prompt.
+- **Split screen, desktop windows and other displays** (DeX, an external screen): a locked app's lock screen takes the whole display (desktop windows, Android 14 and later) or sends you Home, so the app is never usable beside the prompt. Windows of locked apps beside the lock screen, or on another display, are covered by patches.
+- **Work profile and other profiles**: compatibility mode can't see apps in a work profile or another profile, including the work copy of an app installed in both, because Android only shares app-launch information within one profile. They stay locked with the accessibility engine, and the notification shield still hides their notifications. While you're in a work app, compatibility mode counts you as still in the last personal app; locking the phone still locks everything.
 - **Notifications** of a locked app can flash as a heads-up or on a watch before BioKey hides them. With Notification history on, Settings > Notifications > Notification history lists the snoozed (hidden) notifications.
+- **Bringing hidden notifications back**: switch the notification shield off in BioKey. Revoking notification access instead can leave them hidden for up to a day.
+- **Android 12 and 13** have no way to hide an app's screens from other accessibility services: one you have turned on can read and operate BioKey's screens.
+- **Accessibility shortcuts**: a shortcut (volume keys or the accessibility button) assigned to Bio Key App Lock Service switches it off without authentication. Remove it if you rely on self-protection; BioKey's settings warn you while one is assigned.
 - **Self-protection is heuristic.** There's no Android API for "this screen can disable app X", so BioKey recognises those screens by package and content. It's tested against Pixel layouts; other manufacturers' Settings may differ.
 
 ## Permissions
 
 | Permission | Why |
 |---|---|
-| Accessibility service | Sees which app is on screen, reads the name of the app you tap on the home screen or in Recents, and recognises BioKey's own settings pages. Doesn't read what you type. |
+| Accessibility service | Sees which app is on screen, reads the name of the app you tap on the home screen, in search or in Recents, and, with self-protection on, recognises BioKey's own settings pages. Doesn't read what you type. |
 | `USE_BIOMETRIC` | Face and fingerprint authentication. |
 | `HIDE_OVERLAY_WINDOWS` | Hides other apps' overlays while BioKey's screens are showing. |
 | `POST_NOTIFICATIONS` | The protection alert and hidden-notification stand-ins. |
@@ -95,19 +103,24 @@ Package visibility is limited to launchable apps, launchers, keyboards and a few
 ## Architecture
 
 ```
-core/data          LockTimeoutMode, SecurityProfile, AppClassifier
+core/data          LockTimeoutMode, SecurityProfile, AppClassifier, PasswordManager
 core/security      SecurityVault (settings, locked apps, profiles), LockStateTracker (sessions),
                    SecurityEngine (BiometricPrompt), ProtectionEngine (which engine runs),
-                   AdvancedProtection, WindowProtection, ProtectionAlerts
+                   AdvancedProtection, WindowProtection, ProtectionAlerts, VaultBackup
+core/diagnostics   DiagnosticLog (on-phone log of lock decisions)
 core/receiver      Boot receiver
 feature/lock       BioKeyAccessibilityService, UsageWatchService (compatibility mode),
-                   ForegroundRules, LockLauncher, InstantShieldOverlay, LockScreenActivity,
-                   LockCoverView, SelfProtectionDetector, AppInfoCache, ScreenReceiver
-feature/main       MainActivity (BioKey's own lock), main screen, profile sheets, settings
+                   ForegroundRules, SessionRules, LockLauncher, InstantShieldOverlay, WindowMask,
+                   LockScreenActivity, LockCoverView, SelfProtectionDetector, RecentsWatcher,
+                   AppInfoCache, AppLabels, ScreenReceiver
+feature/main       MainActivity (BioKey's own lock), main screen, profile sheets, settings,
+                   backup and diagnostic log, disclosures, BioKeyLogo, header constellation
 feature/setup      First-run setup
 feature/notification  Notification shield
 feature/tile       Quick Settings tile
-ui/theme           BioKeyTheme, system haptics, press animation
+ui                 AppIcons
+ui/brand           LogoArt/LogoLayer, VineSlither, WordmarkView
+ui/theme           BioKeyTheme, components, messages, system haptics, press animation
 ```
 
 ## Building

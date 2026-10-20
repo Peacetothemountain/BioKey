@@ -64,14 +64,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -87,12 +85,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.BioKey.BioKeyApplication
 import com.android.BioKey.core.data.LockTimeoutMode
@@ -103,6 +97,7 @@ import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.AppInfoCache
+import com.android.BioKey.feature.lock.ForegroundRules
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.GroupGap
 import com.android.BioKey.ui.theme.GroupInset
@@ -114,9 +109,13 @@ import com.android.BioKey.ui.theme.springPress
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val FILTER_ALL = "filter:all"
+
+/** Shown wherever a home-screen app's lock switch can't be turned on. */
+internal const val HOME_SCREEN_NOTE = "Home screens can't be locked"
 
 /**
  * BioKey's home. From the top: the logo over its constellation, a card saying whether
@@ -189,10 +188,33 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         }
         val version = InstalledAppsCache.version
         if (installedApps.isEmpty() || InstalledAppsCache.autoSortedVersion == version) return@LaunchedEffect
+        // Each app's category was worked out (Play category included) when the list was read.
         withContext(Dispatchers.IO) {
-            vault.autoSortAppsIntoProfiles(installedApps.map { it.packageName to it.label }, context.packageManager)
+            vault.autoSortAppsIntoProfiles(installedApps.map { it.packageName to it.category })
         }
         InstalledAppsCache.autoSortedVersion = version
+    }
+
+    /**
+     * Home-screen apps BioKey never covers, so the user can always get Home: the one in use and
+     * the system's own ([ForegroundRules.isLauncher]). Locking one would do nothing, so their
+     * switches can't be turned on. Read again on every resume: choosing another home screen sends
+     * no broadcast.
+     */
+    var homeScreens by remember { mutableStateOf(emptySet<String>()) }
+    val scope = rememberCoroutineScope()
+    LifecycleResumeEffect(installedApps) {
+        val apps = installedApps
+        val job = scope.launch {
+            homeScreens = withContext(Dispatchers.IO) {
+                runCatching {
+                    apps.mapNotNullTo(HashSet()) { app ->
+                        app.packageName.takeIf { ForegroundRules.isLauncher(context, it, isLocked = { true }) }
+                    }
+                }.getOrDefault(emptySet())
+            }
+        }
+        onPauseOrDispose { job.cancel() }
     }
 
     var showSettings by rememberSaveable { mutableStateOf(false) }
@@ -234,7 +256,8 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     fun isOn(pkg: String) = PasswordManager.aliasesOf(pkg).any { it in selectedApps }
     /** Actually locked: switched on, and its profile (if any) is on too. */
     fun isLocked(pkg: String) = PasswordManager.aliasesOf(pkg).any { it in lockedApps }
-
+    /** Never covered, so its switch can only be turned off. */
+    fun isHomeScreen(pkg: String) = pkg in homeScreens
 
     BackHandler(enabled = filter != FILTER_ALL && !showSettings) { filter = FILTER_ALL }
 
@@ -248,10 +271,14 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     val appCountByProfile = remember(installedApps, profiles) {
         installedApps.mapNotNull { profileOf(it.packageName)?.id }.groupingBy { it }.eachCount()
     }
-    val lockedCount = remember(installedApps, lockedApps, profiles) { installedApps.count { isLocked(it.packageName) } }
+    // A home screen left switched on (from before, or a backup) isn't counted: it's never covered.
+    val lockedCount = remember(installedApps, lockedApps, profiles, homeScreens) {
+        installedApps.count { isLocked(it.packageName) && !isHomeScreen(it.packageName) }
+    }
     /** Locked apps with a copy compatibility mode can't see: Android shares app usage only within one profile. */
-    fun isUnwatched(app: AppItem) = mode == ProtectionEngine.Mode.COMPATIBILITY && app.inOtherProfile && isLocked(app.packageName)
-    val unwatchedCount = remember(installedApps, lockedApps, profiles, mode) { installedApps.count(::isUnwatched) }
+    fun isUnwatched(app: AppItem) = mode == ProtectionEngine.Mode.COMPATIBILITY && app.inOtherProfile && isLocked(app.packageName) &&
+        !isHomeScreen(app.packageName)
+    val unwatchedCount = remember(installedApps, lockedApps, profiles, mode, homeScreens) { installedApps.count(::isUnwatched) }
     val look = protectionLook(mode, globalLockEnabled, pausedUntil, lockedCount, unwatchedCount, defaultTimeout)
 
     /** The app's own switch; it stays in its profile either way. */
@@ -272,6 +299,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
             // The lock stays on: it still hides the app's notifications, and protects it again as
             // soon as the accessibility engine is back.
             val unwatched = isUnwatched(app)
+            val homeScreen = isHomeScreen(app.packageName)
             GroupRow(
                 index = i,
                 count = apps.size,
@@ -280,11 +308,15 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                     append(profile?.name ?: app.category.label)
                     if (profile != null && !profile.enabled) append(" · off")
                     if (app.isWorkProfile) append(" · Work")
-                    if (unwatched) {
+                    if (homeScreen) {
+                        append(" · $HOME_SCREEN_NOTE")
+                    } else if (unwatched) {
                         append(if (app.isWorkProfile) " · Not protected in compatibility mode" else " · Work copy not protected in compatibility mode")
                     }
                 },
                 subtitleColor = when {
+                    homeScreen && isOn(app.packageName) -> MaterialTheme.colorScheme.error
+                    homeScreen -> MaterialTheme.colorScheme.onSurfaceVariant
                     unwatched -> MaterialTheme.colorScheme.error
                     profile != null -> MaterialTheme.colorScheme.primary
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
@@ -296,10 +328,12 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                     .padding(horizontal = GroupInset)
                     .padding(top = if (i == 0) 0.dp else GroupGap)
             ) {
-                // Its own TalkBack stop, so it says which app it locks.
+                // Its own TalkBack stop, so it says which app it locks. A home screen's can only
+                // be turned off.
                 Switch(
                     checked = isOn(app.packageName),
                     onCheckedChange = { toggleLock(app, it) },
+                    enabled = !homeScreen || isOn(app.packageName),
                     modifier = Modifier.semantics { contentDescription = "Lock ${app.label}" }
                 )
             }
@@ -320,10 +354,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         ) {
             item(key = "header") {
                 Box {
-                    // The constellation runs only while resumed: hold it at "started" while covered.
-                    CompositionLocalProvider(LocalLifecycleOwner provides rememberCappedLifecycleOwner(headerActive)) {
-                        HeaderMatrixDotsExpressive(Modifier.matchParentSize())
-                    }
+                    HeaderMatrixDotsExpressive(Modifier.matchParentSize(), animated = headerActive)
                     Column(Modifier.statusBarsPadding()) {
                         MainHeader(
                             status = look,
@@ -484,6 +515,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
             AppOptionsSheet(
                 app = app,
                 isLocked = isOn(pkg),
+                isHomeScreen = isHomeScreen(pkg),
                 currentProfile = profileOf(pkg),
                 profiles = profiles,
                 defaultTimeout = defaultTimeout,
@@ -562,6 +594,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
             profiles = profiles,
             profileOfApp = ::profileOf,
             lockedApps = lockedApps,
+            homeScreens = homeScreens,
             onAdd = { packages ->
                 vault.addAppsToProfile(currentProfile.id, packages)
                 showAddApps = false
@@ -625,9 +658,9 @@ private fun HeaderTile(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .width(84.dp)
+            .springPress()
             .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick, role = Role.Button)
-            .springPress()
             .semantics(mergeDescendants = true) { this.contentDescription = contentDescription }
             .padding(vertical = 6.dp)
     ) {
@@ -706,47 +739,6 @@ private fun protectionLook(
                 },
             null
         )
-    }
-}
-
-/**
- * The screen's lifecycle, held at STARTED while [active] is false: decorations that animate only
- * while resumed hold their last frame under Settings, without leaving the composition.
- */
-@Composable
-private fun rememberCappedLifecycleOwner(active: Boolean): LifecycleOwner {
-    val parent = LocalLifecycleOwner.current
-    val owner = remember(parent) { CappedLifecycleOwner(parent) }
-    SideEffect { owner.cap = if (active) Lifecycle.State.RESUMED else Lifecycle.State.STARTED }
-    DisposableEffect(owner) {
-        owner.attach()
-        onDispose { owner.detach() }
-    }
-    return owner
-}
-
-internal class CappedLifecycleOwner(private val parent: LifecycleOwner) : LifecycleOwner {
-    private val registry = LifecycleRegistry(this)
-    private val follow = LifecycleEventObserver { _, _ -> sync() }
-    override val lifecycle: Lifecycle get() = registry
-
-    var cap: Lifecycle.State = Lifecycle.State.RESUMED
-        set(value) {
-            field = value
-            sync()
-        }
-
-    fun attach() = parent.lifecycle.addObserver(follow)
-
-    fun detach() = parent.lifecycle.removeObserver(follow)
-
-    private fun sync() {
-        val target = minOf(parent.lifecycle.currentState, cap)
-        // A registry never leaves DESTROYED, and can't reach it before being created.
-        if (registry.currentState == Lifecycle.State.DESTROYED ||
-            (target == Lifecycle.State.DESTROYED && registry.currentState == Lifecycle.State.INITIALIZED)
-        ) return
-        registry.currentState = target
     }
 }
 
