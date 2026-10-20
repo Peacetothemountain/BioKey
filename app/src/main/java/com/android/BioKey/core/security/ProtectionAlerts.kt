@@ -89,6 +89,19 @@ object ProtectionAlerts {
     }
 
     private fun postServiceStopped(context: Context) {
+        if (ProtectionEngine.mode(context) == ProtectionEngine.Mode.COMPATIBILITY) {
+            // Compatibility mode is the engine to run and has what it needs, but didn't start
+            // (Android limits starting it from the background); opening BioKey starts it. Not while
+            // the accessibility switch is still on: then BioKey won't start compatibility mode.
+            post(
+                context,
+                ID_SERVICE_STOPPED,
+                "App lock is off",
+                "BioKey's compatibility mode isn't running, so locked apps are not protected. Tap to open BioKey and start it.",
+                ongoing = true
+            )
+            return
+        }
         if (AdvancedProtection.blocksBioKey(context)) {
             // Android switched the service off and won't let it back on: point to compatibility mode.
             post(
