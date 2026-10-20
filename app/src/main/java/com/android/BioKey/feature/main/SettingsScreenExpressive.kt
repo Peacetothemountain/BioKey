@@ -3,6 +3,7 @@ package com.android.BioKey.feature.main
 import androidx.activity.BackEventCompat
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -11,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,12 +19,12 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.LockClock
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
@@ -40,7 +40,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -78,32 +77,19 @@ private class SettingItem(
     val title: String,
     val subtitle: String,
     val checked: Boolean? = null,
-    val external: Boolean = false,
+    /** False greys the switch out: it can't be changed right now. */
+    val enabled: Boolean = true,
     val onChange: (Boolean) -> Unit = {},
-    val onClick: () -> Unit = {}
+    val onClick: (() -> Unit)? = null
 )
 
+/**
+ * BioKey's settings, over the home screen. [mode] is the engine protecting apps, as the home
+ * screen has it (MainActivity refreshes it on every resume).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
-    // Predictive back: the page follows the back gesture (shrinks, rounds, shifts) and reveals the
-    // home screen underneath; releasing completes it, swiping back cancels it.
-    var backProgress by remember { mutableFloatStateOf(0f) }
-    var backFromLeft by remember { mutableStateOf(true) }
-    PredictiveBackHandler { gesture ->
-        try {
-            gesture.collect { event ->
-                backProgress = event.progress
-                backFromLeft = event.swipeEdge == BackEventCompat.EDGE_LEFT
-            }
-            onNavigateBack()
-        } catch (e: CancellationException) {
-            backProgress = 0f
-            throw e
-        }
-    }
-    val shownProgress by animateFloatAsState(backProgress, label = "predictive_back")
-
+fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> Unit, onPauseRequested: () -> Unit) {
     val context = LocalContext.current
     val view = LocalView.current
     val vault = remember { SecurityVault.getInstance(context) }
@@ -115,17 +101,15 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
     val notificationShieldEnabled by vault.notificationShieldFlow.collectAsStateWithLifecycle()
     val autoSortProfiles by vault.autoSortProfilesFlow.collectAsStateWithLifecycle()
 
-    var mode by remember { mutableStateOf(ProtectionEngine.mode(context)) }
     var notifListenerActive by remember { mutableStateOf(BioKeyNotificationShieldService.isNotificationAccessGranted(context)) }
     var showRelockSheet by remember { mutableStateOf(false) }
     /** Sent to Android's notification access page: on coming back, say if it's still off. */
     var awaitingNotificationAccess by remember { mutableStateOf(false) }
     val disclosures = rememberDisclosureGate()
+    val notifications = rememberNotificationPermission()
     val protecting = mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.COMPATIBILITY
 
     LifecycleResumeEffect(Unit) {
-        ProtectionEngine.refresh(context)
-        mode = ProtectionEngine.mode(context)
         notifListenerActive = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
         if (awaitingNotificationAccess) {
             awaitingNotificationAccess = false
@@ -134,6 +118,10 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
                     awaitingNotificationAccess = true
                     IntentNavigationHelper.openNotificationListenerSettings(context)
                 }
+            } else {
+                // The shield is on by default, so this may be the only moment to ask: without the
+                // permission it can hide notifications but can't stand in for them.
+                notifications.request()
             }
         }
         onPauseOrDispose { }
@@ -164,8 +152,14 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
                 },
                 checked = globalLockEnabled && protecting,
                 onChange = { on ->
-                    vault.setGlobalLockEnabled(on)
-                    if (on && !protecting) enableEngine()
+                    if (!on) {
+                        // Same choices as the home screen (15 minutes, 1 hour, until resumed), never
+                        // an open-ended pause from a single tap.
+                        onPauseRequested()
+                    } else {
+                        vault.setGlobalLockEnabled(true)
+                        if (!protecting) enableEngine()
+                    }
                 }
             )
         )
@@ -177,6 +171,15 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
                 onClick = { showRelockSheet = true }
             )
         )
+        add(
+            SettingItem(
+                icon = if (notifications.allowed) Icons.Default.Notifications else Icons.Default.NotificationsOff,
+                title = "Protection alerts",
+                subtitle = if (notifications.allowed) "Tells you if app locking stops"
+                else "Off: BioKey can't tell you if app locking stops · tap to allow notifications",
+                onClick = if (notifications.allowed) null else notifications::requestOrOpenSettings
+            )
+        )
     }
     val privacy = listOf(
         SettingItem(
@@ -184,6 +187,8 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
             title = "Hide notification content",
             subtitle = when {
                 !notifListenerActive -> "Needs notification access · tap to grant"
+                notificationShieldEnabled && !notifications.allowed ->
+                    "Locked apps' notifications are hidden, with no stand-in until you allow BioKey's notifications"
                 notificationShieldEnabled -> "Locked apps' notifications only say that something arrived"
                 else -> "Notifications from locked apps show in full"
             },
@@ -195,21 +200,36 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
                         awaitingNotificationAccess = true
                         IntentNavigationHelper.openNotificationListenerSettings(context)
                     }
+                } else if (on) {
+                    notifications.request()
                 }
             }
         ),
         SettingItem(
             icon = Icons.Default.AdminPanelSettings,
             title = "Protect BioKey's settings",
-            subtitle = when (mode) {
-                ProtectionEngine.Mode.ACCESSIBILITY ->
+            subtitle = when {
+                mode == ProtectionEngine.Mode.ACCESSIBILITY ->
                     "Optional. Ask for your authentication before BioKey can be switched off, force-stopped or uninstalled"
-                else -> "Optional. Needs the Accessibility service, so it isn't available in compatibility mode"
+                mode == ProtectionEngine.Mode.OFF && selfProtectionEnabled -> "On · works once the Accessibility service is on"
+                mode == ProtectionEngine.Mode.OFF -> "Optional. Needs the Accessibility service, which is off"
+                selfProtectionEnabled -> "On, but inactive in compatibility mode · tap to turn off"
+                else -> "Not available in compatibility mode"
             },
-            checked = selfProtectionEnabled && mode == ProtectionEngine.Mode.ACCESSIBILITY,
+            // Shows what's saved, so it's never on without the user seeing it. In compatibility
+            // mode it can only be turned off; turning it on needs the Accessibility service.
+            checked = selfProtectionEnabled,
+            enabled = mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.OFF || selfProtectionEnabled,
             onChange = { on ->
-                vault.setAccessibilitySelfProtectionEnabled(on)
-                if (on && mode == ProtectionEngine.Mode.OFF) enableEngine()
+                when {
+                    !on -> vault.setAccessibilitySelfProtectionEnabled(false)
+                    mode == ProtectionEngine.Mode.ACCESSIBILITY -> vault.setAccessibilitySelfProtectionEnabled(true)
+                    // Saved only on Agree: "Not now" leaves it off.
+                    mode == ProtectionEngine.Mode.OFF -> disclosures.request(Disclosure.ACCESSIBILITY) {
+                        vault.setAccessibilitySelfProtectionEnabled(true)
+                        IntentNavigationHelper.openAccessibilitySettings(context)
+                    }
+                }
             }
         )
     )
@@ -241,13 +261,13 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
 
     var logEnabled by remember { mutableStateOf(DiagnosticLog.isEnabled()) }
     var showLog by remember { mutableStateOf(false) }
-    val logVersion by DiagnosticLog.version.collectAsState()
+    val logVersion by DiagnosticLog.version.collectAsStateWithLifecycle()
     val logCount = remember(logVersion) { DiagnosticLog.entries().size }
     val diagnostics = listOf(
         SettingItem(
             icon = Icons.Default.BugReport,
             title = "Diagnostic log",
-            subtitle = "Keeps BioKey's recent lock decisions on this phone, to help track down a problem",
+            subtitle = "Keeps BioKey's lock decisions about your locked apps on this phone for 3 days, to help track down a problem",
             checked = logEnabled,
             onChange = { on ->
                 DiagnosticLog.setEnabled(context, on)
@@ -263,58 +283,52 @@ fun SettingsScreenExpressive(onNavigateBack: () -> Unit) {
     )
 
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
-    Scaffold(
-        modifier = Modifier
-            .fillMaxSize()
-            .graphicsLayer {
-                val p = shownProgress
-                scaleX = 1f - 0.1f * p
-                scaleY = 1f - 0.1f * p
-                translationX = (if (backFromLeft) 1f else -1f) * size.width * 0.04f * p
-                shape = RoundedCornerShape(32.dp * p)
-                clip = p > 0f
-            }
-            // Opaque to touches: taps on empty space must not reach the home screen underneath.
-            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
-            .rejectObscuredTouches()
-            .nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = {
-            LargeTopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack, modifier = Modifier.springPress()) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer
-                ),
-                scrollBehavior = scrollBehavior
-            )
-        }
-    ) { padding ->
-        val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-        LazyColumn(
-            // Phones use the full width; on tablets and in landscape the page keeps a readable width.
+    PredictiveBackPage(onNavigateBack) {
+        Scaffold(
             modifier = Modifier
                 .fillMaxSize()
-                .wrapContentWidth()
-                .widthIn(max = MaxContentWidth),
-            contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = 32.dp + navBottom)
-        ) {
-            item { SettingsSection("App lock", appLock) { Haptics.toggle(view, it) } }
-            item { SettingsSection("Privacy & protection", privacy) { Haptics.toggle(view, it) } }
-            item { SettingsSection("Profiles", profiles) { Haptics.toggle(view, it) } }
-            item { SettingsSection("Backup", backup) { Haptics.toggle(view, it) } }
-            item { SettingsSection("Diagnostics", diagnostics) { Haptics.toggle(view, it) } }
-            item {
-                Text(
-                    text = "BioKey has no internet access. Nothing it sees leaves this phone.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 32.dp, vertical = 24.dp)
+                // Opaque to touches: taps on empty space must not reach the home screen underneath.
+                .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
+                .rejectObscuredTouches()
+                .nestedScroll(scrollBehavior.nestedScrollConnection),
+            topBar = {
+                LargeTopAppBar(
+                    title = { Text("Settings") },
+                    navigationIcon = {
+                        IconButton(onClick = onNavigateBack, modifier = Modifier.springPress()) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer
+                    ),
+                    scrollBehavior = scrollBehavior
                 )
+            }
+        ) { padding ->
+            val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+            LazyColumn(
+                // Phones use the full width; on tablets and in landscape the page keeps a readable width.
+                modifier = Modifier
+                    .fillMaxSize()
+                    .wrapContentWidth()
+                    .widthIn(max = MaxContentWidth),
+                contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = 32.dp + navBottom)
+            ) {
+                item { SettingsSection("App lock", appLock) { Haptics.toggle(view, it) } }
+                item { SettingsSection("Privacy & protection", privacy) { Haptics.toggle(view, it) } }
+                item { SettingsSection("Profiles", profiles) { Haptics.toggle(view, it) } }
+                item { SettingsSection("Backup", backup) { Haptics.toggle(view, it) } }
+                item { SettingsSection("Diagnostics", diagnostics) { Haptics.toggle(view, it) } }
+                item {
+                    Text(
+                        text = "BioKey has no internet access. Nothing it sees leaves this phone.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 32.dp, vertical = 24.dp)
+                    )
+                }
             }
         }
     }
@@ -347,12 +361,12 @@ private fun SettingsSection(title: String, items: List<SettingItem>, onToggled: 
                 title = item.title,
                 subtitle = item.subtitle,
                 icon = item.icon,
-                interaction = Modifier.toggleable(value = checked, role = Role.Switch) { next ->
+                interaction = Modifier.toggleable(value = checked, enabled = item.enabled, role = Role.Switch) { next ->
                     onToggled(next)
                     item.onChange(next)
                 }
             ) {
-                Switch(checked = checked, onCheckedChange = null)
+                Switch(checked = checked, onCheckedChange = null, enabled = item.enabled)
             }
         } else {
             GroupRow(
@@ -362,17 +376,46 @@ private fun SettingsSection(title: String, items: List<SettingItem>, onToggled: 
                 subtitle = item.subtitle,
                 icon = item.icon,
                 onClick = item.onClick
-            ) {
-                if (item.external) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.OpenInNew,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
+            )
         }
     }
     Spacer(Modifier.height(4.dp))
+}
+
+/**
+ * Predictive back: the page follows the back gesture (shrinks, rounds, shifts) and reveals the
+ * home screen underneath; releasing completes it, swiping back cancels it. Only this wrapper
+ * recomposes on each gesture frame; [content] is left alone and the progress is read while drawing.
+ */
+@Composable
+private fun PredictiveBackPage(onNavigateBack: () -> Unit, content: @Composable () -> Unit) {
+    var backProgress by remember { mutableFloatStateOf(0f) }
+    var backFromLeft by remember { mutableStateOf(true) }
+    PredictiveBackHandler { gesture ->
+        try {
+            gesture.collect { event ->
+                backProgress = event.progress
+                backFromLeft = event.swipeEdge == BackEventCompat.EDGE_LEFT
+            }
+            onNavigateBack()
+        } catch (e: CancellationException) {
+            backProgress = 0f
+            throw e
+        }
+    }
+    val shownProgress = animateFloatAsState(backProgress, label = "predictive_back")
+    Box(
+        Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                val p = shownProgress.value
+                scaleX = 1f - 0.1f * p
+                scaleY = 1f - 0.1f * p
+                translationX = (if (backFromLeft) 1f else -1f) * size.width * 0.04f * p
+                shape = RoundedCornerShape(32.dp * p)
+                clip = p > 0f
+            }
+    ) {
+        content()
+    }
 }

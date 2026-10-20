@@ -2,6 +2,7 @@ package com.android.BioKey.feature.main
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -19,7 +20,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GppMaybe
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Settings
@@ -52,7 +53,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -64,7 +64,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -77,7 +80,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -85,7 +87,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.compose.LifecycleStartEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.BioKey.BioKeyApplication
 import com.android.BioKey.core.data.LockTimeoutMode
@@ -104,10 +111,11 @@ import com.android.BioKey.ui.theme.Haptics
 import com.android.BioKey.ui.theme.MaxContentWidth
 import com.android.BioKey.ui.theme.SectionHeader
 import com.android.BioKey.ui.theme.springPress
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
-private const val ICON_RENDER_DP = 40
 private const val FILTER_ALL = "filter:all"
 
 /**
@@ -123,7 +131,6 @@ private const val FILTER_ALL = "filter:all"
 fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Unit) {
     val context = LocalContext.current
     val view = LocalView.current
-    val iconPx = with(LocalDensity.current) { ICON_RENDER_DP.dp.roundToPx() }
     val vault = remember { SecurityVault.getInstance(context) }
 
     val selectedApps by vault.selectedAppsFlow.collectAsStateWithLifecycle()
@@ -135,34 +142,63 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     val autoSortProfiles by vault.autoSortProfilesFlow.collectAsStateWithLifecycle()
     val packageChangeVersion by BioKeyApplication.packageChangeVersion.collectAsStateWithLifecycle()
     val disclosures = rememberDisclosureGate()
+    val notifications = rememberNotificationPermission()
 
-    var installedApps by remember { mutableStateOf(InstalledAppsCache.get(packageChangeVersion, iconPx) ?: emptyList()) }
+    // The last list stays on screen while a newer one loads: an app update shouldn't empty it.
+    var installedApps by remember { mutableStateOf(InstalledAppsCache.apps) }
     var isLoadingApps by remember { mutableStateOf(installedApps.isEmpty()) }
+    var appsFailed by remember { mutableStateOf(false) }
 
-    LaunchedEffect(packageChangeVersion, iconPx) {
-        InstalledAppsCache.get(packageChangeVersion, iconPx)?.let {
-            installedApps = it
+    LaunchedEffect(packageChangeVersion) {
+        if (InstalledAppsCache.isCurrent(packageChangeVersion)) {
+            installedApps = InstalledAppsCache.apps
             isLoadingApps = false
             return@LaunchedEffect
         }
-        val apps = withContext(Dispatchers.IO) { loadInstalledApps(context, iconPx) }
+        // An update sends a burst of package changes: load once, after the last.
+        if (installedApps.isNotEmpty()) delay(300)
+        val apps = try {
+            withContext(Dispatchers.IO) { loadInstalledApps(context) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // Not worth losing the accessibility service (same process) over: say so, retry next time.
+            appsFailed = installedApps.isEmpty()
+            isLoadingApps = false
+            return@LaunchedEffect
+        }
         InstalledAppsCache.apps = apps
         InstalledAppsCache.version = packageChangeVersion
-        InstalledAppsCache.iconPx = iconPx
         installedApps = apps
         isLoadingApps = false
+        appsFailed = false
         AppInfoCache.preWarm(context, vault.getLockedPackages())
     }
 
+    // Icons are kept while BioKey is on screen, and for a few minutes after.
+    LifecycleStartEffect(Unit) {
+        AppIconCache.keep()
+        onStopOrDispose { AppIconCache.releaseLater() }
+    }
+
+    // Once per package change (and once per process), not on every unlock.
     LaunchedEffect(autoSortProfiles, installedApps) {
-        if (autoSortProfiles && installedApps.isNotEmpty()) {
-            withContext(Dispatchers.IO) {
-                vault.autoSortAppsIntoProfiles(installedApps.map { it.packageName to it.label }, context.packageManager)
-            }
+        if (!autoSortProfiles) {
+            InstalledAppsCache.autoSortedVersion = -1
+            return@LaunchedEffect
         }
+        val version = InstalledAppsCache.version
+        if (installedApps.isEmpty() || InstalledAppsCache.autoSortedVersion == version) return@LaunchedEffect
+        withContext(Dispatchers.IO) {
+            vault.autoSortAppsIntoProfiles(installedApps.map { it.packageName to it.label }, context.packageManager)
+        }
+        InstalledAppsCache.autoSortedVersion = version
     }
 
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    // Settings' slide in and out, followed so the header holds still only once Settings covers it.
+    val settingsVisibility = remember { MutableTransitionState(showSettings) }
+    settingsVisibility.targetState = showSettings
     var filter by rememberSaveable { mutableStateOf(FILTER_ALL) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var optionsForPackage by rememberSaveable { mutableStateOf<String?>(null) }
@@ -178,6 +214,17 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     LaunchedEffect(filter, currentProfile == null) {
         if (filter != FILTER_ALL && currentProfile == null) filter = FILTER_ALL
     }
+    // An app's options close if it's uninstalled; not while the list is still loading (after
+    // the process was restarted, say), or the sheet the user had open would be lost.
+    LaunchedEffect(isLoadingApps, installedApps) {
+        val pkg = optionsForPackage
+        if (!isLoadingApps && pkg != null && installedApps.none { it.packageName == pkg }) optionsForPackage = null
+    }
+    /**
+     * Home's decorations animate only while nothing covers them: the app picker, or Settings once
+     * it has slid in (stopping as it starts would show them jump to a still frame).
+     */
+    val headerActive = !(settingsVisibility.currentState && settingsVisibility.isIdle) && !(showAddApps && currentProfile != null)
 
     val profileByPackage = remember(profiles) {
         HashMap<String, SecurityProfile>().apply { for (p in profiles) for (pkg in p.packages) put(pkg, p) }
@@ -202,7 +249,10 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         installedApps.mapNotNull { profileOf(it.packageName)?.id }.groupingBy { it }.eachCount()
     }
     val lockedCount = remember(installedApps, lockedApps, profiles) { installedApps.count { isLocked(it.packageName) } }
-    val look = protectionLook(mode, globalLockEnabled, pausedUntil, lockedCount, defaultTimeout)
+    /** Locked apps with a copy compatibility mode can't see: Android shares app usage only within one profile. */
+    fun isUnwatched(app: AppItem) = mode == ProtectionEngine.Mode.COMPATIBILITY && app.inOtherProfile && isLocked(app.packageName)
+    val unwatchedCount = remember(installedApps, lockedApps, profiles, mode) { installedApps.count(::isUnwatched) }
+    val look = protectionLook(mode, globalLockEnabled, pausedUntil, lockedCount, unwatchedCount, defaultTimeout)
 
     /** The app's own switch; it stays in its profile either way. */
     fun toggleLock(app: AppItem, locked: Boolean) {
@@ -219,6 +269,9 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     fun LazyListScope.appGroup(key: String, apps: List<AppItem>, showProfile: Boolean) {
         itemsIndexed(apps, key = { _, app -> "$key/${app.packageName}" }) { i, app ->
             val profile = if (showProfile) profileOf(app.packageName) else null
+            // The lock stays on: it still hides the app's notifications, and protects it again as
+            // soon as the accessibility engine is back.
+            val unwatched = isUnwatched(app)
             GroupRow(
                 index = i,
                 count = apps.size,
@@ -227,8 +280,15 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                     append(profile?.name ?: app.category.label)
                     if (profile != null && !profile.enabled) append(" · off")
                     if (app.isWorkProfile) append(" · Work")
+                    if (unwatched) {
+                        append(if (app.isWorkProfile) " · Not protected in compatibility mode" else " · Work copy not protected in compatibility mode")
+                    }
                 },
-                subtitleColor = if (profile != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                subtitleColor = when {
+                    unwatched -> MaterialTheme.colorScheme.error
+                    profile != null -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
                 leading = { AppIcon(app) },
                 onClick = { optionsForPackage = app.packageName },
                 modifier = Modifier
@@ -236,7 +296,12 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                     .padding(horizontal = GroupInset)
                     .padding(top = if (i == 0) 0.dp else GroupGap)
             ) {
-                Switch(checked = isOn(app.packageName), onCheckedChange = { toggleLock(app, it) })
+                // Its own TalkBack stop, so it says which app it locks.
+                Switch(
+                    checked = isOn(app.packageName),
+                    onCheckedChange = { toggleLock(app, it) },
+                    modifier = Modifier.semantics { contentDescription = "Lock ${app.label}" }
+                )
             }
         }
     }
@@ -255,12 +320,33 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         ) {
             item(key = "header") {
                 Box {
-                    HeaderMatrixDotsExpressive(Modifier.matchParentSize())
+                    // The constellation runs only while resumed: hold it at "started" while covered.
+                    CompositionLocalProvider(LocalLifecycleOwner provides rememberCappedLifecycleOwner(headerActive)) {
+                        HeaderMatrixDotsExpressive(Modifier.matchParentSize())
+                    }
                     Column(Modifier.statusBarsPadding()) {
                         MainHeader(
                             status = look,
+                            animated = headerActive,
                             onOpenStatus = { showProtectionSheet = true },
                             onOpenSettings = { showSettings = true }
+                        )
+                    }
+                }
+            }
+
+            if (!notifications.allowed) {
+                item(key = "alerts_off") {
+                    Box(Modifier.padding(horizontal = GroupInset).padding(bottom = 8.dp)) {
+                        GroupRow(
+                            index = 0,
+                            count = 1,
+                            title = "Alerts are off",
+                            subtitle = "BioKey can't tell you if app locking stops, or stand in for hidden notifications · tap to allow",
+                            icon = Icons.Default.NotificationsOff,
+                            iconTint = MaterialTheme.colorScheme.onErrorContainer,
+                            iconContainer = MaterialTheme.colorScheme.errorContainer,
+                            onClick = notifications::requestOrOpenSettings
                         )
                     }
                 }
@@ -310,6 +396,12 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                         onEnabledChange = { on ->
                             Haptics.toggle(view, on)
                             vault.setProfileEnabled(currentProfile.id, on)
+                            if (!on) {
+                                val id = currentProfile.id
+                                BioKeyMessages.show("${currentProfile.name} off · its apps aren't locked", Icons.Default.LockOpen, actionLabel = "Undo") {
+                                    vault.setProfileEnabled(id, true)
+                                }
+                            }
                         },
                         onEdit = { showEditProfile = true },
                         onRelock = { showRelock = true },
@@ -325,6 +417,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                 matching.isEmpty() -> item(key = "empty") {
                     EmptyState(
                         text = when {
+                            appsFailed -> "Couldn't list your apps. Close BioKey and open it again to retry."
                             searchQuery.isNotBlank() -> "No apps match “${searchQuery.trim()}”"
                             currentProfile != null -> "No apps in ${currentProfile.name} yet"
                             else -> "No apps found"
@@ -355,11 +448,11 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     // Settings slides in over the home screen, which stays composed underneath so the
     // predictive back gesture can reveal it.
     AnimatedVisibility(
-        visible = showSettings,
+        visibleState = settingsVisibility,
         enter = slideInHorizontally { it / 3 } + fadeIn(),
         exit = slideOutHorizontally { it / 3 } + fadeOut()
     ) {
-        SettingsScreenExpressive(onNavigateBack = { showSettings = false })
+        SettingsScreenExpressive(mode = mode, onNavigateBack = { showSettings = false }, onPauseRequested = onPauseRequested)
     }
 
     // ---- Sheets & dialogs ------------------------------------------------------------------
@@ -387,9 +480,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
 
     optionsForPackage?.let { pkg ->
         val app = installedApps.firstOrNull { it.packageName == pkg }
-        if (app == null) {
-            optionsForPackage = null
-        } else {
+        if (app != null) {
             AppOptionsSheet(
                 app = app,
                 isLocked = isOn(pkg),
@@ -447,7 +538,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                 vault.deleteProfile(currentProfile.id)
                 showEditProfile = false
                 filter = FILTER_ALL
-                BioKeyMessages.show("Deleted $name. Its apps are still locked.", Icons.Default.Delete)
+                BioKeyMessages.show("Deleted $name. Its apps keep their own lock switches.", Icons.Default.Delete)
             }
         )
     }
@@ -468,6 +559,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         AddAppsScreen(
             profile = currentProfile,
             installedApps = installedApps,
+            profiles = profiles,
             profileOfApp = ::profileOf,
             lockedApps = lockedApps,
             onAdd = { packages ->
@@ -480,10 +572,11 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
 }
 
 /**
- * Status and Settings as equal-width tiles at the edges, the logo centred between them.
+ * Status and Settings as equal-width tiles at the edges, the logo centred between them. The logo
+ * holds still unless [animated].
  */
 @Composable
-private fun MainHeader(status: ProtectionLook, onOpenStatus: () -> Unit, onOpenSettings: () -> Unit) {
+private fun MainHeader(status: ProtectionLook, animated: Boolean, onOpenStatus: () -> Unit, onOpenSettings: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -503,7 +596,8 @@ private fun MainHeader(status: ProtectionLook, onOpenStatus: () -> Unit, onOpenS
             BioKeyLogo(
                 Modifier
                     .fillMaxWidth(0.84f)
-                    .aspectRatio(2.26f) // the artwork's own proportions
+                    .aspectRatio(2.26f), // the artwork's own proportions
+                animated = animated
             )
         }
         HeaderTile(
@@ -574,6 +668,8 @@ private fun protectionLook(
     enabled: Boolean,
     pausedUntil: Long,
     lockedCount: Int,
+    /** Locked apps with a copy in another profile, which compatibility mode can't see. */
+    unwatchedCount: Int,
     defaultTimeout: LockTimeoutMode
 ): ProtectionLook {
     val context = LocalContext.current
@@ -602,9 +698,55 @@ private fun protectionLook(
             colors.primaryContainer, colors.onPrimaryContainer, Icons.Default.VerifiedUser, "Protected",
             "Protected",
             apps + " · " + defaultTimeout.relockPhrase.lowercase() +
-                if (mode == ProtectionEngine.Mode.COMPATIBILITY) "\nCompatibility mode (works with Advanced Protection)" else "",
+                (if (mode == ProtectionEngine.Mode.COMPATIBILITY) "\nCompatibility mode (works with Advanced Protection)" else "") +
+                when (unwatchedCount) {
+                    0 -> ""
+                    1 -> "\n1 locked app isn't protected in your work profile: compatibility mode can't see apps there"
+                    else -> "\n$unwatchedCount locked apps aren't protected in your work profile: compatibility mode can't see apps there"
+                },
             null
         )
+    }
+}
+
+/**
+ * The screen's lifecycle, held at STARTED while [active] is false: decorations that animate only
+ * while resumed hold their last frame under Settings, without leaving the composition.
+ */
+@Composable
+private fun rememberCappedLifecycleOwner(active: Boolean): LifecycleOwner {
+    val parent = LocalLifecycleOwner.current
+    val owner = remember(parent) { CappedLifecycleOwner(parent) }
+    SideEffect { owner.cap = if (active) Lifecycle.State.RESUMED else Lifecycle.State.STARTED }
+    DisposableEffect(owner) {
+        owner.attach()
+        onDispose { owner.detach() }
+    }
+    return owner
+}
+
+internal class CappedLifecycleOwner(private val parent: LifecycleOwner) : LifecycleOwner {
+    private val registry = LifecycleRegistry(this)
+    private val follow = LifecycleEventObserver { _, _ -> sync() }
+    override val lifecycle: Lifecycle get() = registry
+
+    var cap: Lifecycle.State = Lifecycle.State.RESUMED
+        set(value) {
+            field = value
+            sync()
+        }
+
+    fun attach() = parent.lifecycle.addObserver(follow)
+
+    fun detach() = parent.lifecycle.removeObserver(follow)
+
+    private fun sync() {
+        val target = minOf(parent.lifecycle.currentState, cap)
+        // A registry never leaves DESTROYED, and can't reach it before being created.
+        if (registry.currentState == Lifecycle.State.DESTROYED ||
+            (target == Lifecycle.State.DESTROYED && registry.currentState == Lifecycle.State.INITIALIZED)
+        ) return
+        registry.currentState = target
     }
 }
 

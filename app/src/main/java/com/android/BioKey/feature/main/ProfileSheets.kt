@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -56,6 +57,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +69,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -86,20 +90,25 @@ import com.android.BioKey.ui.theme.GroupGap
 import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.SectionHeader
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
-internal val PROFILE_ICONS: List<Pair<String, ImageVector>> = listOf(
-    "shield" to Icons.Default.Shield,
-    "finance" to Icons.Default.AccountBalance,
-    "social" to Icons.AutoMirrored.Filled.Chat,
-    "work" to Icons.Default.Work,
-    "privacy" to Icons.Default.VisibilityOff,
-    "photos" to Icons.Default.Photo,
-    "health" to Icons.Default.Favorite,
-    "lock" to Icons.Default.Lock
+/** A profile's icon: [key] is what's saved, [label] what TalkBack reads in the icon picker. */
+internal class ProfileIcon(val key: String, val vector: ImageVector, val label: String)
+
+internal val PROFILE_ICONS: List<ProfileIcon> = listOf(
+    ProfileIcon("shield", Icons.Default.Shield, "Shield"),
+    ProfileIcon("finance", Icons.Default.AccountBalance, "Bank"),
+    ProfileIcon("social", Icons.AutoMirrored.Filled.Chat, "Chat"),
+    ProfileIcon("work", Icons.Default.Work, "Briefcase"),
+    ProfileIcon("privacy", Icons.Default.VisibilityOff, "Hidden"),
+    ProfileIcon("photos", Icons.Default.Photo, "Photo"),
+    ProfileIcon("health", Icons.Default.Favorite, "Heart"),
+    ProfileIcon("lock", Icons.Default.Lock, "Lock")
 )
 
 internal fun profileIcon(key: String): ImageVector =
-    PROFILE_ICONS.firstOrNull { it.first == key }?.second ?: Icons.Default.Shield
+    PROFILE_ICONS.firstOrNull { it.key == key }?.vector ?: Icons.Default.Shield
 
 internal val LockTimeoutMode.shortLabel: String
     get() = when (this) {
@@ -140,10 +149,19 @@ internal fun ProfileBadge(iconKey: String, size: Dp = 48.dp, active: Boolean = t
     }
 }
 
+/** The app's icon, drawn off the main thread the first time; its initial until then, or if it has none. */
 @Composable
 internal fun AppIcon(app: AppItem, size: Dp = 40.dp) {
-    if (app.iconBitmap != null) {
-        Image(bitmap = app.iconBitmap, contentDescription = null, modifier = Modifier.size(size))
+    val context = LocalContext.current
+    val sizePx = with(LocalDensity.current) { size.roundToPx() }
+    val key = AppIconCache.key(app, sizePx)
+    var icon by remember(key) { mutableStateOf(AppIconCache.peek(key)) }
+    LaunchedEffect(key) {
+        if (icon == null) icon = withContext(Dispatchers.IO) { AppIconCache.load(context, app, sizePx) }
+    }
+    val bitmap = icon
+    if (bitmap != null) {
+        Image(bitmap = bitmap, contentDescription = null, modifier = Modifier.size(size))
     } else {
         Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.size(size)) {
             Box(contentAlignment = Alignment.Center) {
@@ -195,7 +213,7 @@ internal fun ProfileDetailsDialog(
             title = { Text("Delete “${existing.name}”?") },
             text = {
                 ProtectDialogWindow()
-                Text("Its apps stay locked and will use your default re-lock delay.")
+                Text("Its apps keep their own lock switches and use your default re-lock delay.")
             },
             confirmButton = {
                 TextButton(onClick = { confirmDelete = false; onDelete() }) {
@@ -226,21 +244,25 @@ internal fun ProfileDetailsDialog(
                 Text("Icon", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(12.dp))
                 FlowRow(
+                    modifier = Modifier.selectableGroup(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    PROFILE_ICONS.forEach { (key, vector) ->
-                        val selected = key == iconKey
+                    PROFILE_ICONS.forEach { choice ->
+                        val selected = choice.key == iconKey
+                        // A radio button to TalkBack: it hears the icon's name and which one is chosen.
                         Surface(
-                            onClick = { iconKey = key },
                             shape = CircleShape,
                             color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest,
-                            modifier = Modifier.size(48.dp)
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .selectable(selected = selected, role = Role.RadioButton) { iconKey = choice.key }
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
-                                    imageVector = vector,
-                                    contentDescription = key,
+                                    imageVector = choice.vector,
+                                    contentDescription = choice.label,
                                     tint = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(22.dp)
                                 )
@@ -446,6 +468,8 @@ private fun ProfileChoiceRow(index: Int, count: Int, title: String, subtitle: St
 internal fun AddAppsScreen(
     profile: SecurityProfile,
     installedApps: List<AppItem>,
+    /** Every profile, so the list follows any of them gaining apps (auto-sort) while it's open. */
+    profiles: List<SecurityProfile>,
     profileOfApp: (String) -> SecurityProfile?,
     lockedApps: Set<String>,
     onAdd: (Set<String>) -> Unit,
@@ -455,11 +479,12 @@ internal fun AddAppsScreen(
     var selected by rememberSaveable { mutableStateOf(emptySet<String>()) }
     // Only apps that aren't in any profile yet: an app lives in exactly one profile, and moving
     // it between profiles is done from the app's own options.
-    val candidates = remember(installedApps, profile.packages, query) {
-        installedApps
-            .filter { app -> profileOfApp(app.packageName) == null }
-            .filter { query.isBlank() || it.label.contains(query.trim(), ignoreCase = true) }
+    val outside = remember(installedApps, profiles) { installedApps.filter { app -> profileOfApp(app.packageName) == null } }
+    val candidates = remember(outside, query) {
+        outside.filter { query.isBlank() || it.label.contains(query.trim(), ignoreCase = true) }
     }
+    // An app ticked here that joined another profile meanwhile stays where it is.
+    val chosen = remember(outside, selected) { selected.filterTo(HashSet()) { pkg -> outside.any { it.packageName == pkg } } }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -482,11 +507,11 @@ internal fun AddAppsScreen(
                     },
                     actions = {
                         Button(
-                            onClick = { onAdd(selected) },
-                            enabled = selected.isNotEmpty(),
+                            onClick = { onAdd(chosen) },
+                            enabled = chosen.isNotEmpty(),
                             modifier = Modifier.padding(end = 8.dp)
                         ) {
-                            Text(if (selected.isEmpty()) "Add" else "Add ${selected.size}")
+                            Text(if (chosen.isEmpty()) "Add" else "Add ${chosen.size}")
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -553,11 +578,11 @@ internal fun EdgeToEdgeDialogBars() {
 
 /** Filled, borderless search field shaped like a pill. */
 @Composable
-internal fun SearchPill(query: String, onChange: (String) -> Unit, modifier: Modifier = Modifier, placeholder: String = "Search apps") {
+internal fun SearchPill(query: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
     TextField(
         value = query,
         onValueChange = onChange,
-        placeholder = { Text(placeholder) },
+        placeholder = { Text("Search apps") },
         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
         trailingIcon = if (query.isNotEmpty()) {
             { TextButton(onClick = { onChange("") }) { Text("Clear") } }

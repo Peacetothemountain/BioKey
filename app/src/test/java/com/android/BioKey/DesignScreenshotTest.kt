@@ -11,6 +11,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.LockScreenUIExpressive
+import com.android.BioKey.feature.main.AppIconCache
 import com.android.BioKey.feature.main.AppItem
 import com.android.BioKey.feature.main.InstalledAppsCache
 import com.android.BioKey.feature.main.MainScreenExpressive
@@ -25,6 +26,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import kotlin.math.roundToInt
 
 /**
  * Renders BioKey's screens to PNGs (app/build/screenshots) for design review, without a device.
@@ -49,17 +51,18 @@ class DesignScreenshotTest {
             android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 0f
         )
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val iconPx = (40 * context.resources.displayMetrics.density).toInt()
+        // Icons are drawn per size: seed this screen's, and the tablet test's (mdpi).
+        val iconSizes = setOf((40 * context.resources.displayMetrics.density).roundToInt(), 40)
         InstalledAppsCache.apps = samples.map { (label, color) ->
             AppItem(
                 packageName = "com.example.${label.lowercase()}",
                 label = label,
-                iconBitmap = icon(label, color.toInt(), iconPx).asImageBitmap(),
                 category = AppCategory.GENERAL
-            )
+            ).also { app ->
+                iconSizes.forEach { px -> AppIconCache.put(AppIconCache.key(app, px), icon(label, color.toInt(), px).asImageBitmap()) }
+            }
         }.sortedBy { it.label }
         InstalledAppsCache.version = 0
-        InstalledAppsCache.iconPx = iconPx
         val vault = SecurityVault.getInstance(context)
         vault.setSetupCompletedSync(true)
         listOf("chase", "signal", "photos", "authenticator", "venmo").forEach { vault.setAppLock("com.example.$it", true) }
@@ -89,7 +92,7 @@ class DesignScreenshotTest {
 
     @Test fun main() = shoot("main") { MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
     @Test fun mainOff() = shoot("main_off") { MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP, onPauseRequested = {}) }
-    @Test fun settings() = shoot("settings") { SettingsScreenExpressive(onNavigateBack = {}) }
+    @Test fun settings() = shoot("settings") { SettingsScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onNavigateBack = {}, onPauseRequested = {}) }
     /** Tablets and landscape: lists keep a readable width, lock screens stay centred. */
     @Test fun tablet() {
         RuntimeEnvironment.setQualifiers("w900dp-h1280dp")
@@ -108,7 +111,7 @@ class DesignScreenshotTest {
     /** The whole Settings page, on a tall screen. */
     @Test fun settingsFull() {
         RuntimeEnvironment.setQualifiers("w412dp-h1900dp")
-        shoot("settings_full") { SettingsScreenExpressive(onNavigateBack = {}) }
+        shoot("settings_full") { SettingsScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onNavigateBack = {}, onPauseRequested = {}) }
     }
     @Test fun message() = shoot("message") {
         androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {

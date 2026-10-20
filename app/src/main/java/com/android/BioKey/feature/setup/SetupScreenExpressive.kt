@@ -1,5 +1,6 @@
 package com.android.BioKey.feature.setup
 
+import android.os.Build
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -22,6 +23,7 @@ import androidx.compose.material.icons.filled.AppSettingsAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material3.Button
@@ -32,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +52,7 @@ import com.android.BioKey.feature.main.Disclosure
 import com.android.BioKey.feature.main.HeaderMatrixDotsExpressive
 import com.android.BioKey.feature.main.IntentNavigationHelper
 import com.android.BioKey.feature.main.rememberDisclosureGate
+import com.android.BioKey.feature.main.rememberNotificationPermission
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.springPress
@@ -57,16 +61,32 @@ import com.android.BioKey.ui.theme.springPress
  * First-run setup, as a short checklist: give BioKey a way to see which app is open, then confirm
  * identity once. Normally that's the Accessibility service; with Android's Advanced Protection on
  * (which reserves accessibility for accessibility tools) it's compatibility mode instead: usage
- * access plus display over other apps. Every permission is preceded by its disclosure.
+ * access plus display over other apps. Every permission is preceded by its disclosure. Just
+ * before the final check, Android 13+ asks once whether BioKey may post notifications (its
+ * protection alerts); that's optional.
+ *
+ * [needsScreenLock]: the final check failed because the phone has no screen lock.
  */
 @Composable
 fun SetupScreenExpressive(
     isAuthenticating: Boolean = false,
     authError: String? = null,
+    needsScreenLock: Boolean = authError?.startsWith("Set a screen lock") == true,
     onSetupComplete: () -> Unit
 ) {
     val context = LocalContext.current
     val disclosures = rememberDisclosureGate()
+    val notifications = rememberNotificationPermission()
+    var askedNotifications by rememberSaveable { mutableStateOf(false) }
+    /** The final check, after Android's notification question the first time. */
+    val finish = {
+        if (!askedNotifications && !notifications.allowed) {
+            askedNotifications = true
+            notifications.request(then = onSetupComplete)
+        } else {
+            onSetupComplete()
+        }
+    }
     var a11yActive by remember { mutableStateOf(BioKeyAccessibilityService.isServiceEnabled(context)) }
     var compatibilityMode by remember { mutableStateOf(false) }
     var usageAccess by remember { mutableStateOf(false) }
@@ -85,7 +105,7 @@ fun SetupScreenExpressive(
         val nowReady = a11yActive || (compatibilityMode && usageAccess && overlay)
         if (nowReady && !hasAutoPrompted && authError == null) {
             hasAutoPrompted = true
-            onSetupComplete()
+            finish()
         } else if (!nowReady) {
             hasAutoPrompted = false
         }
@@ -94,9 +114,16 @@ fun SetupScreenExpressive(
 
     val openAccessibility = { disclosures.request(Disclosure.ACCESSIBILITY) { IntentNavigationHelper.openAccessibilitySettings(context) } }
     val openCompatibility = { disclosures.request(Disclosure.COMPATIBILITY) { IntentNavigationHelper.openNextCompatibilityPermission(context) } }
-    val needsScreenLock = authError?.contains("screen lock", ignoreCase = true) == true
 
-    data class Step(val icon: ImageVector, val title: String, val subtitle: String, val done: Boolean, val onClick: (() -> Unit)?)
+    /** [opensExternally]: tapping it leaves BioKey for a system settings page. */
+    data class Step(
+        val icon: ImageVector,
+        val title: String,
+        val subtitle: String,
+        val done: Boolean,
+        val opensExternally: Boolean = true,
+        val onClick: (() -> Unit)?
+    )
     val steps = buildList {
         if (restrictedSettingsBlocked) {
             add(
@@ -140,12 +167,29 @@ fun SetupScreenExpressive(
                 ) { IntentNavigationHelper.openScreenLockSetup(context) }
             )
         }
+        // Android 13+ asks; earlier versions allow notifications unless they were turned off.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU || !notifications.allowed) {
+            add(
+                Step(
+                    Icons.Default.Notifications, "Allow notifications (optional)",
+                    "So BioKey can tell you if app locking ever stops.",
+                    done = notifications.allowed,
+                    // Android's own question from 13 on; before that, only its settings page.
+                    opensExternally = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU,
+                    onClick = {
+                        askedNotifications = true
+                        notifications.requestOrOpenSettings()
+                    }
+                )
+            )
+        }
         add(
             Step(
                 Icons.Default.Fingerprint, "Confirm it's you",
                 "One check with your face, fingerprint or screen lock to finish.",
                 done = false,
-                onClick = if (ready && !isAuthenticating) onSetupComplete else null
+                opensExternally = false,
+                onClick = if (ready && !isAuthenticating) finish else null
             )
         )
     }
@@ -192,7 +236,7 @@ fun SetupScreenExpressive(
                     iconContainer = if (step.done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
                     onClick = step.onClick.takeIf { !step.done }
                 ) {
-                    if (!step.done && step.onClick != null && step.icon != Icons.Default.Fingerprint) {
+                    if (!step.done && step.onClick != null && step.opensExternally) {
                         Icon(
                             Icons.AutoMirrored.Filled.OpenInNew,
                             contentDescription = null,
@@ -217,7 +261,7 @@ fun SetupScreenExpressive(
         Button(
             onClick = {
                 when {
-                    ready -> onSetupComplete()
+                    ready -> finish()
                     compatibilityMode -> openCompatibility()
                     else -> openAccessibility()
                 }

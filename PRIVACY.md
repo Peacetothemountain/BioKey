@@ -1,6 +1,6 @@
 # BioKey privacy policy
 
-_Last updated: 15 October 2026_
+_Last updated: 20 October 2026_
 
 BioKey is an app lock. It keeps the apps you choose behind your face, fingerprint or screen lock.
 This policy explains what BioKey can see on your phone and what it does with it.
@@ -26,7 +26,7 @@ This policy explains what BioKey can see on your phone and what it does with it.
 Before BioKey asks for accessibility, usage access, display over other apps or notification
 access, it shows an in-app disclosure explaining the above and continues only if you tap **Agree**.
 
-BioKey never reads what you type, your messages, or what's on screen in other apps.
+BioKey never reads what you type, your messages, or the content of the apps you use.
 
 ## What BioKey stores, and where
 
@@ -34,9 +34,10 @@ On your phone only, in BioKey's private storage (encrypted by Android with your 
 which apps you've locked, your profiles and their re-lock delays, and your BioKey settings.
 Unlock sessions live only in memory and are wiped whenever the phone locks.
 
-**Diagnostic log** (on by default; Settings > Diagnostics): BioKey's own recent lock decisions,
-such as which app it covered and why, with the package names of your locked apps. At most 500
-entries from the last 3 days. It stays on your phone and leaves it only if you share it from
+**Diagnostic log** (on by default; you can turn it off in Settings > Diagnostics): a short record
+of BioKey's own lock decisions about the apps you've locked, such as which locked app it locked or
+unlocked and why, naming them by package. It records nothing about other apps. At most 500
+entries, from the last 3 days. It stays on your phone and leaves it only if you share it from
 Settings, through Android's share sheet, to wherever you choose. Turning it off deletes it.
 
 **Backup files** (only if you make one): your locked apps, profiles and BioKey settings, sealed
