@@ -3,12 +3,17 @@ package com.android.BioKey.feature.lock
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.PixelFormat
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
+import androidx.annotation.RequiresApi
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 
 /**
@@ -25,7 +30,20 @@ class InstantShieldOverlay(
     private val service: Context,
     windowType: Int,
     private val goHome: () -> Unit,
-    private val onTimeout: (targetPackage: String, attempt: Int) -> Boolean
+    private val onTimeout: (targetPackage: String, attempt: Int) -> Boolean,
+    /**
+     * When the lock screen still hasn't appeared after every retry and the app is still in front,
+     * keep covering it (with the cover's own Unlock and Cancel) instead of going Home and hiding:
+     * Home can be refused as well, and nothing else would cover the app again. For compatibility
+     * mode, whose engine hides the cover once something else is in front.
+     */
+    private val keepCoverOnGiveUp: Boolean = false,
+    /**
+     * Take input focus while covering a locked app, so a hardware keyboard, Back and the app's
+     * soft keyboard stop reaching it. Not for the accessibility engine, which reads the screen
+     * through the focused window. Covers predicted from a tap never take focus.
+     */
+    private val takeFocus: Boolean = false
 ) {
 
     companion object {
@@ -38,9 +56,21 @@ class InstantShieldOverlay(
         @Volatile
         private var activeInstance: InstantShieldOverlay? = null
 
-        fun dismiss(targetPackage: String? = null) {
+        /** Bumped by every cover put up, so a lock screen can tell its own cover from a newer one. */
+        @Volatile
+        private var coversShown = 0L
+
+        /** The generation of the cover put up last (see [dismiss]). */
+        fun currentGeneration(): Long = coversShown
+
+        /**
+         * Hides the cover if it is for [targetPackage] (any, when null) and no newer than
+         * [upToGeneration]. A lock screen on its way out passes the generation it took over, so it
+         * can't take down a cover an engine has just put up again for the same app.
+         */
+        fun dismiss(targetPackage: String? = null, upToGeneration: Long = Long.MAX_VALUE) {
             val current = activeInstance ?: return
-            if (targetPackage == null || current.targetPackage == targetPackage) {
+            if ((targetPackage == null || current.targetPackage == targetPackage) && current.generation <= upToGeneration) {
                 current.hide()
             }
         }
@@ -54,8 +84,11 @@ class InstantShieldOverlay(
         private set
     var targetPackage: String? = null
         private set
+    private var generation = 0L
     private var attempt = 0
     private var isDestroyed = false
+    /** The window has been added (a view only counts as attached after its first traversal). */
+    private var windowAdded = false
 
     private val fastVerifyRunnable = Runnable {
         val pkg = targetPackage ?: return@Runnable
@@ -70,10 +103,14 @@ class InstantShieldOverlay(
         attempt++
         if (attempt < MAX_ATTEMPTS && onTimeout(pkg, attempt)) {
             armTimeout()
-        } else {
-            Log.w(TAG, "Lock screen did not appear for $pkg; failing closed")
+        } else if (attempt < MAX_ATTEMPTS || !keepCoverOnGiveUp) {
+            Log.w(TAG, "Lock screen did not appear; failing closed")
             if (attempt >= MAX_ATTEMPTS) goHome()
             hide()
+        } else if (onTimeout(pkg, attempt)) {
+            keepCovering(pkg)
+        } else {
+            hide() // It has left the screen meanwhile.
         }
     }
 
@@ -91,18 +128,22 @@ class InstantShieldOverlay(
     ).apply {
         layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
         windowAnimations = 0
+        // Focused (see takeFocus), the cover has no text field: the covered app's keyboard goes.
+        softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
         title = "BioKeyShield"
     }
 
     init {
+        if (takeFocus && Build.VERSION.SDK_INT >= 33) cancelOnBack()
         mainHandler.post(::attach)
     }
 
     private fun attach() {
-        if (isDestroyed || cover.isAttachedToWindow) return
+        if (isDestroyed || windowAdded) return
         try {
             applyInsets()
             windowManager.addView(cover, layoutParams)
+            windowAdded = true
         } catch (e: Exception) {
             Log.w(TAG, "Failed to attach shield overlay: ${e.message}")
         }
@@ -116,6 +157,21 @@ class InstantShieldOverlay(
         }
     }
 
+    /** Back, while the focused cover is up, is the cover's Cancel (like Back on the lock screen). */
+    @RequiresApi(33)
+    private fun cancelOnBack() {
+        val onBack = OnBackInvokedCallback { if (isShowing && !isPredicted) cover.onCancel?.invoke() }
+        cover.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                v.findOnBackInvokedDispatcher()?.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, onBack)
+            }
+
+            override fun onViewDetachedFromWindow(v: View) {
+                v.findOnBackInvokedDispatcher()?.unregisterOnBackInvokedCallback(onBack)
+            }
+        })
+    }
+
     fun onConfigurationChanged() {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             mainHandler.post(::onConfigurationChanged)
@@ -123,7 +179,7 @@ class InstantShieldOverlay(
         }
         cover.refreshPalette()
         applyInsets()
-        if (cover.isAttachedToWindow) runCatching { windowManager.updateViewLayout(cover, layoutParams) }
+        if (windowAdded) runCatching { windowManager.updateViewLayout(cover, layoutParams) }
     }
 
     /** True while covering for a launch that was predicted from a tap but hasn't appeared yet. */
@@ -142,31 +198,42 @@ class InstantShieldOverlay(
      */
     fun showPredicted(targetPackage: String, waitMs: Long, onTapped: () -> Unit, onExpired: (String) -> Unit) {
         if (isDestroyed || isShowing) return
-        if (!showCover(targetPackage, onTapped)) return
+        if (!showCover(targetPackage, onTapped, focusable = false)) return
         isPredicted = true
         predictionExpired = onExpired
         mainHandler.removeCallbacks(predictionRunnable)
         mainHandler.postDelayed(predictionRunnable, waitMs)
     }
 
-    fun show(targetPackage: String, onTapped: () -> Unit) {
+    /**
+     * Covers [targetPackage] and checks that its lock screen appears. Returns false if the cover
+     * couldn't be put up. True doesn't mean it is seen: Android hides an application overlay
+     * whose permission was withdrawn without telling the app.
+     */
+    fun show(targetPackage: String, onTapped: () -> Unit): Boolean {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             mainHandler.post { show(targetPackage, onTapped) }
-            return
+            return true
         }
-        if (isDestroyed) return
+        if (isDestroyed) return false
         if (isShowing && this.targetPackage == targetPackage) {
             if (isPredicted) {
                 // The predicted app arrived: from here on it's a regular cover.
                 endPrediction()
                 cover.setOnClickListener { onTapped() }
                 cover.onUnlock = onTapped
+                if (takeFocus) {
+                    setFocusable(true)
+                    runCatching { windowManager.updateViewLayout(cover, layoutParams) }
+                }
                 startVerification()
             }
-            return
+            return true
         }
         if (isShowing) endPrediction()
-        if (showCover(targetPackage, onTapped)) startVerification()
+        if (!showCover(targetPackage, onTapped, focusable = takeFocus)) return false
+        startVerification()
+        return true
     }
 
     private fun endPrediction() {
@@ -182,9 +249,10 @@ class InstantShieldOverlay(
         armTimeout()
     }
 
-    private fun showCover(targetPackage: String, onTapped: () -> Unit): Boolean {
+    private fun showCover(targetPackage: String, onTapped: () -> Unit, focusable: Boolean): Boolean {
         this.targetPackage = targetPackage
         attempt = 0
+        generation = ++coversShown
         bindTarget(targetPackage)
         // Same look as the lock activity while its prompt comes up: identity only, no buttons.
         cover.setActionsVisible(false)
@@ -202,11 +270,13 @@ class InstantShieldOverlay(
         return try {
             cover.visibility = View.VISIBLE
             layoutParams.flags = layoutParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-            if (cover.isAttachedToWindow) {
+            setFocusable(focusable)
+            if (windowAdded) {
                 windowManager.updateViewLayout(cover, layoutParams)
             } else {
                 applyInsets()
                 windowManager.addView(cover, layoutParams)
+                windowAdded = true
             }
             isShowing = true
             activeInstance = this
@@ -217,6 +287,14 @@ class InstantShieldOverlay(
         }
     }
 
+    private fun setFocusable(focusable: Boolean) {
+        layoutParams.flags = if (focusable) {
+            layoutParams.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+        } else {
+            layoutParams.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        }
+    }
+
     private fun bindTarget(target: String) {
         if (target == BioKeyAccessibilityService.SELF_PROTECTION_PENDING_KEY) {
             cover.bind("BioKey", null, isBioKey = true)
@@ -224,16 +302,27 @@ class InstantShieldOverlay(
         }
         val cached = AppInfoCache.get(target)
         if (cached != null) {
-            cover.bind(cached.label, cached.icon, isBioKey = false)
+            cover.bind(cached.label, cached.icon, isBioKey = false, accent = cached.accent)
             return
         }
         cover.bind(AppInfoCache.quickLabel(service, target), null, isBioKey = false)
         AppInfoCache.load(service, target) { loaded ->
-            if (isShowing && targetPackage == target) cover.setIcon(loaded.icon)
+            if (isShowing && targetPackage == target) cover.setIcon(loaded.icon, loaded.accent)
         }
     }
 
-    fun isShowingFor(pkg: String): Boolean = isShowing && targetPackage == pkg
+    /**
+     * Every retry failed and the app is still in front: go Home if Android allows it, and until
+     * something else is in front keep covering, now with Unlock (one more try) and Cancel.
+     */
+    private fun keepCovering(pkg: String) {
+        DiagnosticLog.log("Lock screen for $pkg didn't appear; kept it covered")
+        // No longer waiting for a lock screen: the engine hides the cover when the app leaves.
+        LockStateTracker.clearRegularLockPending(pkg)
+        cover.setStatus("The lock screen didn't open. Tap Unlock to try again.", permanentLockout = false)
+        cover.setActionsVisible(true)
+        goHome()
+    }
 
     private fun armTimeout() {
         mainHandler.removeCallbacks(timeoutRunnable)
@@ -254,8 +343,10 @@ class InstantShieldOverlay(
         if (activeInstance === this) activeInstance = null
         try {
             cover.visibility = View.GONE
-            layoutParams.flags = layoutParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-            if (cover.isAttachedToWindow) windowManager.updateViewLayout(cover, layoutParams)
+            layoutParams.flags = layoutParams.flags or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            if (windowAdded) windowManager.updateViewLayout(cover, layoutParams)
         } catch (e: Exception) {
             Log.w(TAG, "Shield hide failed: ${e.message}")
         }
@@ -268,6 +359,9 @@ class InstantShieldOverlay(
         }
         isDestroyed = true
         hide()
-        if (cover.isAttachedToWindow) runCatching { windowManager.removeViewImmediate(cover) }
+        if (windowAdded) {
+            runCatching { windowManager.removeViewImmediate(cover) }
+            windowAdded = false
+        }
     }
 }
