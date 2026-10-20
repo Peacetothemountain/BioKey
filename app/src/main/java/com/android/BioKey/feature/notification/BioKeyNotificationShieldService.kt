@@ -1,5 +1,6 @@
 package com.android.BioKey.feature.notification
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -51,10 +52,18 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         /**
          * How often hidden notifications' snoozes are pushed back (at the next lock-all), so the
          * 24 h snooze doesn't run out while the app stays locked. Android saves its snooze list to
-         * disk after each push-back, hence not at every screen-off. A phone left unused for more
-         * than 18 h after a push-back can still see them re-posted once.
+         * disk after each push-back, hence not at every screen-off.
          */
         private const val EXTEND_SNOOZES_EVERY_MS = 6 * 60 * 60 * 1000L
+
+        /**
+         * A phone left unused has no lock-all to push the snoozes back at, so an alarm does it
+         * 10 to 12 h after the last push-back. It is inexact: Doze can hold it until its next
+         * maintenance window (by default at most 6 h away), still well before the 24 h run out.
+         */
+        private const val SNOOZE_ALARM_AFTER_MS = 10 * 60 * 60 * 1000L
+        private const val SNOOZE_ALARM_WINDOW_MS = 2 * 60 * 60 * 1000L
+        private const val SNOOZE_ALARM_TAG = "BioKey:extendSnoozes"
 
         /** How long a notification being un-snoozed may take to come back before it can be hidden again. */
         private const val RESTORE_WINDOW_MS = 2_500L
@@ -130,7 +139,14 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     @Volatile private var connected = false
     private var sweepPending = false
     private var snoozesExtendedAt = 0L
+    private var snoozeAlarmSet = false
     private var channelReady = false
+
+    private val alarms by lazy { getSystemService(AlarmManager::class.java) }
+    private val snoozeAlarm = AlarmManager.OnAlarmListener {
+        snoozeAlarmSet = false
+        if (connected) extendSnoozes(force = true)
+    }
 
     private val onLockAll: () -> Unit = { main.post(::onAllSessionsEnded) }
     // Sessions are reported under the name the app was unlocked by: Google Password Manager's
@@ -138,9 +154,10 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     private val onAppUnlocked: (String) -> Unit = { pkg ->
         main.post { if (connected) PasswordManager.aliasesOf(pkg).forEach(::restoreNotificationsForPackage) }
     }
-    private val onAppLocked: (String) -> Unit = { pkg ->
+    // Told once per batch: a restore or auto-sort that turns on 40 locks is one post and one sweep.
+    private val onAppsLocked: (Set<String>) -> Unit = { pkgs ->
         main.post {
-            val aliases = PasswordManager.aliasesOf(pkg)
+            val aliases = PasswordManager.expand(pkgs)
             restoringKeys.entries.removeIf { it.value.packageName in aliases }
             requestSweep()
         }
@@ -164,7 +181,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         connected = true
         LockStateTracker.addLockAllListener(onLockAll)
         LockStateTracker.addAppUnlockListener(onAppUnlocked)
-        LockStateTracker.addAppLockListener(onAppLocked)
+        LockStateTracker.addAppsLockListener(onAppsLocked)
         rehydrateSnoozed()
         requestSweep()
         // Switching the shield on hides what locked apps are already showing.
@@ -211,7 +228,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         // Stand-ins whose notifications are all gone are stale.
         for (pkg in standIns - touched) NotificationManagerCompat.from(this).cancel(TAG_PREFIX + pkg, SUMMARY_ID)
         for (pkg in touched) {
-            val stillHidden = vault.isAppLocked(pkg) && vault.isGlobalLockEnabled() && vault.isNotificationShieldEnabled() &&
+            val stillHidden = vault.isAppLocked(pkg) && vault.isProtectionActive() && vault.isNotificationShieldEnabled() &&
                 !LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))
             if (!stillHidden) {
                 restoreNotificationsForPackage(pkg)
@@ -230,7 +247,8 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         scope = null
         LockStateTracker.removeLockAllListener(onLockAll)
         LockStateTracker.removeAppUnlockListener(onAppUnlocked)
-        LockStateTracker.removeAppLockListener(onAppLocked)
+        LockStateTracker.removeAppsLockListener(onAppsLocked)
+        cancelSnoozeAlarm()
         super.onListenerDisconnected()
     }
 
@@ -242,7 +260,8 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         main.removeCallbacksAndMessages(null)
         LockStateTracker.removeLockAllListener(onLockAll)
         LockStateTracker.removeAppUnlockListener(onAppUnlocked)
-        LockStateTracker.removeAppLockListener(onAppLocked)
+        LockStateTracker.removeAppsLockListener(onAppsLocked)
+        cancelSnoozeAlarm()
         super.onDestroy()
     }
 
@@ -338,7 +357,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         if (notif.extras?.containsKey(Notification.EXTRA_MEDIA_SESSION) == true) return false
         if (notif.fullScreenIntent != null) return false
 
-        if (!vault.isGlobalLockEnabled() || !vault.isNotificationShieldEnabled()) return false
+        if (!vault.isProtectionActive() || !vault.isNotificationShieldEnabled()) return false
         if (!vault.isAppLocked(pkg)) return false
         return !LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))
     }
@@ -366,6 +385,9 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             cachedPendingIntents[pkg]?.remove(sbn.key)
             return false
         }
+        // An alarm already set (at the last push-back, or for an older snooze) comes before this
+        // younger one runs out too.
+        if (!snoozeAlarmSet) scheduleSnoozeAlarm()
         return true
     }
 
@@ -377,13 +399,34 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         val now = SystemClock.elapsedRealtime()
         if (!force && snoozesExtendedAt != 0L && now - snoozesExtendedAt < EXTEND_SNOOZES_EVERY_MS) return
         snoozesExtendedAt = now
-        if (!vault.isGlobalLockEnabled() || !vault.isNotificationShieldEnabled()) return
+        if (!vault.isProtectionActive() || !vault.isNotificationShieldEnabled()) return
+        var extended = false
         for (hidden in listOf(hiddenNotificationKeys, hiddenSummaryKeys)) {
             for ((pkg, keys) in hidden) {
-                if (!vault.isAppLocked(pkg)) continue
+                if (!vault.isAppLocked(pkg) || keys.isEmpty()) continue
                 for (key in keys) runCatching { snoozeNotification(key, SNOOZE_24_HOURS_MS) }
+                extended = true
             }
         }
+        if (extended) scheduleSnoozeAlarm() else cancelSnoozeAlarm()
+    }
+
+    /**
+     * Pushes the snoozes back [SNOOZE_ALARM_AFTER_MS] from now, should no lock-all do it first
+     * (each push-back moves the alarm on). Delivered to [main] while this service is bound.
+     */
+    private fun scheduleSnoozeAlarm() {
+        val manager = alarms ?: return
+        val start = SystemClock.elapsedRealtime() + SNOOZE_ALARM_AFTER_MS
+        snoozeAlarmSet = runCatching {
+            manager.setWindow(AlarmManager.ELAPSED_REALTIME_WAKEUP, start, SNOOZE_ALARM_WINDOW_MS, SNOOZE_ALARM_TAG, snoozeAlarm, main)
+        }.isSuccess
+    }
+
+    private fun cancelSnoozeAlarm() {
+        if (!snoozeAlarmSet) return
+        snoozeAlarmSet = false
+        runCatching { alarms?.cancel(snoozeAlarm) }
     }
 
     private fun restoreAll() {

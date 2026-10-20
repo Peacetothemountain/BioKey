@@ -1,5 +1,6 @@
 package com.android.BioKey.core.security
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.SystemClock
@@ -14,7 +15,6 @@ import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.InstantShieldOverlay
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
-import com.android.BioKey.feature.tile.BioKeyTileService
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
@@ -77,6 +77,7 @@ class SecurityVault private constructor(private val context: Context) {
         private const val MAX_PACKAGES = 2_000
         private val PACKAGE_NAME = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$")
 
+        @SuppressLint("StaticFieldLeak") // Holds only the application context, which lives as long as the process.
         @Volatile
         private var INSTANCE: SecurityVault? = null
 
@@ -299,9 +300,17 @@ class SecurityVault private constructor(private val context: Context) {
         }
     }
 
-    /** Deletes a profile. Its apps keep their own switches and use the default re-lock delay. */
+    /**
+     * Deletes a profile. Its apps keep their own switches and use the default re-lock delay, and
+     * auto-sort leaves them alone as if each had been taken out by hand: it would otherwise file
+     * them straight into a built-in profile and switch their locks on.
+     */
     fun deleteProfile(profileId: String) {
-        mutate { _, profiles -> profiles.removeAll { it.id == profileId } }
+        mutate { _, profiles ->
+            val removed = profiles.filter { it.id == profileId }.flatMap { it.packages }
+            profiles.removeAll { it.id == profileId }
+            autoSortExcluded = autoSortExcluded + removed
+        }
     }
 
     /**
@@ -456,7 +465,6 @@ class SecurityVault private constructor(private val context: Context) {
         }
         InstantShieldOverlay.dismiss()
         BioKeyNotificationShieldService.restoreAllSnoozedNotifications()
-        BioKeyTileService.requestTileUpdate(context)
         return true
     }
 
@@ -472,7 +480,6 @@ class SecurityVault private constructor(private val context: Context) {
         }
         // Nothing unlocked during the pause carries over.
         LockStateTracker.lockAll(includeOwnApp = false, reason = "protection resumed")
-        BioKeyTileService.requestTileUpdate(context)
     }
 
     private fun schedulePauseExpiry(durationMillis: Long) {

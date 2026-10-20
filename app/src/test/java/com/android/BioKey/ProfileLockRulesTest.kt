@@ -134,6 +134,22 @@ class ProfileLockRulesTest {
     }
 
     @Test
+    fun aDeletedProfilesAppsKeepTheirSwitchesAndStayOutOfAutoSort() {
+        val vault = freshVault()
+        val profile = vault.createProfile("Money", "wallet", LockTimeoutMode.IMMEDIATE)
+        vault.addAppsToProfile(profile.id, listOf(bank, chat))
+        vault.setAppLock(chat, false)
+
+        vault.deleteProfile(profile.id)
+        vault.autoSortAppsIntoProfiles(listOf(bank to AppCategory.FINANCE, chat to AppCategory.FINANCE))
+
+        assertEquals(null, vault.profileOf(bank))
+        assertEquals(null, vault.profileOf(chat))
+        assertTrue(vault.isAppLocked(bank))
+        assertFalse(vault.isAppLocked(chat)) // auto-sort didn't switch it on
+    }
+
+    @Test
     fun autoSortLeavesEverythingAloneWhenItIsOff() {
         val vault = freshVault()
         vault.setAutoSortProfilesEnabled(false)
