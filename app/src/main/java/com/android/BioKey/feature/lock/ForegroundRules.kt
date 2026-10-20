@@ -134,7 +134,7 @@ object ForegroundRules {
         @Volatile private var readForPackages = 0
         private val reading = AtomicBoolean(false)
 
-        fun get(context: Context): T {
+        fun get(context: Context, maxAgeMs: Long = this.maxAgeMs): T {
             val current = value ?: return readNow(context.applicationContext)
             if (SystemClock.elapsedRealtime() - readAt > maxAgeMs || readForPackages != BioKeyApplication.packageChangeVersion.value) {
                 refresh(context)
@@ -175,6 +175,9 @@ object ForegroundRules {
 
     private val HOME = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
 
+    /** How old the home-screen list may be when it decides whether a locked home-screen app is covered. */
+    private const val LOCKED_HOME_MAX_AGE_MS = 2_000L
+
     /** Home-screen apps (read again at most every 30 s: the user can switch launchers without any broadcast). */
     private val homes = SystemList(30_000L, Homes(emptyMap(), null)) { context ->
         val pm = context.packageManager
@@ -198,9 +201,12 @@ object ForegroundRules {
         isLocked: (String) -> Boolean = { SecurityVault.getInstance(context).isAppLocked(it) }
     ): Boolean {
         if (pkg in KNOWN_LAUNCHERS) return true
-        val homes = homes.get(context)
-        val isSystem = homes.apps[pkg] ?: return false
-        return isSystem || pkg == homes.default || !isLocked(pkg)
+        val isSystem = homes.get(context).apps[pkg] ?: return false
+        if (isSystem || !isLocked(pkg)) return true
+        // A locked one stays uncovered only while it is the home screen in use, and switching home
+        // screens sends no broadcast: for these, the list is read again within seconds (else a
+        // home screen just chosen would be covered every time Home is pressed, for up to 30 s).
+        return pkg == homes.get(context, LOCKED_HOME_MAX_AGE_MS).default
     }
 
     /**

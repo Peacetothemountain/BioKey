@@ -10,6 +10,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.feature.lock.ForegroundRules
 import java.io.File
+import java.time.Duration
 import javax.xml.parsers.DocumentBuilderFactory
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -19,6 +20,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSystemClock
 import org.w3c.dom.Element
 
 /**
@@ -109,6 +111,20 @@ class ForegroundRulesTest {
         })
     }
 
+    /** Makes [pkg] (registered with [installHome]) the home screen in use. */
+    private fun makeDefaultHome(pkg: String) {
+        @Suppress("DEPRECATION")
+        context.packageManager.addPreferredActivity(
+            IntentFilter(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                addCategory(Intent.CATEGORY_DEFAULT)
+            },
+            IntentFilter.MATCH_CATEGORY_EMPTY,
+            null,
+            ComponentName(pkg, "$pkg.Home")
+        )
+    }
+
     @Test
     fun settingsFallbackHomeIsNotALauncher() {
         installHome("com.android.settings", system = true)
@@ -121,16 +137,7 @@ class ForegroundRulesTest {
         installHome("com.example.kidsmode")
         installHome("com.example.nova")
         // Nova is the home screen in use.
-        @Suppress("DEPRECATION")
-        context.packageManager.addPreferredActivity(
-            IntentFilter(Intent.ACTION_MAIN).apply {
-                addCategory(Intent.CATEGORY_HOME)
-                addCategory(Intent.CATEGORY_DEFAULT)
-            },
-            IntentFilter.MATCH_CATEGORY_EMPTY,
-            null,
-            ComponentName("com.example.nova", "com.example.nova.Home")
-        )
+        makeDefaultHome("com.example.nova")
         val locked: (String) -> Boolean = { true }
         // Locking these never locks the user out of Home.
         assertTrue(ForegroundRules.isLauncher(context, "com.vendor.launcher", locked))
@@ -140,5 +147,27 @@ class ForegroundRulesTest {
         // Not locked: still a home screen (leaving to it is going Home).
         assertTrue(ForegroundRules.isLauncher(context, "com.example.kidsmode") { false })
         assertFalse(ForegroundRules.isLauncher(context, "com.example.game") { false })
+    }
+
+    @Test
+    fun aLockedAppChosenAsTheHomeScreenSoonStopsBeingCovered() {
+        // Choosing a home screen sends no broadcast: without a quick second look, pressing Home
+        // would show its lock screen (and Cancel would go Home to it again) for up to 30 s.
+        installHome("com.vendor.launcher", system = true)
+        installHome("com.example.nova")
+        makeDefaultHome("com.vendor.launcher")
+        val locked: (String) -> Boolean = { true }
+        assertFalse(ForegroundRules.isLauncher(context, "com.example.nova", locked))
+
+        @Suppress("DEPRECATION")
+        context.packageManager.clearPackagePreferredActivities("com.vendor.launcher")
+        makeDefaultHome("com.example.nova")
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(3))
+        // Read again in the background; the answer follows within moments.
+        val deadline = System.currentTimeMillis() + 5_000L
+        while (!ForegroundRules.isLauncher(context, "com.example.nova", locked) && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20L)
+        }
+        assertTrue(ForegroundRules.isLauncher(context, "com.example.nova", locked))
     }
 }

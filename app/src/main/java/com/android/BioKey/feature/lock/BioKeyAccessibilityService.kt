@@ -180,29 +180,33 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     private val deviceStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            when (intent.action) {
-                Intent.ACTION_SCREEN_OFF -> {
-                    watchLauncher(false)
-                    foregroundPackage = null
-                    expectedLaunch = null
-                    recentUnlock = null
-                    rules.reset()
-                    isConfirmingDeviceCredential = false
-                    armMasks()
-                    LockStateTracker.onScreenTurnedOff()
-                }
-                // Sessions ended with the screen, and it may come back on without a keyguard (it
-                // timed out moments ago): whatever is on screen is checked again.
-                Intent.ACTION_SCREEN_ON -> {
-                    reevaluateForeground()
-                    scheduleReconcile(0L)
-                }
-                // The keyguard just went away: whatever is on screen must be re-checked even if
-                // no window event arrives (e.g. a locked app was left open when the screen went off).
-                Intent.ACTION_USER_PRESENT -> {
-                    windowList()?.let { updateMasks(it, full = false) }
-                    reevaluateForeground()
-                    mainHandler.postDelayed(::reevaluateForeground, 250)
+            // First, and whatever goes wrong below: the screen going off ends every session.
+            if (intent.action == Intent.ACTION_SCREEN_OFF) LockStateTracker.onScreenTurnedOff()
+            if (!isRunning) return
+            guarded("Screen change") {
+                when (intent.action) {
+                    Intent.ACTION_SCREEN_OFF -> {
+                        watchLauncher(false)
+                        foregroundPackage = null
+                        expectedLaunch = null
+                        recentUnlock = null
+                        rules.reset()
+                        isConfirmingDeviceCredential = false
+                        armMasks()
+                    }
+                    // Sessions ended with the screen, and it may come back on without a keyguard (it
+                    // timed out moments ago): whatever is on screen is checked again.
+                    Intent.ACTION_SCREEN_ON -> {
+                        reevaluateForeground()
+                        scheduleReconcile(0L)
+                    }
+                    // The keyguard just went away: whatever is on screen must be re-checked even if
+                    // no window event arrives (e.g. a locked app was left open when the screen went off).
+                    Intent.ACTION_USER_PRESENT -> {
+                        windowList()?.let { updateMasks(it, full = false) }
+                        reevaluateForeground()
+                        mainHandler.postDelayed(::reevaluateForeground, 250)
+                    }
                 }
             }
         }
@@ -292,7 +296,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             rules.reset()
             if (isRunning && ::vault.isInitialized && isInteractive()) {
                 // A locked app in picture-in-picture is masked at once.
-                windowList()?.let { updateMasks(it, full = false) }
+                guarded("Masks after lock-all") { windowList()?.let { updateMasks(it, full = false) } }
                 if (launcherInFront) watchLauncher(true)
                 reevaluateForeground()
             }
@@ -870,8 +874,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
         val frontApp = (inFront?.first ?: visible.first()).let {
             if ((it == PKG_GMS || it == PKG_CREDENTIAL_MANAGER) && foregroundPackage == VIRTUAL_PKG_GOOGLE_PASSWORDS) VIRTUAL_PKG_GOOGLE_PASSWORDS else it
         }
-        // The launcher's own events don't always say it has gone.
-        if (launcherInFront && !isLauncher(frontApp)) watchLauncher(false)
+        // The launcher's own events don't always say it has come or gone (taps there are only
+        // delivered while it is in front).
+        val launcherNowInFront = isLauncher(frontApp)
+        if (launcherInFront != launcherNowInFront) watchLauncher(launcherNowInFront)
         val coverAllowed = vault.isGlobalLockEnabled() && !shield.isShowing && !LockScreenActivity.isLockScreenResumed &&
             !SecurityEngine.INSTANCE.isAuthenticating()
         val outcome = rules.reconcile(
@@ -1091,7 +1097,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     /** The app tapped in picture-in-picture had its time to come out of it. */
     private fun onPipExpandOver(pkg: String) {
-        guarded("Picture-in-picture check") {
+        try {
             if (!needsCover(pkg, ignoreAbandoned = true)) {
                 shield.hide()
                 return
@@ -1105,6 +1111,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 mayBe(pkg, inFront) -> lock(pkg, "opened from picture-in-picture")
                 else -> shield.hide()
             }
+        } catch (t: Throwable) {
+            Log.e(TAG, "Picture-in-picture check failed", t)
+            // Nothing would take this cover down again: lock the app (it fails closed from there), or stand down.
+            if (vault.isAppLocked(pkg)) lock(pkg, "in picture-in-picture") else shield.hide()
         }
     }
 
@@ -1259,38 +1269,45 @@ class BioKeyAccessibilityService : AccessibilityService() {
     }
 
     private fun reevaluateForeground() {
-        if (!::vault.isInitialized) return
-        val root = rootInActiveWindow
-        if (root == null) {
-            // Unreadable (an app hiding its windows, the keyguard on its way out): the window list
-            // still says what is on screen.
-            scheduleReconcile(0L)
-            return
-        }
-        val pkg = root.packageName?.toString()
-        val cls = root.className?.toString().orEmpty()
-        val windowId = root.windowId
-        release(root)
-        if (pkg != null) {
-            if (selfProtection.isHost(pkg) && !isConfirmingDeviceCredential) {
-                activeSelfProtectionHost = pkg
-                updateContentMonitoring(needsSelfProtectionMonitoring())
-                if (shouldGuardSelf() && selfProtection.isGuardedScreen(pkg, null)) {
-                    triggerSelfProtection()
-                    return
-                }
+        // Also posted with a delay: the service may have stopped meanwhile.
+        if (!isRunning || !::vault.isInitialized) return
+        try {
+            val root = rootInActiveWindow
+            if (root == null) {
+                // Unreadable (an app hiding its windows, the keyguard on its way out): the window list
+                // still says what is on screen.
+                scheduleReconcile(0L)
+                return
             }
-            // A root says which package, not which screen ([cls] is a view class here): Credential
-            // Manager or Play services is the password manager only if a window event of its own
-            // said so. Otherwise it is a sign-in sheet over another app.
-            val target = if (pkg == PKG_CREDENTIAL_MANAGER || pkg == PKG_GMS) {
-                if (windowPackages[windowId] == VIRTUAL_PKG_GOOGLE_PASSWORDS || foregroundPackage == VIRTUAL_PKG_GOOGLE_PASSWORDS) {
-                    VIRTUAL_PKG_GOOGLE_PASSWORDS
+            val pkg = root.packageName?.toString()
+            val cls = root.className?.toString().orEmpty()
+            val windowId = root.windowId
+            release(root)
+            if (pkg != null) {
+                if (selfProtection.isHost(pkg) && !isConfirmingDeviceCredential) {
+                    activeSelfProtectionHost = pkg
+                    updateContentMonitoring(needsSelfProtectionMonitoring())
+                    if (shouldGuardSelf() && selfProtection.isGuardedScreen(pkg, null)) {
+                        triggerSelfProtection()
+                        return
+                    }
+                }
+                // A root says which package, not which screen ([cls] is a view class here): Credential
+                // Manager or Play services is the password manager only if a window event of its own
+                // said so. Otherwise it is a sign-in sheet over another app.
+                val target = if (pkg == PKG_CREDENTIAL_MANAGER || pkg == PKG_GMS) {
+                    if (windowPackages[windowId] == VIRTUAL_PKG_GOOGLE_PASSWORDS || foregroundPackage == VIRTUAL_PKG_GOOGLE_PASSWORDS) {
+                        VIRTUAL_PKG_GOOGLE_PASSWORDS
+                    } else pkg
                 } else pkg
-            } else pkg
-            handleForeground(target, cls)
+                handleForeground(target, cls)
+            }
+            scheduleReconcile()
+        } catch (t: Throwable) {
+            Log.e(TAG, "Foreground check failed", t)
+            // Whatever it should have covered is looked for in the window list instead.
+            scheduleReconcile(0L)
         }
-        scheduleReconcile()
     }
 
     // -------------------------------------------------------------------------------------------
