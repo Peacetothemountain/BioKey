@@ -43,7 +43,7 @@ class BioKeyBootReceiver : BroadcastReceiver() {
                 if (vault.isSetupCompleted()) {
                     // Compatibility mode may start here (boot is allowed to start it).
                     ProtectionEngine.refresh(appContext)
-                    if (!ProtectionEngine.isProtecting(appContext)) ProtectionAlerts.serviceStopped(appContext)
+                    if (!ProtectionEngine.isProtecting(appContext)) ProtectionAlerts.serviceStopped(appContext, now = true)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to complete boot initialization", e)

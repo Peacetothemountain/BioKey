@@ -10,6 +10,7 @@ import android.os.Looper
 import android.os.UserHandle
 import android.os.UserManager
 import android.util.Log
+import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.ui.AppIcons
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -75,9 +76,9 @@ object AppInfoCache {
         val passwordManager = isPasswordManager(pkg)
         // Google Password Manager is a virtual app: show Credential Manager's (or Play services') icon.
         val realPkg = if (!passwordManager) pkg else {
-            runCatching { pm.getApplicationInfo(BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER, 0) }
-                .map { BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER }
-                .getOrDefault("com.google.android.gms")
+            runCatching { pm.getApplicationInfo(PasswordManager.CREDENTIAL_MANAGER, 0) }
+                .map { PasswordManager.CREDENTIAL_MANAGER }
+                .getOrDefault(PasswordManager.GMS)
         }
         val (label, raw, user) = runCatching {
             val info = pm.getApplicationInfo(realPkg, 0)
@@ -103,5 +104,5 @@ object AppInfoCache {
     }.getOrNull()
 
     private fun isPasswordManager(pkg: String) =
-        pkg == BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS || pkg == BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER
+        pkg == PasswordManager.VIRTUAL_PACKAGE || pkg == PasswordManager.CREDENTIAL_MANAGER
 }

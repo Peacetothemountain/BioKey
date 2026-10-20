@@ -10,6 +10,7 @@ import android.util.Log
 import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
@@ -252,7 +253,7 @@ class LockScreenActivity : ComponentActivity() {
     }
 
     private fun launchApp(pkg: String) {
-        val realPkg = if (pkg == BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS) BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER else pkg
+        val realPkg = if (pkg == PasswordManager.VIRTUAL_PACKAGE) PasswordManager.CREDENTIAL_MANAGER else pkg
         packageManager.getLaunchIntentForPackage(realPkg)?.let { launch ->
             runCatching { startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         }
@@ -266,10 +267,10 @@ class LockScreenActivity : ComponentActivity() {
         val target = intentsMap?.values?.filter { !it.isSummary }?.maxByOrNull { it.postTime }
             ?: intentsMap?.values?.maxByOrNull { it.postTime }
         val pending = target?.pendingIntent
-        val realPkg = if (pkg == BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS) BioKeyAccessibilityService.PKG_CREDENTIAL_MANAGER else pkg
+        val realPkg = if (pkg == PasswordManager.VIRTUAL_PACKAGE) PasswordManager.CREDENTIAL_MANAGER else pkg
         val creator = pending?.creatorPackage
         val validCreator = creator == null || creator == realPkg || creator == pkg ||
-            (pkg == BioKeyAccessibilityService.VIRTUAL_PKG_GOOGLE_PASSWORDS && creator == "com.google.android.gms")
+            (pkg == PasswordManager.VIRTUAL_PACKAGE && creator == PasswordManager.GMS)
 
         if (pending == null || !validCreator) {
             launchApp(pkg)

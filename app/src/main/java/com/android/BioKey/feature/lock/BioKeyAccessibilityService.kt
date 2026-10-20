@@ -22,6 +22,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.view.inputmethod.InputMethodManager
 import androidx.core.content.ContextCompat
+import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
@@ -83,44 +84,17 @@ class BioKeyAccessibilityService : AccessibilityService() {
             return enabled.split(':').any { ComponentName.unflattenFromString(it) == expected }
         }
 
-        const val VIRTUAL_PKG_GOOGLE_PASSWORDS = "com.google.android.gms.passwordmanager"
-        const val PKG_CREDENTIAL_MANAGER = "com.google.android.apps.credentialmanager"
-        private const val PKG_GMS = "com.google.android.gms"
+        private const val VIRTUAL_PKG_GOOGLE_PASSWORDS = PasswordManager.VIRTUAL_PACKAGE
+        private const val PKG_CREDENTIAL_MANAGER = PasswordManager.CREDENTIAL_MANAGER
+        private const val PKG_GMS = PasswordManager.GMS
 
         const val SELF_PROTECTION_PENDING_KEY = "biokey:self-protection"
 
-        private val GPM_IGNORED_CLASS_HINTS = listOf(
-            "Autofill", "Credential", "ConfirmUser", "Authenticator", "SignIn", "OAuth", "Fido", "Passkey",
-            "AccountPicker", "ChooseAccount", "TwoStep", "SecondFactor", "Consent", "AuthAccount",
-            "AuthActivity", "OneTap", "SmartLock", "Authorization", "FederatedIdentity", "TokenActivity",
-            "WebAuthn", "BottomSheet", "CreatePassword", "ShareCredentials"
-        )
-
-        private val GPM_ACTIVITY_HINTS = listOf(
-            "PasswordManagerProxyActivity", "PasswordManagerActivity", "AutofillManagePasswordsActivity", "GooglePasswordManager"
-        )
-
-        /**
-         * Google Password Manager lives inside Play services / Credential Manager, which also host
-         * sign-in sheets that must not be locked. Map only the standalone manager to a virtual package.
-         */
+        /** Google Password Manager's own screens inside Play services or Credential Manager: see [PasswordManager.resolve]. */
         fun isGooglePasswordManagerEvent(event: AccessibilityEvent): Boolean {
             val pkg = event.packageName?.toString() ?: return false
             if (pkg != PKG_CREDENTIAL_MANAGER && pkg != PKG_GMS) return false
-            val cls = event.className?.toString().orEmpty()
-
-            if (pkg == PKG_CREDENTIAL_MANAGER) {
-                return listOf("Picker", "Chooser", "Selector", "Dialog").none { cls.contains(it, ignoreCase = true) } &&
-                    GPM_IGNORED_CLASS_HINTS.none { cls.contains(it, ignoreCase = true) }
-            }
-            if (GPM_ACTIVITY_HINTS.any { cls.contains(it, ignoreCase = true) }) return true
-            if (GPM_IGNORED_CLASS_HINTS.any { cls.contains(it, ignoreCase = true) } || cls.contains("Settings", ignoreCase = true)) {
-                return false
-            }
-            val title = event.text.joinToString(" ").trim()
-            return title.equals("Password Manager", ignoreCase = true) ||
-                title.equals("Google Password Manager", ignoreCase = true) ||
-                title.equals("Saved passwords", ignoreCase = true)
+            return PasswordManager.resolve(pkg, event.className?.toString(), event.text.joinToString(" ")) == VIRTUAL_PKG_GOOGLE_PASSWORDS
         }
     }
 

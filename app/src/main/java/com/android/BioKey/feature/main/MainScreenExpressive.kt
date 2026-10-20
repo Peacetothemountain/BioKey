@@ -89,6 +89,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.BioKey.BioKeyApplication
 import com.android.BioKey.core.data.LockTimeoutMode
+import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.data.SecurityProfile
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.ProtectionEngine
@@ -181,11 +182,11 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     val profileByPackage = remember(profiles) {
         HashMap<String, SecurityProfile>().apply { for (p in profiles) for (pkg in p.packages) put(pkg, p) }
     }
-    fun profileOf(pkg: String) = packageAliases(pkg).firstNotNullOfOrNull { profileByPackage[it] }
+    fun profileOf(pkg: String) = PasswordManager.aliasesOf(pkg).firstNotNullOfOrNull { profileByPackage[it] }
     /** The app's own lock switch. */
-    fun isOn(pkg: String) = packageAliases(pkg).any { it in selectedApps }
+    fun isOn(pkg: String) = PasswordManager.aliasesOf(pkg).any { it in selectedApps }
     /** Actually locked: switched on, and its profile (if any) is on too. */
-    fun isLocked(pkg: String) = packageAliases(pkg).any { it in lockedApps }
+    fun isLocked(pkg: String) = PasswordManager.aliasesOf(pkg).any { it in lockedApps }
 
 
     BackHandler(enabled = filter != FILTER_ALL && !showSettings) { filter = FILTER_ALL }

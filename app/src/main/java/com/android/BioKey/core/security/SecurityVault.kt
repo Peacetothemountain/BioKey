@@ -5,12 +5,15 @@ import android.content.pm.PackageManager
 import android.os.SystemClock
 import com.android.BioKey.core.data.AppClassifier
 import com.android.BioKey.core.data.LockTimeoutMode
+import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.data.SecurityProfile
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.InstantShieldOverlay
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 import com.android.BioKey.feature.tile.BioKeyTileService
+import java.util.UUID
+import java.util.concurrent.Executors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,8 +25,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.UUID
-import java.util.concurrent.Executors
 
 /**
  * BioKey's persistent configuration: which apps are locked, profiles, re-lock delays, pause
@@ -58,10 +59,6 @@ class SecurityVault private constructor(private val context: Context) {
         /** A timed pause restored after a reboot never runs longer than this (wall clock can lie). */
         private const val MAX_RESTORED_PAUSE_MS = 60 * 60_000L
 
-        private const val PKG_GMS_PASSWORDS = "com.google.android.gms.passwordmanager"
-        private const val PKG_CREDENTIAL_MANAGER = "com.google.android.apps.credentialmanager"
-        private val PASSWORD_MANAGER_ALIASES = setOf(PKG_GMS_PASSWORDS, PKG_CREDENTIAL_MANAGER)
-
         @Volatile
         private var INSTANCE: SecurityVault? = null
 
@@ -69,11 +66,6 @@ class SecurityVault private constructor(private val context: Context) {
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: SecurityVault(context.applicationContext).also { INSTANCE = it }
             }
-
-        private fun aliasesOf(pkg: String): Set<String> =
-            if (pkg in PASSWORD_MANAGER_ALIASES) PASSWORD_MANAGER_ALIASES else setOf(pkg)
-
-        private fun expand(packages: Collection<String>): Set<String> = packages.flatMapTo(HashSet(), ::aliasesOf)
     }
 
     private val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -177,7 +169,7 @@ class SecurityVault private constructor(private val context: Context) {
             change(selected, profiles)
 
             val cleanProfiles = cleanProfiles(profiles)
-            val clean = expand(selected)
+            val clean = PasswordManager.expand(selected)
             val locked = effectiveLocks(clean, cleanProfiles)
 
             _profilesFlow.value = cleanProfiles
@@ -205,7 +197,7 @@ class SecurityVault private constructor(private val context: Context) {
 
     /** An app's own lock switch. It stays in its profile either way. */
     fun setAppLock(packageName: String, locked: Boolean) {
-        val targets = aliasesOf(packageName)
+        val targets = PasswordManager.aliasesOf(packageName)
         mutate { selected, _ -> if (locked) selected += targets else selected -= targets }
     }
 
@@ -219,7 +211,7 @@ class SecurityVault private constructor(private val context: Context) {
      * a removal), or takes it out of its profile when null, leaving its lock switch as it is.
      */
     fun moveAppToProfile(packageName: String, profileId: String?, switchOn: Boolean = true) {
-        val targets = aliasesOf(packageName)
+        val targets = PasswordManager.aliasesOf(packageName)
         mutate { selected, profiles ->
             if (profileId != null && switchOn) selected += targets
             profiles.removePackages(targets)
@@ -234,7 +226,7 @@ class SecurityVault private constructor(private val context: Context) {
 
     /** Adds apps to a profile, moving them out of any other one, and switches their locks on. */
     fun addAppsToProfile(profileId: String, packages: Collection<String>) {
-        val targets = expand(packages)
+        val targets = PasswordManager.expand(packages)
         mutate { selected, profiles ->
             selected += targets
             profiles.removePackages(targets)
@@ -272,7 +264,7 @@ class SecurityVault private constructor(private val context: Context) {
     }
 
     fun onPackageUninstalled(packageName: String) {
-        val targets = aliasesOf(packageName)
+        val targets = PasswordManager.aliasesOf(packageName)
         mutate { selected, profiles ->
             selected -= targets
             profiles.removePackages(targets)
@@ -352,7 +344,7 @@ class SecurityVault private constructor(private val context: Context) {
             val assigned = _profilesFlow.value.flatMapTo(HashSet()) { it.packages }
             for ((pkg, label) in apps) {
                 if (pkg == context.packageName) continue
-                val aliases = aliasesOf(pkg)
+                val aliases = PasswordManager.aliasesOf(pkg)
                 if (aliases.any { it in assigned || it in autoSortExcluded }) continue
                 val playCategory = runCatching { pm?.getApplicationInfo(pkg, 0)?.category }.getOrNull() ?: -1
                 val target = AppClassifier.presetProfileFor(AppClassifier.categorize(pkg, label, playCategory)) ?: continue
@@ -450,7 +442,7 @@ class SecurityVault private constructor(private val context: Context) {
     /** Profile memberships expanded to aliases, each app in at most one profile (the first). */
     private fun cleanProfiles(profiles: List<SecurityProfile>): List<SecurityProfile> {
         val seen = HashSet<String>()
-        return profiles.map { p -> p.copy(packages = expand(p.packages).filterTo(HashSet()) { seen.add(it) }) }
+        return profiles.map { p -> p.copy(packages = PasswordManager.expand(p.packages).filterTo(HashSet()) { seen.add(it) }) }
     }
 
     /** Switched-on apps whose profile, if they have one, is on. */
@@ -472,7 +464,7 @@ class SecurityVault private constructor(private val context: Context) {
         } ?: SecurityProfile.DEFAULTS
         // Enforce the invariants on whatever was stored.
         val clean = cleanProfiles(profiles)
-        var selected = expand(prefs.getStringSet(KEY_LOCKED, emptySet()).orEmpty())
+        var selected = PasswordManager.expand(prefs.getStringSet(KEY_LOCKED, emptySet()).orEmpty())
         // Before version 2 every app in a profile was locked: keep each of them switched on.
         val migrating = prefs.getInt(KEY_MODEL_VERSION, 1) < MODEL_VERSION
         if (migrating) selected = selected + clean.flatMap { it.packages }

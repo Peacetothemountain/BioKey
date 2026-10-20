@@ -3,15 +3,16 @@ package com.android.BioKey.core.security
 import android.os.SystemClock
 import android.util.Log
 import com.android.BioKey.core.data.LockTimeoutMode
+import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArraySet
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CopyOnWriteArraySet
 
 /**
  * In-memory lock session state.
@@ -40,8 +41,21 @@ object LockStateTracker {
     /** Suppresses duplicate lock-screen launches from bursts of accessibility events. */
     private const val PENDING_LOCK_DEBOUNCE_MS = 1_200L
 
-    /** Suppresses immediate re-triggering while exiting an abandoned lock screen. */
-    private const val ABANDONED_LOCK_COOLDOWN_MS = 900L
+    /**
+     * Suppresses immediate re-triggering while exiting an abandoned lock screen. Engines re-check
+     * the app once it ends ([addLockAbandonedListener]), so a fast return to it is still covered.
+     */
+    const val ABANDONED_LOCK_COOLDOWN_MS = 900L
+
+    /**
+     * A new session must reach the screen within this long. One whose app never appears (its
+     * notification opened something else, it crashed, Home was pressed first) ends instead of
+     * waiting, unaged, for whoever opens the app next.
+     */
+    const val ARRIVAL_GRACE_MS = 15_000L
+
+    /** How long BioKey's own session survives a trip to the system file picker for a backup. */
+    private const val OWN_PICKER_LEASE_MS = 120_000L
 
     /** How long after an app left the screen its window may still flicker back during the exit animation. */
     private const val JUST_LEFT_MS = 2_000L
@@ -52,17 +66,15 @@ object LockStateTracker {
     /** BioKey's own session ends after this long without interaction, in BioKey or away from it. */
     const val OWN_APP_IDLE_MS = 3 * 60_000L
 
-    private const val PKG_GMS_PASSWORDS = "com.google.android.gms.passwordmanager"
-    private const val PKG_CREDENTIAL_MANAGER = "com.google.android.apps.credentialmanager"
-    private val PASSWORD_MANAGER_ALIASES = setOf(PKG_GMS_PASSWORDS, PKG_CREDENTIAL_MANAGER)
-
     /**
      * One unlocked app. [awaySince] is 0 while the app is on screen. [hopTarget] is set while the
      * user is in a helper app they went to straight from this one.
      */
-    private class Session {
+    private class Session(val unlockedAt: Long) {
         @Volatile var awaySince = 0L
         @Volatile var hopTarget: String? = null
+        /** The app has been on screen since the unlock (see [ARRIVAL_GRACE_MS]). */
+        @Volatile var seen = false
     }
 
     private val sessions = ConcurrentHashMap<String, Session>()
@@ -77,10 +89,15 @@ object LockStateTracker {
     @Volatile private var ownLastActiveAt = 0L
     @Volatile private var ownInForeground = false
     @Volatile private var externalNavigationAt = 0L
+    @Volatile private var ownPickerAt = 0L
+
+    /** Bumped by every [lockAll], so an unlock that raced a device lock can be told apart. */
+    @Volatile private var generation = 0
 
     private val lockAllListeners = CopyOnWriteArraySet<() -> Unit>()
     private val appUnlockListeners = CopyOnWriteArraySet<(String) -> Unit>()
     private val appLockListeners = CopyOnWriteArraySet<(String) -> Unit>()
+    private val lockAbandonedListeners = CopyOnWriteArraySet<(String) -> Unit>()
 
     /** Notified after every [lockAll] (screen-off, manual lock), e.g. to re-redact notifications. */
     fun addLockAllListener(listener: () -> Unit) { lockAllListeners += listener }
@@ -94,14 +111,21 @@ object LockStateTracker {
     fun addAppLockListener(listener: (String) -> Unit) { appLockListeners += listener }
     fun removeAppLockListener(listener: (String) -> Unit) { appLockListeners -= listener }
 
+    /**
+     * Notified when a lock screen is left without authenticating ([markLockAbandoned]). The app
+     * isn't covered again for [ABANDONED_LOCK_COOLDOWN_MS]; engines use this to look once more
+     * when that ends.
+     */
+    fun addLockAbandonedListener(listener: (String) -> Unit) { lockAbandonedListeners += listener }
+    fun removeLockAbandonedListener(listener: (String) -> Unit) { lockAbandonedListeners -= listener }
+
+    /** The current [lockAll] generation: capture it when a prompt starts, pass it to [onAppUnlocked]. */
+    fun lockGeneration(): Int = generation
+
     private fun now() = SystemClock.elapsedRealtime()
 
-    /** Google Password Manager is reachable through two packages; treat them as one app. */
-    private fun aliasesOf(packageName: String): Set<String> =
-        if (packageName in PASSWORD_MANAGER_ALIASES) PASSWORD_MANAGER_ALIASES else setOf(packageName)
-
     private fun sessionOf(packageName: String): Session? =
-        aliasesOf(packageName).firstNotNullOfOrNull { sessions[it] }
+        PasswordManager.aliasesOf(packageName).firstNotNullOfOrNull { sessions[it] }
 
     // ---------------------------------------------------------------------------------------
     // Locked-app sessions
@@ -117,17 +141,27 @@ object LockStateTracker {
             delay(delayMs + 50L)
             isAppUnlocked(packageName, timeoutMode)
         }
-        for (pkg in aliasesOf(packageName)) expiryJobs[pkg] = job
+        for (pkg in PasswordManager.aliasesOf(packageName)) expiryJobs[pkg] = job
     }
 
     private fun cancelExpiry(packageName: String) {
-        for (pkg in aliasesOf(packageName)) expiryJobs.remove(pkg)?.cancel()
+        for (pkg in PasswordManager.aliasesOf(packageName)) expiryJobs.remove(pkg)?.cancel()
     }
 
-    fun onAppUnlocked(packageName: String) {
+    /**
+     * Starts a session for [packageName]. [generation] is [lockGeneration] as it was when the
+     * prompt started: if every session ended since (the phone was locked mid-prompt), the unlock
+     * is stale and no session starts. Returns whether one did.
+     */
+    fun onAppUnlocked(packageName: String, generation: Int = this.generation): Boolean {
+        if (generation != this.generation) {
+            Log.i(TAG, "Unlock of $packageName arrived after a lock-all; ignored")
+            DiagnosticLog.log("Unlock of $packageName ignored: the phone was locked meanwhile")
+            return false
+        }
         cancelExpiry(packageName)
-        val session = Session()
-        for (pkg in aliasesOf(packageName)) {
+        val session = Session(unlockedAt = now())
+        for (pkg in PasswordManager.aliasesOf(packageName)) {
             sessions[pkg] = session
             pendingLocks.remove(pkg)
             abandonedAt.remove(pkg)
@@ -135,11 +169,13 @@ object LockStateTracker {
         Log.i(TAG, "Session started for $packageName")
         DiagnosticLog.log("Unlocked $packageName")
         appUnlockListeners.forEach { runCatching { it(packageName) } }
+        return true
     }
 
     /** The unlocked app is on screen: it is in use, so nothing ages. */
     fun onAppVisible(packageName: String) {
         val session = sessionOf(packageName) ?: return
+        session.seen = true
         if (session.awaySince == 0L) return
         session.awaySince = 0L
         session.hopTarget = null
@@ -154,10 +190,11 @@ object LockStateTracker {
      */
     fun onAppLeft(packageName: String, timeoutMode: LockTimeoutMode, hopTarget: String?) {
         val session = sessionOf(packageName) ?: return
+        session.seen = true
         if (session.awaySince != 0L) return
         session.awaySince = now()
         session.hopTarget = hopTarget
-        for (pkg in aliasesOf(packageName)) leftAt[pkg] = session.awaySince
+        for (pkg in PasswordManager.aliasesOf(packageName)) leftAt[pkg] = session.awaySince
         Log.d(TAG, "$packageName left the screen (hop=$hopTarget)")
         DiagnosticLog.log("$packageName left the screen" + (hopTarget?.let { " · hop to $it" } ?: " · re-lock: ${timeoutMode.name.lowercase()}"))
         when {
@@ -180,7 +217,7 @@ object LockStateTracker {
     ) {
         for ((pkg, session) in sessions) {
             val hop = session.hopTarget ?: continue
-            if (hop == foregroundPackage || pkg in aliasesOf(foregroundPackage) || continuesHop(foregroundPackage)) continue
+            if (hop == foregroundPackage || pkg in PasswordManager.aliasesOf(foregroundPackage) || continuesHop(foregroundPackage)) continue
             session.hopTarget = null
             val mode = timeoutModeOf(pkg)
             Log.d(TAG, "Hop from $pkg ended at $foregroundPackage")
@@ -203,14 +240,18 @@ object LockStateTracker {
      * the way out: during this window, such a flicker is the exit, not the app coming back.
      */
     fun justLeft(packageName: String): Boolean {
-        val stamp = aliasesOf(packageName).firstNotNullOfOrNull { leftAt[it] } ?: return false
+        val stamp = PasswordManager.aliasesOf(packageName).firstNotNullOfOrNull { leftAt[it] } ?: return false
         if (now() - stamp < JUST_LEFT_MS) return true
-        for (pkg in aliasesOf(packageName)) leftAt.remove(pkg)
+        for (pkg in PasswordManager.aliasesOf(packageName)) leftAt.remove(pkg)
         return false
     }
 
     fun isAppUnlocked(packageName: String, timeoutMode: LockTimeoutMode): Boolean {
         val session = sessionOf(packageName) ?: return false
+        if (!session.seen && now() - session.unlockedAt > ARRIVAL_GRACE_MS) {
+            lockPackage(packageName, "never reached the screen")
+            return false
+        }
         val away = session.awaySince
         if (away == 0L || timeoutMode == LockTimeoutMode.ON_SCREEN_OFF) return true
         val hopping = session.hopTarget != null
@@ -226,7 +267,7 @@ object LockStateTracker {
     fun lockPackage(packageName: String, reason: String? = null) {
         cancelExpiry(packageName)
         var hadSession = false
-        for (pkg in aliasesOf(packageName)) {
+        for (pkg in PasswordManager.aliasesOf(packageName)) {
             if (sessions.remove(pkg) != null) hadSession = true
             pendingLocks.remove(pkg)
         }
@@ -249,6 +290,7 @@ object LockStateTracker {
         abandonedAt.clear()
         leftAt.clear()
         clearSelfProtection()
+        generation++
         if (includeOwnApp) lockOwnApp()
         Log.i(TAG, "All sessions wiped")
         if (reason != null) DiagnosticLog.log("All sessions ended ($reason)")
@@ -273,7 +315,7 @@ object LockStateTracker {
     // ---------------------------------------------------------------------------------------
 
     fun isRegularLockPending(packageName: String): Boolean {
-        val stamp = aliasesOf(packageName).firstNotNullOfOrNull { pendingLocks[it] } ?: return false
+        val stamp = PasswordManager.aliasesOf(packageName).firstNotNullOfOrNull { pendingLocks[it] } ?: return false
         if (now() - stamp < PENDING_LOCK_DEBOUNCE_MS) return true
         clearRegularLockPending(packageName)
         return false
@@ -281,29 +323,39 @@ object LockStateTracker {
 
     fun setRegularLockPending(packageName: String) {
         val t = now()
-        for (pkg in aliasesOf(packageName)) {
+        for (pkg in PasswordManager.aliasesOf(packageName)) {
             pendingLocks[pkg] = t
             abandonedAt.remove(pkg)
         }
     }
 
     fun clearRegularLockPending(packageName: String) {
-        for (pkg in aliasesOf(packageName)) pendingLocks.remove(pkg)
+        for (pkg in PasswordManager.aliasesOf(packageName)) pendingLocks.remove(pkg)
     }
 
     fun markLockAbandoned(packageName: String) {
         val t = now()
-        for (pkg in aliasesOf(packageName)) {
+        for (pkg in PasswordManager.aliasesOf(packageName)) {
             pendingLocks.remove(pkg)
             abandonedAt[pkg] = t
         }
+        lockAbandonedListeners.forEach { runCatching { it(packageName) } }
     }
 
-    fun isRecentlyAbandoned(packageName: String): Boolean {
-        val stamp = aliasesOf(packageName).firstNotNullOfOrNull { abandonedAt[it] } ?: return false
-        if (now() - stamp < ABANDONED_LOCK_COOLDOWN_MS) return true
-        for (pkg in aliasesOf(packageName)) abandonedAt.remove(pkg)
-        return false
+    fun isRecentlyAbandoned(packageName: String): Boolean = abandonCooldownRemainingMs(packageName) > 0L
+
+    /** How much of [packageName]'s abandon cooldown is left, or 0. */
+    fun abandonCooldownRemainingMs(packageName: String): Long {
+        val stamp = PasswordManager.aliasesOf(packageName).firstNotNullOfOrNull { abandonedAt[it] } ?: return 0L
+        val left = ABANDONED_LOCK_COOLDOWN_MS - (now() - stamp)
+        if (left > 0L) return left
+        clearAbandoned(packageName)
+        return 0L
+    }
+
+    /** Ends [packageName]'s abandon cooldown early, e.g. when the user taps the app again. */
+    fun clearAbandoned(packageName: String) {
+        for (pkg in PasswordManager.aliasesOf(packageName)) abandonedAt.remove(pkg)
     }
 
     // ---------------------------------------------------------------------------------------
@@ -366,6 +418,7 @@ object LockStateTracker {
 
     fun onOwnAppResumed() {
         externalNavigationAt = 0L
+        ownPickerAt = 0L
         clearSelfProtection()
         if (!isOwnAppUnlocked()) return
         ownInForeground = true
@@ -396,10 +449,31 @@ object LockStateTracker {
         return false
     }
 
+    /**
+     * BioKey is about to open the system file picker for a backup or restore: its session survives
+     * that one trip (at most [OWN_PICKER_LEASE_MS], ended by coming back, by going anywhere but the
+     * picker, or by any lock-all). Unlike [beginExternalNavigation], it grants no self-protection.
+     */
+    fun beginOwnPicker() {
+        if (!hasActiveOwnerSession()) return
+        val t = now()
+        ownLastActiveAt = t
+        ownPickerAt = t
+    }
+
+    fun isOwnPickerActive(): Boolean {
+        val started = ownPickerAt
+        if (started == 0L) return false
+        if (now() - started < OWN_PICKER_LEASE_MS && isOwnAppUnlocked()) return true
+        ownPickerAt = 0L
+        return false
+    }
+
     fun lockOwnApp() {
         ownUnlockedAt = 0L
         ownLastActiveAt = 0L
         ownInForeground = false
         externalNavigationAt = 0L
+        ownPickerAt = 0L
     }
 }

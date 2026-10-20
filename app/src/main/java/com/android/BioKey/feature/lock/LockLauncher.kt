@@ -11,8 +11,11 @@ import android.util.Log
 object LockLauncher {
     private const val TAG = "LockLauncher"
 
-    /** Returns false if the lock screen could not be started (the caller must fail closed). */
-    fun launch(context: Context, targetPkg: String, isSelfProtection: Boolean): Boolean {
+    /**
+     * Returns false if the lock screen could not be started (the caller must fail closed).
+     * [displayId], when known, is the display the locked app is on: the lock screen opens there.
+     */
+    fun launch(context: Context, targetPkg: String, isSelfProtection: Boolean, displayId: Int? = null): Boolean {
         val intent = Intent(context, LockScreenActivity::class.java).apply {
             putExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE, targetPkg)
             putExtra(LockScreenActivity.EXTRA_SELF_PROTECTION, isSelfProtection)
@@ -31,6 +34,10 @@ object LockLauncher {
         try {
             val creatorOptions = ActivityOptions.makeCustomAnimation(context, 0, 0)
             val sendOptions = ActivityOptions.makeCustomAnimation(context, 0, 0)
+            if (displayId != null) {
+                creatorOptions.launchDisplayId = displayId
+                sendOptions.launchDisplayId = displayId
+            }
             if (Build.VERSION.SDK_INT >= 36) {
                 creatorOptions.setPendingIntentCreatorBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS)
                 sendOptions.setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS)
@@ -52,7 +59,9 @@ object LockLauncher {
             Log.w(TAG, "PendingIntent lock screen start failed, trying startActivity: ${e.message}")
         }
         return try {
-            context.startActivity(intent, ActivityOptions.makeCustomAnimation(context, 0, 0).toBundle())
+            val options = ActivityOptions.makeCustomAnimation(context, 0, 0)
+            if (displayId != null) options.launchDisplayId = displayId
+            context.startActivity(intent, options.toBundle())
             true
         } catch (e: Exception) {
             Log.e(TAG, "Lock screen launch failed", e)
