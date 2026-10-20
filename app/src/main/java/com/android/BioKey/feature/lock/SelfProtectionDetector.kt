@@ -1,9 +1,12 @@
 package com.android.BioKey.feature.lock
 
+import android.content.Context
 import android.os.Build
 import android.os.SystemClock
+import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import com.android.BioKey.R
 
 /**
@@ -15,11 +18,15 @@ import com.android.BioKey.R
  *
  * Multi-app list screens (Settings -> Apps, See all apps, Accessibility list, Special app access
  * lists) where BioKey is merely one row among other apps must NEVER trigger.
+ *
+ * Every answer is about one window of the host: the event's own, or the host's window on screen.
+ * Never the active window when that belongs to another app (the other half of a split screen, or
+ * the launcher a new window is still opening from), and never an answer kept from another window.
  */
 internal class SelfProtectionDetector(private val service: BioKeyAccessibilityService) {
 
     companion object {
-        val INSTALLER_PACKAGES = setOf(
+        private val INSTALLER_PACKAGES = setOf(
             "com.google.android.packageinstaller",
             "com.android.packageinstaller",
             "com.samsung.android.packageinstaller",
@@ -29,7 +36,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
             "com.vivo.packageinstaller"
         )
 
-        val HOST_PACKAGES = INSTALLER_PACKAGES + setOf(
+        private val HOST_PACKAGES = INSTALLER_PACKAGES + setOf(
             "com.android.settings",
             "com.google.android.permissioncontroller",
             "com.android.permissioncontroller",
@@ -47,11 +54,12 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         )
 
         private const val SETTINGS_PKG = "com.android.settings"
+        private const val PLAY_STORE_PKG = "com.android.vending"
 
         /** AOSP Settings strings for App info actions; most manufacturers keep these names. */
         private val SETTINGS_ACTION_STRINGS = listOf(
             "force_stop", "uninstall_text", "uninstall_all_users_text", "clear_user_data_text",
-            "clear_cache_btn_text", "remove_device_admin"
+            "clear_cache_btn_text"
         )
 
         /** AOSP Settings strings that name one accessibility service: its switch and its stop dialog. */
@@ -63,18 +71,20 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         private const val CONTENT_CHECK_INTERVAL_MS = 120L
         private const val MAX_NODES_SCANNED = 400
 
+        /** A host window that can't be read yet (it is still opening) is looked at again this often, this many times. */
+        private const val UNREADABLE_RETRY_MS = 180L
+        private const val UNREADABLE_RETRIES = 3
+
         /**
-         * English fallback: exact standalone action labels that only appear on an App Info, App
-         * Storage, or Device Admin detail screen (never on Settings -> Apps, See all apps, or Accessibility lists).
+         * English fallback: exact standalone action labels that only appear on an App Info or App
+         * Storage detail screen (never on Settings -> Apps, See all apps, or Accessibility lists).
          */
         private val EXACT_APP_DETAIL_ACTIONS = setOf(
             "force stop",
             "uninstall",
             "clear storage",
             "clear data",
-            "clear cache",
-            "deactivate",
-            "deactivate this device admin app"
+            "clear cache"
         )
 
         /**
@@ -102,9 +112,72 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
             "android:id/action_bar"
         )
 
+        /** English control verbs a single node starts with, e.g. "Use Bio Key App Lock Service". */
         private val SAME_NODE_PROMPT_VERBS = listOf(
-            "use ", "stop ", "turn off", "disable ", "uninstall", "deactivate", "deny ", "allow "
+            "use ", "stop ", "turn off", "disable ", "uninstall", "deny ", "allow "
         )
+
+        /** Where Android keeps what the accessibility shortcuts (volume keys, button, gesture) switch. */
+        private val SHORTCUT_TARGET_SETTINGS = listOf(
+            "accessibility_shortcut_target_service",
+            "accessibility_button_targets",
+            "accessibility_gesture_targets"
+        )
+
+        /**
+         * Whether an accessibility shortcut is assigned to BioKey's service. A shortcut switches the
+         * service off straight away, without any of the screens self-protection guards, so the
+         * owner should be told to remove it.
+         */
+        fun isShortcutAssigned(context: Context): Boolean = SHORTCUT_TARGET_SETTINGS.any { key ->
+            val targets = runCatching { Settings.Secure.getString(context.contentResolver, key) }.getOrNull()
+            shortcutTargetsInclude(targets, context.packageName, BioKeyAccessibilityService::class.java.name)
+        }
+
+        /** [targets] is a ':'-separated list of flattened component names, full or short ("pkg/.Cls"). */
+        internal fun shortcutTargetsInclude(targets: String?, pkg: String, cls: String): Boolean =
+            !targets.isNullOrBlank() && targets.split(':').any { entry ->
+                val targetPkg = entry.substringBefore('/', "").trim()
+                val targetCls = entry.substringAfter('/', "").trim()
+                targetPkg == pkg && (targetCls == cls || (targetCls.startsWith('.') && pkg + targetCls == cls))
+            }
+
+        /**
+         * Matches any of [labels] as a whole name: "Bio Key" and "Bio Key's", but not the start of
+         * "Bio Keyboard". Only Latin letters and digits count as part of a word, so a name written
+         * right next to Chinese or Japanese text still matches.
+         */
+        internal fun namePattern(labels: Collection<String>): Regex = Regex(
+            labels.filter { it.isNotBlank() }.sortedByDescending { it.length }
+                .joinToString("|", prefix = "(?<![A-Za-z0-9])(?:", postfix = ")(?![A-Za-z0-9])") { Regex.escape(it) },
+            RegexOption.IGNORE_CASE
+        )
+
+        /**
+         * A single node that is itself a control or prompt for one service: "Use Bio Key App Lock
+         * Service", "Stop Bio Key App Lock Service?", "Bio Key App Lock Service shortcut", "Turn
+         * off notification access for Bio Key notification shield?". [togglePrompts] are the
+         * device's own Settings strings for them, in the phone's language.
+         */
+        internal fun isControlPrompt(text: String, togglePrompts: Set<String>): Boolean {
+            val lower = text.trim().lowercase()
+            return lower in togglePrompts || SAME_NODE_PROMPT_VERBS.any { lower.startsWith(it) } ||
+                lower.endsWith(" shortcut") ||
+                lower.endsWith("?") || lower.endsWith("？")
+        }
+
+        /**
+         * The [ids] a [host]'s window can actually contain: its own, the framework's and AndroidX's.
+         * Asking a window for another app's IDs is a wasted round trip to that app. Google's builds
+         * of AOSP apps (com.google.android.permissioncontroller) keep AOSP's resource package.
+         */
+        internal fun viewIdsFor(host: String, ids: Collection<String>): List<String> {
+            val own = setOf(host, host.replace("com.google.android.", "com.android."))
+            return ids.filter { id ->
+                val resourcePkg = id.substringBefore(':')
+                resourcePkg == "android" || resourcePkg.startsWith("androidx.") || resourcePkg in own
+            }
+        }
     }
 
     private val appName = service.getString(R.string.app_name)
@@ -119,6 +192,8 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         a11yLabel,
         notifLabel
     ).filter { it.isNotBlank() }.distinct()
+
+    private val names = namePattern(labels)
 
     /**
      * The opening of BioKey's own accessibility description, shown only on its Accessibility
@@ -150,8 +225,19 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         versionPrefix = string("version_text", "§§")?.substringBefore("§§")?.takeIf { it.isNotBlank() } ?: "version "
     }
 
-    private var lastContentCheck = 0L
-    private var lastGuardedResult = false
+    private val headerIdsByHost = HashMap<String, List<String>>()
+    private val actionBarIdsByHost = HashMap<String, List<String>>()
+
+    private data class WindowKey(val pkg: String, val windowId: Int)
+
+    /** The last answer and the window it was about: a burst of content events reuses it briefly. */
+    private var lastKey: WindowKey? = null
+    private var lastCheckAt = 0L
+    private var lastResult = false
+
+    /** How the service asks for another look later, kept from its last event. */
+    private var recheck: ((Long) -> Unit)? = null
+    private var unreadableRetries = 0
 
     fun isHost(pkg: String) = pkg in HOST_PACKAGES
 
@@ -160,118 +246,162 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         return className.contains("ConfirmDeviceCredential", ignoreCase = true) ||
             className.contains("ConfirmLockPattern", ignoreCase = true) ||
             className.contains("ConfirmLockPassword", ignoreCase = true) ||
+            className.contains("ConfirmCommonPassword", ignoreCase = true) ||
             className.contains("BiometricPrompt", ignoreCase = true) ||
             className.contains("AuthContainerView", ignoreCase = true)
     }
 
+    /**
+     * Whether [pkg]'s window is one of BioKey's guarded screens: [event]'s window, or without an
+     * event the host's window on screen. [onTrailingCheckNeeded] schedules another look (with no
+     * event) after the given delay; it is called when this answer may be about to change.
+     */
     fun isGuardedScreen(
         pkg: String,
         event: AccessibilityEvent? = null,
         onTrailingCheckNeeded: ((Long) -> Unit)? = null
     ): Boolean {
+        if (pkg !in HOST_PACKAGES) return false
+        if (onTrailingCheckNeeded != null) {
+            recheck = onTrailingCheckNeeded
+            unreadableRetries = 0
+        }
+        if (isCredentialConfirmationClass(event?.className?.toString())) return false
         refreshSettingsLabels()
-        if (pkg !in HOST_PACKAGES) {
-            lastGuardedResult = false
-            return false
-        }
-        val eventCls = event?.className?.toString()
-        if (isCredentialConfirmationClass(eventCls)) {
-            lastGuardedResult = false
-            return false
-        }
-        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            lastContentCheck = 0L
-        } else if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-            val now = SystemClock.elapsedRealtime()
-            val elapsed = now - lastContentCheck
-            if (elapsed < CONTENT_CHECK_INTERVAL_MS) {
-                onTrailingCheckNeeded?.invoke(CONTENT_CHECK_INTERVAL_MS - elapsed + 20L)
-                return lastGuardedResult
-            }
-            lastContentCheck = now
-        }
 
         val isWindowStateEvent = event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-        val eventText = if (event != null) {
-            buildString {
-                event.text.forEach { append(it).append(' ') }
-                append(event.contentDescription ?: "")
-            }.trim()
-        } else ""
-        if (eventText.contains("Unlock BioKey", ignoreCase = true) ||
-            eventText.contains("Unlock $appName", ignoreCase = true) ||
-            eventText.contains("Verify it's you", ignoreCase = true)
-        ) {
-            lastGuardedResult = false
+        val isContentEvent = event?.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+        if (event != null && isContentEvent && answeredMomentsAgo(WindowKey(pkg, event.windowId))) return lastResult
+
+        val eventNamesBioKey = event != null &&
+            (event.text.any { mentionsBioKey(it) } || mentionsBioKey(event.contentDescription))
+
+        val root = hostRoot(pkg, event)
+        if (root == null) {
+            if (pkg in INSTALLER_PACKAGES && eventNamesBioKey) return true
+            // Not readable yet: never fall back to an answer about some other window.
+            if (unreadableRetries < UNREADABLE_RETRIES) {
+                unreadableRetries++
+                recheck?.invoke(UNREADABLE_RETRY_MS)
+            }
             return false
         }
-        val eventNamesBioKey = eventText.isNotEmpty() && mentionsBioKey(eventText)
-
-        val root = service.rootInActiveWindow
-        if (root == null) {
-            if (pkg in INSTALLER_PACKAGES && eventNamesBioKey) {
-                lastGuardedResult = true
-                return true
-            }
-            onTrailingCheckNeeded?.invoke(180L)
-            return lastGuardedResult
-        }
+        unreadableRetries = 0
         try {
-            if (root.packageName?.toString() != pkg) {
-                onTrailingCheckNeeded?.invoke(180L)
-                return lastGuardedResult
-            }
-
-            // 1. Package installer dialogs only ever target a single app.
-            if (pkg in INSTALLER_PACKAGES) {
-                val res = eventNamesBioKey || labels.any { root.hasNodeWithText(it) }
-                lastGuardedResult = res
-                return res
-            }
-
-            // 2. Explicit single-app header, collapsing toolbar, or dialog title/message IDs.
-            for (id in SUBJECT_HEADER_AND_DIALOG_IDS) {
-                val nodes = root.findAccessibilityNodeInfosByViewId(id).orEmpty()
-                val match = nodes.any { node ->
-                    val t = node.text?.toString().orEmpty()
-                    val d = node.contentDescription?.toString().orEmpty()
-                    val isUnlockPrompt = t.contains("Unlock ", ignoreCase = true) || d.contains("Unlock ", ignoreCase = true)
-                    !isUnlockPrompt && (mentionsBioKey(t) || mentionsBioKey(d))
-                }
-                nodes.forEach(::release)
-                if (match) {
-                    lastGuardedResult = true
-                    return true
-                }
-            }
-
-            // 3. Check ActionBar title children (for devices not using collapsing_toolbar).
-            for (barId in ACTION_BAR_IDS) {
-                val bars = root.findAccessibilityNodeInfosByViewId(barId).orEmpty()
-                var barMatches = false
-                for (bar in bars) {
-                    if (!barMatches && subtreeMentionsBioKey(bar, maxDepth = 3)) {
-                        barMatches = true
-                    }
-                    release(bar)
-                }
-                if (barMatches) {
-                    lastGuardedResult = true
-                    return true
-                }
-            }
-
-            // 4. Single-pass structural scan of the window for Compose SPA App Info,
-            //    Accessibility detail page, Special App Access detail page, or Compose dialogs.
-            val res = scanWindowStructure(root, isWindowStateEvent && eventNamesBioKey)
-            lastGuardedResult = res
-            return res
+            val key = WindowKey(pkg, root.windowId)
+            if (event == null && answeredMomentsAgo(key)) return lastResult
+            val result = judge(root, pkg, isContentEvent, isWindowStateEvent && eventNamesBioKey, eventNamesBioKey)
+            lastKey = key
+            lastCheckAt = SystemClock.elapsedRealtime()
+            lastResult = result
+            return result
         } finally {
             release(root)
         }
     }
 
-    private fun scanWindowStructure(root: AccessibilityNodeInfo, windowTitleNamesBioKey: Boolean): Boolean {
+    /**
+     * [key]'s window was read less than [CONTENT_CHECK_INTERVAL_MS] ago: its answer stands, and
+     * another look is scheduled for when the interval is over, so the last state is always read.
+     */
+    private fun answeredMomentsAgo(key: WindowKey): Boolean {
+        val later = recheck ?: return false
+        val elapsed = SystemClock.elapsedRealtime() - lastCheckAt
+        if (key != lastKey || elapsed >= CONTENT_CHECK_INTERVAL_MS) return false
+        later(CONTENT_CHECK_INTERVAL_MS - elapsed + 20L)
+        return true
+    }
+
+    /**
+     * The root of the window to judge, or null while it can't be read: [event]'s own window, or
+     * without an event the host's window on screen (the active one first).
+     */
+    private fun hostRoot(pkg: String, event: AccessibilityEvent?): AccessibilityNodeInfo? {
+        val windowId = event?.windowId ?: -1
+        val active = runCatching { service.rootInActiveWindow }.getOrNull()
+        if (active != null) {
+            if (active.packageName?.toString() == pkg && (windowId < 0 || active.windowId == windowId)) return active
+            release(active)
+        }
+        // Split screen, or a window that isn't the active one yet: look it up in the window list.
+        val windows = runCatching { service.windows }.getOrNull().orEmpty()
+        val candidates = if (windowId >= 0) {
+            windows.filter { it.id == windowId }
+        } else {
+            windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && !it.isActive }
+        }
+        for (window in candidates) {
+            runCatching { window.root }.getOrNull()?.ofPackage(pkg)?.let { return it }
+        }
+        return null
+    }
+
+    /** This node if it belongs to [pkg]; otherwise it is released. */
+    private fun AccessibilityNodeInfo.ofPackage(pkg: String): AccessibilityNodeInfo? {
+        if (packageName?.toString() == pkg) return this
+        release(this)
+        return null
+    }
+
+    private fun judge(
+        root: AccessibilityNodeInfo,
+        pkg: String,
+        isContentEvent: Boolean,
+        windowTitleNamesBioKey: Boolean,
+        eventNamesBioKey: Boolean
+    ): Boolean {
+        // 1. Package installer dialogs only ever target a single app.
+        if (pkg in INSTALLER_PACKAGES) {
+            return eventNamesBioKey || root.hasNodeNamingBioKey()
+        }
+
+        // Steps 2 and 3 cost a round trip to the host per ID, and content events come many times a
+        // second (the Play Store redraws all the time). For those the scan goes first, and the IDs
+        // are only asked for when the window names BioKey somewhere.
+        if (isContentEvent) {
+            val scan = scanWindowStructure(root, pkg, windowTitleNamesBioKey)
+            return scan == Scan.GUARDED || (scan == Scan.NAMES_BIOKEY && hasBioKeyTitle(root, pkg))
+        }
+        return hasBioKeyTitle(root, pkg) || scanWindowStructure(root, pkg, windowTitleNamesBioKey) == Scan.GUARDED
+    }
+
+    /** Steps 2 and 3: a header, toolbar or dialog title (found by view ID) that names BioKey. */
+    private fun hasBioKeyTitle(root: AccessibilityNodeInfo, pkg: String): Boolean {
+        // 2. Explicit single-app header, collapsing toolbar, or dialog title/message IDs.
+        for (id in headerIdsByHost.getOrPut(pkg) { viewIdsFor(pkg, SUBJECT_HEADER_AND_DIALOG_IDS) }) {
+            val nodes = root.findAccessibilityNodeInfosByViewId(id).orEmpty()
+            val match = nodes.any { node ->
+                headerNamesBioKey(node.text?.toString().orEmpty(), node.contentDescription?.toString().orEmpty())
+            }
+            nodes.forEach(::release)
+            if (match) return true
+        }
+
+        // 3. Check ActionBar title children (for devices not using collapsing_toolbar).
+        for (barId in actionBarIdsByHost.getOrPut(pkg) { viewIdsFor(pkg, ACTION_BAR_IDS) }) {
+            val bars = root.findAccessibilityNodeInfosByViewId(barId).orEmpty()
+            var barMatches = false
+            for (bar in bars) {
+                if (!barMatches && subtreeMentionsBioKey(bar, maxDepth = 3)) {
+                    barMatches = true
+                }
+                release(bar)
+            }
+            if (barMatches) return true
+        }
+        return false
+    }
+
+    private enum class Scan { GUARDED, NAMES_BIOKEY, OTHER }
+
+    /**
+     * 4. Single-pass structural scan of the window for Compose SPA App Info, Accessibility detail
+     * page, Special App Access detail page, or Compose dialogs.
+     */
+    private fun scanWindowStructure(root: AccessibilityNodeInfo, pkg: String, windowTitleNamesBioKey: Boolean): Scan {
+        // Play Store pages are full of other people's sentences (reviews, descriptions), so there
+        // only the page's structure counts, never a single sentence that names BioKey.
+        val trustSentences = pkg != PLAY_STORE_PKG
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         for (i in 0 until root.childCount) root.getChild(i)?.let(queue::addLast)
 
@@ -287,39 +417,38 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
             val node = queue.removeFirst()
             if (!matchedDirectBioKeyControl && scanned < MAX_NODES_SCANNED) {
                 scanned++
-                val rawText = node.text?.toString()?.trim().orEmpty()
-                val rawDesc = node.contentDescription?.toString()?.trim().orEmpty()
-                val combined = if (rawDesc.isNotEmpty() && rawDesc != rawText) "$rawText $rawDesc" else rawText
-                val lower = combined.lowercase()
-                val lowerText = rawText.lowercase()
-                val viewId = node.viewIdResourceName.orEmpty()
+                val text = node.text?.toString()?.trim().orEmpty()
+                val desc = node.contentDescription?.toString()?.trim().orEmpty()
+                val textNamesBioKey = mentionsBioKey(text)
+                val descNamesBioKey = mentionsBioKey(desc)
 
-                if (viewId in SUBJECT_HEADER_AND_DIALOG_IDS && mentionsBioKey(combined)) {
-                    matchedDirectBioKeyControl = true
-                } else if (lower.contains(a11yDescriptionSnippet)) {
-                    // BioKey's unique accessibility service description on the A11y detail page
-                    matchedDirectBioKeyControl = true
-                } else if (mentionsBioKey(combined)) {
+                if (textNamesBioKey || descNamesBioKey) {
                     mentionsBioKeyNode = true
-                    if (rawText.equals(pkgName, ignoreCase = true)) {
+                    if (text.equals(pkgName, ignoreCase = true)) {
                         hasExactPackageName = true
                     }
-                    // Single node that names BioKey AND has a control/prompt verb
-                    // e.g. "Use Bio Key App Lock Service", "Stop Bio Key App Lock Service?",
-                    // "Bio Key App Lock Service shortcut", "Turn off notification access for Bio Key?"
-                    if (lower in serviceTogglePrompts || SAME_NODE_PROMPT_VERBS.any { lower.contains(it) } ||
-                        lower.endsWith(" shortcut") ||
-                        lower.endsWith("?")
+                    if (node.viewIdResourceName in SUBJECT_HEADER_AND_DIALOG_IDS && headerNamesBioKey(text, desc)) {
+                        matchedDirectBioKeyControl = true
+                    } else if (trustSentences &&
+                        ((textNamesBioKey && isControlPrompt(text, serviceTogglePrompts)) ||
+                            (descNamesBioKey && isControlPrompt(desc, serviceTogglePrompts)))
                     ) {
+                        // Single node that names BioKey AND is a control or prompt for it.
                         matchedDirectBioKeyControl = true
                     }
                 }
+                if (!matchedDirectBioKeyControl && a11yDescriptionSnippet.isNotEmpty() &&
+                    (text.contains(a11yDescriptionSnippet, ignoreCase = true) || desc.contains(a11yDescriptionSnippet, ignoreCase = true))
+                ) {
+                    // BioKey's unique accessibility service description on the A11y detail page
+                    matchedDirectBioKeyControl = true
+                }
 
                 if (!matchedDirectBioKeyControl) {
-                    if (lowerText in appDetailActions || rawDesc.lowercase() in appDetailActions) {
+                    if (text.lowercase() in appDetailActions || desc.lowercase() in appDetailActions) {
                         hasAppDetailAction = true
                     }
-                    if (lowerText.startsWith(versionPrefix) || lowerText.startsWith("version ")) {
+                    if (text.startsWith(versionPrefix, ignoreCase = true) || text.startsWith("version ", ignoreCase = true)) {
                         hasVersionHeader = true
                     }
                     val cls = node.className?.toString().orEmpty()
@@ -332,26 +461,30 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
             release(node)
         }
 
-        if (matchedDirectBioKeyControl) return true
-        if (!mentionsBioKeyNode) return false
+        if (matchedDirectBioKeyControl) return Scan.GUARDED
+        if (!mentionsBioKeyNode) return Scan.OTHER
 
         // BioKey App Info / Storage page (XML or Android 14-17 Compose SpaActivity):
         // Names BioKey AND has an exact App Info action ("Force stop", "Uninstall", "Clear storage", etc.)
-        if (hasAppDetailAction) return true
+        if (hasAppDetailAction) return Scan.GUARDED
 
         // Android 14-17 Compose SpaActivity single-app detail page (AppInfoHeader renders
         // "Bio Key" + "Version X.Y" or "com.android.BioKey", plus a permission toggle or detail body).
         if ((hasVersionHeader || hasExactPackageName) && (hasToggle || windowTitleNamesBioKey)) {
-            return true
+            return Scan.GUARDED
         }
 
-        return false
+        return Scan.NAMES_BIOKEY
+    }
+
+    /** A header or dialog title that names BioKey, other than an "Unlock …" prompt. */
+    private fun headerNamesBioKey(text: String, desc: String): Boolean {
+        val isUnlockPrompt = text.contains("Unlock ", ignoreCase = true) || desc.contains("Unlock ", ignoreCase = true)
+        return !isUnlockPrompt && (mentionsBioKey(text) || mentionsBioKey(desc))
     }
 
     private fun subtreeMentionsBioKey(root: AccessibilityNodeInfo, maxDepth: Int): Boolean {
-        if (mentionsBioKey(root.text?.toString().orEmpty()) ||
-            mentionsBioKey(root.contentDescription?.toString().orEmpty())
-        ) return true
+        if (mentionsBioKey(root.text) || mentionsBioKey(root.contentDescription)) return true
         if (maxDepth <= 0) return false
         var found = false
         for (i in 0 until root.childCount) {
@@ -364,14 +497,15 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         return found
     }
 
-    private fun mentionsBioKey(text: CharSequence): Boolean =
-        text.isNotEmpty() && labels.any { text.contains(it, ignoreCase = true) }
+    private fun mentionsBioKey(text: CharSequence?): Boolean =
+        !text.isNullOrEmpty() && names.containsMatchIn(text)
 
-    private fun AccessibilityNodeInfo.hasNodeWithText(text: String): Boolean {
-        val nodes = findAccessibilityNodeInfosByText(text).orEmpty()
-        val found = nodes.isNotEmpty()
+    /** Android's text search matches parts of words ("Bio Keyboard"): keep whole-name matches only. */
+    private fun AccessibilityNodeInfo.hasNodeNamingBioKey(): Boolean = labels.any { label ->
+        val nodes = findAccessibilityNodeInfosByText(label).orEmpty()
+        val found = nodes.any { mentionsBioKey(it.text) || mentionsBioKey(it.contentDescription) }
         nodes.forEach(::release)
-        return found
+        found
     }
 
     private fun release(node: AccessibilityNodeInfo) {
