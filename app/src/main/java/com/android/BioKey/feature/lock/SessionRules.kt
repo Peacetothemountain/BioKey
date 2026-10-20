@@ -1,6 +1,7 @@
 package com.android.BioKey.feature.lock
 
 import com.android.BioKey.core.data.LockTimeoutMode
+import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.security.LockStateTracker
 
 /**
@@ -16,7 +17,9 @@ import com.android.BioKey.core.security.LockStateTracker
  * 2. An app with a session counts as left once its windows have been gone for [LEAVE_CONFIRM_MS]
  *    (rotations, an app restarting its own screen), unless the screen in front can't be read and
  *    no other app has come forward (apps that hide their windows from accessibility services).
- *    Left for a helper, a system screen it opened, or BioKey itself, it is a hop.
+ *    An unreadable screen titled after another app, and not after one of the app's own screens,
+ *    is that other app coming forward. Left for a helper, a system screen it opened, or BioKey
+ *    itself, it is a hop.
  * 3. A hop ends when the user moves on to anything that isn't another hop target.
  * 4. A locked app on screen without a session is covered, except a just-left app next to the
  *    launcher, which must stay [EXIT_SETTLE_MS] first (its window flickers back as it leaves).
@@ -40,12 +43,17 @@ internal class SessionRules(private val env: Env) {
         fun isHopTarget(pkg: String): Boolean
         /** A locked app without a session that may be covered because it is on screen. */
         fun mayCover(pkg: String): Boolean
+        /** The one app whose name is [title], if exactly one is. */
+        fun appTitled(title: String): String? = null
+        /** Whether [title] is [pkg]'s name or the title of one of its screens. */
+        fun isTitleOf(pkg: String, title: String): Boolean = false
     }
 
     /**
-     * What is on screen. [visible] is in z-order (top first); [lastForeground] is the app the
-     * latest window event brought to the front; [coverAllowed] is false while a cover, the lock
-     * screen or a prompt is already up.
+     * What is on screen. [visible] is in z-order (top first); [pip] are apps shown only in
+     * picture-in-picture; [lastForeground] is the app the latest window event brought to the
+     * front; [coverAllowed] is false while a cover, the lock screen or a prompt is already up;
+     * [frontTitle] is the title of the window in front when [front] is [UNIDENTIFIED_APP].
      */
     data class Screen(
         val visible: Set<String>,
@@ -53,13 +61,14 @@ internal class SessionRules(private val env: Env) {
         val front: String = visible.first(),
         val lastForeground: String? = null,
         val now: Long,
-        val coverAllowed: Boolean = true
+        val coverAllowed: Boolean = true,
+        val frontTitle: String? = null
     )
 
     data class Outcome(
         /** A locked app to cover now, if any. */
         val cover: String? = null,
-        /** It is in picture-in-picture: leave that before covering. */
+        /** It is only in picture-in-picture, which floats above any cover. */
         val coverInPip: Boolean = false,
         /** Look again after this long: something is waiting to be confirmed. */
         val recheckInMs: Long? = null
@@ -90,6 +99,8 @@ internal class SessionRules(private val env: Env) {
             recheck = minOf(recheck ?: ms, ms)
         }
 
+        val front = titledFront(screen) ?: screen.front
+
         // 1. On screen: in use, nothing ages.
         for (pkg in visible) {
             pendingLeaves.remove(pkg)
@@ -99,7 +110,7 @@ internal class SessionRules(private val env: Env) {
         // 2. Gone from the screen long enough: the user left.
         for (pkg in onScreenSessions.toList()) {
             if (pkg in visible) continue
-            if (screen.front == UNIDENTIFIED_APP && screen.lastForeground == pkg) {
+            if (front == UNIDENTIFIED_APP && screen.lastForeground == pkg) {
                 pendingLeaves.remove(pkg)
                 continue
             }
@@ -110,12 +121,12 @@ internal class SessionRules(private val env: Env) {
             }
             pendingLeaves.remove(pkg)
             onScreenSessions.remove(pkg)
-            val hop = screen.front.takeIf { it != pkg && !env.isLauncher(it) && env.isHopTarget(it) }
+            val hop = front.takeIf { it != pkg && !env.isLauncher(it) && env.isHopTarget(it) }
             LockStateTracker.onAppLeft(pkg, env.timeoutOf(pkg), hop)
         }
 
         // 3. A helper hop that moved on to somewhere else ends.
-        LockStateTracker.onForegroundChanged(screen.front, env::timeoutOf, env::isHopTarget)
+        LockStateTracker.onForegroundChanged(front, env::timeoutOf, env::isHopTarget)
 
         // 4. Locked content on screen without a session (split screen, PiP, freeform, missed
         // events): cover it.
@@ -142,6 +153,20 @@ internal class SessionRules(private val env: Env) {
         }
         returningSince.keys.retainAll(visible)
         return Outcome(recheckInMs = recheck)
+    }
+
+    /**
+     * The app an unreadable window in front belongs to, when its title says so: the one app of
+     * that name, as long as it isn't the app last in front or titled like one of that app's own
+     * screens (an app's own unreadable screens never count as leaving it). Null when unsure.
+     */
+    private fun titledFront(screen: Screen): String? {
+        if (screen.front != UNIDENTIFIED_APP) return null
+        val title = screen.frontTitle?.takeIf { it.isNotBlank() } ?: return null
+        val app = env.appTitled(title) ?: return null
+        val last = screen.lastForeground ?: return app
+        if (app in PasswordManager.aliasesOf(last) || env.isTitleOf(last, title)) return null
+        return app
     }
 
     /**

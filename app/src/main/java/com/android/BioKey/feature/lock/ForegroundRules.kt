@@ -2,17 +2,23 @@ package com.android.BioKey.feature.lock
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.view.inputmethod.InputMethodManager
+import androidx.annotation.VisibleForTesting
+import com.android.BioKey.BioKeyApplication
+import com.android.BioKey.core.data.PasswordManager
+import com.android.BioKey.core.security.SecurityVault
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * What the app in front means for sessions, shared by both detection engines (accessibility and
  * compatibility mode) so they behave identically.
  */
 object ForegroundRules {
-
-    private const val PKG_GMS = "com.google.android.gms"
 
     private val KNOWN_LAUNCHERS = setOf(
         "com.google.android.apps.nexuslauncher",
@@ -31,9 +37,11 @@ object ForegroundRules {
      * keeps that app's session, even in "Immediately" mode.
      */
     private val HOP_HELPER_PACKAGES = setOf(
-        PKG_GMS,
+        PasswordManager.GMS,
         "com.google.android.gsf",
-        "com.google.android.apps.credentialmanager",
+        PasswordManager.CREDENTIAL_MANAGER,
+        // Google Password Manager's own screens, to copy a password across.
+        PasswordManager.VIRTUAL_PACKAGE,
         "com.android.credentialmanager",
         "com.google.android.apps.authenticator2",
         "com.azure.authenticator",
@@ -112,30 +120,96 @@ object ForegroundRules {
         "com.sec.android.app.sbrowser.beta", "com.vivaldi.browser"
     )
 
-    @Volatile private var launchers: Set<String> = KNOWN_LAUNCHERS
-    @Volatile private var launchersCheckedAt = 0L
+    /** Lists read from the system are refreshed here, never on an engine's event path. */
+    private val refresher = Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-system-lists").apply { isDaemon = true } }
 
-    /** Home-screen apps (refreshed at most every 30 s; the user can switch launchers). */
-    fun isLauncher(context: Context, pkg: String): Boolean {
-        val now = SystemClock.elapsedRealtime()
-        if (launchersCheckedAt == 0L || now - launchersCheckedAt > 30_000L) {
-            launchersCheckedAt = now
-            runCatching {
-                launchers = KNOWN_LAUNCHERS + context.packageManager
-                    .queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), PackageManager.MATCH_ALL)
-                    .mapNotNull { it.activityInfo?.packageName }
-                    .filter { it != "com.android.settings" } // Settings' fallback home is not a launcher.
+    /**
+     * A list read from the system. Read on first use, so it is never empty; after that it is read
+     * again in the background once older than [maxAgeMs] or after apps changed, and callers keep
+     * the last one meanwhile.
+     */
+    private class SystemList<T : Any>(private val maxAgeMs: Long, private val fallback: T, private val read: (Context) -> T) {
+        @Volatile private var value: T? = null
+        @Volatile private var readAt = 0L
+        @Volatile private var readForPackages = 0
+        private val reading = AtomicBoolean(false)
+
+        fun get(context: Context): T {
+            val current = value ?: return readNow(context.applicationContext)
+            if (SystemClock.elapsedRealtime() - readAt > maxAgeMs || readForPackages != BioKeyApplication.packageChangeVersion.value) {
+                refresh(context)
             }
+            return current
         }
-        return pkg in launchers
+
+        fun refresh(context: Context) {
+            if (!reading.compareAndSet(false, true)) return
+            val app = context.applicationContext
+            runCatching {
+                refresher.execute {
+                    try {
+                        readNow(app)
+                    } finally {
+                        reading.set(false)
+                    }
+                }
+            }.onFailure { reading.set(false) }
+        }
+
+        private fun readNow(context: Context): T {
+            readForPackages = BioKeyApplication.packageChangeVersion.value
+            readAt = SystemClock.elapsedRealtime()
+            val fresh = runCatching { read(context) }.getOrNull() ?: value ?: fallback
+            value = fresh
+            return fresh
+        }
+
+        fun reset() {
+            value = null
+            readAt = 0L
+        }
+    }
+
+    /** Apps with a home screen: whether each is a system app, and which one is the home screen in use. */
+    private class Homes(val apps: Map<String, Boolean>, val default: String?)
+
+    private val HOME = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+
+    /** Home-screen apps (read again at most every 30 s: the user can switch launchers without any broadcast). */
+    private val homes = SystemList(30_000L, Homes(emptyMap(), null)) { context ->
+        val pm = context.packageManager
+        val apps = pm.queryIntentActivities(HOME, PackageManager.MATCH_ALL)
+            .mapNotNull { it.activityInfo }
+            .filter { it.packageName != "com.android.settings" } // Settings' fallback home is not a launcher.
+            .associate { it.packageName to (it.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0) }
+        val default = pm.resolveActivity(HOME, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
+            ?.takeIf { it != "android" } // No default chosen yet: the chooser.
+        Homes(apps, default)
+    }
+
+    /**
+     * Home-screen apps. Any app can declare a home screen (other launchers, kids modes): one the
+     * user locked counts as an app like any other, unless it is the home screen in use or the
+     * system's own (which also hosts Recents), so locking one can never lock the user out of Home.
+     */
+    fun isLauncher(
+        context: Context,
+        pkg: String,
+        isLocked: (String) -> Boolean = { SecurityVault.getInstance(context).isAppLocked(it) }
+    ): Boolean {
+        if (pkg in KNOWN_LAUNCHERS) return true
+        val homes = homes.get(context)
+        val isSystem = homes.apps[pkg] ?: return false
+        return isSystem || pkg == homes.default || !isLocked(pkg)
     }
 
     /**
      * Intents for picking or capturing photos, videos and files. Whatever handles them on this
      * device (the system photo picker, Google Photos, a brand's gallery, file managers, cameras)
-     * is a helper: an app opens it mid-task and gets the result back.
+     * is a helper: an app opens it mid-task and gets the result back. Each needs a `<queries>`
+     * entry in the manifest, or Android hides its handlers.
      */
-    private val PICKER_INTENTS = listOf(
+    internal val PICKER_INTENTS = listOf(
         Intent("android.provider.action.PICK_IMAGES"),
         Intent(Intent.ACTION_GET_CONTENT).setType("image/*"),
         Intent(Intent.ACTION_GET_CONTENT).setType("*/*"),
@@ -145,22 +219,31 @@ object ForegroundRules {
         Intent(MediaStore.ACTION_VIDEO_CAPTURE)
     )
 
-     private var pickers: Set<String> = emptySet()
-     private var pickersCheckedAt = 0L
+    /** Apps that pick or capture media and files on this device (read again at most every 5 min). */
+    private val pickers = SystemList(5 * 60_000L, emptySet<String>()) { context ->
+        val pm = context.packageManager
+        PICKER_INTENTS.flatMapTo(HashSet()) { intent ->
+            pm.queryIntentActivities(intent, PackageManager.MATCH_ALL).mapNotNull { it.activityInfo?.packageName }
+        } - context.packageName
+    }
 
-    /** Apps that pick or capture media and files on this device (refreshed at most every 5 min). */
-    private fun pickerApps(context: Context): Set<String> {
-        val now = SystemClock.elapsedRealtime()
-        if (pickersCheckedAt == 0L || now - pickersCheckedAt > 5 * 60_000L) {
-            pickersCheckedAt = now
-            runCatching {
-                val pm = context.packageManager
-                pickers = PICKER_INTENTS.flatMapTo(HashSet()) { intent ->
-                    pm.queryIntentActivities(intent, PackageManager.MATCH_ALL).mapNotNull { it.activityInfo?.packageName }
-                } - context.packageName
-            }
-        }
-        return pickers
+    /** Enabled keyboards (read again at most every 30 s, and at once after [onInputMethodsChanged]). */
+    private val keyboards = SystemList(30_000L, emptySet<String>()) { context ->
+        context.getSystemService(InputMethodManager::class.java).enabledInputMethodList.mapTo(HashSet()) { it.packageName }
+    }
+
+    /** Packages of the enabled keyboards: a keyboard's window never means the user switched apps. */
+    fun inputMethods(context: Context): Set<String> = keyboards.get(context)
+
+    /** The user enabled or disabled a keyboard. */
+    fun onInputMethodsChanged(context: Context) = keyboards.refresh(context)
+
+    /** Forgets every list read so far (tests register apps between cases). */
+    @VisibleForTesting
+    internal fun resetSystemLists() {
+        homes.reset()
+        pickers.reset()
+        keyboards.reset()
     }
 
     /**
@@ -173,7 +256,7 @@ object ForegroundRules {
 
     /** A helper app worth keeping the previous app's session for; [activityClass] spots custom tabs. */
     fun isHopHelper(context: Context, pkg: String, activityClass: String?): Boolean {
-        if (pkg in HOP_HELPER_PACKAGES || pkg in pickerApps(context)) return true
+        if (pkg in HOP_HELPER_PACKAGES || pkg in pickers.get(context)) return true
         val cls = activityClass.orEmpty()
         return pkg in KNOWN_BROWSERS && (cls.contains("CustomTab", ignoreCase = true) || cls.contains("AuthTab", ignoreCase = true))
     }

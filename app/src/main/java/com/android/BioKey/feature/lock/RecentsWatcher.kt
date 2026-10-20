@@ -35,6 +35,17 @@ internal class RecentsWatcher(
         const val MIN_RISE = 0.12f
         /** A card tapped to open it is never "closed", however it animates. */
         const val TAP_GRACE_MS = 2_000L
+        /** A burst of changes in the launcher settles this fast. */
+        const val SETTLE_MS = 30L
+        /**
+         * While the last look found the home screen, not Recents, look at most this often: live
+         * widgets (clocks, music, weather) change it all the time.
+         */
+        const val HOME_SCAN_INTERVAL_MS = 250L
+
+        /** How long to wait before looking again, [sinceLastScanMs] after the last look. */
+        fun scanDelayMs(sinceLastScanMs: Long, lastFoundRecents: Boolean): Long =
+            if (lastFoundRecents) SETTLE_MS else maxOf(SETTLE_MS, HOME_SCAN_INTERVAL_MS - sinceLastScanMs)
 
         /** Slid up, whole: both edges rose, it kept its size and stayed in its column. */
         fun sweptAway(first: Rect, last: Rect, screenHeight: Int, screenWidth: Int): Boolean {
@@ -56,13 +67,22 @@ internal class RecentsWatcher(
     private var tapped: String? = null
     private var tappedAt = 0L
     private var clearAllLabels: Pair<String, Set<String>>? = null
+    private var inRecents = false
+    private var scannedAt = 0L
     private val scanRunnable = Runnable(::scan)
 
     /** The launcher's content changed: look again, once the burst of changes settles. */
     fun onLauncherChanged(pkg: String) {
         launcher = pkg
         handler.removeCallbacks(scanRunnable)
-        handler.postDelayed(scanRunnable, 30L)
+        handler.postDelayed(scanRunnable, scanDelayMs(SystemClock.elapsedRealtime() - scannedAt, inRecents))
+    }
+
+    /** The launcher came to the front or its windows changed: Recents may be opening, so look now. */
+    fun scanSoon(pkg: String) {
+        launcher = pkg
+        handler.removeCallbacks(scanRunnable)
+        handler.postDelayed(scanRunnable, SETTLE_MS)
     }
 
     /** A tap in the launcher: "Clear all", or a card being opened. */
@@ -81,22 +101,26 @@ internal class RecentsWatcher(
             tapped = it
             tappedAt = SystemClock.elapsedRealtime()
         }
+        scanSoon(pkg)
     }
 
     fun reset() {
         handler.removeCallbacks(scanRunnable)
         cards.clear()
+        inRecents = false
     }
 
     private fun scan() {
         val pkg = launcher ?: return
+        scannedAt = SystemClock.elapsedRealtime()
         val root = service.rootInActiveWindow ?: return
         try {
             if (root.packageName?.toString() != pkg) return
             val panel = root.findAccessibilityNodeInfosByViewId("$pkg:id/overview_panel").orEmpty()
             panel.forEach(::release)
+            inRecents = panel.isNotEmpty()
             // Not in Recents (the home screen): nothing was closed, whatever disappeared.
-            if (panel.isEmpty()) {
+            if (!inRecents) {
                 cards.clear()
                 return
             }
