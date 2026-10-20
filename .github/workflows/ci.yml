@@ -1,6 +1,11 @@
 # Builds BioKey and runs its tests on every push and pull request: the locking rules
 # (SessionRulesTest, PickerHopTest, ProfileLockRulesTest, RecentsGestureTest), the design
-# screenshots, lint and a debug build. Release signing never happens here.
+# screenshots, lint, a debug build and a release build shrunk by R8 like a real one, so breakage
+# that only shows up after shrinking is caught here. The release key never comes near CI: that
+# APK is signed with the runner's throwaway debug key, and its version name ends in -debugsigned.
+#
+# Actions are pinned to full commit SHAs (Dependabot keeps them current), so a moved tag can't
+# change what runs.
 name: Build and test
 
 on:
@@ -16,30 +21,40 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No later step runs git against GitHub, so the token isn't left in .git/config, where
+          # the build could read it.
+          persist-credentials: false
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: '17'
 
       # Installs the SDK and accepts its licences, so Gradle can fetch compileSdk 37.2 itself.
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+        with:
+          # Fails the job if gradle-wrapper.jar isn't a genuine Gradle release.
+          validate-wrappers: true
 
       - name: Test, lint and build
-        run: ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --stacktrace
+        run: >-
+          ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease
+          -Pbiokey.allowDebugSignedRelease=true --stacktrace
 
-      - name: Keep test reports and design screenshots
+      - name: Keep test reports, design screenshots and the R8 mapping
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: reports
           path: |
             app/build/reports/
             app/build/screenshots/
+            app/build/outputs/mapping/release/mapping.txt
           retention-days: 14

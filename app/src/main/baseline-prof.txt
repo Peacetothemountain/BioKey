@@ -1,0 +1,42 @@
+# BioKey's baseline profile: code Android compiles ahead of time, so covers and lock screens don't
+# run interpreted after an install or update. Google Play compiles it at install; other installs
+# get it from ProfileInstaller on first launch, and it takes effect at the next background
+# optimisation (usually while the phone is idle and charging). It covers the lock path of both
+# engines (accessibility events, compatibility mode, the cover, the lock screen) and the session
+# and settings state it reads on every event. Compose and the other libraries bring their own
+# profiles.
+
+# Process start.
+HSPLcom/android/BioKey/BioKeyApplication**->**(**)**
+Lcom/android/BioKey/BioKeyApplication**;
+
+# The lock path: BioKeyAccessibilityService, UsageWatchService, InstantShieldOverlay,
+# LockCoverView, LockLauncher, LockScreenActivity and the rules they apply.
+HSPLcom/android/BioKey/feature/lock/**->**(**)**
+Lcom/android/BioKey/feature/lock/**;
+
+# Sessions, settings and the system checks the lock path makes.
+HSPLcom/android/BioKey/core/security/LockStateTracker**->**(**)**
+HSPLcom/android/BioKey/core/security/SecurityVault**->**(**)**
+HSPLcom/android/BioKey/core/security/SecurityEngine**->**(**)**
+HSPLcom/android/BioKey/core/security/ProtectionEngine**->**(**)**
+HSPLcom/android/BioKey/core/security/AdvancedProtection**->**(**)**
+HSPLcom/android/BioKey/core/security/WindowProtection**->**(**)**
+Lcom/android/BioKey/core/security/LockStateTracker**;
+Lcom/android/BioKey/core/security/SecurityVault**;
+Lcom/android/BioKey/core/security/SecurityEngine**;
+Lcom/android/BioKey/core/security/ProtectionEngine**;
+Lcom/android/BioKey/core/security/AdvancedProtection**;
+Lcom/android/BioKey/core/security/WindowProtection**;
+HSPLcom/android/BioKey/core/data/PasswordManager**->**(**)**
+HSPLcom/android/BioKey/core/data/LockTimeoutMode**->**(**)**
+HSPLcom/android/BioKey/core/data/SecurityProfile**->**(**)**
+Lcom/android/BioKey/core/data/PasswordManager**;
+Lcom/android/BioKey/core/data/LockTimeoutMode**;
+Lcom/android/BioKey/core/data/SecurityProfile**;
+HSPLcom/android/BioKey/core/diagnostics/DiagnosticLog**->**(**)**
+Lcom/android/BioKey/core/diagnostics/DiagnosticLog**;
+
+# BioKey's own lock, which MainActivity shows when BioKey opens.
+HSPLcom/android/BioKey/feature/main/MainActivity**->**(**)**
+Lcom/android/BioKey/feature/main/MainActivity**;

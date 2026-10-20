@@ -34,7 +34,8 @@ android {
         create("release") {
             val store = signingValue("storeFile")
             if (store != null) {
-                storeFile = file(store)
+                // Relative to the project root, next to key.properties (absolute paths work too).
+                storeFile = rootProject.file(store)
                 storePassword = signingValue("storePassword")
                 keyAlias = signingValue("keyAlias")
                 keyPassword = signingValue("keyPassword")
@@ -51,14 +52,15 @@ android {
                 "proguard-rules.pro"
             )
             val release = signingConfigs.getByName("release")
-            signingConfig = when {
-                release.storeFile != null -> release
-                allowDebugSignedRelease -> signingConfigs.getByName("debug")
-                else -> null // Produces an unsigned APK; configure key.properties to sign.
+            when {
+                release.storeFile != null -> signingConfig = release
+                allowDebugSignedRelease -> {
+                    signingConfig = signingConfigs.getByName("debug")
+                    // Marks the version name, so a test build can't pass for a real release.
+                    versionNameSuffix = "-debugsigned"
+                }
+                else -> signingConfig = null // Produces an unsigned APK; configure key.properties to sign.
             }
-        }
-        debug {
-            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
@@ -88,15 +90,32 @@ android {
         }
     }
 
-    // Don't embed the (unencrypted, Google-signed) dependency metadata block in release artifacts.
+    // The dependency list AGP can embed is encrypted for Google Play, which uses it to flag
+    // libraries with known vulnerabilities (SDK Index). Keep it in bundles, which go to Play; leave
+    // it out of APKs, which are sideloaded and have no use for it.
     dependenciesInfo {
         includeInApk = false
-        includeInBundle = false
+        includeInBundle = true
     }
 
     lint {
-        checkReleaseBuilds = false
-        abortOnError = false
+        // Lint errors fail lintDebug (which CI runs); warnings don't. The quick check inside
+        // assembleRelease only looks at fatal issues, so these are fatal: they catch crashes on
+        // older Android versions and components or intents other apps could reach, and a release
+        // built locally, without CI, mustn't ship one either.
+        abortOnError = true
+        checkReleaseBuilds = true
+        fatal += listOf(
+            "NewApi",
+            "UnspecifiedRegisterReceiverFlag",
+            "ExportedService",
+            "ExportedReceiver",
+            "ExportedContentProvider",
+            "MutableImplicitPendingIntent",
+            "UnsafeImplicitIntentLaunch",
+        )
+        // Dependabot proposes updates; these would only repeat them, and need the network.
+        disable += listOf("AndroidGradlePluginVersion", "NewerVersionAvailable", "GradleDependency")
     }
 }
 
@@ -109,6 +128,9 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.core.ktx)
+    // Installs the baseline profile (src/main/baseline-prof.txt) on installs that don't come from
+    // Google Play, which installs it itself.
+    implementation(libs.androidx.profileinstaller)
 
     // Screenshot tests: render screens on the JVM (Robolectric + Roborazzi) for design review.
     testImplementation(libs.junit)
