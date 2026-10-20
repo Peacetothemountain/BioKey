@@ -25,7 +25,9 @@ class PauseEntryTest {
 
     @Test
     fun onlyTheTilesEntryAsksForTheSheet() {
-        val fromTile = Intent(MainActivity.ACTION_PAUSE_PROTECTION).setClassName(context, MainActivity.PAUSE_PROTECTION_ALIAS)
+        // What the tile sends.
+        val fromTile = MainActivity.pauseIntent(context)
+        assertEquals(MainActivity.PAUSE_PROTECTION_ALIAS, fromTile.component?.className)
         assertTrue(MainActivity.isPauseRequest(fromTile))
 
         // What any other app can send to the exported launcher activity.

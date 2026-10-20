@@ -9,8 +9,8 @@ import android.graphics.RadialGradient
 import android.graphics.Shader
 import android.os.Build
 import android.os.SystemClock
-import android.provider.Settings
 import android.view.View
+import com.android.BioKey.ui.theme.animationsEnabled
 import kotlin.math.cos
 
 /**
@@ -34,7 +34,7 @@ internal class CoverBackdrop(context: Context) : View(context) {
 
     private val density = resources.displayMetrics.density
     /** Re-read whenever the cover shows: the overlay's cover lives as long as its engine. */
-    private var animate = animationsOn()
+    private var animate = animationsEnabled(context)
 
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
@@ -55,18 +55,15 @@ internal class CoverBackdrop(context: Context) : View(context) {
         if (Build.VERSION.SDK_INT >= 35) setRequestedFrameRate(REQUESTED_FRAME_RATE_CATEGORY_LOW)
     }
 
-    private fun animationsOn() =
-        Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) != 0f
-
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        animate = animationsOn()
+        animate = animationsEnabled(context)
     }
 
     override fun onVisibilityAggregated(isVisible: Boolean) {
         super.onVisibilityAggregated(isVisible)
         if (isVisible) {
-            animate = animationsOn()
+            animate = animationsEnabled(context)
             invalidate()
         }
     }

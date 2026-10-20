@@ -253,7 +253,14 @@ class UsageWatchService : Service() {
         // A service started this way must be in the foreground within seconds, even one about to
         // stop again, or Android ends BioKey: this comes first.
         try {
-            startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            // "Special use" is a type from Android 14 on; before that the manifest's own type is
+            // asked for, which is the same one.
+            val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            } else {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST
+            }
+            startForeground(NOTIFICATION_ID, buildNotification(), type)
         } catch (e: Exception) {
             // Refused (restarted by Android from the background, say): nothing can cover apps.
             Log.e(TAG, "Compatibility mode couldn't start: ${e.javaClass.simpleName}")
@@ -278,7 +285,7 @@ class UsageWatchService : Service() {
         shield = InstantShieldOverlay(
             this,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            goHome = ::goHome,
+            goHome = { goHome() },
             onTimeout = ::onShieldTimeout,
             keepCoverWhile = ::isExposed,
             takeFocus = true
@@ -506,7 +513,7 @@ class UsageWatchService : Service() {
             if (!idle) forgetScreen()
             idle = true
             // Ends a timed pause that has run out (its own timer doesn't count deep sleep).
-            vault.isGlobalLockEnabled()
+            vault.isProtectionActive()
             return
         }
         idle = false
@@ -546,7 +553,7 @@ class UsageWatchService : Service() {
     private fun handleForeground(event: UsageEvent) = handleForeground(event.app, event.cls, isFloating(event))
 
     private fun handleForeground(pkg: String?, activityClass: String?, floating: Boolean = false) {
-        if (!vault.isGlobalLockEnabled()) {
+        if (!vault.isProtectionActive()) {
             if (pkg != null) {
                 foreground = pkg
                 foregroundClass = activityClass
@@ -774,12 +781,6 @@ class UsageWatchService : Service() {
         LockStateTracker.lockAll(reason = "compatibility mode lost $missing")
         ProtectionAlerts.compatibilityStopped(this, missing)
         stopSelf()
-    }
-
-    private fun goHome() {
-        runCatching {
-            startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        }
     }
 
     private fun buildNotification(): Notification {

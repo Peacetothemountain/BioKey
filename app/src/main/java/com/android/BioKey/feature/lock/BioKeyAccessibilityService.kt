@@ -33,6 +33,7 @@ import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.main.MainActivity
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Enforcement engine: covers locked apps with [LockScreenActivity] until the owner authenticates.
@@ -218,6 +219,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
     }
 
     private var userUnlockedReceiver: BroadcastReceiver? = null
+    /** [initServiceComponents] has been asked for: by the unlock, or by the look after registering for it. */
+    private val initStarted = AtomicBoolean(false)
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -228,16 +231,25 @@ class BioKeyAccessibilityService : AccessibilityService() {
             Log.w(TAG, "Device in Direct Boot (before first unlock): deferring initialization")
             val receiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context?, intent: Intent?) {
-                    if (intent?.action == Intent.ACTION_USER_UNLOCKED) {
-                        runCatching { this@BioKeyAccessibilityService.unregisterReceiver(this) }
-                        userUnlockedReceiver = null
-                        initServiceComponents()
-                    }
+                    if (intent?.action == Intent.ACTION_USER_UNLOCKED) initOnce()
                 }
             }
             userUnlockedReceiver = receiver
             ContextCompat.registerReceiver(this, receiver, IntentFilter(Intent.ACTION_USER_UNLOCKED), ContextCompat.RECEIVER_NOT_EXPORTED)
+            // Looked at again once registered: an unlock in between would otherwise go unseen, and
+            // the service would say it runs while nothing is ever covered.
+            if (userManager.isUserUnlocked) initOnce()
             return
+        }
+        initOnce()
+    }
+
+    /** Runs [initServiceComponents] once, whichever of the unlock broadcast and the second look comes first. */
+    private fun initOnce() {
+        if (!initStarted.compareAndSet(false, true)) return
+        userUnlockedReceiver?.let {
+            runCatching { unregisterReceiver(it) }
+            userUnlockedReceiver = null
         }
         initServiceComponents()
     }
@@ -246,6 +258,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (!isRunning) return
         vault = SecurityVault.getInstance(this)
         AppInfoCache.preWarm(this, vault.getLockedPackages())
+        // An app that stops being locked lets its icon go, as in compatibility mode.
+        AppInfoCache.follow(vault)
         labels = AppLabels(this).apply { warmUp(vault.getLockedPackages()) }
         ownTitle = runCatching { applicationInfo.loadLabel(packageManager).toString() }.getOrNull()
         shield = InstantShieldOverlay(
@@ -352,9 +366,15 @@ class BioKeyAccessibilityService : AccessibilityService() {
         try {
             block()
         } catch (t: Throwable) {
-            Log.e(TAG, "$what failed", t)
+            Log.e(TAG, "$what failed: ${describe(t)}")
         }
     }
+
+    /**
+     * An error as release builds log it (they keep Log.e): its class and where it was thrown. Never
+     * its message, which can name the app being handled (a missing app's error is its package).
+     */
+    private fun describe(t: Throwable) = "${t.javaClass.name} at ${t.stackTrace.firstOrNull()}"
 
     private fun revokeSelfProtectionAfterExit() {
         if (shield.isShowing || LockScreenActivity.isLockScreenResumed || SecurityEngine.INSTANCE.isAuthenticating()) return
@@ -469,12 +489,14 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
             // Worked out once per event: it looks at the window list.
             var exitTransition: Boolean? = null
+            val display = displayOf(event)
             if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && eventPkg != null) {
-                // Fast path: cover a locked app before any other work.
+                // Fast path: cover a locked app before any other work. The shield covers the
+                // phone's own screen only: an app on another display gets its lock screen there.
                 val target = resolveForegroundPackage(event)
                 if (target != null && !isSystemOrOverlay(target, eventCls) && needsCover(target)) {
                     exitTransition = isExitTransition(target)
-                    if (exitTransition == false) shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
+                    if (exitTransition == false && isPhoneScreen(display)) shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
                 }
                 if (event.windowId >= 0) windowPackages[event.windowId] = target ?: eventPkg
                 if (eventCls.isNotEmpty()) lastClassByPackage[eventPkg] = eventCls
@@ -545,14 +567,25 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 scheduleReconcile()
                 return
             }
-            handleForeground(target, eventCls, exitTransition)
+            handleForeground(target, eventCls, exitTransition, display)
             scheduleReconcile()
         } catch (t: Throwable) {
-            Log.e(TAG, "Unexpected error processing accessibility event: ${t.message}", t)
+            Log.e(TAG, "Unexpected error processing accessibility event: ${describe(t)}")
             // Whatever this event should have covered is looked for in the window list instead.
             scheduleReconcile()
         }
     }
+
+    /**
+     * The display [event]'s window is on, where Android says (13 and later). Null when it can't
+     * tell: that counts as the phone's own screen, which the shield covers, and an app on another
+     * display is patched at the next visibility pass instead.
+     */
+    private fun displayOf(event: AccessibilityEvent): Int? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) event.displayId.takeIf { it != Display.INVALID_DISPLAY } else null
+
+    /** [displayId] (null: not known) is the phone's own screen, the one the shield covers. */
+    private fun isPhoneScreen(displayId: Int?) = displayId == null || displayId == Display.DEFAULT_DISPLAY
 
     /** A locked app's own window event names one of its screens. */
     private fun rememberScreenTitle(pkg: String, event: AccessibilityEvent) {
@@ -590,7 +623,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun predictLaunch(event: AccessibilityEvent) {
         // A tap on anything else (a folder named like the app, another app) ends the wait for one.
         expectedLaunch = null
-        if (!vault.isGlobalLockEnabled() || shield.isShowing || LockScreenActivity.isLockScreenResumed) return
+        if (!vault.isProtectionActive() || shield.isShowing || LockScreenActivity.isLockScreenResumed) return
         val spoken = buildList {
             event.contentDescription?.let(::add)
             addAll(event.text)
@@ -633,7 +666,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             // still expected (for the rest of the wait).
             if (!tapped || frontPkg == null || !isLauncher(frontPkg)) expectedLaunch = null
         } catch (t: Throwable) {
-            Log.e(TAG, "Tap-predicted cover check failed", t)
+            Log.e(TAG, "Tap-predicted cover check failed: ${describe(t)}")
             if (vault.isAppLocked(target)) lock(target, "opened after a tap") else shield.hide()
         }
     }
@@ -822,7 +855,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             reconcileFailures = 0
         } catch (t: Throwable) {
             reconcileFailures++
-            Log.e(TAG, "Visibility pass failed ($reconcileFailures)", t)
+            Log.e(TAG, "Visibility pass failed ($reconcileFailures): ${describe(t)}")
             if (reconcileFailures == 1) DiagnosticLog.log("Visibility check failed; trying again")
             // Backing off, then waiting for the next window event: a lasting fault mustn't spin.
             if (reconcileFailures <= RECONCILE_RETRIES) scheduleReconcile(RECONCILE_DELAY_MS shl (reconcileFailures - 1))
@@ -878,7 +911,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         // delivered while it is in front).
         val launcherNowInFront = isLauncher(frontApp)
         if (launcherInFront != launcherNowInFront) watchLauncher(launcherNowInFront)
-        val coverAllowed = vault.isGlobalLockEnabled() && !shield.isShowing && !LockScreenActivity.isLockScreenResumed &&
+        val coverAllowed = vault.isProtectionActive() && !shield.isShowing && !LockScreenActivity.isLockScreenResumed &&
             !SecurityEngine.INSTANCE.isAuthenticating()
         val outcome = rules.reconcile(
             SessionRules.Screen(
@@ -919,7 +952,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     /** Fallback when a window appeared without a state event: ask the window itself (an IPC). */
     private fun windowPackage(window: AccessibilityWindowInfo): String? {
         val root = try { window.root } catch (_: Exception) { null } ?: return null
-        return root.packageName?.toString().also { release(root) }
+        return root.packageName?.toString().also { root.release() }
     }
 
     /** See [ForegroundRules.isHopTarget]; keyboards and unreadable windows also leave a hop running. */
@@ -973,7 +1006,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
      * keyguard or the prompt), never removed.
      */
     private fun updateMasks(list: List<AccessibilityWindowInfo>, full: Boolean) {
-        if (!vault.isGlobalLockEnabled()) {
+        if (!vault.isProtectionActive()) {
             masks.clear()
             maskedApps = emptySet()
             return
@@ -1049,7 +1082,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
      */
     private fun armMasks() {
         masks.setHidden(true)
-        if (!vault.isGlobalLockEnabled()) return
+        if (!vault.isProtectionActive()) return
         val list = windowList() ?: return
         val pips = list.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isInPictureInPictureMode }.mapNotNull { w ->
             val pkg = packageOf(w) ?: return@mapNotNull null
@@ -1066,10 +1099,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
             // Asked for on purpose, like a tap on its icon.
             LockStateTracker.clearAbandoned(pkg)
             when {
-                !target.inPip -> lock(pkg, "its window was tapped", target.displayId)
-                // Its lock screen is already up, under the picture-in-picture window: bring it back.
+                // Its lock screen is already up, under the patch (picture-in-picture, or a window
+                // over a smaller lock screen, whose buttons the patch can hide): bring it to the
+                // front and ask again, even if the user had dismissed the prompt.
                 LockScreenActivity.isLockScreenResumed && LockScreenActivity.activeLockedTarget == pkg ->
-                    launchLockScreen(pkg, isSelfProtection = false, displayId = target.displayId)
+                    launchLockScreen(pkg, isSelfProtection = false, displayId = target.displayId, reprompt = true)
+                !target.inPip -> lock(pkg, "its window was tapped", target.displayId)
                 else -> coverFromPip(pkg, target.windowId)
             }
         }
@@ -1091,7 +1126,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         )
         val window = windowId?.let { id -> windowList()?.firstOrNull { it.id == id } }
         val root = window?.let { runCatching { it.root }.getOrNull() }
-        val expanded = root?.let { node -> runCatching { node.performAction(AccessibilityNodeInfo.ACTION_EXPAND) }.getOrDefault(false).also { release(node) } } == true
+        val expanded = root?.let { node -> runCatching { node.performAction(AccessibilityNodeInfo.ACTION_EXPAND) }.getOrDefault(false).also { node.release() } } == true
         if (!expanded) startApp(pkg)
     }
 
@@ -1112,7 +1147,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 else -> shield.hide()
             }
         } catch (t: Throwable) {
-            Log.e(TAG, "Picture-in-picture check failed", t)
+            Log.e(TAG, "Picture-in-picture check failed: ${describe(t)}")
             // Nothing would take this cover down again: lock the app (it fails closed from there), or stand down.
             if (vault.isAppLocked(pkg)) lock(pkg, "in picture-in-picture") else shield.hide()
         }
@@ -1129,8 +1164,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
     // Foreground changes
     // -------------------------------------------------------------------------------------------
 
-    /** [target] came to the front; [exitTransition], if already known, is [isExitTransition] for it. */
-    private fun handleForeground(target: String, cls: String, exitTransition: Boolean? = null) {
+    /**
+     * [target] came to the front; [exitTransition], if already known, is [isExitTransition] for it.
+     * [displayId] is the display it is on, when known (see [displayOf]).
+     */
+    private fun handleForeground(target: String, cls: String, exitTransition: Boolean? = null, displayId: Int? = null) {
         // BioKey's own windows (lock screen, main UI) have their own authentication.
         if (target == packageName) {
             if (cls == MainActivity::class.java.name) {
@@ -1154,11 +1192,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
             // The app identified itself (or another one did): no unreadable window to wait for.
             expectedLaunch = null
         }
-        onAppInFront(target, cls, isLauncher, exitTransition)
+        onAppInFront(target, cls, isLauncher, exitTransition, displayId)
         if (!isLauncher && launcherInFront) watchLauncher(false)
     }
 
-    private fun onAppInFront(target: String, cls: String, isLauncher: Boolean, exitTransition: Boolean?) {
+    private fun onAppInFront(target: String, cls: String, isLauncher: Boolean, exitTransition: Boolean?, displayId: Int?) {
         val isRecents = isLauncher && isRecentsOverviewClass(cls)
         val previous = foregroundPackage
 
@@ -1212,13 +1250,13 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
         if (SecurityEngine.INSTANCE.isAuthenticatingFor(target) || LockStateTracker.isRegularLockPending(target)) {
             if (!LockScreenActivity.isLockScreenResumed || LockScreenActivity.activeLockedTarget != target) {
-                shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
-                launchLockScreen(target, isSelfProtection = false)
+                if (isPhoneScreen(displayId)) shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
+                launchLockScreen(target, isSelfProtection = false, displayId)
             }
             return
         }
         if (exitTransition ?: isExitTransition(target)) return
-        lock(target, "opened")
+        lock(target, "opened", displayId)
     }
 
     /** A locked app was swiped away in Recents: its session ends now, whatever its re-lock delay. */
@@ -1261,9 +1299,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
             LockScreenActivity.activeLockedTarget == target
         ) return
         LockStateTracker.setRegularLockPending(target)
-        // The shield covers the phone's own screen; on another display the app's patch is its cover.
-        if (displayId == null || displayId == Display.DEFAULT_DISPLAY) {
+        // The shield covers the phone's own screen; on another display the app's patch is its
+        // cover, put up by the visibility pass: brought forward, so it doesn't wait for one.
+        if (isPhoneScreen(displayId)) {
             shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
+        } else {
+            scheduleReconcile(0L)
         }
         launchLockScreen(target, isSelfProtection = false, displayId)
     }
@@ -1282,7 +1323,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             val pkg = root.packageName?.toString()
             val cls = root.className?.toString().orEmpty()
             val windowId = root.windowId
-            release(root)
+            root.release()
             if (pkg != null) {
                 if (selfProtection.isHost(pkg) && !isConfirmingDeviceCredential) {
                     activeSelfProtectionHost = pkg
@@ -1304,7 +1345,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             }
             scheduleReconcile()
         } catch (t: Throwable) {
-            Log.e(TAG, "Foreground check failed", t)
+            Log.e(TAG, "Foreground check failed: ${describe(t)}")
             // Whatever it should have covered is looked for in the window list instead.
             scheduleReconcile(0L)
         }
@@ -1383,15 +1424,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     private fun isLauncher(pkg: String): Boolean = ForegroundRules.isLauncher(this, pkg)
 
+    /** The PIN, pattern or password screen BioKey's prompt hands over to; the classes are the detector's, so both agree. */
     private fun isDeviceCredentialScreen(pkg: String, cls: String): Boolean {
         if (!SecurityEngine.INSTANCE.isAuthenticating()) return false
         if (pkg != "com.android.settings" && pkg != "com.miui.securitycenter" && pkg != "com.android.systemui") return false
-        val lower = cls.lowercase()
-        return lower.contains("confirmdevicecredential") ||
-            lower.contains("confirmlockpassword") ||
-            lower.contains("confirmlockpattern") ||
-            lower.contains("confirmcommonpassword") ||
-            lower.contains("biometricprompt")
+        return selfProtection.isCredentialConfirmationClass(cls)
     }
 
     private fun isSystemOrOverlay(pkg: String, cls: String): Boolean {
@@ -1405,13 +1442,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
         return false
     }
 
-    private fun release(node: AccessibilityNodeInfo) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            @Suppress("DEPRECATION")
-            runCatching { node.recycle() }
-        }
-    }
-
     // -------------------------------------------------------------------------------------------
     // Lock screen launching
     // -------------------------------------------------------------------------------------------
@@ -1420,7 +1450,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun onShieldTimeout(target: String, attempt: Int): Boolean {
         try {
             val stillExposed = if (target == SELF_PROTECTION_PENDING_KEY) {
-                val foreground = rootInActiveWindow?.let { root -> root.packageName?.toString().also { release(root) } }
+                val foreground = rootInActiveWindow?.let { root -> root.packageName?.toString().also { root.release() } }
                     ?: foregroundPackage
                 foreground != null && selfProtection.isHost(foreground) && shouldGuardSelf() && selfProtection.isGuardedScreen(foreground, null)
             } else {
@@ -1432,7 +1462,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             launchLockScreen(target, isSelfProtection = target == SELF_PROTECTION_PENDING_KEY)
             return true
         } catch (t: Throwable) {
-            Log.e(TAG, "Shield check failed", t)
+            Log.e(TAG, "Shield check failed: ${describe(t)}")
             // Keep the cover and look again; after its last attempt the shield fails closed (Home).
             return true
         }
@@ -1445,7 +1475,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun isUnderShield(target: String): Boolean {
         val list = windowList()
         val front = list?.let(::frontWindow)?.let(::packageOf)
-            ?: rootInActiveWindow?.let { root -> root.packageName?.toString().also { release(root) } }
+            ?: rootInActiveWindow?.let { root -> root.packageName?.toString().also { root.release() } }
             ?: foregroundPackage
         if (mayBe(target, front)) return true
         return list?.any { w ->
@@ -1454,10 +1484,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
         } == true
     }
 
-    private fun launchLockScreen(targetPkg: String, isSelfProtection: Boolean, displayId: Int? = null) {
-        if (!LockLauncher.launch(this, targetPkg, isSelfProtection, displayId)) {
+    private fun launchLockScreen(targetPkg: String, isSelfProtection: Boolean, displayId: Int? = null, reprompt: Boolean = false) {
+        if (!LockLauncher.launch(this, targetPkg, isSelfProtection, displayId, reprompt)) {
             // Could not cover the app: fail closed by leaving it (on another display its patch stays over it).
-            if (displayId == null || displayId == Display.DEFAULT_DISPLAY) {
+            if (isPhoneScreen(displayId)) {
                 performGlobalAction(GLOBAL_ACTION_HOME)
                 shield.hide()
             }

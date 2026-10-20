@@ -1,24 +1,30 @@
 package com.android.BioKey
 
+import android.app.Notification
+import android.app.NotificationManager
 import android.content.Context
 import android.provider.Settings
 import androidx.test.core.app.ApplicationProvider
+import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.UsageWatchService
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowSettings
 
 /**
  * Compatibility mode only counts as protecting once it runs or has been asked to start, not just
- * because its permissions are granted; and a lost permission is named for the alert.
+ * because its permissions are granted; a lost permission is named for the alert, and an engine
+ * that has its permissions but didn't start isn't asked for them again.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -49,6 +55,17 @@ class CompatibilityStatusTest {
 
         assertEquals(true, ProtectionEngine.refresh(context))
         assertEquals(ProtectionEngine.Mode.COMPATIBILITY, ProtectionEngine.mode(context))
+    }
+
+    @Test
+    fun anEngineThatDidNotStartIsSaidSo() {
+        ShadowSettings.setCanDrawOverlays(true)
+        SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        // Set up and granted, but its start was refused: the alert mustn't ask for those permissions again.
+        ProtectionAlerts.serviceStopped(context, now = true)
+        val alert = shadowOf(context.getSystemService(NotificationManager::class.java)).allNotifications.single()
+        val text = alert.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
+        assertTrue(text, text.contains("compatibility mode isn't running"))
     }
 
     @Test

@@ -89,10 +89,12 @@ object ProtectionAlerts {
     }
 
     private fun postServiceStopped(context: Context) {
-        if (ProtectionEngine.mode(context) == ProtectionEngine.Mode.COMPATIBILITY) {
+        if (ProtectionEngine.shouldRunCompatibility(context)) {
             // Compatibility mode is the engine to run and has what it needs, but didn't start
-            // (Android limits starting it from the background); opening BioKey starts it. Not while
-            // the accessibility switch is still on: then BioKey won't start compatibility mode.
+            // (Android limits starting it from the background); opening BioKey starts it. Checked
+            // first: under Advanced Protection, asking for permissions already granted would be
+            // wrong. Not while the accessibility switch is still on: then BioKey won't start
+            // compatibility mode.
             post(
                 context,
                 ID_SERVICE_STOPPED,

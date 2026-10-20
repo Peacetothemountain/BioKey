@@ -70,11 +70,12 @@ class BioKeyTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
-        when (status(vault.isSetupCompleted(), vault.isGlobalLockEnabled(), isEngineRunning())) {
+        when (status(vault.isSetupCompleted(), vault.isProtectionActive(), isEngineRunning())) {
             // BioKey shows what's missing (setup, or the switch or permissions an engine needs).
             Status.SETUP_REQUIRED, Status.NOT_PROTECTING -> launch(Intent(this, MainActivity::class.java))
             Status.PAUSED -> vault.resumeProtection()
-            Status.PROTECTING -> launch(Intent(this, MainActivity::class.java).setAction(MainActivity.ACTION_PAUSE_PROTECTION))
+            // Through BioKey's own, non-exported way in: only it opens the pause sheet.
+            Status.PROTECTING -> launch(MainActivity.pauseIntent(this))
         }
     }
 
