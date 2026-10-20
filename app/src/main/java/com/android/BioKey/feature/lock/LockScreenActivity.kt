@@ -246,8 +246,9 @@ class LockScreenActivity : ComponentActivity() {
             // An engine may have covered the app again since we were paused (it came straight
             // back, with the quick-switch gesture, say): that shield is newer than this lock and
             // stays, and its own checks bring the lock screen back. Only a shield still waiting
-            // for our first frame is ours to lower.
-            if (!firstFrameCommitted) dismissShield()
+            // for our first frame, or for the whole display (its checks stop while we are
+            // resumed, so it would stay up), is ours to lower.
+            if (!firstFrameCommitted || awaitingFullscreen) dismissShield()
             finish()
             noTransition(open = false)
         }
@@ -343,13 +344,17 @@ class LockScreenActivity : ComponentActivity() {
      * off screen. A shield still up stays until Home is in front.
      */
     private fun leaveExposed() {
-        if (isFinishing) return
+        // The fullscreen request can answer after this screen was destroyed.
+        if (isFinishing || isDestroyed) return
         DiagnosticLog.log("Lock screen for $lockedPackage didn't get the whole screen; went Home")
         abandon()
         leftWithoutUnlock = true
         goHome()
         val pkg = lockedPackage
-        Handler(Looper.getMainLooper()).postDelayed({ InstantShieldOverlay.dismiss(pkg) }, HOME_SETTLE_MS)
+        // As in dismissShield: not if a newer lock screen has taken over by then.
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (current?.get().let { it == null || it === this }) InstantShieldOverlay.dismiss(pkg)
+        }, HOME_SETTLE_MS)
         finish()
         noTransition(open = false)
     }
