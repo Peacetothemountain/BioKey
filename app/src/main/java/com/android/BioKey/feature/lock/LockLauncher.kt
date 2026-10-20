@@ -12,7 +12,9 @@ object LockLauncher {
     private const val TAG = "LockLauncher"
 
     /**
-     * Returns false if the lock screen could not be started (the caller must fail closed).
+     * Returns false if the lock screen could not be started (the caller must fail closed). True
+     * only means the start was asked for: Android refuses a background start without an error, so
+     * only [LockScreenActivity.isLockScreenResumed] (which the shield's checks watch) confirms it.
      * [displayId], when known, is the display the locked app is on: the lock screen opens there.
      */
     fun launch(context: Context, targetPkg: String, isSelfProtection: Boolean, displayId: Int? = null): Boolean {
@@ -29,8 +31,9 @@ object LockLauncher {
 
         // Primary path: a PendingIntent with an explicit background-start grant and no animation
         // (a plain startActivity from a service can be silently blocked on Android 14+). BioKey
-        // holds a background-start privilege here: a bound accessibility service, or a visible
-        // overlay window in compatibility mode.
+        // holds a background-start privilege here: a bound accessibility service, or in
+        // compatibility mode the user's display-over-other-apps grant (the shield only hides the
+        // app). send() returns normally even when the start is refused.
         try {
             val creatorOptions = ActivityOptions.makeCustomAnimation(context, 0, 0)
             val sendOptions = ActivityOptions.makeCustomAnimation(context, 0, 0)

@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RadialGradient
 import android.graphics.Shader
+import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.View
@@ -32,7 +33,8 @@ internal class CoverBackdrop(context: Context) : View(context) {
     }
 
     private val density = resources.displayMetrics.density
-    private val animate = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) != 0f
+    /** Re-read whenever the cover shows: the overlay's cover lives as long as its engine. */
+    private var animate = animationsOn()
 
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
@@ -46,6 +48,28 @@ internal class CoverBackdrop(context: Context) : View(context) {
     private var focusX = 0f
     private var focusY = 0f
     private var focusRadius = 0f
+
+    init {
+        // A slow breath needs no more than a low frame rate, so the display can drop to one while
+        // the prompt waits. Both covers ask the same, so they still draw the same frame.
+        if (Build.VERSION.SDK_INT >= 35) setRequestedFrameRate(REQUESTED_FRAME_RATE_CATEGORY_LOW)
+    }
+
+    private fun animationsOn() =
+        Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) != 0f
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        animate = animationsOn()
+    }
+
+    override fun onVisibilityAggregated(isVisible: Boolean) {
+        super.onVisibilityAggregated(isVisible)
+        if (isVisible) {
+            animate = animationsOn()
+            invalidate()
+        }
+    }
 
     /** [primary] lights apps whose icons have no colour of their own; [disc] sits behind the icon. */
     fun setColors(primary: Int, disc: Int) {

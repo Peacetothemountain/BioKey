@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.ColorStateList
 import android.content.res.Configuration
-import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.PorterDuff
@@ -25,7 +24,6 @@ import android.widget.TextView
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.ui.graphics.toArgb
-import androidx.core.graphics.createBitmap
 import com.android.BioKey.R
 import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.ui.brand.VineView
@@ -65,7 +63,6 @@ class LockCoverView(context: Context) : FrameLayout(context) {
 
     private companion object {
         const val ICON_DP = AppInfoCache.ICON_DP
-        const val HUE_BUCKETS = 18
     }
 
     var onUnlock: (() -> Unit)? = null
@@ -240,68 +237,40 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         return RippleDrawable(ColorStateList.valueOf(Color.argb(alpha, Color.red(rippleColor), Color.green(rippleColor), Color.blue(rippleColor))), shape, mask)
     }
 
-    /** Shows a locked app's icon (or BioKey's logo when [isBioKey]); [label] is for screen readers. */
-    fun bind(label: String, appIcon: Drawable?, isBioKey: Boolean) {
+    /**
+     * Shows a locked app's icon (or BioKey's logo when [isBioKey]); [label] is for screen readers.
+     * [accent] is the icon's glow colour, ready-made from [AppInfoCache]; worked out here (on the
+     * main thread, on the way to the cover) only when not passed.
+     */
+    fun bind(
+        label: String,
+        appIcon: Drawable?,
+        isBioKey: Boolean,
+        accent: Int? = appIcon?.let { AppInfoCache.accentOf(it, resources) }
+    ) {
         logo.visibility = if (isBioKey) VISIBLE else GONE
         icon.visibility = if (isBioKey) GONE else VISIBLE
         name.visibility = icon.visibility
         name.text = label
         brandMark.visibility = if (isBioKey || actions.visibility == VISIBLE) GONE else VISIBLE
-        setIcon(appIcon)
+        setIcon(appIcon, accent)
         contentDescription = if (isBioKey) "BioKey is locked" else "$label is locked"
         setStatus(null, permanentLockout = false)
         requestLayout()
     }
 
-    fun setIcon(appIcon: Drawable?) {
+    fun setIcon(appIcon: Drawable?, accent: Int? = appIcon?.let { AppInfoCache.accentOf(it, resources) }) {
         if (appIcon != null) {
             // Cached icons are shared with the other cover; each view needs its own instance.
             icon.setImageDrawable(appIcon.constantState?.newDrawable(resources)?.mutate() ?: appIcon)
             icon.setPadding(0, 0, 0, 0)
-            backdrop.setAccent(appColor(appIcon))
+            backdrop.setAccent(accent)
         } else {
             icon.setImageDrawable(context.getDrawable(R.drawable.ic_lock_key)?.mutate()?.apply { setTint(palette.primary) })
             icon.setPadding(dp(26), dp(26), dp(26), dp(26))
             backdrop.setAccent(null)
         }
     }
-
-    /**
-     * The icon's own colour for the glow: its most prominent vivid hue (white, black and grey
-     * backgrounds don't count), so a red logo on a white tile glows red rather than a muddy
-     * average. Null if the icon has no colour (monochrome), and BioKey's own colour is used.
-     */
-    private fun appColor(drawable: Drawable): Int? = runCatching {
-        val sample = drawable.constantState?.newDrawable(resources)?.mutate() ?: return null
-        val n = 24
-        val bmp = createBitmap(n, n)
-        sample.setBounds(0, 0, n, n)
-        sample.draw(Canvas(bmp))
-        // Hue buckets weighted by how vivid each pixel is; then the average colour of the winner.
-        val weight = FloatArray(HUE_BUCKETS)
-        val sums = Array(HUE_BUCKETS) { FloatArray(3) }
-        val hsv = FloatArray(3)
-        for (x in 0 until n) for (y in 0 until n) {
-            val c = bmp.getPixel(x, y)
-            if (Color.alpha(c) < 160) continue
-            Color.colorToHSV(c, hsv)
-            if (hsv[1] < 0.25f || hsv[2] < 0.25f) continue
-            val bucket = (hsv[0] / 360f * HUE_BUCKETS).toInt().coerceIn(0, HUE_BUCKETS - 1)
-            val w = hsv[1] * hsv[2]
-            weight[bucket] += w
-            sums[bucket][0] += Color.red(c) * w
-            sums[bucket][1] += Color.green(c) * w
-            sums[bucket][2] += Color.blue(c) * w
-        }
-        bmp.recycle()
-        val best = weight.indices.maxBy { weight[it] }
-        if (weight[best] < n * n * 0.03f) return null
-        val s = sums[best]
-        Color.colorToHSV(Color.rgb((s[0] / weight[best]).toInt(), (s[1] / weight[best]).toInt(), (s[2] / weight[best]).toInt()), hsv)
-        hsv[1] = hsv[1].coerceIn(0.45f, 0.85f)
-        hsv[2] = hsv[2].coerceIn(0.65f, 0.95f)
-        Color.HSVToColor(hsv)
-    }.getOrNull()
 
     private fun blend(a: Int, b: Int, t: Float): Int = Color.rgb(
         (Color.red(a) + (Color.red(b) - Color.red(a)) * t).toInt(),

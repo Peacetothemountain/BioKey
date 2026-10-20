@@ -10,8 +10,10 @@ import android.security.advancedprotection.AdvancedProtectionManager
  * On Android 17, turning it on limits the accessibility API to genuine accessibility tools
  * (screen readers, switch and voice input, Braille). BioKey is an app lock, not an accessibility
  * tool, and declares itself honestly, so Android switches its service off and keeps it off while
- * the mode is on. BioKey then can't see which app is open, so it explains this instead of
- * silently failing; Android's own App Lock keeps working under Advanced Protection.
+ * the mode is on. BioKey then switches to compatibility mode (usage access and display over other
+ * apps, which Advanced Protection leaves alone: see [ProtectionEngine]), and explains how to set
+ * it up while those permissions are missing. Android's own App Lock keeps working under Advanced
+ * Protection too.
  */
 object AdvancedProtection {
 
