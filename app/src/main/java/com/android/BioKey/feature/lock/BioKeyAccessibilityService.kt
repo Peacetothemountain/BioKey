@@ -1188,6 +1188,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (isSystemOrOverlay(target, cls)) return
         // BioKey's backup file picker is the one trip its own session survives.
         if (LockStateTracker.isOwnPickerActive() && target !in ForegroundRules.DOCUMENTS_UI) LockStateTracker.lockOwnApp()
+        // Only compatibility mode brings another app's lock screen up over BioKey as a trip; one
+        // still running when this engine took over ends here as it would there.
+        if (LockStateTracker.isOwnLockScreenHopActive()) LockStateTracker.lockOwnApp()
 
         val isLauncher = isLauncher(target)
         // Recents lives in the launcher: watch it (and taps there) while it's in front. Turning

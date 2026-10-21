@@ -173,4 +173,20 @@ class CompatibilityActivityStatesTest {
         states.prune(50)
         assertFalse(states.knows(chat))
     }
+
+    @Test
+    fun aReReadAfterAClockChangeIsNewsOfWhatTheActivityAlreadyDid() {
+        val states = ActivityStates()
+        val pip = event(ACTIVITY_PAUSED, bank, 5_000)
+        states.apply(pip)
+        states.rebase()
+        // The same pause, read again on the new clock: news, though nothing changed. Callers tell
+        // the two apart by what the activity did last (lastTypeOf), as the engine does.
+        val reRead = event(ACTIVITY_PAUSED, bank, 4_500)
+        assertEquals(ACTIVITY_PAUSED, states.lastTypeOf(reRead))
+        assertTrue(states.apply(reRead))
+        assertTrue(states.isPaused(pip.activity))
+        // From then on it is on the new clock: read again, it is no news.
+        assertFalse(states.apply(reRead))
+    }
 }

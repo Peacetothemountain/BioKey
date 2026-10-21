@@ -321,4 +321,36 @@ class LockStateTrackerTest {
         assertFalse(LockStateTracker.isExternalNavigationActive())
         assertFalse(LockStateTracker.isOwnAppUnlocked())
     }
+
+    @Test
+    fun anotherAppsLockScreenOverBioKeyIsATripBioKeyStartedItself() {
+        LockStateTracker.onOwnAppUnlocked()
+        LockStateTracker.beginOwnLockScreenHop()
+        assertTrue(LockStateTracker.isOwnTripActive())
+        LockStateTracker.onOwnAppStopped()
+        advance(60_000L)
+        assertTrue(LockStateTracker.isOwnLockScreenHopActive())
+        // Back in BioKey once that app is unlocked: the trip is over, the session carries on.
+        LockStateTracker.onOwnAppResumed()
+        assertFalse(LockStateTracker.isOwnLockScreenHopActive())
+        assertTrue(LockStateTracker.isOwnAppUnlocked())
+
+        LockStateTracker.beginOwnLockScreenHop()
+        LockStateTracker.lockAll()
+        assertFalse(LockStateTracker.isOwnLockScreenHopActive())
+
+        // Without an owner session in front there is nothing to keep.
+        LockStateTracker.beginOwnLockScreenHop()
+        assertFalse(LockStateTracker.isOwnLockScreenHopActive())
+    }
+
+    @Test
+    fun aLockScreenTripThatRunsOutAwayEndsBioKeysSession() {
+        LockStateTracker.onOwnAppUnlocked()
+        LockStateTracker.beginOwnLockScreenHop()
+        LockStateTracker.onOwnAppStopped()
+        advance(2 * 60_000L + 1_000L)
+        assertFalse(LockStateTracker.isOwnTripActive())
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
+    }
 }

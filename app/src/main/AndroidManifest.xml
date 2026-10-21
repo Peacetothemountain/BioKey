@@ -10,8 +10,9 @@
     <uses-permission android:name="android.permission.QUERY_ADVANCED_PROTECTION_MODE" />
 
     <!-- Compatibility mode (when the accessibility service can't run, e.g. under Advanced
-         Protection): which app is opened (usage access), covering it (overlay), and the
-         foreground service that does this while the screen is on. -->
+         Protection): which app is opened and whether a locked app is still on screen (usage
+         access), covering it (overlay), and the foreground service that does this while the
+         screen is on. -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -156,7 +157,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="App lock compatibility mode: while the screen is on, reads which app was opened (usage access) to cover apps the user has locked, on devices where the accessibility service cannot run (for example under Android Advanced Protection). Nothing leaves the device." />
+                android:value="App lock compatibility mode: while the screen is on, reads which app was opened and whether a locked app is still on screen (usage access) to cover apps the user has locked, on devices where the accessibility service cannot run (for example under Android Advanced Protection). Nothing leaves the device." />
         </service>
 
         <service

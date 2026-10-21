@@ -1,11 +1,13 @@
 package com.android.BioKey
 
+import android.app.Activity
 import android.app.Application
 import android.app.NotificationManager
 import android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED
 import android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED
 import android.app.usage.UsageEvents
 import android.app.usage.UsageEvents.Event.ACTIVITY_STOPPED
+import android.app.usage.UsageEventsQuery
 import android.app.usage.UsageStatsManager
 import android.content.ComponentName
 import android.content.Context
@@ -13,6 +15,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
+import android.os.CancellationSignal
 import android.os.HandlerThread
 import android.os.Looper
 import android.provider.Settings
@@ -32,6 +35,8 @@ import com.android.BioKey.feature.lock.ForegroundRules
 import com.android.BioKey.feature.lock.InstantShieldOverlay
 import com.android.BioKey.feature.lock.LockScreenActivity
 import com.android.BioKey.feature.lock.UsageWatchService
+import com.android.BioKey.feature.main.MainActivity
+import java.lang.ref.WeakReference
 import java.time.Duration
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -44,7 +49,10 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ServiceController
+import org.robolectric.annotation.ClassName
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
 import org.robolectric.shadows.ShadowSettings
 import org.robolectric.shadows.ShadowUsageStatsManager
 
@@ -52,10 +60,41 @@ import org.robolectric.shadows.ShadowUsageStatsManager
  * Compatibility mode end to end, from usage events to what it covers: every app that comes to the
  * screen counts, not only the newest; an unlocked app stays in use while it shows; nothing floating
  * over an unlocked app asks for authentication.
+ *
+ * Also on Android 15, where usage access is asked only for the events (and, in a look back, the
+ * apps) it needs, as on the owner's phone. (36 and up would need Java 21 to run.)
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [34, 35], shadows = [CompatibilityEngineTest.PackageFilteringUsageStats::class])
 class CompatibilityEngineTest {
+
+    /**
+     * Usage access as Android 15 and later answer a query that names packages: only their events.
+     * Robolectric's own shadow keeps to the event types asked for, but not to the packages. Each
+     * query's packages are kept ([packageQueries]).
+     */
+    @Implements(UsageStatsManager::class)
+    class PackageFilteringUsageStats : ShadowUsageStatsManager() {
+        companion object {
+            val packageQueries = mutableListOf<Set<String>>()
+        }
+
+        @Implementation(minSdk = 35)
+        override fun queryEvents(@ClassName("android.app.usage.UsageEventsQuery") query: Any?): UsageEvents {
+            val packages = (query as UsageEventsQuery).packageNames.toSet()
+            packageQueries += packages
+            val events = super.queryEvents(query)
+            if (packages.isEmpty()) return events
+            val kept = ArrayList<UsageEvents.Event>()
+            while (events.hasNextEvent()) {
+                val event = UsageEvents.Event()
+                events.getNextEvent(event)
+                if (event.packageName in packages) kept += event
+            }
+            return ShadowUsageStatsManager::class.java.getDeclaredMethod("createUsageEvents", List::class.java)
+                .apply { isAccessible = true }.invoke(null, kept) as UsageEvents
+        }
+    }
 
     private val context: Application = ApplicationProvider.getApplicationContext()
     private val bank = "com.example.bank"
@@ -77,6 +116,7 @@ class CompatibilityEngineTest {
         vault.setSetupCompletedSync(true)
         vault.setAppLock(bank, true)
         DiagnosticLog.clear()
+        PackageFilteringUsageStats.packageQueries.clear()
         startEngine()
     }
 
@@ -91,6 +131,7 @@ class CompatibilityEngineTest {
     fun stop() {
         engine.destroy()
         lockScreenUp(null)
+        promptUpFor(null)
         // The engine asked which apps are launchers and pickers: leave no cached answer to other tests.
         ForegroundRules.resetSystemLists()
         AppInfoCache.invalidate(bank)
@@ -127,15 +168,24 @@ class CompatibilityEngineTest {
         LockScreenActivity::class.java.getDeclaredField("isLockScreenResumed").apply { isAccessible = true }.setBoolean(null, pkg != null)
     }
 
+    /** BioKey's prompt is up for [pkg] (null: none is), as SecurityEngine reports it. */
+    private fun promptUpFor(pkg: String?) {
+        val active = SecurityEngine::class.java.getDeclaredField("active").apply { isAccessible = true }
+        if (pkg == null) return active.set(SecurityEngine.INSTANCE, null)
+        val attempt = Class.forName("${SecurityEngine::class.java.name}\$Attempt").declaredConstructors.single().apply { isAccessible = true }
+        active.set(SecurityEngine.INSTANCE, attempt.newInstance(pkg, WeakReference<Activity>(null), CancellationSignal()))
+    }
+
     private val lockScreen = LockScreenActivity::class.java.name
     private val launcher = "com.google.android.apps.nexuslauncher"
+    private val bioKeysScreen = MainActivity::class.java.name
 
     /** BioKey's lock screen for [pkg] comes up over [front], and its cover, once drawn, asks the shield to go. */
-    private fun lockScreenOpensOver(front: String, pkg: String) {
+    private fun lockScreenOpensOver(front: String, pkg: String, frontClass: String = "$front.MainActivity") {
         lockScreenUp(pkg)
-        event(ACTIVITY_PAUSED, front)
+        event(ACTIVITY_PAUSED, front, frontClass)
         event(ACTIVITY_RESUMED, context.packageName, lockScreen)
-        event(ACTIVITY_STOPPED, front)
+        event(ACTIVITY_STOPPED, front, frontClass)
         step()
         InstantShieldOverlay.dismiss(pkg)
     }
@@ -729,5 +779,217 @@ class CompatibilityEngineTest {
         // Unlocked from a hidden notification's stand-in, whose link opens the bank's Play listing.
         lockScreenClosesOnto(play, bank, unlocked = true, frontClass = "com.google.android.finsky.activities.MainActivity")
         assertEquals(listOf("Covered $play (opened)"), covered(play))
+    }
+
+    private val besideCover = "Covered $bank (on screen beside another app)"
+
+    @Test
+    fun aLockedAppBesideAnotherIsCoveredWhenProtectionResumes() {
+        vault.pauseProtection(15 * 60_000L)
+        step()
+        // Paused: the bank opens beside the chat app in split screen, a while ago, and stays
+        // resumed there, saying nothing more...
+        event(ACTIVITY_RESUMED, bank)
+        shadowOf(context.getSystemService(UsageStatsManager::class.java)).simulateTimeChange(-60_000)
+        step(70_000)
+        // ...while the owner goes on opening screens of the chat app beside it.
+        vault.resumeProtection()
+        event(ACTIVITY_RESUMED, chat)
+        repeat(8) { step() }
+        assertEquals(listOf(besideCover), covered(bank))
+        assertTrue(shield().isShowing)
+    }
+
+    @Test
+    fun aLockedAppBesideAnotherIsCoveredWhenTheEngineStarts() {
+        // Compatibility mode isn't running (the accessibility engine had the phone, say) while
+        // the bank opens beside the chat app, a while ago.
+        engine.destroy()
+        event(ACTIVITY_RESUMED, bank)
+        shadowOf(context.getSystemService(UsageStatsManager::class.java)).simulateTimeChange(-60_000)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(70_000))
+        event(ACTIVITY_RESUMED, chat)
+        startEngine()
+        repeat(8) { step() }
+        assertEquals(listOf(besideCover), covered(bank))
+        assertTrue(shield().isShowing)
+    }
+
+    @Test
+    fun aLockedAppThatLeftBeforeProtectionResumedIsNotCovered() {
+        vault.pauseProtection(15 * 60_000L)
+        step()
+        event(ACTIVITY_RESUMED, bank)
+        event(ACTIVITY_PAUSED, bank)
+        event(ACTIVITY_STOPPED, bank)
+        shadowOf(context.getSystemService(UsageStatsManager::class.java)).simulateTimeChange(-60_000)
+        step(70_000)
+        vault.resumeProtection()
+        event(ACTIVITY_RESUMED, chat)
+        repeat(8) { step() }
+        assertTrue(covered(bank).isEmpty())
+        assertFalse(shield().isShowing)
+    }
+
+    @Test
+    @Config(sdk = [35])
+    fun aLookBackAsksOnlyForLockedAppsAndTheScreenComingOn() {
+        vault.setAppLock(PasswordManager.VIRTUAL_PACKAGE, true)
+        engine.destroy()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(70_000))
+        event(ACTIVITY_RESUMED, chat)
+        PackageFilteringUsageStats.packageQueries.clear()
+        startEngine()
+        // Google Password Manager's screens are Play services' own; the screen coming on is the system's.
+        val expected = PasswordManager.expand(setOf(bank, PasswordManager.VIRTUAL_PACKAGE)) + PasswordManager.GMS + "android"
+        assertEquals(listOf(expected), PackageFilteringUsageStats.packageQueries.filter { it.isNotEmpty() })
+    }
+
+    @Test
+    fun anAppUnlockedAsItGoesIntoPictureInPictureOverItsLockScreenStaysUnlocked() {
+        installWithLaunchScreen(bank, "Bank")
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        // Its lock screen comes up, and the bank (a video playing) goes into picture-in-picture
+        // over it: paused, never stopped.
+        lockScreenUp(bank)
+        event(ACTIVITY_PAUSED, bank)
+        event(ACTIVITY_RESUMED, context.packageName, lockScreen)
+        step()
+        InstantShieldOverlay.dismiss(bank)
+        // Face unlock, at once: the lock screen closes onto Home, the window floating on.
+        lockScreenClosesOnto(launcher, bank, unlocked = true)
+        started()
+        step(LockStateTracker.ARRIVAL_GRACE_MS + 1_000)
+        repeat(8) { step() }
+        assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+        assertFalse(shield().isShowing)
+        assertEquals(emptyList<Intent>(), started())
+        // The window closes: the bank has left.
+        event(ACTIVITY_STOPPED, bank)
+        repeat(2) { step() }
+        assertFalse(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+    }
+
+    @Test
+    fun aClockChangeKeepsAWindowInPictureInPictureWaitingToBeCovered() {
+        // As in bankLeftInPictureInPictureOver, with all but the window coming back long enough
+        // ago that no poll reads it again.
+        unlockBank()
+        event(ACTIVITY_PAUSED, bank)
+        event(ACTIVITY_RESUMED, chat)
+        repeat(3) { step() }
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        step()
+        event(ACTIVITY_STOPPED, bank)
+        event(ACTIVITY_STOPPED, chat)
+        shadowOf(context.getSystemService(UsageStatsManager::class.java)).simulateTimeChange(-60_000)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
+        step()
+        event(ACTIVITY_RESUMED, chat)
+        event(ACTIVITY_PAUSED, bank)
+        step()
+        // Within a second of the window coming back, the clock is set back a little: what was
+        // just read is read again, on the new clock.
+        shadowOf(context.getSystemService(UsageStatsManager::class.java)).simulateTimeChange(-500)
+        context.sendBroadcast(Intent(Intent.ACTION_TIME_CHANGED))
+        repeat(8) { step() }
+        assertEquals(pipCover, covered(bank).last())
+        assertTrue(shield().isShowing)
+        assertTrue(isHeldOpen(bank))
+    }
+
+    @Test
+    fun aWindowInPictureInPictureAskedForOverASignInTabLeavesTheHopAlone() {
+        installWithLaunchScreen(bank, "Bank")
+        val tab = "com.android.chrome"
+        val tabClass = "org.chromium.chrome.browser.customtabs.CustomTabActivity"
+        bankLeftInPictureInPictureOver(chat, frontLocked = true)
+        // The chat app is asked for first; the bank's window, covered, waits for that prompt.
+        lockScreenOpensOver(chat, chat)
+        repeat(6) { step() }
+        assertEquals(pipCover, covered(bank).last())
+        started()
+        // Unlocked, the chat app's lock screen closes onto the sign-in tab it had open over itself.
+        lockScreenClosesOnto(tab, chat, unlocked = true, frontClass = tabClass)
+        step()
+        // Only the bank's lock screen comes up: opening the bank there would end the chat app's hop.
+        val starts = started()
+        assertTrue(starts.toString(), lockScreensFor(starts, bank) > 0)
+        assertTrue(starts.toString(), starts.none { it.component?.packageName == bank })
+        lockScreenOpensOver(tab, bank, frontClass = tabClass)
+        lockScreenClosesOnto(tab, bank, unlocked = true, frontClass = tabClass)
+        assertTrue(LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.IMMEDIATE))
+        // Signed in, back in the chat app: nothing asks again.
+        event(ACTIVITY_PAUSED, tab, tabClass)
+        event(ACTIVITY_RESUMED, chat)
+        step()
+        assertTrue(LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.IMMEDIATE))
+        assertEquals(listOf("Covered $chat (opened)"), covered(chat))
+    }
+
+    /** BioKey's screen stops, as MainActivity.onStop decides: only a trip BioKey started itself keeps its session. */
+    private fun bioKeysScreenStops() {
+        if (LockStateTracker.isOwnTripActive()) LockStateTracker.onOwnAppStopped() else LockStateTracker.lockOwnApp()
+    }
+
+    /**
+     * The owner is in BioKey while the bank floats in picture-in-picture; the screen goes off and
+     * on, and BioKey's prompt comes up. The bank's window is covered, its lock screen held back
+     * until that prompt is done; BioKey is then unlocked. Returns what was started since.
+     */
+    private fun bankAskedForOverBioKey(): List<Intent> {
+        installWithLaunchScreen(bank, "Bank")
+        unlockBank()
+        LockStateTracker.onOwnAppUnlocked()
+        event(ACTIVITY_PAUSED, bank)
+        event(ACTIVITY_RESUMED, context.packageName, bioKeysScreen)
+        repeat(3) { step() }
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        step()
+        event(ACTIVITY_STOPPED, bank)
+        event(ACTIVITY_STOPPED, context.packageName, bioKeysScreen)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
+        step()
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
+        // BioKey is back, asking for itself; the bank's window floats over it.
+        promptUpFor(context.packageName)
+        event(ACTIVITY_RESUMED, context.packageName, bioKeysScreen)
+        event(ACTIVITY_PAUSED, bank)
+        repeat(8) { step() }
+        assertEquals(pipCover, covered(bank).last())
+        started()
+        promptUpFor(null)
+        LockStateTracker.onOwnAppUnlocked()
+        step()
+        return started()
+    }
+
+    @Test
+    fun aLockScreenBroughtUpOverBioKeyLeavesBioKeyUnlocked() {
+        val starts = bankAskedForOverBioKey()
+        // Only the bank's lock screen comes up, over BioKey: a trip BioKey started itself.
+        assertTrue(starts.toString(), lockScreensFor(starts, bank) > 0)
+        assertTrue(starts.toString(), starts.none { it.component?.packageName == bank })
+        lockScreenOpensOver(context.packageName, bank, frontClass = bioKeysScreen)
+        bioKeysScreenStops()
+        lockScreenClosesOnto(context.packageName, bank, unlocked = true, frontClass = bioKeysScreen)
+        // Back in BioKey (MainActivity.onResume): still unlocked, as the owner never left it.
+        assertTrue(LockStateTracker.isOwnAppUnlocked())
+        LockStateTracker.onOwnAppResumed()
+        assertTrue(LockStateTracker.hasActiveOwnerSession())
+        assertFalse(LockStateTracker.isOwnTripActive())
+        assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+    }
+
+    @Test
+    fun cancellingALockScreenBroughtUpOverBioKeyEndsBioKeysSession() {
+        bankAskedForOverBioKey()
+        lockScreenOpensOver(context.packageName, bank, frontClass = bioKeysScreen)
+        bioKeysScreenStops()
+        assertTrue(LockStateTracker.isOwnAppUnlocked())
+        // Cancel: Home, and the phone may be in someone else's hands. BioKey asks again.
+        lockScreenClosesOnto(launcher, bank, unlocked = false)
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
     }
 }

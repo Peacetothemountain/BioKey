@@ -140,7 +140,7 @@ fun SetupScreenExpressive(
             add(
                 Step(
                     Icons.Default.AppSettingsAlt, "Allow usage access",
-                    "Advanced Protection is on, so BioKey uses compatibility mode: this tells it which app was opened.",
+                    "Advanced Protection is on, so BioKey uses compatibility mode: this tells it which app was opened and whether a locked app is still on screen.",
                     done = usageAccess, onClick = openCompatibility
                 )
             )

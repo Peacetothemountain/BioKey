@@ -532,9 +532,10 @@ class UsageWatchService : Service() {
 
     /**
      * Locked apps' activity events from [floor] to [to], where a look back's own window begins: a
-     * window left in picture-in-picture says nothing more until it changes, so only these tell a
-     * look back (after a pause, when the engine starts or takes over) that it still shows. They
-     * only say what each activity did last ([onBatch]), never what is in front.
+     * window left in picture-in-picture, or resumed beside another app (split screen, a desktop
+     * window), says nothing more until it changes, so only these tell a look back (after a pause,
+     * when the engine starts or takes over) that it still shows. They only say what each activity
+     * did last ([onBatch]), never what is in front.
      *
      * Only those since the screen last came on (up to [now]): the screen going off stops every
      * activity, so a window floating now has been paused again since. An older pause is an
@@ -628,17 +629,21 @@ class UsageWatchService : Service() {
             return
         }
         idle = false
+        // The apps those events from before a look back's window are about (see below).
+        val olderApps = LinkedHashSet<String>()
         if (batch.fresh) {
             forgetScreen()
             handledUntil = Long.MIN_VALUE
             // What locked apps' activities did before the look back's window: one left paused
-            // (in picture-in-picture, say) is showing, and is covered like any found so. Nothing
-            // here came to the front just now, so none of it is handled as an app opening. A
-            // process that died while paused, since the screen last came on, leaves that state
-            // behind: its app is then covered until the owner unlocks it, which fails closed.
+            // (in picture-in-picture, say) is showing, and is covered like any found so; one left
+            // resumed is on screen beside the app in front (see below). Nothing here came to the
+            // front just now, so none of it is handled as an app opening. A process that died
+            // while paused, since the screen last came on, leaves that state behind: its app is
+            // then covered until the owner unlocks it, which fails closed.
             for (e in batch.older) {
                 val before = activities.lastTypeOf(e)
                 if (activities.apply(e)) notePaused(e, before, fresh = true)
+                e.app?.let(olderApps::add)
             }
         } else if (batch.rebasedFrom != null) {
             // What each activity last did still holds (a window in picture-in-picture, and the
@@ -672,6 +677,11 @@ class UsageWatchService : Service() {
         if (batch.fresh && screenLocked.value) return
         newest?.let(::handleForeground)
         for (pkg in resumed) if (pkg != newest?.app) handleOtherResume(pkg)
+        // A look back: a locked app that last resumed before its window (beside another app in
+        // split screen, in a desktop window, on another display) says nothing more while it stays
+        // there, yet is on screen and usable. It is handled as one that came to the screen beside
+        // the app in front, which covers it if it has no session.
+        for (pkg in olderApps) if (pkg != newest?.app && pkg !in resumed && activities.isResumed(pkg)) handleOtherResume(pkg)
         reconcile(screenLocked)
         resumeDeferred()
         releaseHeld()
@@ -682,9 +692,14 @@ class UsageWatchService : Service() {
      * [before] (null: none known). Paused straight from stopped, or from nothing seen, is showing
      * without having come to the front; so is anything left paused in a [fresh] look back, where
      * nothing older is known. Anything else about the activity ends that.
+     *
+     * The same as [before] is what the activity already did, read again: after a clock change
+     * every event re-read counts as news ([ActivityStates.rebase]), and a window waiting to be
+     * covered (paused, in picture-in-picture) must not be forgotten for it, as it says nothing more.
      */
     private fun notePaused(e: UsageEvent, before: Int?, fresh: Boolean) {
         val app = e.app ?: return
+        if (before == e.type) return
         val cameBackPaused = e.type == UsageEvents.Event.ACTIVITY_PAUSED &&
             (fresh || before == null || before == UsageEvents.Event.ACTIVITY_STOPPED)
         if (cameBackPaused) {
@@ -790,12 +805,15 @@ class UsageWatchService : Service() {
 
     /**
      * [pkg], another app, came to the front. BioKey's own session survives only the trips it
-     * starts itself, and only as far as they go: its backup file picker, or the settings pages it
-     * opened. Anything else ends them, and the session with them, as in the accessibility engine.
+     * starts itself, and only as far as they go: its backup file picker, the settings pages it
+     * opened, or another app's lock screen it brought up over itself ([launchLockScreen]), which
+     * no other app is part of. Anything else ends them, and the session with them, as in the
+     * accessibility engine.
      */
     private fun endOwnTrips(pkg: String) {
         if (LockStateTracker.isOwnPickerActive() && pkg !in ForegroundRules.DOCUMENTS_UI) LockStateTracker.lockOwnApp()
         if (!SelfProtectionDetector.isHostPackage(pkg) && LockStateTracker.isExternalNavigationActive()) LockStateTracker.lockOwnApp()
+        if (LockStateTracker.isOwnLockScreenHopActive()) LockStateTracker.lockOwnApp()
     }
 
     /**
@@ -850,6 +868,13 @@ class UsageWatchService : Service() {
                     val hop = if (mayHop) hopTo(foreground, foregroundClass, pkg) else null
                     LockStateTracker.onAppLeft(pkg, vault.getTimeoutMode(pkg), hop)
                 }
+            } else if (activities.isVisible(pkg) && vault.isAppLocked(pkg) && LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))) {
+                // Still showing, unlocked: in use, as in the accessibility engine (SessionRules).
+                // An app unlocked as it went into picture-in-picture over its own lock screen,
+                // which then closed onto Home, never comes to the front: without this its session
+                // would end as never on screen. Nothing ages meanwhile (it hasn't left), and it
+                // leaves once its activities stop (above).
+                LockStateTracker.onAppVisible(pkg)
             }
         }
         val now = SystemClock.elapsedRealtime()
@@ -935,7 +960,7 @@ class UsageWatchService : Service() {
         held = pkg to activity
         pausedBehind -= pkg
         // A tap on the cover asks for the prompt again, as its lock screen may be up under it.
-        val shown = shield.show(pkg) { LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = true) }
+        val shown = shield.show(pkg) { launchLockScreen(pkg, reprompt = true) }
         if (!shown && !checkPermissions()) return
         if (LockScreenActivity.isLockScreenResumed && LockScreenActivity.activeLockedTarget == pkg) {
             // Its lock screen is up already, under the window, and won't ask the cover to go: it
@@ -965,17 +990,22 @@ class UsageWatchService : Service() {
 
     /**
      * The cover is over [pkg], which shows without being in front ([coverShowingPaused]): asks for
-     * it. Over a locked app (its session, or its lock screen) or BioKey, only [pkg]'s lock screen
-     * comes up: opening [pkg] there would count as the user leaving that app, which would then ask
-     * again although they never left it. Going to BioKey's lock screen is a hop, so it keeps its
-     * session and is back in front once [pkg] is unlocked. Anywhere else [pkg] is opened, to bring
-     * it out of picture-in-picture.
+     * it. Over a locked app (its session, or its lock screen), BioKey, or a helper or screen an
+     * unlocked app is hopping to (a sign-in tab it opened, say), only [pkg]'s lock screen comes
+     * up: opening [pkg] there would count as the user leaving that app (or ending its hop), which
+     * would then ask again although they never left it. Going to BioKey's lock screen is a hop,
+     * so it keeps its session and is back in front once [pkg] is unlocked; BioKey's own session
+     * survives it too ([launchLockScreen]). [pkg] then stays in picture-in-picture, under the
+     * held cover until it is unlocked. Anywhere else (Home, an ordinary app) [pkg] is opened, to
+     * bring it out of picture-in-picture.
      */
     private fun askForShowingPaused(pkg: String) {
         LockStateTracker.setRegularLockPending(pkg)
         val front = foreground
-        if (front != null && front != pkg && (front == packageName || vault.isAppLocked(front))) {
-            if (!LockLauncher.launch(this, pkg, isSelfProtection = false)) goHome()
+        if (front != null && front != pkg &&
+            (front == packageName || vault.isAppLocked(front) || hopTo(front, foregroundClass, pkg) != null)
+        ) {
+            if (!launchLockScreen(pkg)) goHome()
             return
         }
         expanding = pkg
@@ -1017,7 +1047,7 @@ class UsageWatchService : Service() {
         }
         // Still floating: its lock screen goes up under the cover, which stays over both.
         LockStateTracker.setRegularLockPending(pkg)
-        if (!LockLauncher.launch(this, pkg, isSelfProtection = false)) goHome()
+        if (!launchLockScreen(pkg)) goHome()
     }
 
     /**
@@ -1083,17 +1113,29 @@ class UsageWatchService : Service() {
         // one: its lock screen comes up under it, its prompt over it, and the cover stays.
         val heldFor = held?.first
         if (heldFor != null && heldFor != pkg && shield.isShowing && shield.targetPackage == heldFor && isHeldOpen(heldFor)) {
-            if (!LockLauncher.launch(this, pkg, isSelfProtection = false)) goHome()
+            if (!launchLockScreen(pkg)) goHome()
             return
         }
         // The overlay goes up first and hides the app. The lock screen may start from the
         // background because the user let BioKey display over other apps.
-        if (!shield.show(pkg) { LockLauncher.launch(this, pkg, isSelfProtection = false) }) {
+        if (!shield.show(pkg) { launchLockScreen(pkg) }) {
             if (!checkPermissions()) return
             DiagnosticLog.log("Cover for $pkg couldn't be shown")
         }
         // Couldn't even ask for the lock screen: leave the app. The cover stays up and retries.
-        if (!LockLauncher.launch(this, pkg, isSelfProtection = false)) goHome()
+        if (!launchLockScreen(pkg)) goHome()
+    }
+
+    /**
+     * Asks for [pkg]'s lock screen (and, with [reprompt], its prompt again). Over BioKey's own
+     * screen, unlocked, that is a trip BioKey starts itself: the lock screen closes back onto
+     * BioKey, which then keeps its session rather than asking again although the owner never left
+     * it ([LockStateTracker.beginOwnLockScreenHop]). Anything else coming to the front ends that
+     * ([endOwnTrips]).
+     */
+    private fun launchLockScreen(pkg: String, reprompt: Boolean = false): Boolean {
+        if (foreground == packageName) LockStateTracker.beginOwnLockScreenHop()
+        return LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = reprompt)
     }
 
     private fun onShieldTimeout(target: String, attempt: Int): Boolean {
@@ -1103,7 +1145,7 @@ class UsageWatchService : Service() {
         if (target == expanding || target == deferred) return true
         if (attempt > 0) DiagnosticLog.log("Lock screen for $target not up yet; asking again ($attempt)")
         LockStateTracker.setRegularLockPending(target)
-        return LockLauncher.launch(this, target, isSelfProtection = false)
+        return launchLockScreen(target)
     }
 
     /** [target] still shows without a session, and compatibility mode can still cover it. */

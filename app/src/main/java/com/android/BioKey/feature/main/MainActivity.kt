@@ -193,7 +193,9 @@ class MainActivity : ComponentActivity() {
         // visit prompts again.
         isPermanentLockout = false
         lockMessage = null
-        if (LockStateTracker.isExternalNavigationActive() || LockStateTracker.isOwnPickerActive()) {
+        // A trip BioKey started itself (a settings page, the backup file picker, another app's lock
+        // screen brought up over it) keeps its session; anything else ends it.
+        if (LockStateTracker.isOwnTripActive()) {
             LockStateTracker.onOwnAppStopped()
         } else {
             LockStateTracker.lockOwnApp()

@@ -24,6 +24,11 @@ object LockLauncher {
      * when not, on the phone's own screen, the one the shield covers.
      * [reprompt]: the user asked for this lock on purpose, so a lock screen already up for
      * [targetPkg] brings its prompt back (see [LockScreenActivity.EXTRA_REPROMPT]).
+     *
+     * The lock screen coming up isn't the user leaving the app below (FLAG_ACTIVITY_NO_USER_ACTION):
+     * that app gets no onUserLeaveHint, so a video or a navigation app doesn't go into
+     * picture-in-picture over its own lock screen, where nothing but the whole-screen cover would
+     * hide it.
      */
     fun launch(
         context: Context,
@@ -40,7 +45,8 @@ object LockLauncher {
                 Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_NO_ANIMATION or
                     Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS or
-                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                    Intent.FLAG_ACTIVITY_NO_USER_ACTION
             )
         }
         // Always a display of its own: a start without one lets Android choose, from an earlier
