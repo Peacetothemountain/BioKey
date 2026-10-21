@@ -26,8 +26,8 @@ android {
         applicationId = "com.android.BioKey"
         minSdk = 31
         targetSdk = 37
-        versionCode = 466
-        versionName = "4.5"
+        versionCode = 467
+        versionName = "4.6"
     }
 
     signingConfigs {
