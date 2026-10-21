@@ -10,6 +10,7 @@ import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.android.BioKey.R
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.lock.UsageWatchService
 import com.android.BioKey.feature.main.MainActivity
@@ -31,7 +32,15 @@ object ProtectionAlerts {
      * this time and there is nothing to alert about.
      */
     private const val HANDOVER_GRACE_MS = 3_000L
+
+    /**
+     * How long BioKey's accessibility service, switched on, gets to connect once BioKey's process
+     * starts before it counts as not running ([checkAccessibilityConnects]): Android connects it
+     * moments after the process starts, unless it gave up restarting one that kept crashing.
+     */
+    private const val CONNECT_WAIT_MS = 10_000L
     private val STOP_TOKEN = Any()
+    private val CONNECT_TOKEN = Any()
     private val main = Handler(Looper.getMainLooper())
 
     fun ensureChannels(context: Context) {
@@ -139,8 +148,33 @@ object ProtectionAlerts {
         )
     }
 
+    /**
+     * BioKey's process just started (the notification shield rebinding, the tile, an alarm). With
+     * the accessibility switch on, the service still not running [CONNECT_WAIT_MS] later means
+     * Android stopped restarting it after repeated crashes: nothing covers apps, and the switch
+     * still reads as on in Settings. Alerts then, as when an engine stops; the alert goes as soon
+     * as the service connects ([serviceRestored]). The boot receiver checks the same after a boot.
+     */
+    fun checkAccessibilityConnects(context: Context) {
+        val app = context.applicationContext
+        main.removeCallbacksAndMessages(CONNECT_TOKEN)
+        main.postDelayed({
+            if (SecurityVault.getInstance(app).isSetupCompleted() &&
+                ProtectionEngine.mode(app) == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING &&
+                !isShowing(app, ID_SERVICE_STOPPED) // The boot check's own, say: not again.
+            ) {
+                DiagnosticLog.log("Accessibility engine is switched on but not running")
+                postServiceStopped(app)
+            }
+        }, CONNECT_TOKEN, CONNECT_WAIT_MS)
+    }
+
+    private fun isShowing(context: Context, id: Int): Boolean =
+        runCatching { context.getSystemService(NotificationManager::class.java).activeNotifications.any { it.id == id } }.getOrDefault(false)
+
     fun serviceRestored(context: Context) {
         main.removeCallbacksAndMessages(STOP_TOKEN)
+        main.removeCallbacksAndMessages(CONNECT_TOKEN)
         NotificationManagerCompat.from(context).cancel(ID_SERVICE_STOPPED)
     }
 }

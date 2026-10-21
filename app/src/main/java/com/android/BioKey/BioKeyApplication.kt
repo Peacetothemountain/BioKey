@@ -13,6 +13,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.android.BioKey.core.data.AppClassifier
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.AppInfoCache
@@ -82,6 +83,7 @@ class BioKeyApplication : Application() {
                 // Pre-warm SecurityVault so UI threads find it ready in memory
                 SecurityVault.getInstance(app)
                 ProtectionEngine.refresh(app)
+                ProtectionAlerts.checkAccessibilityConnects(app)
             } catch (e: Exception) {
                 Log.e(TAG, "Error initializing credential-protected components", e)
             }

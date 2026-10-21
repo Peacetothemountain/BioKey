@@ -4,20 +4,30 @@ import android.app.Application
 import android.app.NotificationManager
 import android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED
 import android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED
+import android.app.usage.UsageEvents
 import android.app.usage.UsageEvents.Event.ACTIVITY_STOPPED
 import android.app.usage.UsageStatsManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageInfo
 import android.os.HandlerThread
 import android.os.Looper
 import android.provider.Settings
+import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.ForegroundRules
 import com.android.BioKey.feature.lock.InstantShieldOverlay
 import com.android.BioKey.feature.lock.LockScreenActivity
@@ -67,6 +77,11 @@ class CompatibilityEngineTest {
         vault.setSetupCompletedSync(true)
         vault.setAppLock(bank, true)
         DiagnosticLog.clear()
+        startEngine()
+    }
+
+    /** Compatibility mode starts (BioKey set up, or the accessibility engine handing over). */
+    private fun startEngine() {
         engine = Robolectric.buildService(UsageWatchService::class.java).create()
         worker = (UsageWatchService::class.java.getDeclaredField("worker").apply { isAccessible = true }.get(engine.get()) as HandlerThread).looper
         step(200)
@@ -75,9 +90,10 @@ class CompatibilityEngineTest {
     @After
     fun stop() {
         engine.destroy()
-        lockScreenFor(null)
+        lockScreenUp(null)
         // The engine asked which apps are launchers and pickers: leave no cached answer to other tests.
         ForegroundRules.resetSystemLists()
+        AppInfoCache.invalidate(bank)
     }
 
     /** Lets [ms] pass: polls run, and what they read is acted on. */
@@ -103,6 +119,74 @@ class CompatibilityEngineTest {
     /** The app BioKey's lock screen is up for, as the real activity reports it. */
     private fun lockScreenFor(pkg: String?) {
         LockScreenActivity::class.java.getDeclaredField("activeLockedTarget").apply { isAccessible = true }.set(null, pkg)
+    }
+
+    /** The app BioKey's lock screen is up and in front for (null: none), as the real activity reports it. */
+    private fun lockScreenUp(pkg: String?) {
+        lockScreenFor(pkg)
+        LockScreenActivity::class.java.getDeclaredField("isLockScreenResumed").apply { isAccessible = true }.setBoolean(null, pkg != null)
+    }
+
+    private val lockScreen = LockScreenActivity::class.java.name
+    private val launcher = "com.google.android.apps.nexuslauncher"
+
+    /** BioKey's lock screen for [pkg] comes up over [front], and its cover, once drawn, asks the shield to go. */
+    private fun lockScreenOpensOver(front: String, pkg: String) {
+        lockScreenUp(pkg)
+        event(ACTIVITY_PAUSED, front)
+        event(ACTIVITY_RESUMED, context.packageName, lockScreen)
+        event(ACTIVITY_STOPPED, front)
+        step()
+        InstantShieldOverlay.dismiss(pkg)
+    }
+
+    /** The lock screen for [pkg] closes onto [front], unlocked ([unlocked]) or left. */
+    private fun lockScreenClosesOnto(front: String, pkg: String, unlocked: Boolean, frontClass: String = "$front.MainActivity") {
+        if (unlocked) LockStateTracker.onAppUnlocked(pkg) else LockStateTracker.markLockAbandoned(pkg)
+        InstantShieldOverlay.dismiss(pkg)
+        lockScreenUp(null)
+        event(ACTIVITY_PAUSED, context.packageName, lockScreen)
+        event(ACTIVITY_RESUMED, front, frontClass)
+        step()
+    }
+
+    /**
+     * [pkg] is installed, named [label], with a launch screen, so opening it starts an activity.
+     * The engine caches its name for the covers, for the whole test run: it is named as an app is.
+     */
+    private fun installWithLaunchScreen(pkg: String, label: String) {
+        val pm = shadowOf(context.packageManager)
+        pm.installPackage(PackageInfo().apply {
+            packageName = pkg
+            applicationInfo = ApplicationInfo().apply {
+                packageName = pkg
+                nonLocalizedLabel = label
+            }
+        })
+        val main = ComponentName(pkg, "$pkg.MainActivity")
+        pm.addActivityIfNotPresent(main)
+        pm.addIntentFilterForActivity(main, IntentFilter(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) })
+    }
+
+    /** The activities BioKey started since the last call. */
+    private fun started(): List<Intent> = generateSequence { shadowOf(context).nextStartedActivity }.toList()
+
+    private fun lockScreensFor(starts: List<Intent>, pkg: String) =
+        starts.count { it.component?.className == lockScreen && it.getStringExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE) == pkg }
+
+    private fun isHeldOpen(pkg: String) =
+        UsageWatchService::class.java.getDeclaredMethod("isHeldOpen", String::class.java).apply { isAccessible = true }.invoke(engine.get(), pkg) as Boolean
+
+    /** What the cover says: its text that is showing. */
+    private fun coverTexts(): List<String> {
+        val cover = InstantShieldOverlay::class.java.getDeclaredField("cover").apply { isAccessible = true }.get(shield()) as View
+        fun texts(view: View): List<String> = when {
+            view.visibility != View.VISIBLE -> emptyList()
+            view is TextView -> listOf(view.text.toString()).filter { it.isNotBlank() }
+            view is ViewGroup -> (0 until view.childCount).flatMap { texts(view.getChildAt(it)) }
+            else -> emptyList()
+        }
+        return texts(cover)
     }
 
     private fun shield() =
@@ -403,5 +487,247 @@ class CompatibilityEngineTest {
         event(ACTIVITY_RESUMED, wellbeing, "com.google.android.apps.wellbeing.settings.TopLevelSettingsActivity")
         step()
         assertEquals(listOf("Covered $wellbeing (opened)"), covered(wellbeing))
+    }
+
+    /**
+     * The bank, unlocked, goes into picture-in-picture over [front] (locked too, with
+     * [frontLocked]) and the phone locks. Once it is unlocked, [front] is in front and the bank's
+     * window is back, paused (it never resumes).
+     */
+    private fun bankLeftInPictureInPictureOver(front: String, frontLocked: Boolean = false) {
+        unlockBank()
+        event(ACTIVITY_PAUSED, bank)
+        event(ACTIVITY_RESUMED, front)
+        repeat(3) { step() }
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        step()
+        if (frontLocked) vault.setAppLock(front, true)
+        event(ACTIVITY_STOPPED, bank)
+        event(ACTIVITY_STOPPED, front)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
+        step()
+        event(ACTIVITY_RESUMED, front)
+        event(ACTIVITY_PAUSED, bank)
+        step()
+    }
+
+    private val pipCover = "Covered $bank (showing behind the app in front, as in picture-in-picture)"
+
+    @Test
+    fun aWindowInPictureInPictureOverAnotherLockedAppLeavesThatAppUnlocked() {
+        installWithLaunchScreen(bank, "Bank")
+        bankLeftInPictureInPictureOver(chat, frontLocked = true)
+        // The chat app, in front, is asked for first, and unlocked at once (face unlock).
+        assertEquals(listOf("Covered $chat (opened)"), covered(chat))
+        lockScreenOpensOver(chat, chat)
+        lockScreenClosesOnto(chat, chat, unlocked = true)
+        started()
+        repeat(6) { step() }
+        assertEquals(pipCover, covered(bank).last())
+        // Only the bank's lock screen comes up, over the chat app: opening the bank over it would
+        // count as leaving the chat app, which would then ask again.
+        val starts = started()
+        assertTrue(starts.toString(), lockScreensFor(starts, bank) > 0)
+        assertTrue(starts.toString(), starts.none { it.component?.packageName == bank })
+        lockScreenOpensOver(chat, bank)
+        lockScreenClosesOnto(chat, bank, unlocked = true)
+        assertTrue(LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.IMMEDIATE))
+        assertFalse(shield().isShowing)
+        // The bank's window floats on, unlocked: its session reached the screen.
+        step(LockStateTracker.ARRIVAL_GRACE_MS + 1_000)
+        assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+        assertTrue(LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.IMMEDIATE))
+    }
+
+    @Test
+    fun aWindowInPictureInPictureWaitsForAnotherAppsPromptToGo() {
+        installWithLaunchScreen(bank, "Bank")
+        bankLeftInPictureInPictureOver(chat, frontLocked = true)
+        // The chat app's lock screen is up, its prompt slow to finish (a fingerprint).
+        lockScreenOpensOver(chat, chat)
+        started()
+        repeat(6) { step() }
+        // The cover goes over both, and stays, but nothing starts that would take that prompt away.
+        assertEquals(pipCover, covered(bank).last())
+        repeat(20) { step() }
+        var starts = started()
+        assertEquals(starts.toString(), 0, lockScreensFor(starts, bank))
+        assertTrue(starts.toString(), starts.none { it.component?.packageName == bank || it.hasCategory(Intent.CATEGORY_HOME) })
+        assertTrue(shield().isShowing)
+        assertEquals(bank, shield().targetPackage)
+        // Unlocked: its lock screen goes, and only then the bank's comes up, under the cover.
+        lockScreenClosesOnto(chat, chat, unlocked = true)
+        step()
+        starts = started()
+        assertTrue(starts.toString(), lockScreensFor(starts, bank) > 0)
+        assertTrue(starts.toString(), starts.none { it.component?.packageName == bank })
+        assertTrue(shield().isShowing)
+        assertTrue(LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.IMMEDIATE))
+    }
+
+    /**
+     * The bank, left in picture-in-picture over the chat app, is covered; its lock screen is
+     * cancelled (Home), then the owner taps Unlock on the cover still held over Home and unlocks
+     * it there, the window still floating.
+     */
+    private fun unlockBankFromTheHeldCoverOverHome() {
+        bankLeftInPictureInPictureOver(chat)
+        repeat(6) { step() }
+        assertEquals(pipCover, covered(bank).last())
+        lockScreenOpensOver(chat, bank)
+        lockScreenClosesOnto(launcher, bank, unlocked = false)
+        assertTrue(shield().isShowing)
+        lockScreenOpensOver(launcher, bank)
+        lockScreenClosesOnto(launcher, bank, unlocked = true)
+    }
+
+    @Test
+    fun anAppUnlockedWhileItsWindowStaysInPictureInPictureStaysUnlocked() {
+        unlockBankFromTheHeldCoverOverHome()
+        val covers = covered(bank).size
+        step(LockStateTracker.ARRIVAL_GRACE_MS + 5_000)
+        repeat(8) { step() }
+        assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+        assertFalse(shield().isShowing)
+        // Expanding the window asks for nothing.
+        event(ACTIVITY_RESUMED, bank)
+        repeat(3) { step() }
+        assertEquals(covers, covered(bank).size)
+        assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+    }
+
+    @Test
+    fun anAppUnlockedInPictureInPictureLocksAgainOnceItsWindowCloses() {
+        unlockBankFromTheHeldCoverOverHome()
+        step()
+        assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+        event(ACTIVITY_STOPPED, bank)
+        repeat(2) { step() }
+        assertFalse(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+    }
+
+    @Test
+    fun aHeldCoverSaysWhatThePromptUnderItSaid() {
+        bankLeftInPictureInPictureOver(chat)
+        repeat(6) { step() }
+        lockScreenOpensOver(chat, bank)
+        assertTrue(shield().isShowing)
+        // The prompt ends in a lockout: the held cover, all the owner sees, says so, and keeps
+        // saying it when something tries to take it down.
+        InstantShieldOverlay.onPrompt(bank, showing = true)
+        InstantShieldOverlay.onPrompt(bank, showing = false, message = SecurityEngine.LOCKOUT_PERMANENT_MESSAGE, permanentLockout = true)
+        assertTrue(coverTexts().toString(), SecurityEngine.LOCKOUT_PERMANENT_MESSAGE in coverTexts())
+        shield().hide()
+        assertTrue(shield().isShowing)
+        assertTrue(coverTexts().toString(), SecurityEngine.LOCKOUT_PERMANENT_MESSAGE in coverTexts())
+        // The next prompt clears it.
+        InstantShieldOverlay.onPrompt(bank, showing = true)
+        assertFalse(coverTexts().toString(), SecurityEngine.LOCKOUT_PERMANENT_MESSAGE in coverTexts())
+    }
+
+    @Test
+    fun aLockedAppInPictureInPictureIsCoveredWhenProtectionResumes() {
+        vault.pauseProtection(15 * 60_000L)
+        step()
+        // Paused: the bank goes into picture-in-picture as the owner goes Home, a while ago (further
+        // back than the first look reaches)...
+        event(ACTIVITY_RESUMED, bank)
+        event(ACTIVITY_PAUSED, bank)
+        shadowOf(context.getSystemService(UsageStatsManager::class.java)).simulateTimeChange(-60_000)
+        step(70_000)
+        // ...and protection resumes while the owner opens something else.
+        vault.resumeProtection()
+        event(ACTIVITY_RESUMED, chat)
+        repeat(8) { step() }
+        assertEquals(pipCover, covered(bank).last())
+        assertTrue(shield().isShowing)
+    }
+
+    /** The screen came on, as usage access logs it. */
+    private fun screenCameOn() {
+        shadowOf(context.getSystemService(UsageStatsManager::class.java)).addEvent(
+            ShadowUsageStatsManager.EventBuilder.buildEvent()
+                .setPackage("android").setEventType(UsageEvents.Event.SCREEN_INTERACTIVE).setTimeStamp(System.currentTimeMillis())
+                .build()
+        )
+        Thread.sleep(2)
+    }
+
+    /**
+     * Protection is paused while the bank is paused and its process then dies without a word,
+     * then resumes as the owner opens the chat app; the screen comes on in between, a while ago
+     * ([recentScreenOn] false) or just now.
+     */
+    private fun resumeAfterADeadPause(recentScreenOn: Boolean) {
+        vault.pauseProtection(15 * 60_000L)
+        step()
+        event(ACTIVITY_RESUMED, bank)
+        event(ACTIVITY_PAUSED, bank)
+        if (!recentScreenOn) screenCameOn()
+        shadowOf(context.getSystemService(UsageStatsManager::class.java)).simulateTimeChange(-60_000)
+        step(70_000)
+        if (recentScreenOn) screenCameOn()
+        vault.resumeProtection()
+        event(ACTIVITY_RESUMED, chat)
+        repeat(8) { step() }
+    }
+
+    @Test
+    fun aPauseFromBeforeTheScreenLastCameOnIsNoWindowStillShowing() {
+        // The screen going off and on would have stopped any window still there, and paused it again.
+        resumeAfterADeadPause(recentScreenOn = false)
+        assertTrue(covered(bank).isEmpty())
+        assertFalse(shield().isShowing)
+    }
+
+    @Test
+    fun aPauseFromBeforeARecentScreenOnIsNoWindowStillShowingEither() {
+        resumeAfterADeadPause(recentScreenOn = true)
+        assertTrue(covered(bank).isEmpty())
+        assertFalse(shield().isShowing)
+    }
+
+    @Test
+    fun aLockedAppInPictureInPictureIsCoveredWhenTheEngineStarts() {
+        // Compatibility mode isn't running (the accessibility engine had the phone, say) while
+        // the bank goes into picture-in-picture, a while ago.
+        engine.destroy()
+        event(ACTIVITY_RESUMED, bank)
+        event(ACTIVITY_PAUSED, bank)
+        shadowOf(context.getSystemService(UsageStatsManager::class.java)).simulateTimeChange(-60_000)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(70_000))
+        event(ACTIVITY_RESUMED, chat)
+        // It takes over (or restarts) while the owner is in another app.
+        startEngine()
+        repeat(8) { step() }
+        assertEquals(pipCover, covered(bank).last())
+        assertTrue(shield().isShowing)
+    }
+
+    @Test
+    fun aClockChangeKeepsTheCoverHeldOverAWindowInPictureInPicture() {
+        bankLeftInPictureInPictureOver(chat)
+        repeat(6) { step() }
+        lockScreenOpensOver(chat, bank)
+        assertTrue(shield().isShowing)
+        // A while later (nothing left to read again), the clock is set.
+        shadowOf(context.getSystemService(UsageStatsManager::class.java)).simulateTimeChange(-60_000)
+        step()
+        context.sendBroadcast(Intent(Intent.ACTION_TIME_CHANGED))
+        repeat(3) { step() }
+        assertTrue(shield().isShowing)
+        assertTrue(isHeldOpen(bank))
+    }
+
+    @Test
+    fun aLockedPlayStoreIsCoveredWhenALockScreenClosesOntoIt() {
+        val play = "com.android.vending"
+        vault.setAppLock(play, true)
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        lockScreenOpensOver(bank, bank)
+        // Unlocked from a hidden notification's stand-in, whose link opens the bank's Play listing.
+        lockScreenClosesOnto(play, bank, unlocked = true, frontClass = "com.google.android.finsky.activities.MainActivity")
+        assertEquals(listOf("Covered $play (opened)"), covered(play))
     }
 }

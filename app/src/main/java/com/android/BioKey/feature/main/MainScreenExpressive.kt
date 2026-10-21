@@ -498,10 +498,9 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                 when (mode) {
                     ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP ->
                         disclosures.request(Disclosure.COMPATIBILITY) { IntentNavigationHelper.openNextCompatibilityPermission(context) }
-                    ProtectionEngine.Mode.OFF ->
+                    // Not running too: turning it off and on grants it again, so the disclosure comes first.
+                    ProtectionEngine.Mode.OFF, ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING ->
                         disclosures.request(Disclosure.ACCESSIBILITY) { IntentNavigationHelper.openAccessibilitySettings(context) }
-                    // Already agreed to and switched on: straight to the switch, to turn it off and on.
-                    ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> IntentNavigationHelper.openAccessibilitySettings(context)
                     else -> vault.resumeProtection()
                 }
             },

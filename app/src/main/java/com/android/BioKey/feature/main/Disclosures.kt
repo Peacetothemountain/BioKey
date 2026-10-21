@@ -88,7 +88,7 @@ enum class Disclosure(
     COMPATIBILITY(
         Icons.Default.AppSettingsAlt,
         "BioKey uses usage access and display over other apps",
-        reads = listOf("Which app was just opened (app usage events on this phone)"),
+        reads = listOf("Which app was just opened, and whether a locked app is still on screen (app usage events on this phone)"),
         usedFor = listOf(
             "Covering apps you've locked until you authenticate, without the Accessibility service",
             "Drawing BioKey's lock cover over a locked app as it opens"

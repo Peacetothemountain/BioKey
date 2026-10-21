@@ -2,15 +2,20 @@ package com.android.BioKey
 
 import android.app.Notification
 import android.app.NotificationManager
+import android.content.ComponentName
 import android.content.Context
+import android.os.Looper
 import android.provider.Settings
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.lock.UsageWatchService
+import java.time.Duration
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -77,5 +82,29 @@ class CompatibilityStatusTest {
         ShadowSettings.setCanDrawOverlays(true)
         assertNull(ProtectionEngine.missingCompatibilityPermissions(context))
         assertEquals(false, UsageWatchService.isRunning)
+    }
+
+    private fun alerts() = shadowOf(context.getSystemService(NotificationManager::class.java)).allNotifications
+        .map { it.extras.getCharSequence(Notification.EXTRA_TEXT).toString() }
+
+    @Test
+    fun aSwitchedOnServiceThatNeverConnectsIsSaidSo() {
+        SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        // Switched on in Settings, but Android stopped restarting it (it kept crashing).
+        Settings.Secure.putString(
+            context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+            ComponentName(context, BioKeyAccessibilityService::class.java).flattenToString()
+        )
+        ProtectionAlerts.checkAccessibilityConnects(context)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(11))
+        assertTrue(alerts().toString(), alerts().any { "app lock service stopped" in it })
+    }
+
+    @Test
+    fun aSwitchedOffServiceIsNoAlertAtStart() {
+        SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        ProtectionAlerts.checkAccessibilityConnects(context)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(11))
+        assertFalse(alerts().toString(), alerts().any { "app lock service stopped" in it })
     }
 }

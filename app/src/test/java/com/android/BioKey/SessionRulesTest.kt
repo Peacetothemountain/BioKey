@@ -229,6 +229,54 @@ class SessionRulesTest {
     }
 
     @Test
+    fun onlyTheFirstAppInFrontAfterAnUnlockCanBeWhereItsLockScreenClosed() {
+        // Unlocked, but the lock screen closed onto Home (the app crashed, or Home was pressed)...
+        LockStateTracker.onAppUnlocked(bank)
+        rules.noteUnlocked(bank, SystemClock.elapsedRealtime())
+        rules.noteInFront(launcher, SystemClock.elapsedRealtime())
+        screen(launcher)
+        // ...then a helper, within the landing window: not where the lock screen closed.
+        advance(1_000)
+        rules.noteInFront(dialer, SystemClock.elapsedRealtime())
+        screen(dialer)
+        advance(ARRIVAL_GRACE_MS)
+        assertFalse(unlocked(bank))
+    }
+
+    @Test
+    fun unlockingStraightOntoAHelperLands() {
+        LockStateTracker.onAppUnlocked(bank)
+        rules.noteUnlocked(bank, SystemClock.elapsedRealtime())
+        rules.noteInFront(dialer, SystemClock.elapsedRealtime())
+        screen(dialer)
+        advance(ARRIVAL_GRACE_MS + 1_000)
+        assertTrue(unlocked(bank))
+    }
+
+    @Test
+    fun unlockingOntoAHelperThatReportedBeforeTheUnlockLands() {
+        // Its window reported while the lock screen was up, and again as the lock screen closed onto it.
+        rules.noteInFront(dialer, SystemClock.elapsedRealtime())
+        LockStateTracker.onAppUnlocked(bank)
+        rules.noteUnlocked(bank, SystemClock.elapsedRealtime())
+        rules.noteInFront(dialer, SystemClock.elapsedRealtime())
+        screen(dialer)
+        advance(ARRIVAL_GRACE_MS + 1_000)
+        assertTrue(unlocked(bank))
+    }
+
+    @Test
+    fun aHelperAfterTheLandingWindowIsNoLanding() {
+        LockStateTracker.onAppUnlocked(bank)
+        rules.noteUnlocked(bank, SystemClock.elapsedRealtime())
+        advance(SessionRules.UNLOCK_LANDING_MS)
+        rules.noteInFront(dialer, SystemClock.elapsedRealtime())
+        screen(dialer)
+        advance(ARRIVAL_GRACE_MS)
+        assertFalse(unlocked(bank))
+    }
+
+    @Test
     fun unlockingOntoAnythingElseStillNeedsTheAppToArrive() {
         LockStateTracker.onAppUnlocked(bank)
         assertFalse(rules.noteUnlockedOnto(bank, game))

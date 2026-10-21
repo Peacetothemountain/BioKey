@@ -62,6 +62,8 @@ class InstantShieldOverlay(
         private const val FAST_VERIFY_MS = 60L
         private const val TIMEOUT_MS = 700L
         private const val MAX_ATTEMPTS = 4
+        /** What a held cover ([holdWhile]) says while its lock screen has nothing else to say. */
+        private const val HELD_TEXT = "Still on screen (in picture-in-picture, say). Unlock it to carry on."
 
         @SuppressLint("StaticFieldLeak")
         @Volatile
@@ -87,14 +89,18 @@ class InstantShieldOverlay(
         }
 
         /**
-         * A lock screen's prompt for [targetPackage] came up ([showing]) or went. A cover held over
-         * that lock screen ([holdWhile]) hides its buttons while the prompt is up, and shows them
-         * again after, as the lock screen's own cover does under it.
+         * A lock screen's prompt for [targetPackage] came up ([showing]) or went, with [message]
+         * (an error, or the lockout one when [permanentLockout]) if it left one. A cover held over
+         * that lock screen ([holdWhile]) hides its buttons while the prompt is up, and after shows
+         * them again with that message, as the lock screen's own cover does under it: it is all
+         * the owner sees.
          */
-        fun onPrompt(targetPackage: String, showing: Boolean) {
+        fun onPrompt(targetPackage: String, showing: Boolean, message: String? = null, permanentLockout: Boolean = false) {
             val current = activeInstance ?: return
             if (!current.isShowing || current.targetPackage != targetPackage) return
+            current.heldStatus = if (showing) null else message?.let { it to permanentLockout }
             if (current.isHeld) {
+                if (showing) current.cover.setStatus(null, permanentLockout = false) else current.showHeldStatus()
                 current.cover.setActionsVisible(!showing)
             } else if (!showing && current.holdWhile?.invoke(targetPackage) == true) {
                 // Held without ever being asked to go (put up over a lock screen already there):
@@ -117,6 +123,11 @@ class InstantShieldOverlay(
     private var isDestroyed = false
     /** Kept up when asked to go, because [holdWhile] said so; until the next cover or a real hide. */
     private var isHeld = false
+    /**
+     * What the last prompt for this cover's target left on its lock screen (the message, and
+     * whether it is a lockout), for a held cover to say instead of [HELD_TEXT] ([onPrompt]).
+     */
+    private var heldStatus: Pair<String, Boolean>? = null
     /** The window has been added (a view only counts as attached after its first traversal). */
     private var windowAdded = false
 
@@ -283,6 +294,7 @@ class InstantShieldOverlay(
         this.targetPackage = targetPackage
         attempt = 0
         isHeld = false
+        heldStatus = null
         generation = ++coversShown
         bindTarget(targetPackage)
         // Same look as the lock activity while its prompt comes up: identity only, no buttons.
@@ -296,6 +308,13 @@ class InstantShieldOverlay(
             ) {
                 goHome()
             }
+            hide()
+        }
+        // After a lockout (a held cover saying so) the primary button locks the phone, as on the
+        // lock screen, where that can be done; it is hidden where it can't.
+        cover.onLockDevice = {
+            LockStateTracker.markLockAbandoned(targetPackage)
+            if (!BioKeyAccessibilityService.lockDevice()) goHome()
             hide()
         }
         return try {
@@ -371,8 +390,15 @@ class InstantShieldOverlay(
     private fun hold(target: String) {
         if (!isHeld) DiagnosticLog.log("Kept $target covered: it is still on screen")
         isHeld = true
-        cover.setStatus("Still on screen (in picture-in-picture, say). Unlock it to carry on.", permanentLockout = false)
-        cover.setActionsVisible(!SecurityEngine.INSTANCE.isAuthenticatingFor(target))
+        val prompting = SecurityEngine.INSTANCE.isAuthenticatingFor(target)
+        if (prompting) cover.setStatus(null, permanentLockout = false) else showHeldStatus()
+        cover.setActionsVisible(!prompting)
+    }
+
+    /** A held cover says what the last prompt left on its lock screen, or else [HELD_TEXT]. */
+    private fun showHeldStatus() {
+        val (message, lockout) = heldStatus ?: (HELD_TEXT to false)
+        cover.setStatus(message, lockout)
     }
 
     private fun hide(force: Boolean) {

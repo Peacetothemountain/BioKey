@@ -95,7 +95,8 @@ object LockLauncher {
             ).send(context, 0, null, null, null, null, sendOptions.toBundle())
             return true
         } catch (e: Exception) {
-            Log.w(TAG, "PendingIntent start failed, trying startActivity: ${e.message}")
+            // Never the message: for another app's launch screen it names that app.
+            Log.w(TAG, "PendingIntent start failed, trying startActivity: ${e.javaClass.simpleName}")
         }
         return try {
             val options = ActivityOptions.makeCustomAnimation(context, 0, 0)
@@ -104,7 +105,8 @@ object LockLauncher {
             context.startActivity(intent, options.toBundle())
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Start from the background failed", e)
+            // Kept in release builds: only the kind of failure, as logs mustn't tell which apps are locked.
+            Log.e(TAG, "Start from the background failed: ${e.javaClass.simpleName}")
             false
         }
     }

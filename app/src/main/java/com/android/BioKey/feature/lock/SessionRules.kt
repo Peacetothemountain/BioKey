@@ -26,7 +26,7 @@ import com.android.BioKey.core.security.LockStateTracker
  * 5. Unlocked apps on screen are remembered, so step 2 can notice them leave.
  *
  * And, outside a pass: an app whose lock screen closed onto a helper it had open has arrived,
- * and hopped there ([noteUnlockedOnto]).
+ * and hopped there ([noteUnlocked], [noteInFront]).
  */
 internal class SessionRules(private val env: Env) {
 
@@ -37,6 +37,12 @@ internal class SessionRules(private val env: Env) {
         const val EXIT_SETTLE_MS = 500L
         /** A window that hides from accessibility services: its owner can't be read. */
         const val UNIDENTIFIED_APP = "biokey:unidentified-app"
+        /**
+         * After an unlock, how long the screen the lock screen closes onto may be a helper the app
+         * had open over itself ([noteInFront]): longer than an unreadable window is taken to be
+         * the unlocked app's, as a sign-in link can cold-start a browser.
+         */
+        const val UNLOCK_LANDING_MS = 5_000L
     }
 
     interface Env {
@@ -80,11 +86,31 @@ internal class SessionRules(private val env: Env) {
     private val onScreenSessions = HashSet<String>()
     private val pendingLeaves = HashMap<String, Long>()
     private val returningSince = HashMap<String, Long>()
+    /** The app unlocked last, and when, until the first app in front after that ([noteInFront]). */
+    private var unlockLanding: Pair<String, Long>? = null
 
     /** A window event put [pkg], unlocked, in front: it is in use. */
     fun noteOnScreen(pkg: String) {
         pendingLeaves.remove(pkg)
         onScreenSessions += pkg
+    }
+
+    /** [pkg] was just unlocked (at [now]): the next app in front says where its lock screen closed. */
+    fun noteUnlocked(pkg: String, now: Long) {
+        unlockLanding = pkg to now
+    }
+
+    /**
+     * [front] came to the front at [now] (BioKey's own screens and floating windows aside). Only
+     * the first app in front after an unlock says where its lock screen closed onto: a helper the
+     * unlocked app had open over itself, within [UNLOCK_LANDING_MS], is its session arriving
+     * ([noteUnlockedOnto]). Home, Recents or another app first, and the session must still reach
+     * the screen in time, as in compatibility mode: a helper opened from there is no landing.
+     */
+    fun noteInFront(front: String, now: Long) {
+        val (unlocked, at) = unlockLanding ?: return
+        unlockLanding = null
+        if (now - at < UNLOCK_LANDING_MS) noteUnlockedOnto(unlocked, front)
     }
 
     /**
@@ -108,6 +134,7 @@ internal class SessionRules(private val env: Env) {
         onScreenSessions.clear()
         pendingLeaves.clear()
         returningSince.clear()
+        unlockLanding = null
     }
 
     fun reconcile(screen: Screen): Outcome {

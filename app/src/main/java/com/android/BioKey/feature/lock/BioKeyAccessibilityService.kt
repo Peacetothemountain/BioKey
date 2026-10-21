@@ -75,13 +75,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
         /** After an unlock, how long an unreadable window that opens is taken to be the unlocked app's. */
         private const val UNLOCK_ATTRIBUTION_MS = 2_000L
 
-        /**
-         * After an unlock, how long the screen the lock screen closes onto may be a helper the app
-         * had open over itself ([SessionRules.noteUnlockedOnto]): longer than [UNLOCK_ATTRIBUTION_MS],
-         * as a sign-in link can cold-start a browser.
-         */
-        private const val UNLOCK_LANDING_MS = 5_000L
-
         /** How many unreadable windows are remembered as some app's ([attributedWindows]). */
         private const val MAX_ATTRIBUTED_WINDOWS = 16
 
@@ -170,8 +163,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private var expectedLaunch: Pair<String, Long>? = null
     /** The app unlocked last (package, when), for an unreadable window it opens: see [attributeUnreadable]. */
     private var recentUnlock: Pair<String, Long>? = null
-    /** The app unlocked last (package, when), until it or a helper it had open is in front: see [onAppInFront]. */
-    private var unlockLanding: Pair<String, Long>? = null
     /** Apps whose every window on screen has a [WindowMask] patch: covered already. */
     private var maskedApps: Set<String> = emptySet()
 
@@ -201,7 +192,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
                         foregroundPackage = null
                         expectedLaunch = null
                         recentUnlock = null
-                        unlockLanding = null
                         rules.reset()
                         isConfirmingDeviceCredential = false
                         armMasks()
@@ -345,7 +335,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             if (pkg != SELF_PROTECTION_PENDING_KEY) {
                 val now = SystemClock.elapsedRealtime()
                 recentUnlock = pkg to now
-                unlockLanding = pkg to now
+                rules.noteUnlocked(pkg, now)
             }
             if (launcherInFront) watchLauncher(true)
         }
@@ -1244,14 +1234,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
         foregroundPackage = target
 
-        // The app just unlocked is in front, or BioKey's lock screen closed onto a helper it had
-        // open over itself: then its session has arrived and hops there (compatibility mode does
-        // the same). Anything else, and it must still reach the screen in time.
-        unlockLanding?.let { (unlocked, at) ->
-            val landed = SystemClock.elapsedRealtime() - at >= UNLOCK_LANDING_MS ||
-                target in PasswordManager.aliasesOf(unlocked) || rules.noteUnlockedOnto(unlocked, target)
-            if (landed) unlockLanding = null
-        }
+        // The first app in front after an unlock: if BioKey's lock screen closed onto a helper the
+        // unlocked app had open over itself, its session has arrived and hops there (compatibility
+        // mode does the same). Anything else, and it must still reach the screen in time.
+        rules.noteInFront(target, SystemClock.elapsedRealtime())
 
         if (isLauncher || !vault.isAppLocked(target)) {
             // A tap-predicted cover outlives launcher events (the app is still on its way) but

@@ -432,7 +432,8 @@ class LockScreenActivity : ComponentActivity() {
                 }
                 cover.setStatus(text, isPermanentLockout)
                 cover.setActionsVisible(true)
-                InstantShieldOverlay.onPrompt(pkg, showing = false)
+                // A cover held over this screen hides it: it says the same.
+                InstantShieldOverlay.onPrompt(pkg, showing = false, message = text, permanentLockout = isPermanentLockout)
             }
         )
     }

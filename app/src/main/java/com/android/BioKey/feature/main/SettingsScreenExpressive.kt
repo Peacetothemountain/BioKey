@@ -158,8 +158,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         when (mode) {
             ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP ->
                 disclosures.request(Disclosure.COMPATIBILITY) { IntentNavigationHelper.openNextCompatibilityPermission(context) }
-            // Already agreed to and switched on: straight to the switch, to turn it off and on.
-            ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> IntentNavigationHelper.openAccessibilitySettings(context)
+            // Off, or on but not running (turning it off and on grants it again): disclosure first.
             else -> disclosures.request(Disclosure.ACCESSIBILITY) { IntentNavigationHelper.openAccessibilitySettings(context) }
         }
     }

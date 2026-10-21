@@ -156,4 +156,21 @@ class CompatibilityActivityStatesTest {
         states.clear()
         assertFalse(states.knows(bank))
     }
+
+    @Test
+    fun aClockChangeKeepsWhatEachActivityDidLast() {
+        // A window in picture-in-picture, paused at a time the clock has since gone back past.
+        val states = ActivityStates()
+        val pip = event(ACTIVITY_PAUSED, bank, 5_000)
+        states.apply(pip)
+        states.apply(event(ACTIVITY_STOPPED, chat, 5_000))
+        states.rebase()
+        assertTrue(states.isPaused(pip.activity))
+        // Whatever the new clock says applies, earlier as it reads...
+        assertTrue(states.apply(event(ACTIVITY_RESUMED, bank, 100)))
+        assertTrue(states.isResumed(bank))
+        // ...and stopped activities still go at the next prune.
+        states.prune(50)
+        assertFalse(states.knows(chat))
+    }
 }
