@@ -774,6 +774,15 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun isOwnWindow(window: AccessibilityWindowInfo): Boolean =
         ownTitle != null && window.title?.toString() == ownTitle
 
+    /**
+     * BioKey's own screen is in front: the last window event was its main screen's, with no other
+     * app's since, and the window in front, [front], is BioKey's or can't be read (BioKey's own
+     * can't), or isn't known. A locked app coming to the front by itself never passes: its window
+     * event makes it the last one in front ([lock] too).
+     */
+    private fun isOwnScreenInFront(front: String?): Boolean =
+        foregroundPackage == packageName && (front == null || front == packageName || front == SessionRules.UNIDENTIFIED_APP)
+
     /** The window the user is using: the active one, else a focused one. */
     private fun frontWindow(list: List<AccessibilityWindowInfo>): AccessibilityWindowInfo? {
         val apps = list.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
@@ -931,6 +940,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 Log.i(TAG, "Locked app $cover in picture-in-picture couldn't be masked; bringing it out")
                 coverFromPip(cover, pipWindows[cover])
             } else {
+                // Beside BioKey's own screen, unlocked and in front (split screen, as protection
+                // resumes from it, say): its lock screen closes back onto BioKey, a trip BioKey
+                // starts itself rather than the owner leaving it.
+                if (cover != frontApp && isPhoneScreen(displayOf[cover]) && isOwnScreenInFront(frontApp)) LockStateTracker.beginOwnLockScreenHop(cover)
                 lock(cover, "on screen without a session", displayOf[cover])
             }
             return
@@ -1150,7 +1163,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
             val inFront = list?.let(::frontWindow)?.let(::packageOf)
             when {
                 // It wouldn't leave: its lock screen goes up under it, its patch stays over it.
-                stillInPip -> lock(pkg, "in picture-in-picture without a session")
+                // Over BioKey's own screen, that lock screen closes back onto BioKey (a trip BioKey
+                // starts itself); one that did come out has pushed BioKey off screen itself.
+                stillInPip -> {
+                    if (isOwnScreenInFront(inFront)) LockStateTracker.beginOwnLockScreenHop(pkg)
+                    lock(pkg, "in picture-in-picture without a session")
+                }
                 mayBe(pkg, inFront) -> lock(pkg, "opened from picture-in-picture")
                 else -> shield.hide()
             }
@@ -1188,9 +1206,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (isSystemOrOverlay(target, cls)) return
         // BioKey's backup file picker is the one trip its own session survives.
         if (LockStateTracker.isOwnPickerActive() && target !in ForegroundRules.DOCUMENTS_UI) LockStateTracker.lockOwnApp()
-        // Only compatibility mode brings another app's lock screen up over BioKey as a trip; one
-        // still running when this engine took over ends here as it would there.
-        if (LockStateTracker.isOwnLockScreenHopActive()) LockStateTracker.lockOwnApp()
+        // Another app's lock screen BioKey brought up over its own screen is a trip it started
+        // itself ([reconcileNow], [onPipExpandOver]): any other app coming to the front ends it.
+        // The app it is for, coming back beside BioKey once unlocked, is that lock screen closing,
+        // whose own end ends the trip unless BioKey is back (LockStateTracker.endOwnLockScreenHop):
+        // its window can say so before BioKey's screen has resumed.
+        if (!LockStateTracker.isOwnLockScreenHopFor(target) && LockStateTracker.isOwnLockScreenHopActive()) LockStateTracker.lockOwnApp()
 
         val isLauncher = isLauncher(target)
         // Recents lives in the launcher: watch it (and taps there) while it's in front. Turning

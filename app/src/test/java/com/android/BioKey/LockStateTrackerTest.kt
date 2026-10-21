@@ -1,5 +1,6 @@
 package com.android.BioKey
 
+import android.os.SystemClock
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
@@ -325,7 +326,7 @@ class LockStateTrackerTest {
     @Test
     fun anotherAppsLockScreenOverBioKeyIsATripBioKeyStartedItself() {
         LockStateTracker.onOwnAppUnlocked()
-        LockStateTracker.beginOwnLockScreenHop()
+        LockStateTracker.beginOwnLockScreenHop(bank)
         assertTrue(LockStateTracker.isOwnTripActive())
         LockStateTracker.onOwnAppStopped()
         advance(60_000L)
@@ -335,22 +336,69 @@ class LockStateTrackerTest {
         assertFalse(LockStateTracker.isOwnLockScreenHopActive())
         assertTrue(LockStateTracker.isOwnAppUnlocked())
 
-        LockStateTracker.beginOwnLockScreenHop()
+        LockStateTracker.beginOwnLockScreenHop(bank)
         LockStateTracker.lockAll()
         assertFalse(LockStateTracker.isOwnLockScreenHopActive())
 
         // Without an owner session in front there is nothing to keep.
-        LockStateTracker.beginOwnLockScreenHop()
+        LockStateTracker.beginOwnLockScreenHop(bank)
         assertFalse(LockStateTracker.isOwnLockScreenHopActive())
     }
 
     @Test
     fun aLockScreenTripThatRunsOutAwayEndsBioKeysSession() {
         LockStateTracker.onOwnAppUnlocked()
-        LockStateTracker.beginOwnLockScreenHop()
+        LockStateTracker.beginOwnLockScreenHop(bank)
         LockStateTracker.onOwnAppStopped()
         advance(2 * 60_000L + 1_000L)
         assertFalse(LockStateTracker.isOwnTripActive())
         assertFalse(LockStateTracker.isOwnAppUnlocked())
+    }
+
+    @Test
+    fun aLockScreenTripDoesNotStretchBioKeysIdleLimit() {
+        // Nobody has touched BioKey for a while when a lock screen comes up over it by itself (a
+        // timed pause running out, say): its session still ends when the idle limit is reached.
+        LockStateTracker.onOwnAppUnlocked()
+        advance(LockStateTracker.OWN_APP_IDLE_MS - 10_000L)
+        LockStateTracker.beginOwnLockScreenHop(bank)
+        LockStateTracker.onOwnAppStopped()
+        advance(20_000L)
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
+
+        // A trip the owner asked for still counts as using BioKey.
+        LockStateTracker.onOwnAppUnlocked()
+        advance(LockStateTracker.OWN_APP_IDLE_MS - 10_000L)
+        LockStateTracker.beginOwnPicker()
+        LockStateTracker.onOwnAppStopped()
+        advance(20_000L)
+        assertTrue(LockStateTracker.isOwnAppUnlocked())
+    }
+
+    @Test
+    fun aLockScreenTripEndsWithItsLockScreen() {
+        // Left for somewhere no engine sees (a work app, in compatibility mode): BioKey asks again.
+        LockStateTracker.onOwnAppUnlocked()
+        LockStateTracker.beginOwnLockScreenHop(bank)
+        LockStateTracker.onOwnAppStopped()
+        advance(1_000L)
+        LockStateTracker.endOwnLockScreenHop(shownSince = SystemClock.elapsedRealtime())
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
+
+        // Closed back onto BioKey, whose screen is back first: nothing more to end.
+        LockStateTracker.onOwnAppUnlocked()
+        LockStateTracker.beginOwnLockScreenHop(bank)
+        val shown = SystemClock.elapsedRealtime()
+        LockStateTracker.onOwnAppStopped()
+        advance(1_000L)
+        LockStateTracker.onOwnAppResumed()
+        // The next lock screen is asked for over it, before this one has stopped: that trip is its own.
+        advance(100L)
+        LockStateTracker.beginOwnLockScreenHop(chat)
+        LockStateTracker.endOwnLockScreenHop(shown)
+        assertTrue(LockStateTracker.hasActiveOwnerSession())
+        assertTrue(LockStateTracker.isOwnLockScreenHopActive())
+        assertTrue(LockStateTracker.isOwnLockScreenHopFor(chat))
+        assertFalse(LockStateTracker.isOwnLockScreenHopFor(bank))
     }
 }

@@ -675,6 +675,15 @@ class UsageWatchService : Service() {
         val screenLocked = lazy(LazyThreadSafetyMode.NONE) { batch.deviceLocked || keyguard.isKeyguardLocked }
         // A look back from behind the keyguard is about before the phone was locked: nothing to cover.
         if (batch.fresh && screenLocked.value) return
+        // An unlocked app back on screen is in use before anything else is looked at: one that
+        // hopped to BioKey's lock screen from beside the app in front (split screen) comes back
+        // with that app, which may well be the newer resume, and mustn't have its hop ended, as
+        // if it had gone elsewhere, by that app coming to the front first.
+        for (pkg in resumed) {
+            if (vault.isAppLocked(pkg) && activities.isResumed(pkg) && LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))) {
+                LockStateTracker.onAppVisible(pkg)
+            }
+        }
         newest?.let(::handleForeground)
         for (pkg in resumed) if (pkg != newest?.app) handleOtherResume(pkg)
         // A look back: a locked app that last resumed before its window (beside another app in
@@ -756,6 +765,14 @@ class UsageWatchService : Service() {
         foregroundClass = activityClass
         sideVisible -= pkg
         pausedBehind -= pkg
+        if (pkg == packageName && activityClass == LOCK_SCREEN_CLASS) {
+            // BioKey brought its lock screen up over them: an app beside the one in front that has
+            // a session hops there, as the one in front does (below), and once that lock screen
+            // closes onto them it is back (onBatch) rather than having left.
+            for (entry in sideVisible.entries) {
+                if (vault.isAppLocked(entry.key) && LockStateTracker.isAppUnlocked(entry.key, vault.getTimeoutMode(entry.key))) entry.setValue(true)
+            }
+        }
         for (entry in sideVisible.entries) {
             if (entry.value && hopTo(pkg, activityClass, entry.key) == null) entry.setValue(false)
         }
@@ -808,12 +825,16 @@ class UsageWatchService : Service() {
      * starts itself, and only as far as they go: its backup file picker, the settings pages it
      * opened, or another app's lock screen it brought up over itself ([launchLockScreen]), which
      * no other app is part of. Anything else ends them, and the session with them, as in the
-     * accessibility engine.
+     * accessibility engine. That lock screen closing onto a split screen BioKey is half of isn't
+     * anything else: the app it was for, or the other half, can be the newer resume, and BioKey's
+     * own screen, back beside it, ends that trip itself ([LockStateTracker.onOwnAppResumed]).
      */
     private fun endOwnTrips(pkg: String) {
         if (LockStateTracker.isOwnPickerActive() && pkg !in ForegroundRules.DOCUMENTS_UI) LockStateTracker.lockOwnApp()
         if (!SelfProtectionDetector.isHostPackage(pkg) && LockStateTracker.isExternalNavigationActive()) LockStateTracker.lockOwnApp()
-        if (LockStateTracker.isOwnLockScreenHopActive()) LockStateTracker.lockOwnApp()
+        if (!LockStateTracker.isOwnLockScreenHopFor(pkg) && !isOwnScreenResumed() && LockStateTracker.isOwnLockScreenHopActive()) {
+            LockStateTracker.lockOwnApp()
+        }
     }
 
     /**
@@ -834,6 +855,11 @@ class UsageWatchService : Service() {
     /**
      * [pkg] came to the screen since the last look, but isn't the newest: the other half of a split
      * screen, or an app a dialog or sheet opened over straight away. It is showing too.
+     *
+     * Back within its abandon cooldown (its lock screen went Home a moment ago, as one that can't
+     * have the whole screen does, and the pair was switched straight back to), it isn't covered
+     * yet, but it is kept track of as on screen, so it is once the cooldown ends ([recheck],
+     * [reconcile]): nothing else would look at it again while it stays there.
      */
     private fun handleOtherResume(pkg: String) {
         if (pkg == packageName || pkg == foreground || !vault.isAppLocked(pkg)) return
@@ -843,7 +869,17 @@ class UsageWatchService : Service() {
             sideVisible[pkg] = hopTo(foreground, foregroundClass, pkg) != null
             return
         }
-        if (!mayCover(pkg)) return
+        if (!mayCover(pkg)) {
+            if (LockStateTracker.isRecentlyAbandoned(pkg)) {
+                // Beside the app in front, or paused behind it: covered as such once the cooldown ends.
+                if (activities.isResumed(pkg)) {
+                    sideVisible.putIfAbsent(pkg, false)
+                } else {
+                    pausedBehind.getOrPut(pkg) { SystemClock.elapsedRealtime() }
+                }
+            }
+            return
+        }
         when {
             activities.isResumed(pkg) -> lock(pkg, "on screen beside another app")
             frontSeeThrough -> lock(pkg, "opened under a dialog")
@@ -993,18 +1029,20 @@ class UsageWatchService : Service() {
      * it. Over a locked app (its session, or its lock screen), BioKey, or a helper or screen an
      * unlocked app is hopping to (a sign-in tab it opened, say), only [pkg]'s lock screen comes
      * up: opening [pkg] there would count as the user leaving that app (or ending its hop), which
-     * would then ask again although they never left it. Going to BioKey's lock screen is a hop,
-     * so it keeps its session and is back in front once [pkg] is unlocked; BioKey's own session
-     * survives it too ([launchLockScreen]). [pkg] then stays in picture-in-picture, under the
-     * held cover until it is unlocked. Anywhere else (Home, an ordinary app) [pkg] is opened, to
-     * bring it out of picture-in-picture.
+     * would then ask again although they never left it. The same beside an ordinary app in front,
+     * with an unlocked app, or BioKey's own unlocked screen, as the other half of a split screen
+     * ([isInUseBeside]): opened, [pkg] would push that one off screen too. Going to BioKey's lock
+     * screen is a hop, so the app keeps its session and is back once [pkg] is unlocked; BioKey's
+     * own session survives it too ([launchLockScreen]). [pkg] then stays in picture-in-picture,
+     * under the held cover until it is unlocked. Anywhere else (Home, an ordinary app on its own)
+     * [pkg] is opened, to bring it out of picture-in-picture.
      */
     private fun askForShowingPaused(pkg: String) {
         LockStateTracker.setRegularLockPending(pkg)
         val front = foreground
-        if (front != null && front != pkg &&
+        val overInUse = front != null && front != pkg &&
             (front == packageName || vault.isAppLocked(front) || hopTo(front, foregroundClass, pkg) != null)
-        ) {
+        if (overInUse || isInUseBeside(pkg)) {
             if (!launchLockScreen(pkg)) goHome()
             return
         }
@@ -1012,6 +1050,15 @@ class UsageWatchService : Service() {
         LockLauncher.launchApp(this, PasswordManager.launchPackage(pkg))
         handler.postDelayed({ onExpandWaitOver(pkg) }, PIP_EXPAND_WAIT_MS)
     }
+
+    /**
+     * Something other than [pkg] is in use beside the app in front, the other half of a split
+     * screen: a locked app with a session, or BioKey's own screen with BioKey unlocked.
+     */
+    private fun isInUseBeside(pkg: String): Boolean =
+        sideVisible.keys.any {
+            it != pkg && activities.isResumed(it) && vault.isAppLocked(it) && LockStateTracker.isAppUnlocked(it, vault.getTimeoutMode(it))
+        } || (isOwnScreenShowing() && LockStateTracker.hasActiveOwnerSession())
 
     /**
      * After each look: the cover held over [deferred] while another lock screen or prompt was up
@@ -1128,15 +1175,26 @@ class UsageWatchService : Service() {
 
     /**
      * Asks for [pkg]'s lock screen (and, with [reprompt], its prompt again). Over BioKey's own
-     * screen, unlocked, that is a trip BioKey starts itself: the lock screen closes back onto
-     * BioKey, which then keeps its session rather than asking again although the owner never left
-     * it ([LockStateTracker.beginOwnLockScreenHop]). Anything else coming to the front ends that
-     * ([endOwnTrips]).
+     * screen, unlocked, in front or beside the app in front ([isOwnScreenShowing]), that is a trip
+     * BioKey starts itself: the lock screen closes back onto BioKey, which then keeps its session
+     * rather than asking again although the owner never left it
+     * ([LockStateTracker.beginOwnLockScreenHop]). Anything else coming to the front ends that
+     * ([endOwnTrips]), as does the lock screen stopping anywhere but over BioKey.
      */
     private fun launchLockScreen(pkg: String, reprompt: Boolean = false): Boolean {
-        if (foreground == packageName) LockStateTracker.beginOwnLockScreenHop()
+        if (isOwnScreenShowing()) LockStateTracker.beginOwnLockScreenHop(pkg)
         return LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = reprompt)
     }
+
+    /**
+     * BioKey's own screen (not its lock screen) is in front, or resumed beside the app in front
+     * (the other half of a split screen): a lock screen brought up now comes up over it.
+     */
+    private fun isOwnScreenShowing(): Boolean =
+        (foreground == packageName && foregroundClass != LOCK_SCREEN_CLASS) || isOwnScreenResumed()
+
+    /** Some screen of BioKey's own other than its lock screen is resumed, as usage access last said. */
+    private fun isOwnScreenResumed(): Boolean = activities.isResumed(packageName, except = "$packageName/$LOCK_SCREEN_CLASS")
 
     private fun onShieldTimeout(target: String, attempt: Int): Boolean {
         if (!isExposed(target)) return false
@@ -1265,6 +1323,9 @@ internal class ActivityStates {
     fun pausedActivitiesOf(app: String): List<String> = byActivity.filter { (_, s) -> s.app == app && s.type == PAUSED }.keys.toList()
 
     fun isResumed(app: String): Boolean = byActivity.values.any { it.app == app && it.type == RESUMED }
+
+    /** Whether some activity of [app] other than [except] ([UsageEvent.activity]) is resumed. */
+    fun isResumed(app: String, except: String): Boolean = byActivity.any { (activity, s) -> activity != except && s.app == app && s.type == RESUMED }
 
     /** Some activity of [app] is resumed or paused: it is (or may still be) on screen. */
     fun isVisible(app: String): Boolean = byActivity.values.any { it.app == app && it.type != STOPPED }

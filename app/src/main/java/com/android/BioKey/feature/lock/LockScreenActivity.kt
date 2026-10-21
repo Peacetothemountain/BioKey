@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.OutcomeReceiver
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import android.view.MotionEvent
 import androidx.activity.ComponentActivity
@@ -118,6 +119,11 @@ class LockScreenActivity : ComponentActivity() {
      * came back (a quick switch, say), and it brings its own lock screen.
      */
     private var ownedShield = Long.MAX_VALUE
+    /**
+     * When this screen was created or last resumed ([SystemClock.elapsedRealtime]): a trip of
+     * BioKey's own begun before then came up through it ([LockStateTracker.endOwnLockScreenHop]).
+     */
+    private var shownAt = 0L
 
     private val isCurrent get() = current?.get() === this
 
@@ -131,6 +137,7 @@ class LockScreenActivity : ComponentActivity() {
         noTransition(open = true)
         super.onCreate(savedInstanceState)
         current = WeakReference(this)
+        shownAt = SystemClock.elapsedRealtime()
         vault = SecurityVault.getInstance(this)
 
         if (!readIntent(intent)) {
@@ -219,6 +226,7 @@ class LockScreenActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         current = WeakReference(this)
+        shownAt = SystemClock.elapsedRealtime()
         isLockScreenResumed = true
         activeLockedTarget = lockedPackage
         if (!isSelfProtection && isTargetUnlocked(lockedPackage)) {
@@ -262,7 +270,12 @@ class LockScreenActivity : ComponentActivity() {
     override fun onStop() {
         if (isCurrent) isLockScreenResumed = false
         super.onStop()
-        if (isFinishing || isChangingConfigurations) return
+        if (isChangingConfigurations) return
+        // A trip BioKey's own session is on, this screen having come up over it, ends here, after
+        // an unlock or not: closing back onto BioKey, its screen resumed first and ended it already;
+        // anywhere else (an app the engine can't see among them) the session ends with it.
+        if (isCurrent) LockStateTracker.endOwnLockScreenHop(shownAt)
+        if (isFinishing) return
         engine.resetAuthenticatingStateFor(this)
         // The screen went off, or the keyguard came up over the cover (Lockdown with the screen
         // on): keep the cover, behind the keyguard, so nothing of the app shows once the phone is
@@ -293,6 +306,8 @@ class LockScreenActivity : ComponentActivity() {
         if (isCurrent) {
             isLockScreenResumed = false
             if (activeLockedTarget == lockedPackage) activeLockedTarget = null
+            // As in onStop, for a screen that closed before it was ever shown (nothing to unlock).
+            if (!isChangingConfigurations) LockStateTracker.endOwnLockScreenHop(shownAt)
             if (!isChangingConfigurations && !leftWithoutUnlock) dismissShield(if (isUnlocked()) Long.MAX_VALUE else ownedShield)
             current = null
         }

@@ -992,4 +992,162 @@ class CompatibilityEngineTest {
         lockScreenClosesOnto(launcher, bank, unlocked = false)
         assertFalse(LockStateTracker.isOwnAppUnlocked())
     }
+
+    @Test
+    fun aLockedAppBackBesideAnotherDuringItsCooldownIsCoveredOnceItEnds() {
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        // Its lock screen can't have the whole screen (split screen): it goes Home, given up.
+        lockScreenOpensOver(bank, bank)
+        lockScreenClosesOnto(launcher, bank, unlocked = false)
+        // At once, a quick switch back to the pair, the chat app's resume the newer: nothing is
+        // covered during the cooldown...
+        event(ACTIVITY_PAUSED, launcher)
+        event(ACTIVITY_RESUMED, bank)
+        event(ACTIVITY_RESUMED, chat)
+        step()
+        assertEquals(listOf("Covered $bank (opened)"), covered(bank))
+        // ...but the bank, still on screen beside it, is once it ends.
+        step(LockStateTracker.ABANDONED_LOCK_COOLDOWN_MS)
+        repeat(3) { step() }
+        assertEquals("Covered $bank (still on screen, uncovered)", covered(bank).last())
+        assertTrue(shield().isShowing)
+    }
+
+    private val notes = "com.example.notes"
+
+    /** BioKey's lock screen for [pkg] comes up over a split screen of [halves] (package to activity): both pause, then stop under it. */
+    private fun lockScreenOpensOverPair(pkg: String, vararg halves: Pair<String, String>) {
+        lockScreenUp(pkg)
+        for ((app, cls) in halves) event(ACTIVITY_PAUSED, app, cls)
+        event(ACTIVITY_RESUMED, context.packageName, lockScreen)
+        for ((app, cls) in halves) event(ACTIVITY_STOPPED, app, cls)
+        step()
+        InstantShieldOverlay.dismiss(pkg)
+    }
+
+    /** The lock screen for [pkg], unlocked, closes onto the split screen of [halves], the last one's resume the newest. */
+    private fun lockScreenClosesOntoPair(pkg: String, vararg halves: Pair<String, String>) {
+        LockStateTracker.onAppUnlocked(pkg)
+        InstantShieldOverlay.dismiss(pkg)
+        lockScreenUp(null)
+        event(ACTIVITY_PAUSED, context.packageName, lockScreen)
+        for ((app, cls) in halves) event(ACTIVITY_RESUMED, app, cls)
+        step()
+    }
+
+    private fun half(pkg: String) = pkg to "$pkg.MainActivity"
+
+    @Test
+    fun aWindowInPictureInPictureAskedForBesideAnUnlockedAppLeavesThatAppUnlocked() {
+        installWithLaunchScreen(bank, "Bank")
+        // The bank floats in picture-in-picture over the notes app and the chat app (locked too),
+        // side by side in split screen, and the phone locks.
+        unlockBank()
+        event(ACTIVITY_PAUSED, bank)
+        event(ACTIVITY_RESUMED, chat)
+        event(ACTIVITY_RESUMED, notes)
+        repeat(3) { step() }
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        step()
+        vault.setAppLock(chat, true)
+        event(ACTIVITY_STOPPED, bank)
+        event(ACTIVITY_STOPPED, chat)
+        event(ACTIVITY_STOPPED, notes)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
+        step()
+        // Unlocked: the pair is back, the notes app's resume the newer, the bank's window paused.
+        event(ACTIVITY_RESUMED, chat)
+        event(ACTIVITY_RESUMED, notes)
+        event(ACTIVITY_PAUSED, bank)
+        step()
+        assertEquals(listOf("Covered $chat (on screen beside another app)"), covered(chat))
+        // The chat app is asked for first; the bank's window, covered, waits for that prompt.
+        lockScreenOpensOverPair(chat, half(chat), half(notes))
+        repeat(6) { step() }
+        assertEquals(pipCover, covered(bank).last())
+        started()
+        lockScreenClosesOntoPair(chat, half(chat), half(notes))
+        // Only the bank's lock screen comes up: opening the bank would push the chat app, unlocked
+        // beside the notes app, off screen, and it would ask again although it was never left.
+        val starts = started()
+        assertTrue(starts.toString(), lockScreensFor(starts, bank) > 0)
+        assertTrue(starts.toString(), starts.none { it.component?.packageName == bank })
+        lockScreenOpensOverPair(bank, half(chat), half(notes))
+        assertTrue(LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.IMMEDIATE))
+        lockScreenClosesOntoPair(bank, half(chat), half(notes))
+        assertTrue(LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.IMMEDIATE))
+        assertFalse(shield().isShowing)
+        step(LockStateTracker.ARRIVAL_GRACE_MS + 1_000)
+        assertTrue(LockStateTracker.isAppUnlocked(chat, LockTimeoutMode.IMMEDIATE))
+        assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+        assertEquals(1, covered(chat).size)
+    }
+
+    /** BioKey's screen comes back, as MainActivity.onResume decides. */
+    private fun bioKeysScreenResumes() {
+        LockStateTracker.isOwnLockScreenHopActive()
+        if (LockStateTracker.isOwnAppUnlocked()) LockStateTracker.onOwnAppResumed()
+    }
+
+    @Test
+    fun aLockScreenBroughtUpOverASplitScreenLeavesBioKeyBesideItUnlocked() {
+        installWithLaunchScreen(bank, "Bank")
+        val bioKey = context.packageName to bioKeysScreen
+        // The owner has BioKey beside the notes app while the bank floats in picture-in-picture;
+        // the screen goes off and on, and BioKey's prompt comes up.
+        unlockBank()
+        LockStateTracker.onOwnAppUnlocked()
+        event(ACTIVITY_PAUSED, bank)
+        event(ACTIVITY_RESUMED, context.packageName, bioKeysScreen)
+        event(ACTIVITY_RESUMED, notes)
+        repeat(3) { step() }
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        step()
+        event(ACTIVITY_STOPPED, bank)
+        event(ACTIVITY_STOPPED, context.packageName, bioKeysScreen)
+        event(ACTIVITY_STOPPED, notes)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
+        step()
+        promptUpFor(context.packageName)
+        event(ACTIVITY_RESUMED, context.packageName, bioKeysScreen)
+        event(ACTIVITY_RESUMED, notes)
+        event(ACTIVITY_PAUSED, bank)
+        repeat(8) { step() }
+        assertEquals(pipCover, covered(bank).last())
+        started()
+        promptUpFor(null)
+        LockStateTracker.onOwnAppUnlocked()
+        step()
+        // Only the bank's lock screen comes up, over the pair: a trip BioKey started itself.
+        val starts = started()
+        assertTrue(starts.toString(), lockScreensFor(starts, bank) > 0)
+        assertTrue(starts.toString(), starts.none { it.component?.packageName == bank })
+        lockScreenOpensOverPair(bank, bioKey, half(notes))
+        bioKeysScreenStops()
+        assertTrue(LockStateTracker.isOwnAppUnlocked())
+        // Unlocked: the pair is back, the notes app's resume the newer, read before BioKey's
+        // screen has said it is back.
+        lockScreenClosesOntoPair(bank, bioKey, half(notes))
+        assertTrue(LockStateTracker.isOwnAppUnlocked())
+        bioKeysScreenResumes()
+        assertTrue(LockStateTracker.hasActiveOwnerSession())
+        assertFalse(LockStateTracker.isOwnTripActive())
+        assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+    }
+
+    @Test
+    fun anAppComingToTheFrontOverBioKeyStartsNoTripOfBioKeys() {
+        LockStateTracker.onOwnAppUnlocked()
+        event(ACTIVITY_RESUMED, context.packageName, bioKeysScreen)
+        step()
+        // A locked app's notification is tapped: it opens over BioKey, and is covered there.
+        event(ACTIVITY_PAUSED, context.packageName, bioKeysScreen)
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        assertEquals(listOf("Covered $bank (opened)"), covered(bank))
+        assertFalse(LockStateTracker.isOwnTripActive())
+        bioKeysScreenStops()
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
+    }
 }

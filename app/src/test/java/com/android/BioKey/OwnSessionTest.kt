@@ -15,7 +15,9 @@ import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.WindowProtection
+import com.android.BioKey.feature.lock.LockScreenActivity
 import com.android.BioKey.feature.main.IntentNavigationHelper
 import java.time.Duration
 import org.junit.Assert.assertFalse
@@ -27,6 +29,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.android.controller.ActivityController
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowSystemClock
 
@@ -121,6 +124,56 @@ class OwnSessionTest {
         assertTrue(LockStateTracker.hasActiveOwnerSession())
         assertFalse(LockStateTracker.isExternalNavigationActive())
         assertFalse(LockStateTracker.isSelfProtectionGranted())
+    }
+
+    private val bank = "com.example.bank"
+
+    /**
+     * The owner is in BioKey, unlocked, when the bank's lock screen is brought up over it (a trip
+     * BioKey starts itself), and BioKey's screen stops under it, as MainActivity.onStop decides.
+     */
+    private fun bankLockScreenOverBioKey(): ActivityController<LockScreenActivity> {
+        SecurityVault.getInstance(context).awaitPendingWrites()
+        context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE).edit().clear().commit()
+        SecurityVault.resetForTests()
+        SecurityVault.getInstance(context).apply {
+            setSetupCompletedSync(true)
+            setAppLock(bank, true)
+        }
+        LockStateTracker.onOwnAppUnlocked()
+        LockStateTracker.beginOwnLockScreenHop(bank)
+        val lockScreen = Robolectric.buildActivity(
+            LockScreenActivity::class.java,
+            Intent(context, LockScreenActivity::class.java).putExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE, bank)
+        ).setup()
+        if (LockStateTracker.isOwnTripActive()) LockStateTracker.onOwnAppStopped() else LockStateTracker.lockOwnApp()
+        assertTrue(LockStateTracker.isOwnAppUnlocked())
+        return lockScreen
+    }
+
+    @Test
+    fun aLockScreenOverBioKeyLeftForAnAppNoEngineSeesEndsBioKeysSession() {
+        val lockScreen = bankLockScreenOverBioKey()
+        advance(1_000)
+        // A work app's notification is tapped: the lock screen stops under it, and nothing the
+        // engine can see comes to the front.
+        lockScreen.pause().stop()
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
+        lockScreen.destroy()
+    }
+
+    @Test
+    fun aLockScreenOverBioKeyThatClosesBackOntoItLeavesItUnlocked() {
+        val lockScreen = bankLockScreenOverBioKey()
+        advance(1_000)
+        LockStateTracker.onAppUnlocked(bank)
+        lockScreen.pause()
+        // BioKey's screen resumes before the lock screen stops (MainActivity.onResume).
+        LockStateTracker.isOwnLockScreenHopActive()
+        if (LockStateTracker.isOwnAppUnlocked()) LockStateTracker.onOwnAppResumed()
+        lockScreen.stop().destroy()
+        assertTrue(LockStateTracker.hasActiveOwnerSession())
+        assertFalse(LockStateTracker.isOwnTripActive())
     }
 
     @Test

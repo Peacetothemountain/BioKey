@@ -109,6 +109,8 @@ object LockStateTracker {
     @Volatile private var externalNavigationAt = 0L
     @Volatile private var ownPickerAt = 0L
     @Volatile private var ownLockScreenHopAt = 0L
+    /** The app whose lock screen that trip is for ([beginOwnLockScreenHop]). */
+    @Volatile private var ownLockScreenHopFor: String? = null
 
     /** Bumped by every [lockAll], so an unlock that raced a device lock can be told apart. */
     @Volatile private var generation = 0
@@ -504,10 +506,17 @@ object LockStateTracker {
         ownLastActiveAt = now()
     }
 
+    /**
+     * BioKey's screen stopped on a trip it started itself ([isOwnTripActive]). One the owner asked
+     * for (a settings page, the file picker) counts as activity; another app's lock screen brought
+     * up over BioKey ([beginOwnLockScreenHop]) doesn't: nobody touched BioKey for it, which can
+     * happen with nobody at the phone (a timed pause running out), so it mustn't stretch
+     * [OWN_APP_IDLE_MS]. Coming back still counts ([onOwnAppResumed]).
+     */
     fun onOwnAppStopped() {
         if (!isOwnAppUnlocked()) return
         ownInForeground = false
-        ownLastActiveAt = now()
+        if (externalNavigationAt != 0L || ownPickerAt != 0L) ownLastActiveAt = now()
     }
 
     fun hasActiveOwnerSession(): Boolean = ownInForeground && isOwnAppUnlocked()
@@ -551,16 +560,19 @@ object LockStateTracker {
     }
 
     /**
-     * Compatibility mode is about to bring up another app's lock screen over BioKey's own unlocked
-     * screen (a locked app's window in picture-in-picture, found while the owner is in BioKey).
-     * BioKey starts that trip itself, and the lock screen closes back onto BioKey, so its session
-     * survives it: at most [OWN_LOCK_SCREEN_HOP_MS], ended by coming back, by any other app coming
-     * to the front (Home, once that lock screen is cancelled), or by any lock-all. Unlike
-     * [beginExternalNavigation], no other app (not even Settings) is part of the trip, and it
-     * grants no self-protection.
+     * An engine is about to bring up [target]'s lock screen over BioKey's own unlocked screen, in
+     * front or beside the app in front (a locked app's window in picture-in-picture, a locked app
+     * beside BioKey in split screen as protection resumes). BioKey starts that trip itself, and
+     * the lock screen closes back onto BioKey, so its session survives it: at most
+     * [OWN_LOCK_SCREEN_HOP_MS], ended by coming back, by any other app coming to the front (Home,
+     * once that lock screen is cancelled), by that lock screen stopping anywhere but over BioKey
+     * ([endOwnLockScreenHop]), or by any lock-all. Unlike [beginExternalNavigation], no other app
+     * (not even Settings) is part of the trip, and it grants no self-protection. Never for an app
+     * that came to the front by itself: that is the owner leaving BioKey.
      */
-    fun beginOwnLockScreenHop() {
+    fun beginOwnLockScreenHop(target: String) {
         if (!hasActiveOwnerSession()) return
+        ownLockScreenHopFor = target
         ownLockScreenHopAt = now()
     }
 
@@ -571,6 +583,30 @@ object LockStateTracker {
         ownLockScreenHopAt = 0L
         endTripAway()
         return false
+    }
+
+    /**
+     * Whether the lock-screen trip running now is for [pkg]: that app coming to the front is its
+     * lock screen closing onto it (beside BioKey in split screen, once unlocked), not another app.
+     */
+    fun isOwnLockScreenHopFor(pkg: String): Boolean = ownLockScreenHopAt != 0L && ownLockScreenHopFor == pkg
+
+    /**
+     * BioKey's lock screen, shown since [shownSince] ([SystemClock.elapsedRealtime]), stopped or
+     * closed: a trip begun before then went through it, and ends. Closing back onto BioKey, its
+     * screen has resumed by now, which ended the trip already ([onOwnAppResumed]); anywhere else
+     * (Home, an app no engine sees, such as a work app in compatibility mode), BioKey's session
+     * ends with the trip, as it would have when BioKey stopped. A trip begun since is for the lock
+     * screen asked for next, over BioKey back in front, and carries on.
+     */
+    fun endOwnLockScreenHop(shownSince: Long) {
+        val started = ownLockScreenHopAt
+        if (started == 0L || started > shownSince) return
+        ownLockScreenHopAt = 0L
+        if (!ownInForeground) {
+            Log.i(TAG, "BioKey's lock-screen trip ended away from BioKey; session ended")
+            lockOwnApp()
+        }
     }
 
     /**
