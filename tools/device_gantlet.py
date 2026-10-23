@@ -41,6 +41,8 @@ ADB = None
 SERIAL = None
 # Apps that reopen themselves by design (the gantlet's "loop" app): they may end up Home, given up on.
 MAY_GO_HOME = set()
+# The emulator's fingerprint (--fingerprint), to unlock the phone when something locked it.
+FINGERPRINT = None
 
 
 def adb(*args, check=True, timeout=30):
@@ -229,6 +231,10 @@ def home():
 def go_home_fully():
     """Out of any lock screen or prompt: Home until the home screen is in front."""
     for _ in range(4):
+        # Folding can lock the phone (the "continue apps when folded" setting): with a fingerprint
+        # to unlock it, carry on; without one, the scenario stops here.
+        if FINGERPRINT is not None and "isKeyguardShowing=true" in sh("dumpsys window | grep isKeyguardShowing"):
+            lock_and_unlock_phone(FINGERPRINT)
         home()
         if launcher_package() in top_resumed():
             return
@@ -555,7 +561,7 @@ def scenarios(pkg, launcher, display, label, hinge=None, fingerprint=None):
 
 
 def main():
-    global ADB, SERIAL
+    global ADB, SERIAL, FINGERPRINT
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--locked", action="append", required=True, help="a package locked in BioKey, optionally with its icon's name: com.twitter.android=X (repeatable)")
     parser.add_argument("--serial", help="adb serial, when more than one device is connected")
@@ -576,7 +582,7 @@ def main():
     SERIAL = args.serial
     MAY_GO_HOME.update(args.may_go_home)
     hinge = Hinge() if args.hinge else None
-    fingerprint = Fingerprint() if args.fingerprint else None
+    fingerprint = FINGERPRINT = Fingerprint() if args.fingerprint else None
 
     if "Awake" not in sh("dumpsys power | grep mWakefulness="):
         sys.exit("Wake and unlock the phone first")

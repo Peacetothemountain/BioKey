@@ -50,10 +50,14 @@ object LockStateTracker {
 
     /**
      * How many times within [DISPLACED_WINDOW_MS] an app back over its own lock screen is covered
-     * again at once ([coverAgainAfterDisplaced]). Past that it keeps doing it, and goes Home.
+     * again at once ([coverAgainAfterDisplaced]). Past that it keeps doing it, and goes Home. Only
+     * straight back counts: anything else in front between ends the run ([onForegroundChanged]).
      */
     private const val MAX_DISPLACED_COVERS = 2
     private const val DISPLACED_WINDOW_MS = 10_000L
+
+    /** BioKey's own package: its lock screen in front is no app's run of returns ending. */
+    private const val OWN_PACKAGE = "com.android.BioKey"
 
     /**
      * A new session must reach the screen within this long. One whose app never appears (its
@@ -266,12 +270,21 @@ object LockStateTracker {
      * (another helper, a system screen, BioKey's own lock screen: a sign-in sheet that sends the
      * user to an authenticator, say); anywhere else ends it, and the app ages as a normal exit.
      * Coming back to the app itself is [onAppVisible]'s job.
+     *
+     * Also ends other apps' runs of returns over their own lock screen ([coverAgainAfterDisplaced]):
+     * one opened again after Home or another app is the owner opening it, every time, however
+     * quickly (compatibility mode sees no tap on its icon to end the cooldown), not an app that
+     * keeps putting itself back.
      */
     fun onForegroundChanged(
         foregroundPackage: String,
         timeoutModeOf: (String) -> LockTimeoutMode,
         continuesHop: (String) -> Boolean = { false }
     ) {
+        if (foregroundPackage != OWN_PACKAGE) {
+            val front = PasswordManager.aliasesOf(foregroundPackage)
+            displacedCovers.keys.removeAll { it !in front }
+        }
         for ((pkg, session) in sessions) {
             val hop = session.hopTarget ?: continue
             if (hop == foregroundPackage || pkg in PasswordManager.aliasesOf(foregroundPackage) || continuesHop(foregroundPackage)) continue

@@ -1136,6 +1136,30 @@ class CompatibilityEngineTest {
     }
 
     @Test
+    fun aLockedAppOpenedAgainFromHomeAtOnceIsCoveredEveryTimeNeverSentHome() {
+        // As in the report: the owner opens it, goes Home from its lock screen and opens it again
+        // straight away, over and over. Compatibility mode sees no tap on the icon.
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        repeat(5) { attempt ->
+            lockScreenOpensOver(bank, bank)
+            started()
+            LockStateTracker.markLockDisplaced(bank) // Home: the lock screen goes to the background.
+            lockScreenUp(null)
+            event(ACTIVITY_PAUSED, context.packageName, lockScreen)
+            event(ACTIVITY_RESUMED, launcher, "$launcher.NexusLauncherActivity")
+            step()
+            event(ACTIVITY_PAUSED, launcher, "$launcher.NexusLauncherActivity")
+            event(ACTIVITY_RESUMED, bank)
+            step()
+            val starts = started()
+            assertTrue("attempt ${attempt + 1}: $starts", starts.none { it.hasCategory(Intent.CATEGORY_HOME) })
+            assertTrue("attempt ${attempt + 1}: $starts", lockScreensFor(starts, bank) > 0)
+            assertTrue(shield().isShowing)
+        }
+    }
+
+    @Test
     fun aLockedAppBackOverALockScreenLeftOnPurposeGoesHome() {
         event(ACTIVITY_RESUMED, bank)
         step()

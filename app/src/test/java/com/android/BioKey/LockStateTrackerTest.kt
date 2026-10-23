@@ -277,6 +277,16 @@ class LockStateTrackerTest {
         LockStateTracker.markLockDisplaced(chat)
         assertTrue(LockStateTracker.coverAgainAfterDisplaced(chat))
 
+        // Opened again from Home each time, however quickly: covered every time, never sent Home.
+        advance(10_000L)
+        repeat(5) {
+            LockStateTracker.onForegroundChanged("com.google.android.apps.nexuslauncher", { LockTimeoutMode.IMMEDIATE })
+            LockStateTracker.markLockDisplaced(chat)
+            assertTrue("return ${it + 1}", LockStateTracker.coverAgainAfterDisplaced(chat))
+            // Its lock screen in front isn't anything else.
+            LockStateTracker.onForegroundChanged("com.android.BioKey", { LockTimeoutMode.IMMEDIATE })
+        }
+
         // Left on purpose (Cancel, Back), or back only after the cooldown: not covered at once.
         LockStateTracker.markLockDisplaced(bank)
         LockStateTracker.markLockAbandoned(bank)
