@@ -1,4 +1,5 @@
-# Builds BioKey and runs its tests on every push and pull request: the locking rules
+# Builds BioKey and runs its tests on every push and pull request: first the lock screen's
+# gantlet (the gantlet job), then the locking rules
 # (SessionRulesTest, PickerHopTest, ProfileLockRulesTest, RecentsGestureTest), the design
 # screenshots, lint, a debug build and a release build shrunk by R8 like a real one, so breakage
 # that only shows up after shrinking is caught here. The release key never comes near CI: that
@@ -20,7 +21,62 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The lock screen's gantlet: the tests that stand between a release and a locked app being sent
+  # Home, or shown, on some phone. Every screen size (phones, foldables' cover and main screens,
+  # tablets), every way of leaving or covering the lock screen, both engines. Fast, and first: the
+  # build below only starts once these pass. The full device and emulator gantlet
+  # (tools/device_gantlet.py, tools/emulator_gantlet.py) runs on real phones and emulators, by hand.
+  gantlet:
+    name: Lock-screen gantlet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+        with:
+          validate-wrappers: true
+
+      # Gradle fails a filter that matches no test, so a renamed class can't quietly drop out.
+      - name: Lock screen, launch options and engines on every screen
+        run: >-
+          ./gradlew :app:testDebugUnitTest --stacktrace
+          --tests 'com.android.BioKey.Gantlet*'
+          --tests 'com.android.BioKey.LockStateTrackerTest'
+          --tests 'com.android.BioKey.CompatibilityEngineTest'
+          --tests 'com.android.BioKey.AccessibilityOwnTripTest'
+          --tests 'com.android.BioKey.ForegroundRulesTest'
+          --tests 'com.android.BioKey.LockLauncherTest'
+          --tests 'com.android.BioKey.SessionRulesTest'
+          --tests 'com.android.BioKey.RecentsGestureTest'
+          --tests 'com.android.BioKey.OwnSessionTest'
+
+      - name: Device and emulator gantlet tools still run
+        run: |
+          python3 -m py_compile tools/device_gantlet.py tools/emulator_gantlet.py
+          python3 tools/device_gantlet.py --help > /dev/null
+          python3 tools/emulator_gantlet.py --help > /dev/null
+          ./gradlew -p tools/gantlet-targets assembleDebug --stacktrace
+
+      - name: Keep the gantlet's test reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gantlet-reports
+          path: app/build/reports/tests/
+          retention-days: 14
+
   build:
+    needs: gantlet
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
