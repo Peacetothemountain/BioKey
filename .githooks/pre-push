@@ -1,0 +1,20 @@
+#!/bin/sh
+# Runs the lock screen's gantlet (tools/gantlet_tests.sh) before anything is pushed to main, and
+# refuses the push if it fails. GitHub can't require CI to pass on this private repository without
+# GitHub Pro, so this is what holds main to it on a computer that pushes. It tests the working
+# tree, so commit (or stash) what isn't part of the push first.
+#
+# Turn it on once per clone:   git config core.hooksPath .githooks
+# Skip it in an emergency:     git push --no-verify
+zero=0000000000000000000000000000000000000000
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$remote_ref" = "refs/heads/main" ] || continue
+  [ "$local_sha" = "$zero" ] && continue # Deleting main: nothing to test.
+  echo "Pushing to main: running the lock-screen gantlet first..."
+  if ! sh "$(git rev-parse --show-toplevel)/tools/gantlet_tests.sh" --console=plain -q; then
+    echo "The lock-screen gantlet failed: not pushing to main (reports in app/build/reports/tests)." >&2
+    exit 1
+  fi
+  echo "The lock-screen gantlet passed."
+done
+exit 0

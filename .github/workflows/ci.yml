@@ -46,19 +46,9 @@ jobs:
         with:
           validate-wrappers: true
 
-      # Gradle fails a filter that matches no test, so a renamed class can't quietly drop out.
+      # The same list the pre-push hook runs (.githooks/pre-push).
       - name: Lock screen, launch options and engines on every screen
-        run: >-
-          ./gradlew :app:testDebugUnitTest --stacktrace
-          --tests 'com.android.BioKey.Gantlet*'
-          --tests 'com.android.BioKey.LockStateTrackerTest'
-          --tests 'com.android.BioKey.CompatibilityEngineTest'
-          --tests 'com.android.BioKey.AccessibilityOwnTripTest'
-          --tests 'com.android.BioKey.ForegroundRulesTest'
-          --tests 'com.android.BioKey.LockLauncherTest'
-          --tests 'com.android.BioKey.SessionRulesTest'
-          --tests 'com.android.BioKey.RecentsGestureTest'
-          --tests 'com.android.BioKey.OwnSessionTest'
+        run: sh tools/gantlet_tests.sh --stacktrace
 
       - name: Device and emulator gantlet tools still run
         run: |
