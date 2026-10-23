@@ -52,6 +52,10 @@ ANDROID = {
     "17": ("android-37.0", os.path.join("system-images", "android-37.0", "google_apis", "x86_64")),
 }
 TARGETS = ["plain", "splash", "late", "chain", "newtask", "permission", "loop"]
+# Their names (tools/gantlet-targets/app/build.gradle.kts): the gantlet taps them in the app drawer.
+TARGET_NAMES = {"plain": "Gantlet Plain", "splash": "Gantlet Splash", "late": "Gantlet Late",
+                "chain": "Gantlet Chain", "newtask": "Gantlet NewTask", "permission": "Gantlet Permission",
+                "loop": "Gantlet Loop"}
 
 # A foldable AVD's settings, those that differ per profile filled in by make_avd.
 AVD_CONFIG = """\
@@ -324,9 +328,10 @@ def accessibility(emu, on):
 
 def run_gantlet(emu, engine, out_dir):
     args = [sys.executable, "-u", os.path.join(ROOT, "tools", "device_gantlet.py"), "--serial", emu.serial,
-            "--hinge", "--fingerprint", "--watch-exposure", TARGET_COLOR, "--may-go-home", "com.biokey.gantlet.loop"]
+            "--hinge", "--fingerprint", "--drawer", "--watch-exposure", TARGET_COLOR,
+            "--may-go-home", "com.biokey.gantlet.loop"]
     for target in TARGETS:
-        args += ["--locked", f"com.biokey.gantlet.{target}"]
+        args += ["--locked", f"com.biokey.gantlet.{target}={TARGET_NAMES[target]}"]
     path = os.path.join(out_dir, f"{emu.avd}.{engine}.log")
     with open(path, "w", encoding="utf-8") as f:
         code = subprocess.call(args, stdout=f, stderr=subprocess.STDOUT)

@@ -206,6 +206,10 @@ def device_now():
     return float(sh("date +%s.%N").strip())
 
 
+def keyguard_showing():
+    return "isKeyguardShowing=true" in sh("dumpsys window | grep isKeyguardShowing")
+
+
 def top_resumed():
     out = sh("dumpsys activity activities")
     m = re.search(r"topResumedActivity=ActivityRecord\{\S+ \S+ (\S+)", out) or \
@@ -281,6 +285,38 @@ def find_app_on_home_screen(label):
     return spot
 
 
+def screen_size():
+    out = sh("wm size")
+    m = re.search(r"Override size: (\d+)x(\d+)", out) or re.search(r"Physical size: (\d+)x(\d+)", out)
+    return int(m.group(1)), int(m.group(2))
+
+
+def open_app_drawer():
+    w, h = screen_size()
+    sh(f"input swipe {w // 2} {int(h * 0.92)} {w // 2} {int(h * 0.25)} 300")
+    time.sleep(1.5)
+
+
+def drawer_spots(labels):
+    """
+    Where each of [labels] is in the app drawer, read once (uiautomator suspends accessibility
+    services while it reads, BioKey's engine included: never during a scenario).
+    """
+    go_home_fully()
+    open_app_drawer()
+    sh("uiautomator dump /sdcard/biokey_gantlet_ui.xml", check=False)
+    xml = sh("cat /sdcard/biokey_gantlet_ui.xml", check=False)
+    spots = {}
+    for label in labels:
+        m = re.search(r'(?:text|content-desc)="' + re.escape(label) + r'"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
+        if m:
+            x1, y1, x2, y2 = map(int, m.groups())
+            spots[label] = ((x1 + x2) // 2, (y1 + y2) // 2)
+    go_home_fully()
+    time.sleep(6)  # BioKey's accessibility engine reconnects.
+    return spots
+
+
 def app_label(pkg):
     out = sh(f"dumpsys package {pkg}")
     m = re.search(r"nonLocalizedLabel=([^\s]+)", out)
@@ -333,7 +369,12 @@ def check_locked(result, events, pkg, launcher, start, expect_lock=True):
     bounced = [t for t in homes if t > first_lock]
     if bounced:
         result.fail(f"sent Home {bounced[0] - first_lock:.2f}s after the lock screen came up")
-    closed = [t for t in lock_finishes if t > first_lock]
+    # A lock screen that closes because the app put itself over it is replaced by a new one (the
+    # app covered again): only one that closes with none after it closed by itself.
+    closed = [t for t in lock_finishes if t > first_lock and not any(l > t for l in lock_resumes)]
+    replaced = [t for t in lock_finishes if t > first_lock and any(l > t for l in lock_resumes)]
+    if replaced:
+        result.note(f"covered again {len(replaced)}x (the app came back over its lock screen)")
     if closed:
         result.fail(f"the lock screen closed by itself {closed[0] - first_lock:.2f}s after coming up")
     top = top_resumed()
@@ -350,7 +391,39 @@ def run_open(result, pkg, launcher, how, settle=4.0):
     check_locked(result, events.read(), pkg, launcher, start)
 
 
-def scenarios(pkg, launcher, display, label, hinge=None, fingerprint=None):
+def scenarios(pkg, launcher, display, label, hinge=None, fingerprint=None, drawer_spot=None):
+    def tapped_in_app_drawer(warm):
+        def run(r):
+            if drawer_spot is None:
+                r.skip("not found in the app drawer (--drawer, and give its name: --locked package=Name)")
+                return
+            if hinge is not None:
+                hinge.unfold()  # Where the spots were read.
+            go_home_fully()
+            if warm:
+                open_app(pkg)
+                time.sleep(3)
+                go_home_fully()
+            else:
+                sh(f"am force-stop {pkg}")
+            open_app_drawer()
+            run_open(r, pkg, launcher, lambda: sh(f"input tap {drawer_spot[0]} {drawer_spot[1]}"))
+        return run
+
+    def tapped_three_times_in_drawer(r):
+        if drawer_spot is None:
+            r.skip("not found in the app drawer (--drawer, and give its name: --locked package=Name)")
+            return
+        if hinge is not None:
+            hinge.unfold()
+        for attempt in range(3):
+            go_home_fully()
+            open_app_drawer()
+            sub = Result(f"attempt {attempt + 1}")
+            run_open(sub, pkg, launcher, lambda: sh(f"input tap {drawer_spot[0]} {drawer_spot[1]}"), settle=3.0)
+            for p in sub.problems:
+                r.fail(f"attempt {attempt + 1}: {p}")
+
     def cold_start(r):
         go_home_fully()
         sh(f"am force-stop {pkg}")
@@ -480,23 +553,48 @@ def scenarios(pkg, launcher, display, label, hinge=None, fingerprint=None):
         go_home_fully()
         hinge.unfold()
         open_app(pkg)
-        time.sleep(2.5)
-        fingerprint.touch()
-        time.sleep(3)
+        # An app that opens its main screen over its lock screen is covered again: the prompt to
+        # answer is the newest lock screen's, so touch until the app is in front.
+        for _ in range(3):
+            time.sleep(2.5)
+            fingerprint.touch()
+            time.sleep(2)
+            if top_resumed().startswith(pkg + "/"):
+                break
         if not top_resumed().startswith(pkg + "/"):
             r.fail(f"not open after the fingerprint: {top_resumed() or 'nothing'} in front")
             return
         events = Events()
         events.mark()
+        locked_by_fold = False
         try:
             for step, move in (("folded", hinge.fold), ("unfolded", hinge.unfold)):
                 move()
+                if keyguard_showing():
+                    # Folding locked the phone (the phone's "continue using apps on fold" setting,
+                    # or an emulator that always sleeps on fold): every session ends with it.
+                    locked_by_fold = True
+                    break
                 top = top_resumed()
                 if not top.startswith(pkg + "/"):
                     r.fail(f"{step}: {top or 'nothing'} in front, not the unlocked app")
         finally:
             hinge.unfold()
-        if any(tag == "wm_set_resumed_activity" and LOCK_SCREEN_SHORT in body for _, tag, body in events.read()):
+        if locked_by_fold:
+            r.note("folding locked the phone: the session must end with it")
+            sh("input keyevent KEYCODE_WAKEUP")
+            for _ in range(3):
+                fingerprint.touch()  # The keyguard first; the app's own prompt, if one comes up, isn't answered.
+                time.sleep(2)
+                if not keyguard_showing():
+                    break
+            time.sleep(2)
+            top = top_resumed()
+            if top.startswith(pkg + "/"):
+                r.fail("open again once the phone was unlocked: its session outlived the phone locking on fold")
+            elif LOCK_SCREEN_SHORT not in top:
+                r.note(f"in front once unlocked: {top or 'nothing'}")
+        elif any(tag == "wm_set_resumed_activity" and LOCK_SCREEN_SHORT in body for _, tag, body in events.read()):
             r.fail("asked to unlock again after folding")
         # Locking the phone ends the session: the next open is covered again.
         lock_and_unlock_phone(fingerprint)
@@ -541,6 +639,9 @@ def scenarios(pkg, launcher, display, label, hinge=None, fingerprint=None):
             r.fail("Back left the app open")
 
     return [
+        ("tapped in the app drawer, cold", tapped_in_app_drawer(warm=False)),
+        ("tapped in the app drawer, warm", tapped_in_app_drawer(warm=True)),
+        ("tapped in the app drawer three times in a row", tapped_three_times_in_drawer),
         ("cold start", cold_start),
         ("warm start", warm_start),
         ("tapped on the home screen (in a folder)", tapped_on_home_screen),
@@ -575,6 +676,9 @@ def main():
     parser.add_argument("--watch-exposure", metavar="R,G,B",
                         help="fail a scenario if the screen shows this colour uncovered (tools/gantlet-targets "
                              "apps: 220,0,120)")
+    parser.add_argument("--drawer", action="store_true",
+                        help="also open the apps by tapping them in the app drawer (as people do; give each "
+                             "--locked app its name). Their spots are read once, before the scenarios")
     parser.add_argument("--may-go-home", action="append", default=[],
                         help="a package that reopens itself by design: covered, then given up on (Home)")
     args = parser.parse_args()
@@ -598,12 +702,17 @@ def main():
     if display.may_emulate:
         print("Emulating foldables' screens: the home screen's layout may lose icons that don't fit them.")
     watcher = ExposureWatcher(tuple(map(int, args.watch_exposure.split(",")))) if args.watch_exposure else None
+    specs = [(spec.partition("=")[0], spec.partition("=")[2] or app_label(spec.partition("=")[0])) for spec in args.locked]
+    spots = {}
+    if args.drawer:
+        if hinge is not None:
+            hinge.unfold()
+        spots = drawer_spots([label for _, label in specs if label])
+        print(f"In the app drawer: {', '.join(spots) or 'none of them'}")
     results = []
     try:
-        for spec in args.locked:
-            pkg, _, label = spec.partition("=")
-            label = label or app_label(pkg)
-            for name, fn in scenarios(pkg, launcher, display, label, hinge, fingerprint):
+        for pkg, label in specs:
+            for name, fn in scenarios(pkg, launcher, display, label, hinge, fingerprint, spots.get(label)):
                 if args.only and args.only.lower() not in name.lower():
                     continue
                 result = Result(f"{pkg}: {name}")
