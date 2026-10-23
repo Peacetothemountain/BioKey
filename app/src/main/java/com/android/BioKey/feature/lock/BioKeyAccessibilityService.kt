@@ -320,7 +320,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     /**
      * A lock screen was left without unlocking. Its app isn't covered again during the cooldown
-     * (its window can flicker back while the lock screen leaves), so it is looked at once more
+     * (its window can flicker back while the lock screen leaves), except when it comes back over a
+     * displaced lock screen ([LockStateTracker.coverAgainAfterDisplaced]), so it is looked at once more
      * when the cooldown ends: an app re-opened meanwhile must not stay open.
      */
     private val onLockAbandoned: (String) -> Unit = { pkg ->
@@ -1280,12 +1281,18 @@ class BioKeyAccessibilityService : AccessibilityService() {
         }
 
         if (LockStateTracker.isRecentlyAbandoned(target)) {
-            // Its lock screen was left a moment ago and it is back in front already (a quick
-            // switch, which sends no tap to clear the cooldown, or an app that put itself over its
-            // own lock screen). It isn't covered during the cooldown, so it mustn't stay usable
-            // either: Home, as compatibility mode does. On the way out of a real exit a second Home
-            // changes nothing; other displays are left to the checks when the cooldown ends.
+            // Its lock screen went a moment ago and it is back in front already (a quick switch,
+            // which sends no tap to clear the cooldown, or an app that put itself over its own
+            // lock screen). Only covered again at once where its lock screen was displaced rather
+            // than left (an app opening its main screen from its launch one, as it starts): it
+            // mustn't stay usable either, so otherwise Home, as compatibility mode does. On the
+            // way out of a real exit a second Home changes nothing; other displays are left to the
+            // checks when the cooldown ends.
             if (isPhoneScreen(displayId) && isInFront(target) && !isExitTransition(target)) {
+                if (LockStateTracker.coverAgainAfterDisplaced(target)) {
+                    lock(target, "came back over its lock screen", displayId)
+                    return
+                }
                 performGlobalAction(GLOBAL_ACTION_HOME)
             }
             shield.hide()

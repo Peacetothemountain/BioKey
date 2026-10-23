@@ -5,6 +5,7 @@ import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -60,6 +61,14 @@ class LockScreenActivity : ComponentActivity() {
          * front, and well inside [LockStateTracker.ABANDONED_LOCK_COOLDOWN_MS], so it is still ours.
          */
         private const val HOME_SETTLE_MS = 500L
+
+        /**
+         * Whether a lock screen [inMultiWindow], its window at [window], leaves nothing of
+         * [display] beside it: full screen, or a window at least as big as the display (one
+         * that reaches past its edges still hides all of it).
+         */
+        internal fun coversDisplay(inMultiWindow: Boolean, window: Rect, display: Rect): Boolean =
+            !inMultiWindow || window.contains(display)
 
         @Volatile
         var isLockScreenResumed: Boolean = false
@@ -287,7 +296,9 @@ class LockScreenActivity : ComponentActivity() {
             return
         }
         if (!isUnlocked()) {
-            abandon()
+            // Not a Cancel or Back (those finish first): something came over this screen, maybe
+            // the locked app itself, opening its main screen from the one it launched with.
+            abandon(displaced = true)
             leftWithoutUnlock = true
             // An engine may have covered the app again since we were paused (it came straight
             // back, with the quick-switch gesture, say): that shield is newer than this lock and
@@ -355,8 +366,11 @@ class LockScreenActivity : ComponentActivity() {
     }
 
     /** Full screen, or a window as big as the display: nothing else can be on screen beside it. */
-    private fun hasWholeDisplay() = !isInMultiWindowMode ||
-        windowManager.currentWindowMetrics.bounds == windowManager.maximumWindowMetrics.bounds
+    private fun hasWholeDisplay() = coversDisplay(
+        isInMultiWindowMode,
+        windowManager.currentWindowMetrics.bounds,
+        windowManager.maximumWindowMetrics.bounds
+    )
 
     /**
      * Asks to turn this window into a full-screen one (freeform and desktop windows, Android 14
@@ -519,10 +533,13 @@ class LockScreenActivity : ComponentActivity() {
         }
     }
 
-    /** Bookkeeping when the user walks away from the lock without authenticating. */
-    private fun abandon() {
-        DiagnosticLog.log("Lock screen for $lockedPackage left without unlocking")
-        LockStateTracker.markLockAbandoned(lockedPackage)
+    /**
+     * Bookkeeping when the user walks away from the lock without authenticating, or ([displaced])
+     * something else comes over it ([LockStateTracker.markLockDisplaced]).
+     */
+    private fun abandon(displaced: Boolean = false) {
+        DiagnosticLog.log("Lock screen for $lockedPackage ${if (displaced) "covered by another screen" else "left"} without unlocking")
+        if (displaced) LockStateTracker.markLockDisplaced(lockedPackage) else LockStateTracker.markLockAbandoned(lockedPackage)
         if (isSelfProtection) LockStateTracker.clearSelfProtection()
     }
 

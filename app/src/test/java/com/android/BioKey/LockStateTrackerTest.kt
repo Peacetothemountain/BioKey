@@ -262,6 +262,31 @@ class LockStateTrackerTest {
     }
 
     @Test
+    fun anAppBackOverItsDisplacedLockScreenIsCoveredAgainButNotForever() {
+        // Its launch screen opened its main one over the lock screen: covered again, once.
+        LockStateTracker.markLockDisplaced(chat)
+        assertTrue(LockStateTracker.isRecentlyAbandoned(chat))
+        assertTrue(LockStateTracker.coverAgainAfterDisplaced(chat))
+        assertFalse(LockStateTracker.coverAgainAfterDisplaced(chat))
+        LockStateTracker.markLockDisplaced(chat)
+        assertTrue(LockStateTracker.coverAgainAfterDisplaced(chat))
+        // An app that keeps doing it goes Home instead, until a while has passed.
+        LockStateTracker.markLockDisplaced(chat)
+        assertFalse(LockStateTracker.coverAgainAfterDisplaced(chat))
+        advance(10_000L)
+        LockStateTracker.markLockDisplaced(chat)
+        assertTrue(LockStateTracker.coverAgainAfterDisplaced(chat))
+
+        // Left on purpose (Cancel, Back), or back only after the cooldown: not covered at once.
+        LockStateTracker.markLockDisplaced(bank)
+        LockStateTracker.markLockAbandoned(bank)
+        assertFalse(LockStateTracker.coverAgainAfterDisplaced(bank))
+        LockStateTracker.markLockDisplaced(bank)
+        advance(ABANDONED_LOCK_COOLDOWN_MS)
+        assertFalse(LockStateTracker.coverAgainAfterDisplaced(bank))
+    }
+
+    @Test
     fun lockingABatchEndsEverySessionBeforeTellingAnyone() {
         val batches = mutableListOf<Set<String>>()
         val singles = mutableListOf<String>()

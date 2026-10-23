@@ -137,6 +137,17 @@ class ForegroundRulesTest {
     }
 
     @Test
+    fun phoneMakersOwnHomeScreensAreLaunchersEvenBeforeAndroidIsAsked() {
+        // Samsung, OPPO, vivo, Xiaomi, Honor and others: never covered, even if locked by mistake.
+        for (home in listOf(
+            "com.sec.android.app.launcher", "com.oppo.launcher", "com.bbk.launcher2", "com.miui.home",
+            "com.hihonor.android.launcher", "com.huawei.android.launcher", "net.oneplus.launcher"
+        )) {
+            assertTrue(home, ForegroundRules.isLauncher(context, home) { true })
+        }
+    }
+
+    @Test
     fun settingsFallbackHomeIsNotALauncher() {
         installHome("com.android.settings", system = true)
         assertFalse(ForegroundRules.isLauncher(context, "com.android.settings") { false })
