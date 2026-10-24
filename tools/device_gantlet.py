@@ -16,12 +16,27 @@ tablet one) from the phone's own layout. Restoring the size doesn't bring those 
 
     python tools/device_gantlet.py --locked com.twitter.android=X --locked com.google.android.apps.messaging=Messages
 
-Exit status 0 when every scenario passes.
+Latency: BioKey's debug build logs when each launch started, when its cover was first drawn and
+when its prompt was asked for (BioKeyLatency in logcat, core/diagnostics/LatencyMarks.kt; a release
+build logs nothing). The gantlet reads those lines after every scenario and prints, per engine and
+scenario, how many milliseconds the cover and the prompt took: count, median, 90th percentile and
+slowest. With --latency-budget it also fails the run when a median is slower than the baseline's
+(tools/gantlet-latency-baseline.json) by more than the budget; --record-latency-baseline writes
+that file, from a run on the phone or emulator it is meant for.
+
+    python tools/device_gantlet.py --locked com.biokey.gantlet.plain="Gantlet Plain" --record-latency-baseline
+    python tools/device_gantlet.py --locked com.biokey.gantlet.plain="Gantlet Plain" --latency-budget
+
+Exit status 0 when every scenario passes (and, with --latency-budget, no median got slower).
 """
 import argparse
+import datetime
+import json
+import math
 import os
 import re
 import shutil
+import statistics
 import subprocess
 import sys
 import time
@@ -36,6 +51,11 @@ FOLD7_COVER = ("Galaxy Z Fold7 cover screen", "1080x2520", 420)
 FOLD7_INNER = ("Galaxy Z Fold7 main screen", "1968x2184", 374)
 FOLD7_INNER_LAND = ("Galaxy Z Fold7 main screen, landscape", "2184x1968", 374)
 FLIP7_COVER = ("Galaxy Z Flip7 cover screen", "948x1048", 420)
+
+LATENCY_BASELINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gantlet-latency-baseline.json")
+# How much slower than the baseline's a median may be before the run fails: both 20% and 16 ms (a
+# frame at 60 Hz) slower, so a few milliseconds of noise on a fast cover don't fail it.
+LATENCY_BUDGET = "20,16"
 
 ADB = None
 SERIAL = None
@@ -182,6 +202,136 @@ class ExposureWatcher:
             return False
         scale = r / tr
         return abs(g - tg * scale) <= 40 and abs(b - tb * scale) <= 40 * max(scale, 0.5)
+
+
+class LatencyMarks:
+    """
+    BioKey's latency marks (core/diagnostics/LatencyMarks.kt), from a time on: one logcat line per
+    moment on the lock path, "BioKeyLatency: <mark> <pkg> <uptimeMs> [engine]", every time on the
+    phone's uptime clock. Read from logcat by time rather than after clearing it, so nothing else
+    in the phone's log is lost.
+    """
+
+    LINE = re.compile(r"BioKeyLatency\s*:\s*(trigger|cover|prompt) (\S+) (\d+)(?: (\w+))?\s*$")
+    # A second sign of the same launch (the tap, then the app's window) comes this soon after the
+    # first; a later one is another launch.
+    SAME_LAUNCH_MS = 2000
+
+    def read(self, since):
+        """The marks logged since [since] (the phone's clock, as device_now gives it): (mark, pkg, uptime ms, engine)."""
+        # A time without a decimal point would be read as a number of lines.
+        out = sh(f"logcat -d -v epoch -T {since:.3f} -s BioKeyLatency", check=False)
+        marks = []
+        for line in out.splitlines():
+            m = self.LINE.search(line)
+            if m:
+                marks.append((m.group(1), m.group(2), int(m.group(3)), m.group(4)))
+        return marks
+
+    @classmethod
+    def launches(cls, marks):
+        """
+        Each launch in [marks]: its engine, and how many ms after it started its cover was drawn
+        and its prompt asked for (None when not seen). The first sign of a launch is when it
+        started: a tap is covered before the app has a window, whose event says the same again.
+        """
+        current = {}
+        done = []
+        for mark, pkg, at, engine in marks:
+            launch = current.get(pkg)
+            if mark == "trigger":
+                if launch is None or launch["prompt"] is not None or at - launch["start"] > cls.SAME_LAUNCH_MS:
+                    if launch is not None:
+                        done.append(launch)
+                    current[pkg] = {"engine": engine or "?", "start": at, "cover": None, "prompt": None}
+            elif launch is not None and at >= launch["start"] and launch[mark] is None:
+                launch[mark] = at - launch["start"]
+        return done + list(current.values())
+
+
+def latency_note(launches):
+    """A scenario's [launches], for its notes: "covered 41/38 ms and prompt asked for 260/251 ms after the launch"."""
+    def ms(mark):
+        return "/".join("-" if launch[mark] is None else str(launch[mark]) for launch in launches)
+    engines = ", ".join(sorted({launch["engine"] for launch in launches}))
+    return f"covered {ms('cover')} ms and prompt asked for {ms('prompt')} ms after the launch ({engines})"
+
+
+def median(values):
+    """The median of [values], in whole ms."""
+    return round(statistics.median(values))
+
+
+def percentile(values, p):
+    """The [p]th percentile of [values], by nearest rank (one of them, never between two)."""
+    ordered = sorted(values)
+    return ordered[max(0, math.ceil(p / 100 * len(ordered)) - 1)]
+
+
+def latency_table(timings):
+    """[timings]: {(engine, scenario, mark): [ms]}. The summary's table, as lines to print."""
+    rows = [("engine", "scenario", "until", "count", "median", "p90", "max")]
+    for (engine, scenario, mark), values in sorted(timings.items()):
+        rows.append((engine, scenario, mark, str(len(values)), str(median(values)),
+                     str(percentile(values, 90)), str(max(values))))
+    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+    lines = []
+    for n, row in enumerate(rows):
+        lines.append("  ".join(cell.ljust(w) if i < 3 else cell.rjust(w) for i, (cell, w) in enumerate(zip(row, widths))))
+        if n == 0:
+            lines.append("  ".join("-" * w for w in widths))
+    return lines
+
+
+def latency_medians(timings):
+    """{engine: {scenario: {mark: median ms}}}, as the baseline holds them."""
+    out = {}
+    for (engine, scenario, mark), values in timings.items():
+        out.setdefault(engine, {}).setdefault(scenario, {})[mark] = median(values)
+    return out
+
+
+def record_latency_baseline(path, timings, device):
+    """
+    Writes this run's medians to [path]. Only the engines this run measured are replaced: the
+    emulator gantlet runs each engine on its own, one after the other.
+    """
+    baseline = {}
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            baseline = json.load(f)
+    for engine, medians in latency_medians(timings).items():
+        baseline[engine] = {"device": device, "recorded": datetime.date.today().isoformat(), "medians_ms": medians}
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(baseline, f, indent=2, sort_keys=True)
+        f.write("\n")
+
+
+def compare_latency(path, timings, device, budget):
+    """
+    The medians in [timings] slower than [path]'s by more than [budget] ("percent,ms": slower by
+    both), as lines to print; and notes on what couldn't be compared.
+    """
+    percent, floor = (float(x) for x in budget.split(","))
+    with open(path, encoding="utf-8") as f:
+        baseline = json.load(f)
+    slower, notes = [], []
+    for engine, medians in sorted(latency_medians(timings).items()):
+        recorded = baseline.get(engine)
+        if recorded is None:
+            notes.append(f"{engine}: no baseline for this engine")
+            continue
+        if recorded.get("device") != device:
+            notes.append(f"{engine}: the baseline was recorded on {recorded.get('device')}, not on {device}")
+        for scenario, marks in sorted(medians.items()):
+            for mark, median in sorted(marks.items()):
+                base = recorded.get("medians_ms", {}).get(scenario, {}).get(mark)
+                if base is None:
+                    notes.append(f"{engine}, {scenario}, until the {mark}: not in the baseline")
+                elif median > base * (1 + percent / 100) and median - base >= floor:
+                    slower.append(f"{engine}, {scenario}: until the {mark} {median} ms, {median - base} ms slower "
+                                  f"than the baseline's {base} ms")
+    return slower, notes
 
 
 class Events:
@@ -681,6 +831,15 @@ def main():
                              "--locked app its name). Their spots are read once, before the scenarios")
     parser.add_argument("--may-go-home", action="append", default=[],
                         help="a package that reopens itself by design: covered, then given up on (Home)")
+    parser.add_argument("--latency-baseline", metavar="FILE", default=LATENCY_BASELINE,
+                        help="the latency baseline to compare with or record (default: "
+                             "tools/gantlet-latency-baseline.json)")
+    parser.add_argument("--latency-budget", metavar="PERCENT,MS", nargs="?", const=LATENCY_BUDGET,
+                        help="fail the run if a median latency is slower than the baseline's by more than this "
+                             f"percentage and this many ms (default when given alone: {LATENCY_BUDGET})")
+    parser.add_argument("--record-latency-baseline", action="store_true",
+                        help="write this run's median latencies to the baseline, for the engines it measured "
+                             "(only from a run where every scenario passed)")
     args = parser.parse_args()
     ADB = find_adb()
     SERIAL = args.serial
@@ -694,8 +853,8 @@ def main():
         sys.exit("Unlock the phone first")
     version = re.search(r"versionName=(\S+)", sh(f"dumpsys package {BIOKEY}"))
     launcher = launcher_package()
-    print(f"BioKey {version.group(1) if version else '?'} on {sh('getprop ro.product.model').strip()}, "
-          f"Android {sh('getprop ro.build.version.release').strip()}, home screen {launcher}")
+    device = f"{sh('getprop ro.product.model').strip()}, Android {sh('getprop ro.build.version.release').strip()}"
+    print(f"BioKey {version.group(1) if version else '?'} on {device}, home screen {launcher}")
 
     display = Display()
     display.may_emulate = args.emulate_foldables
@@ -710,6 +869,9 @@ def main():
         spots = drawer_spots([label for _, label in specs if label])
         print(f"In the app drawer: {', '.join(spots) or 'none of them'}")
     results = []
+    latency = LatencyMarks()
+    # {(engine, scenario, "cover" or "prompt"): [ms after the launch]}, every app's together.
+    timings = {}
     try:
         for pkg, label in specs:
             for name, fn in scenarios(pkg, launcher, display, label, hinge, fingerprint, spots.get(label)):
@@ -720,6 +882,7 @@ def main():
                 watching = watcher is not None and not name.startswith("unlocked")
                 if watching:
                     watcher.start()
+                since = device_now()
                 try:
                     fn(result)
                 except Exception as e:  # A scenario that can't run is a failure, not a crash of the run.
@@ -731,6 +894,17 @@ def main():
                             result.fail(f"the app showed uncovered in {shown} of {frames} screenshots")
                         elif frames and not result.skipped:
                             result.note(f"never shown uncovered ({frames} screenshots)")
+                    try:
+                        launches = [] if result.skipped else LatencyMarks.launches(latency.read(since))
+                    except Exception as e:  # Timings missing are a note, not a failure of the scenario.
+                        launches = []
+                        result.note(f"latency marks unread: {e}")
+                    for launch in launches:
+                        for mark in ("cover", "prompt"):
+                            if launch[mark] is not None:
+                                timings.setdefault((launch["engine"], name, mark), []).append(launch[mark])
+                    if launches:
+                        result.note(latency_note(launches))
                 results.append(result)
                 status = "FAIL" if result.problems else "skip" if result.skipped else "pass"
                 print(f"[{status}] {result.name}")
@@ -748,7 +922,39 @@ def main():
     skipped = [r for r in results if r.skipped and not r.problems]
     print(f"\n{len(results) - len(failed) - len(skipped)} of {len(results)} scenarios passed, "
           f"{len(failed)} failed, {len(skipped)} skipped")
-    sys.exit(1 if failed else 0)
+
+    if timings:
+        print("\nLatency, in ms after the launch started (the tap, or the app's window; compatibility mode: the "
+              "app's resume), until its cover was drawn and its prompt asked for:")
+        for line in latency_table(timings):
+            print(f"  {line}")
+    else:
+        print("\nNo latency marks: BioKey's debug build logs them (a release build never does).")
+    too_slow = False
+    if args.latency_budget:
+        if not timings:
+            print("No latencies to compare with the baseline.")
+            too_slow = True
+        elif not os.path.exists(args.latency_baseline):
+            print(f"No latency baseline at {args.latency_baseline}: record one with --record-latency-baseline.")
+            too_slow = True
+        else:
+            slower, notes = compare_latency(args.latency_baseline, timings, device, args.latency_budget)
+            for n in notes:
+                print(f"  {n}")
+            for s in slower:
+                print(f"  ! {s}")
+            print(f"{len(slower)} median latencies slower than the baseline by more than {args.latency_budget} (%, ms)")
+            too_slow = bool(slower)
+    if args.record_latency_baseline:
+        if failed:
+            print("Latency baseline not recorded: the timings of a run with failures aren't the ones to hold to.")
+        elif not timings:
+            print("Latency baseline not recorded: no latency marks.")
+        else:
+            record_latency_baseline(args.latency_baseline, timings, device)
+            print(f"Latency baseline recorded: {args.latency_baseline}")
+    sys.exit(1 if failed or too_slow else 0)
 
 
 if __name__ == "__main__":

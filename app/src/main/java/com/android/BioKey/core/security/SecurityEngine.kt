@@ -116,6 +116,7 @@ class SecurityEngine private constructor() {
                 .setConfirmationRequired(false)
                 .build()
                 .authenticate(attempt.cancel, activity.mainExecutor, callback)
+            com.android.BioKey.core.diagnostics.LatencyMarks.mark("prompt", packageName)
         } catch (e: Exception) {
             Log.e(TAG, "Failed starting BiometricPrompt: ${e.javaClass.simpleName}")
             if (active === attempt) active = null

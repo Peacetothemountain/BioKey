@@ -152,6 +152,12 @@ A relative `storeFile` path is resolved from the project root. Without `key.prop
 
 Its version name ends in `-debugsigned`, so it can't be mistaken for a real release.
 
+### Latency
+
+The device gantlet (`tools/device_gantlet.py`, on a test phone or emulator with the debug build) also reports how fast each cover goes up: per engine and scenario, the milliseconds from the launch (the tap on its icon, or its window opening; in compatibility mode, its resume) until the cover is drawn and until the prompt is asked for, as count, median, 90th percentile and slowest. The debug build logs those moments to logcat under `BioKeyLatency` (`core/diagnostics/LatencyMarks.kt`), on the phone's uptime clock; release builds never do, since the lines name locked apps.
+
+No baseline is checked in yet: numbers only mean something from the phone they were measured on. To record one, run the gantlet with `--record-latency-baseline` on that phone (every scenario must pass), which writes `tools/gantlet-latency-baseline.json`; commit it. From then on, `--latency-budget` fails a run whose median for any engine, scenario and mark is more than 20% and at least 16 ms slower than the baseline's (`--latency-budget 30,25` for another budget).
+
 ## License
 
 Apache 2.0. See [LICENSE](LICENSE).

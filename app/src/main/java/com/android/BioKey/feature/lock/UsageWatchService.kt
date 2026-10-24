@@ -823,6 +823,7 @@ class UsageWatchService : Service() {
         if (LockScreenActivity.isLockScreenResumed && LockScreenActivity.activeLockedTarget == pkg) return
         // Also while its prompt or a launch is still on its way: a lock screen that has just gone to
         // the background is about to give up, and nothing would cover the app again.
+        com.android.BioKey.core.diagnostics.LatencyMarks.triggerAtWallClock("compatibility", pkg, handledUntil)
         lock(pkg)
     }
 

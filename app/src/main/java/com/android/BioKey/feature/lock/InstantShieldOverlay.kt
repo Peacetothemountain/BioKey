@@ -329,6 +329,7 @@ class InstantShieldOverlay(
                 windowAdded = true
             }
             isShowing = true
+            com.android.BioKey.core.diagnostics.LatencyMarks.markOnNextDraw(cover, "cover", targetPackage)
             activeInstance = this
             true
         } catch (e: Exception) {

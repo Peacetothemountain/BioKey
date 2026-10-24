@@ -74,6 +74,9 @@ android {
 
     buildFeatures {
         compose = true
+        // BuildConfig.DEBUG keeps the gantlet's latency marks (core/diagnostics/LatencyMarks) out
+        // of release builds.
+        buildConfig = true
     }
 
     compileOptions {
