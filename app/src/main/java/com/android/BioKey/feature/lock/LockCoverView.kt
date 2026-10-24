@@ -60,7 +60,6 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         val wash = scheme.primaryContainer.toArgb()
         val primary = scheme.primary.toArgb()
         val onPrimary = scheme.onPrimary.toArgb()
-        val secondary = scheme.secondary.toArgb()
         val tertiary = scheme.tertiary.toArgb()
         val error = scheme.error.toArgb()
     }
@@ -225,8 +224,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         cancelButton.background = ripple(Color.TRANSPARENT, p.primary)
         primaryButton.setTextColor(p.onPrimary)
         primaryButton.background = ripple(p.primary, p.onPrimary)
-        logo.setColors(p.primary, p.secondary, p.tertiary)
-        brandMark.setColors(p.primary, p.secondary, p.tertiary)
+        logo.setColor(p.primary)
+        brandMark.setColor(p.primary)
     }
 
     private fun ripple(fill: Int, rippleColor: Int): Drawable {

@@ -35,8 +35,6 @@ class BrandArtTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 
     private val primary = Color.rgb(200, 30, 30)
-    private val secondary = Color.rgb(30, 160, 30)
-    private val tertiary = Color.rgb(30, 30, 200)
 
     /** The box (left, top, right, bottom) of what was drawn on [bitmap], or null if nothing was. */
     private fun drawnBounds(bitmap: Bitmap): IntArray? {
@@ -53,34 +51,35 @@ class BrandArtTest {
     fun theMarkFitsItsBoxCentredInThePhonesColours() {
         // A wide box: the mark takes its height, centred across.
         val bitmap = Bitmap.createBitmap(400, 200, Bitmap.Config.ARGB_8888)
-        KeyMark.draw(Canvas(bitmap), 0f, 0f, 400f, 200f, primary, secondary, tertiary)
+        KeyMark.draw(Canvas(bitmap), 0f, 0f, 400f, 200f, primary)
         val (l, t, r, b) = drawnBounds(bitmap) ?: error("nothing drawn")
         val expectedWidth = 200f * KeyMark.ASPECT
         assertTrue("fills the height: $t..$b", t <= 12 && b >= 188)
         assertEquals("centred across", 200f, (l + r) / 2f, 8f)
         assertTrue("no wider than it should be: ${r - l}", r - l <= expectedWidth + 2)
-        // The gradient runs from primary (the ridges' top left) to tertiary (the blade's end).
-        var reddish = 0; var bluish = 0
+        // One colour, as the themed icon is: every solid pixel the colour it was given.
+        var solid = 0
+        var other = 0
         for (y in 0 until 200) for (x in 0 until 400) {
             val c = bitmap.getPixel(x, y)
-            if (Color.alpha(c) < 200) continue
-            if (Color.red(c) > Color.blue(c) + 60) reddish++
-            if (Color.blue(c) > Color.red(c) + 60) bluish++
+            if (Color.alpha(c) < 250) continue
+            solid++
+            if (abs(Color.red(c) - Color.red(primary)) > 8 || abs(Color.green(c) - Color.green(primary)) > 8 || abs(Color.blue(c) - Color.blue(primary)) > 8) other++
         }
-        assertTrue("primary in it: $reddish", reddish > 50)
-        assertTrue("tertiary in it: $bluish", bluish > 50)
+        assertTrue("drawn: $solid", solid > 200)
+        assertEquals("pixels in another colour", 0, other)
     }
 
     @Test
     fun theMarkDrawsNothingInAnEmptyBox() {
         val bitmap = Bitmap.createBitmap(20, 20, Bitmap.Config.ARGB_8888)
-        KeyMark.draw(Canvas(bitmap), 0f, 0f, 0f, 20f, primary, secondary, tertiary)
+        KeyMark.draw(Canvas(bitmap), 0f, 0f, 0f, 20f, primary)
         assertEquals(null, drawnBounds(bitmap))
     }
 
     @Test
     fun theCoversLogoIsTheMarkCentred() {
-        val view = WordmarkView(context).apply { setColors(primary, secondary, tertiary) }
+        val view = WordmarkView(context).apply { setColor(primary) }
         view.measure(View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(120, View.MeasureSpec.EXACTLY))
         view.layout(0, 0, 200, 120)
         val bitmap = Bitmap.createBitmap(200, 120, Bitmap.Config.ARGB_8888)
@@ -111,7 +110,7 @@ class BrandArtTest {
     fun theFlowingPrintKeepsItsForm() {
         // Still and flowing, the print covers the same ground: only small gaps move along it.
         fun drawn(motion: KeyMark.Motion?): Bitmap = Bitmap.createBitmap(300, 340, Bitmap.Config.ARGB_8888).also {
-            KeyMark.draw(Canvas(it), 0f, 0f, 300f, 340f, primary, secondary, tertiary, motion)
+            KeyMark.draw(Canvas(it), 0f, 0f, 300f, 340f, primary, motion)
         }
         val still = drawn(null)
         val flowing = drawn(KeyMark.Motion().apply { at(2.5f) })

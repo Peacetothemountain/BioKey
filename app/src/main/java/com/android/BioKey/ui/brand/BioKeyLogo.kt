@@ -41,7 +41,7 @@ fun BioKeyLogo(modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     val name = stringResource(R.string.brand_name)
     Canvas(modifier.clearAndSetSemantics { contentDescription = name; role = Role.Image }) {
-        drawMark(colors.primary.toArgb(), colors.secondary.toArgb(), colors.tertiary.toArgb(), motion = null)
+        drawMark(colors.primary.toArgb(), motion = null)
     }
 }
 
@@ -126,7 +126,7 @@ fun BioKeyMarkSideways(modifier: Modifier = Modifier, animated: Boolean = true) 
         // Laid out upright in the box turned on its side, then turned with it.
         rotate(90f) {
             drawMark(
-                colors.primary.toArgb(), colors.secondary.toArgb(), colors.tertiary.toArgb(),
+                colors.primary.toArgb(),
                 motion = motion,
                 width = size.height,
                 height = size.width
@@ -137,14 +137,12 @@ fun BioKeyMarkSideways(modifier: Modifier = Modifier, animated: Boolean = true) 
 
 /** Draws the mark centred in this scope, in a [width] x [height] box (the scope's own by default). */
 private fun DrawScope.drawMark(
-    primary: Int,
-    secondary: Int,
-    tertiary: Int,
+    color: Int,
     motion: KeyMark.Motion?,
     width: Float = size.width,
     height: Float = size.height
 ) {
     drawIntoCanvas {
-        KeyMark.draw(it.nativeCanvas, (size.width - width) / 2f, (size.height - height) / 2f, width, height, primary, secondary, tertiary, motion)
+        KeyMark.draw(it.nativeCanvas, (size.width - width) / 2f, (size.height - height) / 2f, width, height, color, motion)
     }
 }

@@ -15,23 +15,19 @@ import android.view.View
 @SuppressLint("ViewConstructor")
 class WordmarkView(context: Context) : View(context) {
 
-    private var primary = 0
-    private var secondary = 0
-    private var tertiary = 0
+    private var color = 0
 
     init {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
     }
 
-    /** The mark in [primary], [secondary] and [tertiary], the theme's. */
-    fun setColors(primary: Int, secondary: Int, tertiary: Int) {
-        this.primary = primary
-        this.secondary = secondary
-        this.tertiary = tertiary
+    /** The mark in [color], one of the theme's (its primary). */
+    fun setColor(color: Int) {
+        this.color = color
         invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
-        KeyMark.draw(canvas, 0f, 0f, width.toFloat(), height.toFloat(), primary, secondary, tertiary)
+        KeyMark.draw(canvas, 0f, 0f, width.toFloat(), height.toFloat(), color)
     }
 }

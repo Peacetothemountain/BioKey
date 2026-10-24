@@ -2,20 +2,18 @@ package com.android.BioKey.ui.brand
 
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PathMeasure
 import android.graphics.RectF
-import android.graphics.Shader
 import androidx.core.graphics.withScale
 import androidx.core.graphics.withTranslation
 import kotlin.math.min
 
 /**
  * BioKey's mark: the key of its launcher icon, a fingerprint whose middle ridge becomes the key's
- * blade, drawn in vector at any size and in the phone's own colours (Material You) instead of the
- * icon's fixed blue-to-orange.
+ * blade, drawn in vector at any size and in one colour, the phone's own (Material You), as its
+ * themed icon is.
  *
  * Its geometry is the icon's own, measured from the launcher artwork on its 108-unit grid, so the
  * mark inside BioKey and the icon on the home screen are the same key: five concentric ridges,
@@ -116,7 +114,6 @@ internal object KeyMark {
         strokeJoin = Paint.Join.ROUND
     }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
-    private var shaderFor: Pair<Int, Int>? = null
 
     /**
      * The gaps that travel along each ridge while it flows ([Motion]): how long each is (round caps
@@ -133,30 +130,14 @@ internal object KeyMark {
 
     /**
      * Draws the mark fitted into [width] x [height] at [left], [top] (centred, its proportions
-     * kept): the ridges and key in a gradient from [primary] (top left) to [tertiary] (the blade's
-     * end), as the icon runs from blue to orange; the sparkles in [primary], [tertiary] and
-     * [secondary], as the icon's are blue, orange and blue.
+     * kept), all of it in [color], as the launcher's themed icon is one colour.
      */
-    fun draw(
-        canvas: Canvas,
-        left: Float,
-        top: Float,
-        width: Float,
-        height: Float,
-        primary: Int,
-        secondary: Int,
-        tertiary: Int,
-        motion: Motion? = null
-    ) {
+    fun draw(canvas: Canvas, left: Float, top: Float, width: Float, height: Float, color: Int, motion: Motion? = null) {
         if (width <= 0f || height <= 0f) return
         val scale = min(width / BOUNDS.width(), height / BOUNDS.height())
         val dx = left + (width - BOUNDS.width() * scale) / 2f - BOUNDS.left * scale
         val dy = top + (height - BOUNDS.height() * scale) / 2f - BOUNDS.top * scale
-        if (shaderFor != primary to tertiary) {
-            // In the mark's own units: the gradient scales with it.
-            stroke.shader = LinearGradient(40f, 24f, 60f, 70f, primary, tertiary, Shader.TileMode.CLAMP)
-            shaderFor = primary to tertiary
-        }
+        stroke.color = color
         canvas.withTranslation(dx, dy) {
             scale(scale, scale)
             if (motion == null) {
@@ -167,11 +148,6 @@ internal object KeyMark {
             }
             drawPath(key, stroke)
             for ((i, path) in sparkles.withIndex()) {
-                val color = when (i) {
-                    0 -> primary
-                    1 -> tertiary
-                    else -> withAlpha(secondary, 0.8f)
-                }
                 if (motion == null) {
                     fill.color = color
                     drawPath(path, fill)
