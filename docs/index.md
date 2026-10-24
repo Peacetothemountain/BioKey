@@ -4,6 +4,8 @@ layout: default
 
 # BioKey
 
+![BioKey]({{ '/assets/feature-graphic.png' | relative_url }})
+
 An app lock for Android. The apps you choose open only after your face, fingerprint or screen
 lock, and stay unlocked while you're using them.
 

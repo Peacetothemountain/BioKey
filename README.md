@@ -1,5 +1,7 @@
 # BioKey
 
+![BioKey](docs/assets/feature-graphic.png)
+
 An app lock for Android, modelled on Android 17's own App Lock: the apps you choose open only after your face, fingerprint or screen lock, and stay unlocked while you're using them. No internet access, no data collected.
 
 **[Get it on Google Play](https://play.google.com/store/apps/details?id=com.nbdesigns.biokey)** · [Privacy policy](https://peacetothemountain.github.io/BioKey/privacy/) · [Support](https://peacetothemountain.github.io/BioKey/support/)
@@ -8,6 +10,13 @@ An app lock for Android, modelled on Android 17's own App Lock: the apps you cho
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![UI](https://img.shields.io/badge/UI-Jetpack%20Compose%20%2F%20Material%203-4285F4?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
+<p align="center">
+  <img src="docs/assets/screen-home.png" width="200" alt="BioKey's list of locked apps">
+  <img src="docs/assets/screen-cover.png" width="200" alt="A locked app covered as it opens">
+  <img src="docs/assets/screen-profile.png" width="200" alt="A profile of locked apps">
+  <img src="docs/assets/screen-dark.png" width="200" alt="BioKey in dark theme">
+</p>
 
 ---
 

@@ -2,7 +2,7 @@
 
 BioKey's releases, newest first. The version is the `versionName` in `app/build.gradle.kts`.
 
-## 1.0
+## 1.0 (24 October 2026)
 
 The first release on Google Play, as `com.nbdesigns.biokey`. Android 12 and later.
 
