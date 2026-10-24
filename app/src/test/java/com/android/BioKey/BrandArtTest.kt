@@ -39,26 +39,26 @@ class BrandArtTest {
     @Test
     fun fitsLikeContentScaleFitAndCentres() {
         // Wider box than the artwork: height-bound, centred horizontally.
-        val wide = LogoArt.fit(1600, 709, 400f, 100f)
-        assertEquals(100f / 709, wide.scale, 1e-6f)
+        val wide = LogoArt.fit(1000, 443, 400f, 100f)
+        assertEquals(100f / 443, wide.scale, 1e-6f)
         assertEquals(100f, wide.height, 1e-3f)
         assertEquals((400f - wide.width) / 2f, wide.left, 1e-3f)
         assertEquals(0f, wide.top, 1e-3f)
         assertEquals(226, wide.pixelWidth)
         assertEquals(100, wide.pixelHeight)
         // Taller box: width-bound, centred vertically.
-        val tall = LogoArt.fit(1600, 709, 320f, 400f)
+        val tall = LogoArt.fit(1000, 443, 320f, 400f)
         assertEquals(320f, tall.width, 1e-3f)
         assertEquals((400f - tall.height) / 2f, tall.top, 1e-3f)
         assertEquals(0f, tall.left, 1e-3f)
         // Never a zero-sized copy.
-        assertEquals(1, LogoArt.fit(1600, 709, 0.2f, 0.2f).pixelHeight)
+        assertEquals(1, LogoArt.fit(1000, 443, 0.2f, 0.2f).pixelHeight)
     }
 
     @Test
     fun copiesAreSizedAndShared() {
         val res = context.resources
-        assertArrayEquals(intArrayOf(1600, 709), LogoArt.artSize(res, R.drawable.ic_title_logo_letters))
+        assertArrayEquals(intArrayOf(1000, 443), LogoArt.artSize(res, R.drawable.ic_title_logo_letters))
         val first = LogoArt.sized(res, R.drawable.ic_title_logo_letters, 338, 150)
         assertNotNull(first)
         assertEquals(338, first!!.width)

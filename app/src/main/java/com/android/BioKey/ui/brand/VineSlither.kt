@@ -17,7 +17,8 @@ import kotlin.math.sin
  * Draws the vines of the BioKey logo (the tentacles layer), slithering: waves travel along each
  * vine like a snake, while the artwork itself is untouched.
  *
- * How: `logo_vine_field.webp` (made from the artwork by `tools/logo/VineField.cs`) holds, for
+ * How: `logo_vine_field.webp` (made from the 1600 px artwork by `tools/logo/VineField.cs`, then
+ * each half box-filtered down to 500 px, as the artwork was to 1000 px) holds, for
  * every pixel on or near a vine, the vine's sideways direction and how far along the vine it
  * is, pre-multiplied into two vectors U and V. A small shader moves each point by
  * A (U cos wt - V sin wt), a wave travelling along the vine; each cross-section moves as one
@@ -35,8 +36,11 @@ class VineSlither(private val resources: Resources) {
     companion object {
         /** One wave passing a point on a vine. */
         private const val PERIOD_MS = 2_400L
-        /** How far a vine sways to either side, in artwork pixels. */
-        private const val AMPLITUDE = 18f
+        /**
+         * How far a vine sways to either side, in artwork pixels: 18 at the 1600 px the sway was
+         * tuned on, so the same reach on the 1000 px artwork.
+         */
+        private const val AMPLITUDE = 11.25f
 
         /** The wave's position on the shared uptime clock, so every logo on screen moves in step. */
         fun phaseAt(uptimeMs: Long): Float = (uptimeMs % PERIOD_MS) / PERIOD_MS.toFloat()
