@@ -1,5 +1,6 @@
 package com.android.BioKey.ui.brand
 
+import android.content.res.Resources
 import android.os.SystemClock
 import androidx.compose.animation.core.EaseInOutCubic
 import androidx.compose.animation.core.withInfiniteAnimationFrameMillis
@@ -12,6 +13,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -23,16 +25,21 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.util.lerp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.android.BioKey.R
 import com.android.BioKey.ui.brand.LogoLayer
 import com.android.BioKey.ui.brand.VineSlither
 import com.android.BioKey.ui.theme.animationsEnabled
+import kotlin.math.roundToInt
 
 /** One breath of the aura, in and out. */
 private const val BREATH_MS = 5_600L
@@ -55,9 +62,13 @@ internal fun breathAt(uptimeMs: Long): Float {
  *
  * The vines slither like snakes ([VineSlither]); the letters stay still. One frame loop moves
  * both the wave and the aura, and both are read only while drawing, so each frame redraws the
- * logo's own layers: no recomposition, no re-layout. Capped at 60 fps, paused off screen; still
- * when [animated] is false (lock screens, or hidden behind another page) or with "Remove
- * animations", holding the frame it was on.
+ * logo's own layers: no recomposition, no re-layout. Capped at 60 fps, paused whenever the
+ * screen isn't resumed; still when [animated] is false (lock screens, or hidden behind another
+ * page) or with "Remove animations", holding the frame it was on.
+ *
+ * Never holds a frame back for its artwork: copies sized to the logo are made in the background
+ * ([LogoArt]), another size's copy standing in until they are ready. [prepareBioKeyLogo] starts
+ * them ahead of a screen that shows the logo at once.
  */
 @Composable
 fun BioKeyLogo(modifier: Modifier = Modifier, animated: Boolean = true) {
@@ -75,16 +86,25 @@ fun BioKeyLogo(modifier: Modifier = Modifier, animated: Boolean = true) {
     // there from the plain disc on its second frame.
     val phase = remember { mutableFloatStateOf(if (slither) VineSlither.phaseAt(SystemClock.uptimeMillis()) else STILL) }
     val breath = remember { mutableFloatStateOf(if (animate) breathAt(SystemClock.uptimeMillis()) else STILL) }
-    LaunchedEffect(animate) {
+    // Counts copies made in the background as they become ready: read while drawing, so each one
+    // redraws the layers, which take it in.
+    val copies = remember { mutableIntStateOf(0) }
+    val onCopyReady = remember<() -> Unit> { { copies.intValue++ } }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner, animate) {
         if (!animate) return@LaunchedEffect
-        var last = 0L
-        while (true) {
-            withInfiniteAnimationFrameMillis { ms ->
-                if (ms - last >= 16) {
-                    last = ms
-                    val now = SystemClock.uptimeMillis()
-                    if (slither) phase.floatValue = VineSlither.phaseAt(now)
-                    breath.floatValue = breathAt(now)
+        // The sway field is decoded in the background, ahead of the first moving frame that needs it.
+        if (slither) LogoArt.prepareField(resources)
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            var last = 0L
+            while (true) {
+                withInfiniteAnimationFrameMillis { ms ->
+                    if (ms - last >= 16) {
+                        last = ms
+                        val now = SystemClock.uptimeMillis()
+                        if (slither) phase.floatValue = VineSlither.phaseAt(now)
+                        breath.floatValue = breathAt(now)
+                    }
                 }
             }
         }
@@ -112,8 +132,9 @@ fun BioKeyLogo(modifier: Modifier = Modifier, animated: Boolean = true) {
                     role = Role.Image
                 }
                 .drawBehind {
+                    copies.intValue
                     letters.setTint(primary.toArgb())
-                    drawIntoCanvas { letters.draw(it.nativeCanvas, size.width, size.height) }
+                    drawIntoCanvas { letters.draw(it.nativeCanvas, size.width, size.height, onCopyReady, standIn = true) }
                 }
         )
         Spacer(
@@ -121,10 +142,28 @@ fun BioKeyLogo(modifier: Modifier = Modifier, animated: Boolean = true) {
                 .fillMaxSize()
                 .graphicsLayer()
                 .drawBehind {
+                    copies.intValue
                     val p = phase.floatValue.takeIf { it > STILL }
                     vines.setTint(tertiary.toArgb())
-                    drawIntoCanvas { vines.draw(it.nativeCanvas, size.width, size.height, p) }
+                    drawIntoCanvas { vines.draw(it.nativeCanvas, size.width, size.height, p, onCopyReady, standIn = true) }
                 }
         )
+    }
+}
+
+/**
+ * Starts making, in the background, the copies a [BioKeyLogo] laid out at [width] x [height]
+ * draws: for a screen that shows one on its first frame (BioKey's own lock), so the logo is
+ * there from the start. Main thread only.
+ */
+fun prepareBioKeyLogo(resources: Resources, width: Dp, height: Dp) {
+    // Laid out in whole pixels, as Compose rounds a size in dp.
+    val density = resources.displayMetrics.density
+    val w = (width.value * density).roundToInt().toFloat()
+    val h = (height.value * density).roundToInt().toFloat()
+    for (id in intArrayOf(R.drawable.ic_title_logo_letters, R.drawable.ic_title_logo_tentacles)) {
+        val art = LogoArt.artSize(resources, id) ?: continue
+        val fit = LogoArt.fit(art[0], art[1], w, h)
+        LogoArt.prepare(resources, id, fit.pixelWidth, fit.pixelHeight)
     }
 }

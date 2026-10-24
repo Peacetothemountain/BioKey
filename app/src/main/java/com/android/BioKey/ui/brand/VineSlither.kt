@@ -86,12 +86,13 @@ half4 main(float2 p) {
 
     /**
      * Draws the vines fitted into [width] x [height]; [phase] from [phaseAt], or null for still.
-     * [onReady]: never wait for the copy (see [LogoLayer.layout]).
+     * [onReady]: never wait for the copy, or for the sway field (the vines hold still until it is
+     * ready); [standIn]: see [LogoLayer.layout].
      */
-    fun draw(canvas: Canvas, width: Float, height: Float, phase: Float?, onReady: (() -> Unit)? = null) {
-        if (!vines.layout(width, height, onReady)) return
+    fun draw(canvas: Canvas, width: Float, height: Float, phase: Float?, onReady: (() -> Unit)? = null, standIn: Boolean = false) {
+        if (!vines.layout(width, height, onReady, standIn)) return
         if (phase != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val moving = wave()
+            val moving = wave(onReady)
             if (moving != null) {
                 val fit = vines.fit
                 val reach = AMPLITUDE * fit.scale
@@ -100,17 +101,26 @@ half4 main(float2 p) {
                 return
             }
         }
-        vines.draw(canvas, width, height)
+        vines.draw(canvas, width, height, onReady, standIn)
     }
 
-    /** The wave, laid out over the current artwork; null (draw still) if it can't be built. */
+    /**
+     * The wave, laid out over the current artwork; null (draw still) if it can't be built, or
+     * while its field is decoded in the background ([onReady]: see [LogoArt.field]).
+     */
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
-    private fun wave(): Wave? {
+    private fun wave(onReady: (() -> Unit)?): Wave? {
         val content = vines.content ?: return null
         val w = wave ?: run {
             if (waveFailed) return null
-            // Decorative: without the field or the shader, the vines just hold still.
-            runCatching { LogoArt.field(resources)?.let(::Wave) }.getOrNull()
+            val field = LogoArt.field(resources, onReady)
+            if (field == null) {
+                // Decorative: without the field the vines just hold still.
+                waveFailed = !LogoArt.isFieldPreparing()
+                return null
+            }
+            // Nor without the shader.
+            runCatching { Wave(field) }.getOrNull()
                 .also { wave = it; waveFailed = it == null } ?: return null
         }
         if (content !== waveContent) {
