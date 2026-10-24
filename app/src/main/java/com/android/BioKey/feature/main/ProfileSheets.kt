@@ -297,14 +297,18 @@ internal fun ProfileDetailsDialog(
     )
 }
 
-/** Pick how soon apps lock again after leaving them. */
+/**
+ * Pick how soon apps lock again after leaving them. With [settingsDefault] (a profile's sheet),
+ * the first choice is to follow the default in Settings, picked as null; [current] null is that.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun RelockSheet(
     title: String,
-    current: LockTimeoutMode,
-    onSelect: (LockTimeoutMode) -> Unit,
-    onDismiss: () -> Unit
+    current: LockTimeoutMode?,
+    onSelect: (LockTimeoutMode?) -> Unit,
+    onDismiss: () -> Unit,
+    settingsDefault: LockTimeoutMode? = null
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         ProtectDialogWindow()
@@ -316,15 +320,15 @@ internal fun RelockSheet(
         ) {
             SheetTitle(title, "Apps stay unlocked while you use them. This sets when they lock again after you leave.")
             Spacer(Modifier.height(12.dp))
-            val modes = LockTimeoutMode.entries
+            val modes: List<LockTimeoutMode?> = (if (settingsDefault != null) listOf(null) else emptyList<LockTimeoutMode?>()) + LockTimeoutMode.entries
             // One set of choices for screen readers, not radio buttons each on their own.
             Group(count = modes.size, modifier = Modifier.selectableGroup()) { i ->
                 val mode = modes[i]
                 GroupRow(
                     index = i,
                     count = modes.size,
-                    title = mode.shortLabel,
-                    subtitle = mode.explanation,
+                    title = mode?.shortLabel ?: "Same as Settings",
+                    subtitle = if (mode != null) mode.explanation else "Follows the default re-lock delay · now ${settingsDefault?.shortLabel?.replaceFirstChar { it.lowercase() }}",
                     interaction = Modifier.selectable(selected = mode == current, role = Role.RadioButton) { onSelect(mode) }
                 ) {
                     RadioButton(selected = mode == current, onClick = null)
@@ -453,7 +457,7 @@ private fun LazyListScope.profileChoices(
             index = i + 1,
             count = count,
             title = profile.name,
-            subtitle = if (profile.enabled) profile.timeoutMode.relockPhrase else "Off · its apps aren't locked",
+            subtitle = if (profile.enabled) (profile.timeoutMode ?: defaultTimeout).relockPhrase else "Off · its apps aren't locked",
             iconKey = profile.iconKey,
             selected = currentProfile?.id == profile.id,
             onClick = { onMoveToProfile(profile.id) }
