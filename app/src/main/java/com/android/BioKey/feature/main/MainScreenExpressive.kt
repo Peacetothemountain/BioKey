@@ -99,7 +99,8 @@ import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.ForegroundRules
-import com.android.BioKey.ui.brand.BioKeyLogo
+import com.android.BioKey.ui.brand.BioKeyMarkSideways
+import com.android.BioKey.ui.brand.KeyMark
 import com.android.BioKey.ui.brand.HeaderMatrixDotsExpressive
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.GroupGap
@@ -114,6 +115,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 
 private const val FILTER_ALL = "filter:all"
 
@@ -371,13 +377,22 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
             contentPadding = PaddingValues(bottom = 96.dp)
         ) {
             item(key = "header") {
-                Box {
-                    HeaderMatrixDotsExpressive(Modifier.matchParentSize(), animated = headerActive)
+                // Where the header and its logo are on screen: the constellation thins out round
+                // the logo, so no link cuts through the name.
+                var headerOrigin by remember { mutableStateOf(Offset.Zero) }
+                var logoBounds by remember { mutableStateOf<Rect?>(null) }
+                Box(Modifier.onGloballyPositioned { headerOrigin = it.positionInRoot() }) {
+                    HeaderMatrixDotsExpressive(
+                        Modifier.matchParentSize(),
+                        animated = headerActive,
+                        quiet = logoBounds?.translate(-headerOrigin)
+                    )
                     Column(Modifier.statusBarsPadding()) {
                         MainHeader(
                             status = look,
                             onOpenStatus = { showProtectionSheet = true },
-                            onOpenSettings = { showSettings = true }
+                            onOpenSettings = { showSettings = true },
+                            onLogoPlaced = { logoBounds = it }
                         )
                     }
                 }
@@ -624,7 +639,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
 
 /** Status and Settings as equal-width tiles at the edges, the logo centred between them. */
 @Composable
-private fun MainHeader(status: ProtectionLook, onOpenStatus: () -> Unit, onOpenSettings: () -> Unit) {
+private fun MainHeader(status: ProtectionLook, onOpenStatus: () -> Unit, onOpenSettings: () -> Unit, onLogoPlaced: (Rect) -> Unit = {}) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -641,10 +656,12 @@ private fun MainHeader(status: ProtectionLook, onOpenStatus: () -> Unit, onOpenS
         )
         // Centred between the two equal-width tiles, with breathing room on both sides.
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-            BioKeyLogo(
+            // The mark alone, on its side: the fingerprint on the right, the key on the left.
+            BioKeyMarkSideways(
                 Modifier
-                    .fillMaxWidth(0.9f)
-                    .aspectRatio(3.1f) // the mark beside the name
+                    .height(64.dp)
+                    .aspectRatio(1f / KeyMark.ASPECT)
+                    .onGloballyPositioned { onLogoPlaced(it.boundsInRoot()) }
             )
         }
         HeaderTile(

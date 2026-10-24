@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -26,6 +27,13 @@ import kotlinx.coroutines.isActive
 /**
  * Ambient constellation behind the header: two depth layers of drifting, pulsing dots, joined by
  * links that fade with distance, the whole field fading out toward the content below.
+ *
+ * Calm on purpose:
+ * - Dots and their links fade out before an edge, so a dot wrapping round to the other side never
+ *   pops in or out, nor do its links.
+ * - Around [quiet] (the logo's bounds) the field thins out, so no link cuts through the name.
+ * - As many dots as the header has room for, the same density on a phone, an unfolded foldable or
+ *   a tablet; when the header changes size (a fold, a rotation) the dots move with it.
  *
  * Performance:
  * - Draws in its own graphics layer, so a new frame re-records only this canvas, never the
@@ -45,23 +53,37 @@ private const val TUNED_DENSITY = 2.625f
 private const val LINK_DIST = 220f
 private const val LINK_DIST_SQ = LINK_DIST * LINK_DIST
 private const val EDGE_MARGIN = 24f
+/** How far in from an edge a dot takes to fade in fully (it wraps [EDGE_MARGIN] beyond the edge). */
+private const val EDGE_FADE = 56f
+/** How bright the field is inside the quiet zone, and over how far round it that eases off. */
+private const val QUIET_ALPHA = 0.18f
+private const val QUIET_FEATHER = 40f
+/** Dots for the header the field was tuned on (a phone's, 1080 x 450 tuned pixels), and the limits. */
+private const val TUNED_COUNT = 30
+private const val TUNED_AREA = 1080f * 450f
+private const val MIN_COUNT = 20
+private const val MAX_COUNT = 72
 
-private class Field(count: Int) {
-    val n = count
-    val x = FloatArray(count)
-    val y = FloatArray(count)
-    val heading = FloatArray(count)
-    val speed = FloatArray(count)
-    val radius = FloatArray(count)
-    val phase = FloatArray(count)
+private class Field(capacity: Int) {
+    /** How many of the dots are in use: as many as the header has room for ([countFor]). */
+    var n = capacity
+    val x = FloatArray(capacity)
+    val y = FloatArray(capacity)
+    val heading = FloatArray(capacity)
+    val speed = FloatArray(capacity)
+    val radius = FloatArray(capacity)
+    val phase = FloatArray(capacity)
     /** 1 = near layer (bigger, brighter, faster, linked), 0 = far layer. */
-    val near = BooleanArray(count)
+    val near = BooleanArray(capacity)
     var seeded = false
     var startNanos = 0L
     var lastNanos = 0L
+    /** The size the dots were placed in, to move them with the header when it changes size. */
+    var placedW = 0f
+    var placedH = 0f
 
     init {
-        for (i in 0 until count) {
+        for (i in 0 until capacity) {
             near[i] = i % 3 != 0
             heading[i] = Random.nextFloat() * (2f * Math.PI.toFloat())
             speed[i] = if (near[i]) 14f + Random.nextFloat() * 14f else 6f + Random.nextFloat() * 6f
@@ -71,11 +93,26 @@ private class Field(count: Int) {
     }
 
     fun seed(w: Float, h: Float) {
-        for (i in 0 until n) {
+        for (i in x.indices) {
             x[i] = Random.nextFloat() * w
             y[i] = Random.nextFloat() * h
         }
+        placedW = w
+        placedH = h
         seeded = true
+    }
+
+    /** The header is now [w] x [h]: every dot keeps its place relative to it. */
+    fun resize(w: Float, h: Float) {
+        if (w == placedW && h == placedH) return
+        val sx = w / placedW
+        val sy = h / placedH
+        for (i in x.indices) {
+            x[i] *= sx
+            y[i] *= sy
+        }
+        placedW = w
+        placedH = h
     }
 
     /** Moves every dot by [dt] seconds; [unit] converts the tuned pixels to this screen's. */
@@ -93,16 +130,19 @@ private class Field(count: Int) {
     }
 }
 
+/** As many dots as a [w] x [h] header (in tuned pixels) has room for, at the tuned density. */
+internal fun countFor(w: Float, h: Float): Int = (TUNED_COUNT * (w * h) / TUNED_AREA).toInt().coerceIn(MIN_COUNT, MAX_COUNT)
+
 @Composable
 fun HeaderMatrixDotsExpressive(
     modifier: Modifier = Modifier,
-    particleCount: Int = 30,
-    animated: Boolean = true
+    animated: Boolean = true,
+    quiet: Rect? = null
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val tertiary = MaterialTheme.colorScheme.tertiary
     val animationsOff = !animated || !animationsEnabled()
-    val field = remember(particleCount) { Field(particleCount) }
+    val field = remember { Field(MAX_COUNT) }
     val wash = remember(primary, tertiary) {
         Brush.verticalGradient(listOf(primary.copy(alpha = 0.14f), tertiary.copy(alpha = 0.05f), Color.Transparent))
     }
@@ -141,6 +181,13 @@ fun HeaderMatrixDotsExpressive(
             field.seed(w, h)
             field.startNanos = now
         }
+        field.resize(w, h)
+        field.n = countFor(w / unit, h / unit)
+        val edgeFade = EDGE_FADE * unit
+        val quietFeather = QUIET_FEATHER * unit
+        // How visible a point is: fading toward the bottom, before the edges, and round the logo.
+        fun visibility(px: Float, py: Float): Float =
+            depthFade(py, h) * edgeFade(px, py, w, edgeFade) * quietFade(px, py, quiet, quietFeather)
         val dt = if (field.lastNanos == 0L) 0f else ((now - field.lastNanos) / 1e9f).coerceIn(0f, MAX_STEP_SECONDS)
         field.lastNanos = now
         val t = (now - field.startNanos) / 1e9f
@@ -159,7 +206,9 @@ fun HeaderMatrixDotsExpressive(
                 val dy = y[i] - y[j]
                 val d2 = dx * dx + dy * dy
                 if (d2 >= linkDistSq) continue
-                val fade = depthFade((y[i] + y[j]) * 0.5f, h)
+                // The dimmest of its ends and middle: a link fades with whichever is going.
+                val fade = minOf(visibility(x[i], y[i]), visibility(x[j], y[j]), visibility((x[i] + x[j]) * 0.5f, (y[i] + y[j]) * 0.5f))
+                if (fade <= 0.01f) continue
                 drawLine(
                     color = primary.copy(alpha = (1f - d2 / linkDistSq) * 0.30f * fade),
                     start = Offset(x[i], y[i]),
@@ -171,7 +220,7 @@ fun HeaderMatrixDotsExpressive(
 
         // Dots: far layer dim and still-ish, near layer pulsing with a soft tertiary glow.
         for (i in 0 until n) {
-            val fade = depthFade(y[i], h)
+            val fade = visibility(x[i], y[i])
             if (fade <= 0.01f) continue
             val center = Offset(x[i], y[i])
             if (!field.near[i]) {
@@ -197,4 +246,23 @@ fun HeaderMatrixDotsExpressive(
 private fun depthFade(y: Float, h: Float): Float {
     val p = (y / h).coerceIn(0f, 1f)
     return 1f - p * p
+}
+
+/** 0 at the left, right and top edges (and beyond, where dots wrap round), easing to 1 [fade] in. */
+private fun edgeFade(x: Float, y: Float, w: Float, fade: Float): Float =
+    smooth(minOf(x, w - x, y) / fade)
+
+/** [QUIET_ALPHA] inside [quiet], easing back to 1 over [feather] round it; 1 with no quiet zone. */
+private fun quietFade(x: Float, y: Float, quiet: Rect?, feather: Float): Float {
+    if (quiet == null) return 1f
+    val dx = maxOf(quiet.left - x, 0f, x - quiet.right)
+    val dy = maxOf(quiet.top - y, 0f, y - quiet.bottom)
+    val outside = kotlin.math.sqrt(dx * dx + dy * dy)
+    return QUIET_ALPHA + (1f - QUIET_ALPHA) * smooth(outside / feather)
+}
+
+/** Smoothstep of [t], clamped to 0..1: eases in and out of a fade. */
+private fun smooth(t: Float): Float {
+    val c = t.coerceIn(0f, 1f)
+    return c * c * (3f - 2f * c)
 }

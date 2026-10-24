@@ -14,6 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
@@ -92,3 +93,34 @@ fun BioKeyLogo(modifier: Modifier = Modifier) {
         }
     }
 }
+
+/**
+ * BioKey's mark on its own ([KeyMark]), without the name, turned a quarter-turn clockwise: the
+ * fingerprint on the right, the key on the left. For the home header, where it sits between the
+ * status and Settings tiles. As large as fits [modifier]'s size, centred, in the phone's colours.
+ * Still.
+ */
+@Composable
+fun BioKeyMarkSideways(modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val name = stringResource(R.string.brand_name)
+    Canvas(
+        modifier.clearAndSetSemantics {
+            contentDescription = name
+            role = Role.Image
+        }
+    ) {
+        // Laid out upright in the box turned on its side, then turned with it.
+        rotate(90f) {
+            val w = size.height
+            val h = size.width
+            drawIntoCanvas {
+                KeyMark.draw(
+                    it.nativeCanvas, (size.width - w) / 2f, (size.height - h) / 2f, w, h,
+                    colors.primary.toArgb(), colors.secondary.toArgb(), colors.tertiary.toArgb()
+                )
+            }
+        }
+    }
+}
+
