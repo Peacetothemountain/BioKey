@@ -44,9 +44,9 @@ import org.junit.runner.RunWith
 class BaselineProfileGenerator {
 
     companion object {
-        private const val BIOKEY = "com.android.BioKey"
-        private const val ACCESSIBILITY_SERVICE = "$BIOKEY/$BIOKEY.feature.lock.BioKeyAccessibilityService"
-        private const val LOCK_SCREEN = "$BIOKEY/.feature.lock.LockScreenActivity"
+        private const val BIOKEY = "com.nbdesigns.biokey"
+        private const val ACCESSIBILITY_SERVICE = "$BIOKEY/com.android.BioKey.feature.lock.BioKeyAccessibilityService"
+        private const val LOCK_SCREEN = "$BIOKEY/com.android.BioKey.feature.lock.LockScreenActivity"
         private const val DEFAULT_LOCKED_APP = "com.biokey.gantlet.plain"
         private const val LOCK_SCREEN_WAIT_MS = 10_000L
 

@@ -1,0 +1,38 @@
+name: Feature request
+description: Something BioKey could do, or do better.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        BioKey stays within Google Play's rules and has no internet access, so some things an app
+        lock could do are off the table (anything that needs the network, or claiming to be an
+        accessibility tool). Its README lists what Android doesn't let an app lock do, under Limits.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you'd like to do
+      description: The situation, and what gets in the way today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: How BioKey could help
+      description: What you'd want it to do. Rough is fine.
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Phone model and Android version (if it matters)
+      placeholder: Pixel 9, Android 17
+
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Other apps that do this, or anything you've tried.

@@ -270,11 +270,11 @@ def set_up(emu):
         emu.adb("install", "-r", "-g", apk, timeout=300)
 
     log(emu.avd, "setting BioKey up")
-    pkg = "com.android.BioKey"
+    pkg = "com.nbdesigns.biokey"
     emu.sh(f"appops set {pkg} ACCESS_RESTRICTED_SETTINGS allow; pm grant {pkg} android.permission.POST_NOTIFICATIONS; "
            f"appops set {pkg} GET_USAGE_STATS allow; appops set {pkg} SYSTEM_ALERT_WINDOW allow")
     accessibility(emu, True)
-    emu.sh(f"am start -n {pkg}/.feature.main.MainActivity")
+    emu.sh(f"am start -n {pkg}/com.android.BioKey.feature.main.MainActivity")
     time.sleep(4)
     emu.finger()  # "Confirm it's you" finishes setup.
     time.sleep(3)
@@ -283,7 +283,7 @@ def set_up(emu):
     # off (BioKey runs in compatibility mode meanwhile).
     accessibility(emu, False)
     emu.sh("input keyevent KEYCODE_HOME")
-    emu.sh(f"am start -n {pkg}/.feature.main.MainActivity")
+    emu.sh(f"am start -n {pkg}/com.android.BioKey.feature.main.MainActivity")
     time.sleep(3)
     # BioKey locked itself when its accessibility engine stopped: its prompt is up already (it asks
     # by itself as it opens), or its Unlock button brings it up. Either way, the fingerprint.
@@ -333,7 +333,7 @@ def set_up(emu):
 
 
 def accessibility(emu, on):
-    service = "com.android.BioKey/com.android.BioKey.feature.lock.BioKeyAccessibilityService"
+    service = "com.nbdesigns.biokey/com.android.BioKey.feature.lock.BioKeyAccessibilityService"
     emu.sh(f"settings put secure enabled_accessibility_services {service if on else 'null'}; "
            f"settings put secure accessibility_enabled {1 if on else 0}")
     time.sleep(4)

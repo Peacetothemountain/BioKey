@@ -1,6 +1,7 @@
 package com.android.BioKey.core.security
 
 import android.app.Activity
+import android.content.Context
 import android.os.Build
 import android.util.Log
 import android.view.KeyEvent
@@ -19,6 +20,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.DialogWindowProvider
+import com.android.BioKey.BuildConfig
+import java.io.File
 
 /**
  * Window protection and anti-tapjacking utilities.
@@ -28,12 +31,22 @@ object WindowProtection {
     private const val TAG = "WindowProtection"
 
     /**
+     * FLAG_SECURE, which keeps BioKey's windows out of screenshots and recordings. Only a debug
+     * build with files/store-capture present (written with run-as) leaves it off, to capture the
+     * Play Store pictures and video: [BuildConfig.DEBUG] is a constant, so a release always sets
+     * it and R8 drops the check.
+     */
+    fun secureFlag(context: Context): Int =
+        if (BuildConfig.DEBUG && File(context.filesDir, "store-capture").exists()) 0
+        else WindowManager.LayoutParams.FLAG_SECURE
+
+    /**
      * FLAG_SECURE (no screenshots/recording/recents thumbnails), hides other apps' overlays
      * while this window is visible (needs HIDE_OVERLAY_WINDOWS), and drops obscured touches.
      */
     fun applyWindowProtections(activity: Activity) {
         val window = activity.window
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        window.addFlags(secureFlag(activity))
         try {
             window.setHideOverlayWindows(true)
         } catch (e: Exception) {
@@ -148,7 +161,7 @@ fun ProtectDialogWindow() {
     DisposableEffect(view) {
         val window = (view.parent as? DialogWindowProvider)?.window
         window?.let {
-            it.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            it.addFlags(WindowProtection.secureFlag(view.context))
             runCatching { it.setHideOverlayWindows(true) }
             it.decorView.filterTouchesWhenObscured = true
             WindowProtection.hideFromNonToolAccessibilityServices(it.decorView)

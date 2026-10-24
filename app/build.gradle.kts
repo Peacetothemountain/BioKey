@@ -24,11 +24,11 @@ android {
     compileSdk { version = release(37) { minorApiLevel = 2 } }
 
     defaultConfig {
-        applicationId = "com.android.BioKey"
+        applicationId = "com.nbdesigns.biokey"
         minSdk = 31
         targetSdk = 37
-        versionCode = 467
-        versionName = "4.6"
+        versionCode = 1
+        versionName = "1.0"
     }
 
     signingConfigs {

@@ -19,6 +19,7 @@ import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.diagnostics.LatencyMarks
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
+import com.android.BioKey.core.security.WindowProtection
 
 /**
  * Full-screen cover drawn the instant a locked app reaches the screen, before
@@ -161,7 +162,7 @@ class InstantShieldOverlay(
         WindowManager.LayoutParams.MATCH_PARENT,
         WindowManager.LayoutParams.MATCH_PARENT,
         windowType,
-        WindowManager.LayoutParams.FLAG_SECURE or
+        WindowProtection.secureFlag(service) or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
