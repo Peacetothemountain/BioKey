@@ -1,0 +1,20 @@
+# The GitHub Pages site for BioKey, served from this folder on main
+# (Settings > Pages > Deploy from a branch: main, /docs). Pages builds only this folder.
+title: BioKey
+description: An app lock for Android. Your chosen apps open only after your face, fingerprint or screen lock. No internet access, no data collected.
+url: "https://peacetothemountain.github.io"
+baseurl: "/BioKey"
+
+# Supported by GitHub Pages without any extra plugins.
+theme: minima
+email: support.nbdesigns@gmail.com
+github_username: Peacetothemountain
+
+# The links in the site's header, in this order.
+header_pages:
+  - privacy.md
+  - support.md
+
+# For whoever publishes BioKey, not for its users: read on GitHub instead.
+exclude:
+  - RELEASING.md
