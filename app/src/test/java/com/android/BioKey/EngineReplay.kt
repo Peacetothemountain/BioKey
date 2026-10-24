@@ -154,6 +154,9 @@ internal class EngineReplay(private val context: Application) {
         context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE).edit().clear().commit()
         SecurityVault.resetForTests()
         LockStateTracker.lockAll()
+        // Robolectric's clock starts again for each test; a lock screen "resumed" in an earlier one
+        // in this JVM would otherwise look newer than anything started here.
+        LockScreenActivity::class.java.getDeclaredField("resumedAt").apply { isAccessible = true }.setLong(null, 0L)
         DiagnosticLog.clear()
         // A fresh phone: no usage history from before the trace (a recording made in the same test, say).
         ShadowUsageStatsManager.reset()
