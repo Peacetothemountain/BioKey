@@ -61,11 +61,11 @@ import org.robolectric.shadows.ShadowUsageStatsManager
  * screen counts, not only the newest; an unlocked app stays in use while it shows; nothing floating
  * over an unlocked app asks for authentication.
  *
- * Also on Android 15, where usage access is asked only for the events (and, in a look back, the
- * apps) it needs, as on the owner's phone. (36 and up would need Java 21 to run.)
+ * Also on Android 17, the owner's phone's, where usage access is asked only for the events (and,
+ * in a look back, the apps) it needs (Android 15 and later do).
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [31, 35], shadows = [CompatibilityEngineTest.PackageFilteringUsageStats::class, InstallTimePermissions::class])
+@Config(sdk = [31, 37], shadows = [CompatibilityEngineTest.PackageFilteringUsageStats::class, InstallTimePermissions::class])
 class CompatibilityEngineTest {
 
     /**

@@ -14,8 +14,8 @@ import org.robolectric.annotation.Config
 /**
  * Advanced Protection decides BioKey's engine: on Android 17, with it on, Android switches the
  * accessibility service off and BioKey has to run in compatibility mode. Android 16 has the mode
- * but leaves BioKey alone; older versions don't have it. Robolectric runs Android 16 and 17 only on
- * Java 21, so these run the decisions on any version, with Android's answer given.
+ * but leaves BioKey alone; older versions don't have it. These run the decisions with Android's
+ * answer given, on any version; the Robolectric class below also runs it on Android 12 and 17.
  */
 class AdvancedProtectionTest {
 
@@ -65,7 +65,7 @@ class AdvancedProtectionTest {
  * AdvancedProtectionManager, a class those versions don't have.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [31, 35], shadows = [InstallTimePermissions::class])
+@Config(sdk = [31, 37], shadows = [InstallTimePermissions::class])
 class AdvancedProtectionBeforeAndroid16Test {
 
     private val context: Context = ApplicationProvider.getApplicationContext()

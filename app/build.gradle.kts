@@ -101,6 +101,12 @@ android {
             // and the Gradle daemon fit in 16 GB, and a desktop isn't swamped. Robolectric keeps a
             // sandbox per Android version in each JVM, which 2 GB holds.
             test.maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).coerceIn(1, 4)
+            // Java 21 runs the tests (the app itself is built for 17): Robolectric needs it for
+            // Android 16 and 17, the versions BioKey's owners run.
+            test.javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
+            // Robolectric reaches into FileDescriptor, through the JDK's own internals, to fake the
+            // shared memory of Android 16 and 17: Java 21 allows that only when asked.
+            test.jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED", "--add-opens=java.base/java.io=ALL-UNNAMED")
             test.maxHeapSize = "2g"
 
             if (screenshots) {
