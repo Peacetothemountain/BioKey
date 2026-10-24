@@ -7,6 +7,7 @@ import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -96,12 +97,16 @@ object LockStateTracker {
     private const val LOCK_ALL_LOG_DEDUPE_MS = 2_000L
 
     /**
-     * One unlocked app. [awaySince] is 0 while the app is on screen. [hopTarget] is set while the
-     * user is in a helper app they went to straight from this one.
+     * An unlocked app off screen: since when, and [hopTarget], the helper app the user went to
+     * straight from it, while they are there. Never changed in place: a reader on another thread
+     * (compatibility mode reads on its own) must never see the time of one exit with the hop of
+     * another, which would end a session in the middle of a sign-in.
      */
+    private class Away(val since: Long, val hopTarget: String?)
+
+    /** One unlocked app. [away] is null while the app is on screen. */
     private class Session(val unlockedAt: Long) {
-        @Volatile var awaySince = 0L
-        @Volatile var hopTarget: String? = null
+        val away = AtomicReference<Away?>(null)
         /** The app has been on screen since the unlock (see [ARRIVAL_GRACE_MS]). */
         @Volatile var seen = false
     }
@@ -236,9 +241,7 @@ object LockStateTracker {
     fun onAppVisible(packageName: String) {
         val session = sessionOf(packageName) ?: return
         session.seen = true
-        if (session.awaySince == 0L) return
-        session.awaySince = 0L
-        session.hopTarget = null
+        if (session.away.getAndSet(null) == null) return
         cancelExpiry(packageName)
     }
 
@@ -251,10 +254,9 @@ object LockStateTracker {
     fun onAppLeft(packageName: String, timeoutMode: LockTimeoutMode, hopTarget: String?) {
         val session = sessionOf(packageName) ?: return
         session.seen = true
-        if (session.awaySince != 0L) return
-        session.awaySince = now()
-        session.hopTarget = hopTarget
-        for (pkg in PasswordManager.aliasesOf(packageName)) leftAt[pkg] = session.awaySince
+        val away = Away(since = now(), hopTarget = hopTarget)
+        if (!session.away.compareAndSet(null, away)) return
+        for (pkg in PasswordManager.aliasesOf(packageName)) leftAt[pkg] = away.since
         Log.d(TAG, "$packageName left the screen (hop=$hopTarget)")
         // The diagnostic log names locked apps only: a hop's destination is just "a helper app".
         DiagnosticLog.log("$packageName left the screen" + if (hopTarget != null) " · hop to a helper app" else " · re-lock: ${timeoutMode.name.lowercase()}")
@@ -286,15 +288,17 @@ object LockStateTracker {
             displacedCovers.keys.removeAll { it !in front }
         }
         for ((pkg, session) in sessions) {
-            val hop = session.hopTarget ?: continue
+            val away = session.away.get() ?: continue
+            val hop = away.hopTarget ?: continue
             if (hop == foregroundPackage || pkg in PasswordManager.aliasesOf(foregroundPackage) || continuesHop(foregroundPackage)) continue
-            session.hopTarget = null
+            // Only the exit it was read from: back on screen meanwhile, the app isn't away at all.
+            if (!session.away.compareAndSet(away, Away(away.since, hopTarget = null))) continue
             val mode = timeoutModeOf(pkg)
             Log.d(TAG, "Hop from $pkg ended at $foregroundPackage")
             DiagnosticLog.log("Hop from $pkg ended: another app came to the front")
             if (!isAppUnlocked(pkg, mode)) continue
             if (mode.durationMillis > 0L) {
-                scheduleExpiry(pkg, (session.awaySince + mode.durationMillis - now()).coerceAtLeast(0L), mode)
+                scheduleExpiry(pkg, (away.since + mode.durationMillis - now()).coerceAtLeast(0L), mode)
             }
         }
     }
@@ -319,19 +323,34 @@ object LockStateTracker {
     fun isAppUnlocked(packageName: String, timeoutMode: LockTimeoutMode): Boolean {
         val session = sessionOf(packageName) ?: return false
         if (!session.seen && now() - session.unlockedAt > ARRIVAL_GRACE_MS) {
-            lockPackage(packageName, "never reached the screen")
-            return false
+            return !expire(packageName, session, "never reached the screen") && isAppUnlocked(packageName, timeoutMode)
         }
-        val away = session.awaySince
-        if (away == 0L || timeoutMode == LockTimeoutMode.ON_SCREEN_OFF) return true
-        val hopping = session.hopTarget != null
+        val away = session.away.get()
+        if (away == null || timeoutMode == LockTimeoutMode.ON_SCREEN_OFF) return true
+        val hopping = away.hopTarget != null
         if (timeoutMode == LockTimeoutMode.IMMEDIATE && !hopping) {
-            lockPackage(packageName, "left, re-locks immediately")
-            return false
+            return !expire(packageName, session, "left, re-locks immediately") && isAppUnlocked(packageName, timeoutMode)
         }
-        val stillUnlocked = now() - away < awayAllowanceMs(timeoutMode, hopping)
-        if (!stillUnlocked) lockPackage(packageName, "re-lock time passed")
-        return stillUnlocked
+        if (now() - away.since < awayAllowanceMs(timeoutMode, hopping)) return true
+        return !expire(packageName, session, "re-lock time passed") && isAppUnlocked(packageName, timeoutMode)
+    }
+
+    /**
+     * Ends [session], found over: [packageName]'s session as it was when looked at. One started
+     * since, by an unlock on another thread (while an expiry timer was checking the last one,
+     * say), is left alone. Returns whether [session] ended here.
+     */
+    private fun expire(packageName: String, session: Session, reason: String): Boolean {
+        var ended = false
+        for (pkg in PasswordManager.aliasesOf(packageName)) if (sessions.remove(pkg, session)) ended = true
+        if (!ended) return false
+        // What [endSessions] does after removing a session, without removing whatever is there now.
+        cancelExpiry(packageName)
+        for (pkg in PasswordManager.aliasesOf(packageName)) pendingLocks.remove(pkg)
+        Log.i(TAG, "Session ended for $packageName")
+        DiagnosticLog.log("Session ended: $packageName ($reason)")
+        notifyLocked(setOf(packageName))
+        return true
     }
 
     fun lockPackage(packageName: String, reason: String? = null) = lockPackages(setOf(packageName), reason)
