@@ -17,7 +17,8 @@ import kotlin.math.sin
  * Draws the vines of the BioKey logo (the tentacles layer), slithering: waves travel along each
  * vine like a snake, while the artwork itself is untouched.
  *
- * How: `logo_vine_field.webp` (made from the artwork by `tools/logo/VineField.cs`) holds, for
+ * How: `logo_vine_field.webp` (made from the 1600 px artwork by `tools/logo/VineField.cs`, then
+ * each half box-filtered down to 500 px, as the artwork was to 1000 px) holds, for
  * every pixel on or near a vine, the vine's sideways direction and how far along the vine it
  * is, pre-multiplied into two vectors U and V. A small shader moves each point by
  * A (U cos wt - V sin wt), a wave travelling along the vine; each cross-section moves as one
@@ -35,8 +36,11 @@ class VineSlither(private val resources: Resources) {
     companion object {
         /** One wave passing a point on a vine. */
         private const val PERIOD_MS = 2_400L
-        /** How far a vine sways to either side, in artwork pixels. */
-        private const val AMPLITUDE = 18f
+        /**
+         * How far a vine sways to either side, in artwork pixels: 18 at the 1600 px the sway was
+         * tuned on, so the same reach on the 1000 px artwork.
+         */
+        private const val AMPLITUDE = 11.25f
 
         /** The wave's position on the shared uptime clock, so every logo on screen moves in step. */
         fun phaseAt(uptimeMs: Long): Float = (uptimeMs % PERIOD_MS) / PERIOD_MS.toFloat()
@@ -86,12 +90,13 @@ half4 main(float2 p) {
 
     /**
      * Draws the vines fitted into [width] x [height]; [phase] from [phaseAt], or null for still.
-     * [onReady]: never wait for the copy (see [LogoLayer.layout]).
+     * [onReady]: never wait for the copy, or for the sway field (the vines hold still until it is
+     * ready); [standIn]: see [LogoLayer.layout].
      */
-    fun draw(canvas: Canvas, width: Float, height: Float, phase: Float?, onReady: (() -> Unit)? = null) {
-        if (!vines.layout(width, height, onReady)) return
+    fun draw(canvas: Canvas, width: Float, height: Float, phase: Float?, onReady: (() -> Unit)? = null, standIn: Boolean = false) {
+        if (!vines.layout(width, height, onReady, standIn)) return
         if (phase != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val moving = wave()
+            val moving = wave(onReady)
             if (moving != null) {
                 val fit = vines.fit
                 val reach = AMPLITUDE * fit.scale
@@ -100,17 +105,28 @@ half4 main(float2 p) {
                 return
             }
         }
-        vines.draw(canvas, width, height)
+        vines.draw(canvas, width, height, onReady, standIn)
     }
 
-    /** The wave, laid out over the current artwork; null (draw still) if it can't be built. */
+    /**
+     * The wave, laid out over the current artwork; null (draw still) if it can't be built, or
+     * while its field is decoded in the background ([onReady]: see [LogoArt.field]).
+     */
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
-    private fun wave(): Wave? {
+    private fun wave(onReady: (() -> Unit)?): Wave? {
         val content = vines.content ?: return null
         val w = wave ?: run {
-            if (waveFailed) return null
-            // Decorative: without the field or the shader, the vines just hold still.
-            runCatching { LogoArt.field(resources)?.let(::Wave) }.getOrNull()
+            // On its way: a moving logo draws every frame, so it is picked up once there, with no
+            // need to be told each frame.
+            if (waveFailed || (onReady != null && LogoArt.isFieldPreparing())) return null
+            val field = LogoArt.field(resources, onReady)
+            if (field == null) {
+                // Decorative: without the field the vines just hold still.
+                waveFailed = !LogoArt.isFieldPreparing()
+                return null
+            }
+            // Nor without the shader.
+            runCatching { Wave(field) }.getOrNull()
                 .also { wave = it; waveFailed = it == null } ?: return null
         }
         if (content !== waveContent) {

@@ -6,12 +6,14 @@ import android.os.SystemClock
 import androidx.compose.material3.SnackbarDuration
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.ui.brand.LogoArt
+import com.android.BioKey.ui.brand.LogoLayer
 import com.android.BioKey.ui.brand.breathAt
 import com.android.BioKey.ui.theme.BioKeyMessages
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -37,26 +39,26 @@ class BrandArtTest {
     @Test
     fun fitsLikeContentScaleFitAndCentres() {
         // Wider box than the artwork: height-bound, centred horizontally.
-        val wide = LogoArt.fit(1600, 709, 400f, 100f)
-        assertEquals(100f / 709, wide.scale, 1e-6f)
+        val wide = LogoArt.fit(1000, 443, 400f, 100f)
+        assertEquals(100f / 443, wide.scale, 1e-6f)
         assertEquals(100f, wide.height, 1e-3f)
         assertEquals((400f - wide.width) / 2f, wide.left, 1e-3f)
         assertEquals(0f, wide.top, 1e-3f)
         assertEquals(226, wide.pixelWidth)
         assertEquals(100, wide.pixelHeight)
         // Taller box: width-bound, centred vertically.
-        val tall = LogoArt.fit(1600, 709, 320f, 400f)
+        val tall = LogoArt.fit(1000, 443, 320f, 400f)
         assertEquals(320f, tall.width, 1e-3f)
         assertEquals((400f - tall.height) / 2f, tall.top, 1e-3f)
         assertEquals(0f, tall.left, 1e-3f)
         // Never a zero-sized copy.
-        assertEquals(1, LogoArt.fit(1600, 709, 0.2f, 0.2f).pixelHeight)
+        assertEquals(1, LogoArt.fit(1000, 443, 0.2f, 0.2f).pixelHeight)
     }
 
     @Test
     fun copiesAreSizedAndShared() {
         val res = context.resources
-        assertArrayEquals(intArrayOf(1600, 709), LogoArt.artSize(res, R.drawable.ic_title_logo_letters))
+        assertArrayEquals(intArrayOf(1000, 443), LogoArt.artSize(res, R.drawable.ic_title_logo_letters))
         val first = LogoArt.sized(res, R.drawable.ic_title_logo_letters, 338, 150)
         assertNotNull(first)
         assertEquals(338, first!!.width)
@@ -91,6 +93,51 @@ class BrandArtTest {
         val copy = LogoArt.sizedIfReady(res, R.drawable.ic_title_logo_letters, 271, 120) { ready++ }
         assertEquals(271, copy!!.width)
         assertSame(copy, LogoArt.sized(res, R.drawable.ic_title_logo_letters, 271, 120))
+    }
+
+    @Test
+    fun aLogoAtANewSizeDrawsAnotherCopyUntilItsOwnIsReady() {
+        val res = context.resources
+        // The lock's copy, ready.
+        assertNotNull(LogoArt.sized(res, R.drawable.ic_title_logo_letters, 360, 160))
+        var ready = 0
+        val layer = LogoLayer(res, R.drawable.ic_title_logo_letters)
+        // Home's logo, at a size not made yet: drawn at once from the lock's copy, never decoded on the spot.
+        assertTrue(layer.layout(250f, 200f, { ready++ }, standIn = true))
+        val standIn = layer.content
+        assertNotNull(standIn)
+        idleUntil { ready > 0 }
+        assertEquals(1, ready)
+        // Its own copy is taken in once ready.
+        assertTrue(layer.layout(250f, 200f, { ready++ }, standIn = true))
+        assertNotSame(standIn, layer.content)
+        // A cover's logo doesn't stand in: nothing until its copy is ready.
+        val cover = LogoLayer(res, R.drawable.ic_title_logo_letters)
+        assertFalse(cover.layout(240f, 200f, { ready++ }))
+        idleUntil { ready > 1 }
+    }
+
+    @Test
+    fun theSwayFieldIsDecodedInTheBackgroundAndKept() {
+        val res = context.resources
+        var ready = 0
+        val first = LogoArt.field(res) { ready++ }
+        if (first == null) {
+            idleUntil { ready > 0 }
+            assertEquals(1, ready)
+        }
+        val field = LogoArt.field(res) { ready++ }
+        assertNotNull(field)
+        // Kept: the next moving logo finds it, with no decode.
+        assertSame(field, LogoArt.field(res, null))
+    }
+
+    private fun idleUntil(done: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + 10_000L
+        while (!done() && System.currentTimeMillis() < deadline) {
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(10L)
+        }
     }
 
     @Test

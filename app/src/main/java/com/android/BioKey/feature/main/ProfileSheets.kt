@@ -93,7 +93,6 @@ import com.android.BioKey.ui.theme.GroupGap
 import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.SectionHeader
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** A profile's icon: [key] is what's saved, [label] what TalkBack reads in the icon picker. */
@@ -160,7 +159,7 @@ internal fun AppIcon(app: AppItem, size: Dp = 40.dp) {
     val key = AppIconCache.key(app, sizePx)
     var icon by remember(key) { mutableStateOf(AppIconCache.peek(key)) }
     LaunchedEffect(key) {
-        if (icon == null) icon = withContext(Dispatchers.IO) { AppIconCache.load(context, app, sizePx) }
+        if (icon == null) icon = withContext(AppIconCache.loading) { AppIconCache.load(context, app, sizePx) }
     }
     val bitmap = icon
     if (bitmap != null) {

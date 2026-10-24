@@ -132,9 +132,16 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     val notifications = rememberNotificationPermission()
     val protecting = ProtectionEngine.isProtecting(mode)
 
+    // Both were read just now, as Settings opened: read again on every later resume, back from
+    // the system pages that change them, not on the one that follows straight away.
+    val readOnOpen = remember { booleanArrayOf(true) }
     LifecycleResumeEffect(Unit) {
-        notifListenerActive = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
-        shortcutAssigned = SelfProtectionDetector.isShortcutAssigned(context)
+        if (readOnOpen[0]) {
+            readOnOpen[0] = false
+        } else {
+            notifListenerActive = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
+            shortcutAssigned = SelfProtectionDetector.isShortcutAssigned(context)
+        }
         if (notificationAccessTrip.awaiting) {
             notificationAccessTrip.awaiting = false
             if (!notifListenerActive) {

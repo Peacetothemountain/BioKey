@@ -20,6 +20,8 @@ import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.data.AppClassifier
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.ui.AppIcons
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
@@ -42,7 +44,8 @@ internal object InstalledAppsCache {
  * icons are dropped a few minutes after BioKey's screens were last on view.
  */
 internal object AppIconCache {
-    private const val MAX_BYTES = 4 * 1024 * 1024
+    /** About 180 rows' icons at 105 px: a long list scrolled down and back isn't drawn again. */
+    private const val MAX_BYTES = 8 * 1024 * 1024
     private const val RELEASE_AFTER_MS = 5 * 60_000L
 
     private val icons = object : LruCache<String, ImageBitmap>(MAX_BYTES) {
@@ -50,6 +53,12 @@ internal object AppIconCache {
     }
     private val main = Handler(Looper.getMainLooper())
     private val release = Runnable { icons.evictAll() }
+
+    /**
+     * Where icons are drawn ([load]): a few at a time, so a fling past dozens of rows doesn't
+     * start dozens of draws at once, and a row scrolled away before its turn is never drawn.
+     */
+    val loading: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(3)
 
     fun key(app: AppItem, sizePx: Int) = "${app.packageName}/${app.user?.hashCode() ?: 0}/$sizePx"
 
@@ -85,11 +94,12 @@ internal object AppIconCache {
             return AppIcons.render(pm.getApplicationIcon(source), sizePx)
         }
         val user = app.user ?: Process.myUserHandle()
-        val drawable = context.getSystemService(LauncherApps::class.java)
+        // The activity the list was read from, rather than asking the system for it again;
+        // looked up only for an app listed without one.
+        val launcher = app.launcher ?: context.getSystemService(LauncherApps::class.java)
             ?.getActivityList(app.packageName, user)
             ?.firstOrNull()
-            ?.getIcon(0)
-            ?: pm.getApplicationIcon(app.packageName)
+        val drawable = launcher?.getIcon(0) ?: pm.getApplicationIcon(app.packageName)
         // Render first, then badge, so the briefcase sits on top of the final icon.
         val rendered = AppIcons.render(drawable, sizePx)
         return if (app.user != null) badged(context, rendered, user, sizePx) else rendered
@@ -118,7 +128,8 @@ internal suspend fun loadInstalledApps(context: Context): List<AppItem> {
                     packageName = pkg,
                     label = label,
                     category = AppClassifier.categorize(pkg, label, activity.applicationInfo.category),
-                    user = user.takeIf { it != myUser }
+                    user = user.takeIf { it != myUser },
+                    launcher = activity
                 )
             }
         }
