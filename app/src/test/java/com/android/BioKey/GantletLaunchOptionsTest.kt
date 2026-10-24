@@ -26,7 +26,7 @@ import org.robolectric.shadows.ShadowDisplayManager
  * Only another display where windows are freeform (a monitor, DeX) gets the whole display asked for.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34, 35])
+@Config(sdk = [31, 35], shadows = [InstallTimePermissions::class])
 class GantletLaunchOptionsTest {
 
     private val context: Application = ApplicationProvider.getApplicationContext()
