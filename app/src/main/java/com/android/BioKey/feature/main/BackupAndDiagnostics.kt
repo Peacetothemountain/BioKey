@@ -25,7 +25,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.text.LocalAutofillHighlightColor
+import androidx.compose.foundation.text.LocalAutofillHighlightBrush
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -59,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalAutofillManager
 import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.semantics.error
@@ -370,7 +371,7 @@ private fun PasswordDialog(
             ProtectDialogWindow()
             Column(Modifier.rejectObscuredTouches(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(text)
-                CompositionLocalProvider(LocalAutofillHighlightColor provides Color.Transparent) {
+                CompositionLocalProvider(LocalAutofillHighlightBrush provides SolidColor(Color.Transparent)) {
                     OutlinedTextField(
                         value = password,
                         onValueChange = {
