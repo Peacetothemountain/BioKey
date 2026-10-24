@@ -91,17 +91,18 @@ class BrandArtTest {
     }
 
     @Test
-    fun theHeadersMarkSwirlsSmoothlyAndComesBackToWhereItWas() {
+    fun theHeadersColourSwirlsSmoothlyQuickestInTheMiddle() {
         val a = KeyMark.Motion().apply { at(1.234f) }
         val b = KeyMark.Motion().apply { at(1.234f + 0.016f) }
-        // One frame later: a small step for every ridge and sparkle, never a jump.
-        for (i in a.ridgeTurn.indices) assertTrue("ridge $i", abs(a.ridgeTurn[i] - b.ridgeTurn[i]) < 1f)
+        // One frame later: a small step for every ridge's colour and every sparkle, never a jump.
+        for (i in a.ridgeSweep.indices) {
+            val step = (b.ridgeSweep[i] - a.ridgeSweep[i] + 360f) % 360f
+            assertTrue("ridge $i stepped $step", step > 0f && step < 3f)
+        }
         for (k in a.sparkleScale.indices) assertTrue("sparkle $k", abs(a.sparkleScale[k] - b.sparkleScale[k]) < 0.05f)
-        // The inner ridges turn further than the outer ones: a whorl.
-        val poses = (0 until 400).map { KeyMark.Motion().apply { at(it * 0.05f) } }
-        val outer = poses.maxOf { abs(it.ridgeTurn.first()) }
-        val inner = poses.maxOf { abs(it.ridgeTurn.last()) }
-        assertTrue("inner $inner, outer $outer", inner > outer * 2)
+        // The inner ridges' colour goes round quicker than the outer ones': it spirals in.
+        val later = KeyMark.Motion().apply { at(1f) }
+        assertTrue(later.ridgeSweep.last() > later.ridgeSweep.first() * 2)
     }
 
     @Test

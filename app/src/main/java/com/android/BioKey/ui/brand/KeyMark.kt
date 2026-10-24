@@ -3,11 +3,12 @@ package com.android.BioKey.ui.brand
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
-import androidx.core.graphics.withRotation
+import android.graphics.SweepGradient
 import androidx.core.graphics.withScale
 import androidx.core.graphics.withTranslation
 import kotlin.math.min
@@ -93,13 +94,14 @@ internal object KeyMark {
     val SPARKLE_COUNT = SPARKLES.size
 
     /**
-     * How the mark moves at one moment: each ridge turned about the fingerprint's centre by
-     * [ridgeTurn] degrees (the key never moves), each sparkle scaled by [sparkleScale] about its
-     * centre, shifted by [sparkleDx], [sparkleDy] (in the icon's units) and faded to
-     * [sparkleAlpha]. Updated in place: nothing is allocated per frame.
+     * How the mark moves at one moment. Its lines never move: each ridge's colour sweeps round the
+     * fingerprint's centre, turned to [ridgeSweep] degrees (the key keeps its still gradient). Each
+     * sparkle is scaled by [sparkleScale] about its centre, shifted by [sparkleDx], [sparkleDy] (in
+     * the icon's units) and faded to [sparkleAlpha]. Updated in place: nothing is allocated per
+     * frame.
      */
     class Motion {
-        val ridgeTurn = FloatArray(RIDGE_COUNT)
+        val ridgeSweep = FloatArray(RIDGE_COUNT)
         val sparkleScale = FloatArray(SPARKLE_COUNT) { 1f }
         val sparkleDx = FloatArray(SPARKLE_COUNT)
         val sparkleDy = FloatArray(SPARKLE_COUNT)
@@ -115,6 +117,12 @@ internal object KeyMark {
     }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private var shaderFor: Pair<Int, Int>? = null
+
+    /** The ridges' strokes while they swirl: a colour sweep round the print's centre, turned per ridge. */
+    private val swirl = Paint(stroke)
+    private var swirlShader: SweepGradient? = null
+    private var swirlFor: Pair<Int, Int>? = null
+    private val swirlTurn = Matrix()
 
     /**
      * Draws the mark fitted into [width] x [height] at [left], [top] (centred, its proportions
@@ -144,9 +152,16 @@ internal object KeyMark {
         }
         canvas.withTranslation(dx, dy) {
             scale(scale, scale)
-            for ((i, ridge) in ridges.withIndex()) {
-                val turn = motion?.ridgeTurn?.get(i) ?: 0f
-                if (turn == 0f) drawPath(ridge, stroke) else withRotation(turn, CX, CY) { drawPath(ridge, stroke) }
+            if (motion == null) {
+                for (ridge in ridges) drawPath(ridge, stroke)
+            } else {
+                // The lines stay where they are; their colour swirls round the print's centre.
+                val shader = swirlShaderFor(primary, tertiary)
+                for ((i, ridge) in ridges.withIndex()) {
+                    swirlTurn.setRotate(motion.ridgeSweep[i], CX, CY)
+                    shader.setLocalMatrix(swirlTurn)
+                    drawPath(ridge, swirl)
+                }
             }
             drawPath(key, stroke)
             for ((i, path) in sparkles.withIndex()) {
@@ -166,6 +181,16 @@ internal object KeyMark {
                     withScale(motion.sparkleScale[i], motion.sparkleScale[i], cx, cy) { drawPath(path, fill) }
                 }
             }
+        }
+    }
+
+    /** The sweep the ridges swirl in: primary, round to tertiary, and back, so it has no seam. */
+    private fun swirlShaderFor(primary: Int, tertiary: Int): SweepGradient {
+        swirlShader?.takeIf { swirlFor == primary to tertiary }?.let { return it }
+        return SweepGradient(CX, CY, intArrayOf(primary, tertiary, primary), null).also {
+            swirlShader = it
+            swirlFor = primary to tertiary
+            swirl.shader = it
         }
     }
 

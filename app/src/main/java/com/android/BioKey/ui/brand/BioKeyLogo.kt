@@ -48,32 +48,27 @@ fun BioKeyLogo(modifier: Modifier = Modifier) {
 /** At most one frame per this long (~60 fps): the motion is slow, and time-based. */
 private const val FRAME_INTERVAL_NANOS = 16_000_000L
 
-/** One swirl of the ridges, out and back, and one twinkle of the sparkles. */
-private const val SWIRL_SECONDS = 7f
+/** One twinkle of the sparkles. */
 private const val TWINKLE_SECONDS = 2.6f
 /** One slow circle of each sparkle round where it sits. */
 private const val DRIFT_SECONDS = 9f
 
 /**
- * How far each ridge turns either way, outermost first: the inner ones most, like a whorl, so the
- * print swirls round its centre while staying where it is.
+ * How long each ridge's colour takes to go once round the print, outermost first: the inner ones
+ * quicker, so the colour spirals in towards the middle while the lines stay where they are.
  */
-private val SWIRL_DEGREES = floatArrayOf(4f, 7f, 10f, 14f, 19f)
+private val SWIRL_SECONDS = floatArrayOf(9f, 7.5f, 6f, 4.5f, 3.2f)
 /** How far each sparkle drifts round where it sits (in the icon's units). */
 private const val DRIFT = 1.4f
 
 /**
- * Sets [this] to the mark's pose [seconds] into its loop: the ridges turning one way and the
- * next the other, each a little behind the one outside it, so a wave runs in through the print;
- * the sparkles twinkling (growing and brightening) out of step, each drifting round in a small
- * circle. Every pose is a smooth function of time, so the loop never jumps.
+ * Sets [this] to the mark's pose [seconds] into its loop: each ridge's colour turned round the
+ * print's centre, the inner ones further (the lines themselves never move); the sparkles twinkling
+ * (growing and brightening) out of step, each drifting round in a small circle. Every pose is a
+ * smooth function of time, so the loop never jumps.
  */
 internal fun KeyMark.Motion.at(seconds: Float) {
-    val swirl = 2f * PI.toFloat() * seconds / SWIRL_SECONDS
-    for (i in ridgeTurn.indices) {
-        val direction = if (i % 2 == 0) 1f else -1f
-        ridgeTurn[i] = direction * SWIRL_DEGREES[i] * sin(swirl - i * 0.55f)
-    }
+    for (i in ridgeSweep.indices) ridgeSweep[i] = (360f * seconds / SWIRL_SECONDS[i]) % 360f
     for (k in sparkleScale.indices) {
         val twinkle = (sin(2f * PI.toFloat() * seconds / TWINKLE_SECONDS + k * 2.1f) + 1f) / 2f
         sparkleScale[k] = 0.65f + 0.5f * twinkle
@@ -89,8 +84,9 @@ internal fun KeyMark.Motion.at(seconds: Float) {
  * left), for the home header between the status and Settings tiles. As large as fits [modifier]'s
  * size, centred, in the phone's colours.
  *
- * Moves on its own, never from the phone's sensors: the print's ridges swirl in place round its
- * centre while the key holds still, and the sparkles twinkle and drift round it ([at]). Only while
+ * Moves on its own, never from the phone's sensors: the print stays exactly where it is while the
+ * colour in its ridges swirls round its centre, quickest in the middle; the key holds still, and
+ * the sparkles twinkle and drift round it ([at]). Only while
  * [animated] (the header uncovered), the screen resumed and "Remove animations" off; otherwise it
  * holds its pose. Like the constellation behind it: its own graphics layer, the frame read only
  * while drawing (no recomposition per frame), at most 60 fps, nothing allocated per frame.
@@ -121,12 +117,13 @@ fun BioKeyMarkSideways(modifier: Modifier = Modifier, animated: Boolean = true) 
     }
     Canvas(modifier.graphicsLayer().clearAndSetSemantics { contentDescription = name; role = Role.Image }) {
         val now = frameNanos
-        if (now != 0L) motion.at((now - startNanos[0]) / 1e9f)
+        // Held at its first pose until it moves, so it never changes look as it starts.
+        motion.at(if (now == 0L) 0f else (now - startNanos[0]) / 1e9f)
         // Laid out upright in the box turned on its side, then turned with it.
         rotate(90f) {
             drawMark(
                 colors.primary.toArgb(), colors.secondary.toArgb(), colors.tertiary.toArgb(),
-                motion = if (now != 0L) motion else null,
+                motion = motion,
                 width = size.height,
                 height = size.width
             )
