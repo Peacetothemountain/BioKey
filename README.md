@@ -169,6 +169,16 @@ The baseline profile (code Android compiles ahead of time, so the first cover af
 
 It writes `app/src/release/generated/baselineProfiles/` (the baseline and startup profiles), which AGP merges with the hand-written `app/src/main/baseline-prof.txt`; check the generated files in.
 
+### Engine traces
+
+The debug build records what each protection engine is told and what it decides (`core/diagnostics/EngineTrace.kt`): window events and window lists, usage events, the screen and keyguard, the lock screen and its prompt, unlocks and cancels; then every cover, lock screen started and trip Home. A problem seen on a phone can then be replayed on the JVM, without the phone. Release builds record nothing, since the trace names locked apps.
+
+1. Reproduce the problem on the phone with the debug build.
+2. Copy the trace off it: `adb shell run-as com.android.BioKey cat files/engine-trace.txt > app/src/test/resources/traces/<name>.trace`.
+3. `EngineReplayTest` replays every trace there into the real engine and checks it decides what the trace says it did. To turn a bug into a test, edit the trace's decisions (its `o.*` lines) to what should have happened: the test fails until the engine does that.
+
+A replay sets up the phone from the trace (locked apps, their re-lock delays and names, home screens, helper apps, keyboards) and plays every input at the time it came. It doesn't replay BioKey's own lock screen (only what the engines were told of it) or the notification shield.
+
 ## License
 
 Apache 2.0. See [LICENSE](LICENSE).

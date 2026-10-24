@@ -11,6 +11,7 @@ import android.hardware.display.DisplayManager
 import android.os.Build
 import android.util.Log
 import android.view.Display
+import com.android.BioKey.core.diagnostics.EngineTrace
 
 /** Starts [LockScreenActivity] from a background component (either detection engine). */
 object LockLauncher {
@@ -53,6 +54,7 @@ object LockLauncher {
         // start (another display's) or the lock screen's own task, while no display means the
         // phone's own screen everywhere else (the shield, its checks).
         val display = displayId ?: Display.DEFAULT_DISPLAY
+        EngineTrace.record("o.launch", targetPkg, display, if (reprompt) 1 else 0)
         return start(context, intent, targetPkg.hashCode(), display, wholeDisplay(context, display))
     }
 

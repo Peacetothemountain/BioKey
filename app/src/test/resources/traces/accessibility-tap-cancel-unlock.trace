@@ -1,0 +1,66 @@
+# BioKey engine trace v1
+100	env	engine	accessibility
+100	env	protection	1
+100	env	locked	com.twitter.android	IMMEDIATE	X
+100	env	home	com.google.android.apps.nexuslauncher	0	1
+100	o.log	Accessibility engine started
+350	a.win
+350	d.deviceLocked	0
+350	d.interactive	1
+350	a.win
+600	a.ev	32	com.google.android.apps.nexuslauncher	com.google.android.apps.nexuslauncher.NexusLauncherActivity	-1	-1	0	0	%00
+750	a.win	1%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.google.android.apps.nexuslauncher
+1100	a.ev	1	com.google.android.apps.nexuslauncher	android.widget.TextView	-1	-1	0	0	%00	X
+1100	o.log	Tap on com.twitter.android: covering it before it opens
+1615	a.ev	32	com.twitter.android	com.twitter.android.MainActivity	-1	-1	0	0	%00
+1615	o.log	Covered com.twitter.android (opened)
+1615	o.launch	com.twitter.android	0	0
+1675	a.win	2%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.twitter.android
+1675	o.launch	com.twitter.android	0	0
+1765	a.win	2%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.twitter.android
+2115	l.target	com.twitter.android
+2115	l.resumed	1
+2115	a.ev	32	com.android.BioKey	com.android.BioKey.feature.lock.LockScreenActivity	-1	-1	0	0	%00
+2265	a.win	3%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.android.BioKey	2%2C1%2C0%2C%2C-1%2C0 0 320 470%2C%2Ccom.twitter.android
+2615	l.dismiss	com.twitter.android
+2630	u.abandon	com.twitter.android
+2630	l.target	
+2630	l.resumed	0
+2630	a.ev	32	com.twitter.android	com.twitter.android.MainActivity	-1	-1	0	0	%00
+2630	a.win	2%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.twitter.android
+2630	o.home
+2780	a.win	2%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.twitter.android
+3550	a.win	2%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.twitter.android
+3550	o.log	Covered com.twitter.android (re-opened while its lock screen was closing)
+3565	o.launch	com.twitter.android	0	0
+3625	a.win	2%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.twitter.android
+3625	o.launch	com.twitter.android	0	0
+4265	a.win	2%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.twitter.android
+4265	o.launch	com.twitter.android	0	0
+4965	a.win	2%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.twitter.android
+4965	o.launch	com.twitter.android	0	0
+5665	a.win	2%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.twitter.android
+5665	o.launch	com.twitter.android	0	0
+6130	a.ev	32	com.google.android.apps.nexuslauncher	com.google.android.apps.nexuslauncher.NexusLauncherActivity	-1	-1	0	0	%00
+6280	a.win	1%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.google.android.apps.nexuslauncher
+6365	o.home
+6630	a.ev	32	com.twitter.android	com.twitter.android.MainActivity	-1	-1	0	0	%00
+6645	o.launch	com.twitter.android	0	0
+6705	a.win	2%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.twitter.android
+6705	o.launch	com.twitter.android	0	0
+6795	a.win	2%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.twitter.android
+7145	l.target	com.twitter.android
+7145	l.resumed	1
+7145	u.unlock	com.twitter.android
+7145	o.log	Unlocked com.twitter.android
+7145	l.dismiss	com.twitter.android
+7160	l.target	
+7160	l.resumed	0
+7160	a.ev	32	com.twitter.android	com.twitter.android.MainActivity	-1	-1	0	0	%00
+7310	a.win	2%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.twitter.android
+7660	a.ev	32	com.google.android.apps.nexuslauncher	com.google.android.apps.nexuslauncher.NexusLauncherActivity	-1	-1	0	0	%00
+7810	a.win	1%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.google.android.apps.nexuslauncher
+8230	a.win	1%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.google.android.apps.nexuslauncher
+8230	o.log	com.twitter.android left the screen · re-lock: immediate
+8230	o.log	Session ended: com.twitter.android (left%2C re-locks immediately)
+10160	z.end

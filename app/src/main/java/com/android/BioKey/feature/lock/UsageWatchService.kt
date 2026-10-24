@@ -30,6 +30,7 @@ import androidx.core.content.ContextCompat
 import com.android.BioKey.R
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.diagnostics.LatencyMarks
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
@@ -240,9 +241,26 @@ class UsageWatchService : Service() {
         override fun run() {
             if (!polling) return
             val batch = readScreen()
+            if (EngineTrace.enabled) traceBatch(batch)
             if (shouldHandOver(batch)) handler.post { onBatch(batch) }
             workerHandler.postDelayed(this, POLL_MS)
         }
+    }
+
+    /** Events already in the trace, and when they happened (worker thread; see [traceBatch]). */
+    private val tracedEvents = LinkedHashMap<String, Long>()
+
+    /**
+     * Debug builds: a poll that read something for the first time, as EngineTrace's `c.poll`:
+     * whether it was a look back, then each event new to it (type, package, class, and how long
+     * before the read it happened). A replay adds those and polls at the same moment.
+     */
+    private fun traceBatch(batch: Batch) {
+        val firstSeen = (batch.older + batch.events).filter { e -> tracedEvents.put("${e.time}|${e.type}|${e.activity}", e.time) == null }
+        tracedEvents.values.removeAll { it < batch.readAt - 2 * OVERLAP_MS }
+        if (firstSeen.isEmpty() && !batch.fresh) return
+        val fields = firstSeen.map { e -> listOf(e.type, e.pkg, e.cls.orEmpty(), batch.readAt - e.time).joinToString(",") { EngineTrace.escape(it.toString()) } }
+        EngineTrace.record("c.poll", if (batch.fresh) 1 else 0, *fields.toTypedArray())
     }
 
     /** Whether [batch] goes to the main thread: anything new, or a heartbeat ([QUIET_HEARTBEAT_POLLS]). */
@@ -258,6 +276,7 @@ class UsageWatchService : Service() {
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            EngineTrace.record("d.bc", intent.action)
             stir()
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> {
@@ -299,7 +318,7 @@ class UsageWatchService : Service() {
         // the keyguard up, where nothing shows and the lock screen would only end up over them.
         handler.post {
             stir()
-            if (!isRunning || !polling || dreaming || keyguard.isKeyguardLocked) return@post
+            if (!isRunning || !polling || dreaming || keyguardLocked()) return@post
             foreground?.let { fg ->
                 if (!activities.knows(fg) || activities.isVisible(fg)) handleForeground(fg, foregroundClass)
             }
@@ -325,7 +344,7 @@ class UsageWatchService : Service() {
         // still (or again) in front.
         handler.postDelayed({
             stir()
-            if (isRunning && polling) recheck(lazy { keyguard.isDeviceLocked || keyguard.isKeyguardLocked })
+            if (isRunning && polling) recheck(lazy { deviceLockedNow() || keyguardLocked() })
         }, LockStateTracker.abandonCooldownRemainingMs(pkg) + 50L)
     }
 
@@ -337,7 +356,18 @@ class UsageWatchService : Service() {
         }
     }
 
-    private fun isInteractive() = power.isInteractive
+    private fun isInteractive() = power.isInteractive.also { EngineTrace.answer("interactive", it) }
+
+    // What the engine asks of the keyguard, recorded for a replay (EngineTrace) when it changes.
+    private fun keyguardLocked() = keyguard.isKeyguardLocked.also { EngineTrace.answer("keyguard", it) }
+
+    private fun deviceLockedNow() = keyguard.isDeviceLocked.also { EngineTrace.answer("deviceLocked", it) }
+
+    /** Home, as the engine sends the user there to fail closed. Recorded for a replay (EngineTrace). */
+    private fun sendHome() {
+        EngineTrace.record("o.home")
+        goHome()
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -379,7 +409,7 @@ class UsageWatchService : Service() {
         shield = InstantShieldOverlay(
             this,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            goHome = { goHome() },
+            goHome = { sendHome() },
             onTimeout = ::onShieldTimeout,
             keepCoverWhile = ::isExposed,
             takeFocus = true,
@@ -413,6 +443,7 @@ class UsageWatchService : Service() {
         }
         isRunning = true
         ProtectionAlerts.serviceRestored(this)
+        startEngineTrace(this, vault, "compatibility")
         // A locked app may already be in front (after a reboot or an update): look back for it first.
         if (isInteractive()) startPolling(lookBack = true)
         Log.i(TAG, "Compatibility mode started")
@@ -577,7 +608,7 @@ class UsageWatchService : Service() {
     private fun deviceLocked(force: Boolean): Boolean {
         if (force || ++pollsSinceLockCheck >= LOCK_CHECK_POLLS) {
             pollsSinceLockCheck = 0
-            lastDeviceLocked = keyguard.isDeviceLocked
+            lastDeviceLocked = deviceLockedNow()
         }
         return lastDeviceLocked
     }
@@ -777,7 +808,7 @@ class UsageWatchService : Service() {
         }
         activities.prune(batch.from)
         // Whether the keyguard is up is asked only once something would be covered (a binder call).
-        val screenLocked = lazy(LazyThreadSafetyMode.NONE) { batch.deviceLocked || keyguard.isKeyguardLocked }
+        val screenLocked = lazy(LazyThreadSafetyMode.NONE) { batch.deviceLocked || keyguardLocked() }
         // A look back from behind the keyguard is about before the phone was locked: nothing to cover.
         if (batch.fresh && screenLocked.value) return
         // An unlocked app back on screen is in use before anything else is looked at: one that
@@ -922,7 +953,7 @@ class UsageWatchService : Service() {
                 return
             }
             hideShieldUnlessLocking(pkg)
-            goHome()
+            sendHome()
             return
         }
         if (LockScreenActivity.isLockScreenResumed && LockScreenActivity.activeLockedTarget == pkg) return
@@ -1155,7 +1186,7 @@ class UsageWatchService : Service() {
         val overInUse = front != null && front != pkg &&
             (front == packageName || vault.isAppLocked(front) || hopTo(front, foregroundClass, pkg) != null)
         if (overInUse || isInUseBeside(pkg)) {
-            if (!launchLockScreen(pkg)) goHome()
+            if (!launchLockScreen(pkg)) sendHome()
             return
         }
         expanding = pkg
@@ -1209,7 +1240,7 @@ class UsageWatchService : Service() {
         }
         // Still floating: its lock screen goes up under the cover, which stays over both.
         LockStateTracker.setRegularLockPending(pkg)
-        if (!launchLockScreen(pkg)) goHome()
+        if (!launchLockScreen(pkg)) sendHome()
     }
 
     /**
@@ -1275,7 +1306,7 @@ class UsageWatchService : Service() {
         // one: its lock screen comes up under it, its prompt over it, and the cover stays.
         val heldFor = held?.first
         if (heldFor != null && heldFor != pkg && shield.isShowing && shield.targetPackage == heldFor && isHeldOpen(heldFor)) {
-            if (!launchLockScreen(pkg)) goHome()
+            if (!launchLockScreen(pkg)) sendHome()
             return
         }
         // The overlay goes up first and hides the app. The lock screen may start from the
@@ -1285,7 +1316,7 @@ class UsageWatchService : Service() {
             DiagnosticLog.log("Cover for $pkg couldn't be shown")
         }
         // Couldn't even ask for the lock screen: leave the app. The cover stays up and retries.
-        if (!launchLockScreen(pkg)) goHome()
+        if (!launchLockScreen(pkg)) sendHome()
     }
 
     /**

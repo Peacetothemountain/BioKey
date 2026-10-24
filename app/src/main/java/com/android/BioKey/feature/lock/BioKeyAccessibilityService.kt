@@ -27,6 +27,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.util.forEach
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.diagnostics.LatencyMarks
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
@@ -192,6 +193,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     private val deviceStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            EngineTrace.record("d.bc", intent.action)
             // First, and whatever goes wrong below: the screen going off ends every session.
             if (intent.action == Intent.ACTION_SCREEN_OFF) LockStateTracker.onScreenTurnedOff()
             if (!isRunning) return
@@ -276,7 +278,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         shield = InstantShieldOverlay(
             this,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            goHome = { performGlobalAction(GLOBAL_ACTION_HOME) },
+            goHome = { pressHome() },
             onTimeout = ::onShieldTimeout
         )
         masks = WindowMask(this, ::onMaskTapped)
@@ -306,6 +308,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         ProtectionAlerts.serviceRestored(this)
         // The accessibility engine is the better one: compatibility mode stands down.
         UsageWatchService.stop(this)
+        startEngineTrace(this, vault, "accessibility")
         // A locked app may already be in front (service restarted, or enabled over it).
         mainHandler.postDelayed(::reevaluateForeground, 250)
         Log.i(TAG, "Accessibility service connected & components initialized")
@@ -358,9 +361,25 @@ class BioKeyAccessibilityService : AccessibilityService() {
         mainHandler.post { if (isRunning && ::vault.isInitialized && launcherInFront) watchLauncher(true) }
     }
 
-    private fun isInteractive() = power?.isInteractive == true
+    private fun isInteractive() = (power?.isInteractive == true).also { EngineTrace.answer("interactive", it) }
 
-    private fun isDeviceLocked() = keyguard?.isDeviceLocked == true
+    private fun isDeviceLocked() = (keyguard?.isDeviceLocked == true).also { EngineTrace.answer("deviceLocked", it) }
+
+    private fun isKeyguardLocked() = (keyguard?.isKeyguardLocked == true).also { EngineTrace.answer("keyguard", it) }
+
+    /** Home, as the service presses it. Recorded for a replay ([EngineTrace]). */
+    private fun pressHome(): Boolean {
+        EngineTrace.record("o.home")
+        return performGlobalAction(GLOBAL_ACTION_HOME)
+    }
+
+    /**
+     * Whose [w] reads as, for a trace ([EngineTrace.windows]): known from its events, or asked; a
+     * window known to be unreadable is left empty, without asking it again (nor, as [packageOf]
+     * would, remembering the answer: a debug build must decide as a release build does).
+     */
+    private fun traceRootPackage(w: AccessibilityWindowInfo): String? =
+        windowPackages[w.id] ?: if (w.id in attributedWindows || w.id in unreadableAt) null else windowPackage(w)
 
     // -------------------------------------------------------------------------------------------
     // Event handling
@@ -480,6 +499,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || !::vault.isInitialized) return
+        EngineTrace.event(event)
         handlingEvent = true
         try {
             handleEvent(event)
@@ -877,6 +897,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             null
         }
         if (handlingEvent) eventWindows = list
+        if (list != null && EngineTrace.enabled) EngineTrace.windows(list, ::traceRootPackage)
         return list
     }
 
@@ -1090,7 +1111,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             maskedApps = emptySet()
             return
         }
-        if (!isInteractive() || keyguard?.isKeyguardLocked == true || apps.isEmpty()) {
+        if (!isInteractive() || isKeyguardLocked() || apps.isEmpty()) {
             masks.setHidden(true)
             masks.add(targets)
             return
@@ -1301,7 +1322,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         ) {
             Log.i(TAG, "Overview opened from locked $previous; going Home")
             foregroundPackage = target
-            performGlobalAction(GLOBAL_ACTION_HOME)
+            pressHome()
             shield.hide()
             return
         }
@@ -1350,7 +1371,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     lock(target, "came back over its lock screen", displayId)
                     return
                 }
-                performGlobalAction(GLOBAL_ACTION_HOME)
+                pressHome()
             }
             shield.hide()
             return
@@ -1518,7 +1539,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     guarded("Leaving a guarded page") {
                         val host = activeSelfProtectionHost
                         if (host != null && shouldGuardSelf() && selfProtection.isGuardedScreen(host, null)) {
-                            performGlobalAction(GLOBAL_ACTION_HOME)
+                            pressHome()
                         }
                     }
                 }, 220L)
@@ -1626,7 +1647,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             lastLaunch = null
             // Could not cover the app: fail closed by leaving it (on another display its patch stays over it).
             if (isPhoneScreen(displayId)) {
-                performGlobalAction(GLOBAL_ACTION_HOME)
+                pressHome()
                 shield.hide()
             }
         }

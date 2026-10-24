@@ -83,6 +83,7 @@ android {
             "com.android.BioKey.SessionRulesTest",
             "com.android.BioKey.RecentsGestureTest",
             "com.android.BioKey.OwnSessionTest",
+            "com.android.BioKey.EngineReplayTest",
         )
         val testSet = providers.gradleProperty("biokey.tests").getOrElse("all")
         require(testSet in setOf("all", "gantlet", "others")) { "biokey.tests is all, gantlet or others, not $testSet" }

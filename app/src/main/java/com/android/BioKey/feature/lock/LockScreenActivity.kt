@@ -21,6 +21,7 @@ import androidx.core.view.WindowCompat
 import com.android.BioKey.R
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
@@ -70,13 +71,20 @@ class LockScreenActivity : ComponentActivity() {
         internal fun coversDisplay(inMultiWindow: Boolean, window: Rect, display: Rect): Boolean =
             !inMultiWindow || window.contains(display)
 
+        // Both are what the engines are told about the lock screen: recorded for a replay (EngineTrace).
         @Volatile
         var isLockScreenResumed: Boolean = false
-            private set
+            private set(value) {
+                if (value != field) EngineTrace.record("l.resumed", if (value) 1 else 0)
+                field = value
+            }
 
         @Volatile
         var activeLockedTarget: String? = null
-            private set
+            private set(value) {
+                if (value != field) EngineTrace.record("l.target", value)
+                field = value
+            }
 
         /** When a lock screen last resumed ([SystemClock.uptimeMillis]): a start before it has arrived. */
         @Volatile
@@ -484,6 +492,7 @@ class LockScreenActivity : ComponentActivity() {
         } else {
             // Taken first: the unlock lets the notification shield restore (and forget) them.
             val deepLinks = if (launchAfterUnlock) BioKeyNotificationShieldService.takeDeepLinks(pkg) else null
+            EngineTrace.record("u.unlock", pkg)
             if (!LockStateTracker.onAppUnlocked(pkg, generation)) {
                 // Still hidden: the stand-in keeps its links for the next unlock.
                 deepLinks?.let { BioKeyNotificationShieldService.cachedPendingIntents.putIfAbsent(pkg, ConcurrentHashMap(it)) }
@@ -549,6 +558,7 @@ class LockScreenActivity : ComponentActivity() {
      */
     private fun abandon(displaced: Boolean = false) {
         DiagnosticLog.log("Lock screen for $lockedPackage ${if (displaced) "covered by another screen" else "left"} without unlocking")
+        EngineTrace.record(if (displaced) "u.displaced" else "u.abandon", lockedPackage)
         if (displaced) LockStateTracker.markLockDisplaced(lockedPackage) else LockStateTracker.markLockAbandoned(lockedPackage)
         if (isSelfProtection) LockStateTracker.clearSelfProtection()
     }
@@ -574,7 +584,9 @@ class LockScreenActivity : ComponentActivity() {
      * lock screen has taken over from us.
      */
     private fun dismissShield(upToGeneration: Long = Long.MAX_VALUE) {
-        if (isCurrent) InstantShieldOverlay.dismiss(lockedPackage, upToGeneration)
+        if (!isCurrent) return
+        EngineTrace.record("l.dismiss", lockedPackage)
+        InstantShieldOverlay.dismiss(lockedPackage, upToGeneration)
     }
 
     /**

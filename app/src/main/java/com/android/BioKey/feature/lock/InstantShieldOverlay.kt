@@ -15,6 +15,7 @@ import android.window.OnBackInvokedDispatcher
 import androidx.annotation.RequiresApi
 import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.diagnostics.LatencyMarks
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
@@ -262,8 +263,8 @@ class InstantShieldOverlay(
             if (isPredicted) {
                 // The predicted app arrived: from here on it's a regular cover.
                 endPrediction()
-                cover.setOnClickListener { onTapped() }
-                cover.onUnlock = onTapped
+                cover.setOnClickListener { tapped(onTapped) }
+                cover.onUnlock = { tapped(onTapped) }
                 if (takeFocus) {
                     setFocusable(true)
                     runCatching { windowManager.updateViewLayout(cover, layoutParams) }
@@ -276,6 +277,12 @@ class InstantShieldOverlay(
         if (!showCover(targetPackage, onTapped, focusable = takeFocus)) return false
         startVerification()
         return true
+    }
+
+    /** A tap on the cover (or its Unlock): what the engine is told, recorded for a replay ([EngineTrace]). */
+    private fun tapped(onTapped: () -> Unit) {
+        EngineTrace.record("s.tap", targetPackage)
+        onTapped()
     }
 
     private fun endPrediction() {
@@ -300,9 +307,10 @@ class InstantShieldOverlay(
         bindTarget(targetPackage)
         // Same look as the lock activity while its prompt comes up: identity only, no buttons.
         cover.setActionsVisible(false)
-        cover.setOnClickListener { onTapped() }
-        cover.onUnlock = onTapped
+        cover.setOnClickListener { tapped(onTapped) }
+        cover.onUnlock = { tapped(onTapped) }
         cover.onCancel = {
+            EngineTrace.record("s.cancel", targetPackage)
             LockStateTracker.markLockAbandoned(targetPackage)
             if (targetPackage != BioKeyAccessibilityService.SELF_PROTECTION_PENDING_KEY ||
                 !BioKeyAccessibilityService.dismissSelfProtection()
@@ -314,6 +322,7 @@ class InstantShieldOverlay(
         // After a lockout (a held cover saying so) the primary button locks the phone, as on the
         // lock screen, where that can be done; it is hidden where it can't.
         cover.onLockDevice = {
+            EngineTrace.record("s.lockDevice", targetPackage)
             LockStateTracker.markLockAbandoned(targetPackage)
             if (!BioKeyAccessibilityService.lockDevice()) goHome()
             hide()

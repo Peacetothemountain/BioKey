@@ -92,6 +92,8 @@ object DiagnosticLog {
 
     /** Records [text] now. Cheap, safe from any thread. */
     fun log(text: String) {
+        // Whatever the log's own switch: a replay compares what the engines decided.
+        EngineTrace.record("o.log", text)
         if (!enabled) return
         val entry = Entry(System.currentTimeMillis(), text.replace('\n', ' '))
         synchronized(entries) {
