@@ -66,13 +66,16 @@ internal class EngineReplay(private val context: Application) {
             when (r.kind) {
                 "o.launch" -> "launch ${r.fields[0]} on ${r.fields[1]}" + if (r.fields.getOrNull(2) == "1") " (again)" else ""
                 "o.home" -> "home"
-                "o.log" -> r.fields[0].takeIf { text -> DECISIONS.any(text::startsWith) }?.let { "log $it" }
+                "o.log" -> r.fields[0].takeIf { text -> DECISIONS.any(text::startsWith) && !text.endsWith(LOCK_SCREEN_LEFT) }?.let { "log $it" }
                 else -> null
             }
         }
 
         /** The diagnostic log lines that are an engine's decisions (the rest say what the owner did). */
         private val DECISIONS = listOf("Covered ", "Tap on ", "Kept ", "Lock screen for ", "Session ended", "All sessions ended")
+
+        /** How BioKey's lock screen logs being left ("Lock screen for X left without unlocking"): its own line, not a replayed engine's. */
+        private const val LOCK_SCREEN_LEFT = " without unlocking"
 
         /** The window state flags of a trace's `a.win` entries. */
         private const val ACTIVE = 'a'
