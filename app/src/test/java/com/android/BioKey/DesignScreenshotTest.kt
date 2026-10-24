@@ -30,7 +30,8 @@ import kotlin.math.roundToInt
 
 /**
  * Renders BioKey's screens to PNGs (app/build/screenshots) for design review, without a device.
- * Run: ./gradlew :app:testDebugUnitTest --tests "*DesignScreenshotTest*"
+ * Run: ./gradlew :app:testDebugUnitTest -Pbiokey.screenshots=true --tests "*DesignScreenshotTest*"
+ * Without -Pbiokey.screenshots=true, test runs leave it out (testOptions in app/build.gradle.kts).
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
