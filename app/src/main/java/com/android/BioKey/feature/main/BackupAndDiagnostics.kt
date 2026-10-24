@@ -21,7 +21,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
@@ -44,7 +44,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,6 +61,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
@@ -399,8 +399,14 @@ private fun PasswordDialog(
 @Composable
 internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val version by DiagnosticLog.version.collectAsState()
+    val version by DiagnosticLog.version.collectAsStateWithLifecycle()
     val entries = remember(version) { DiagnosticLog.entries().asReversed() }
+    // Each row's key: its entry's time, numbered among any logged in the same millisecond, oldest
+    // first, so new entries leave the keys of the rows below them as they were.
+    val keys = remember(entries) {
+        val seen = HashMap<Long, Int>()
+        entries.asReversed().map { "${it.at}/${seen.merge(it.at, 1, Int::plus)}" }.asReversed()
+    }
     val time = remember { SimpleDateFormat("MMM d, HH:mm:ss", Locale.getDefault()) }
     var confirmDelete by remember { mutableStateOf(false) }
 
@@ -452,7 +458,7 @@ internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
                                 )
                             }
                         }
-                        items(entries) { entry ->
+                        itemsIndexed(entries, key = { i, _ -> keys[i] }) { _, entry ->
                             Column {
                                 Text(time.format(Date(entry.at)), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                                 Text(entry.text, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
