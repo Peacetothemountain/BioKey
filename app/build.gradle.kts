@@ -67,9 +67,71 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
-        unitTests.all {
-            it.systemProperty("roborazzi.test.record", "true")
-            it.maxHeapSize = "3g"
+
+        // The lock screen's gantlet: the unit tests that must pass before anything reaches main.
+        // This is the only list of them. -Pbiokey.tests=gantlet runs just these (tools/gantlet_tests.sh,
+        // for CI and the pre-push hook), -Pbiokey.tests=others runs everything else (CI, after the
+        // gantlet), so a test added here moves from one run to the other and can't run in neither
+        // or both.
+        val gantlet = listOf(
+            "com.android.BioKey.Gantlet*",
+            "com.android.BioKey.LockStateTrackerTest",
+            "com.android.BioKey.CompatibilityEngineTest",
+            "com.android.BioKey.AccessibilityOwnTripTest",
+            "com.android.BioKey.ForegroundRulesTest",
+            "com.android.BioKey.LockLauncherTest",
+            "com.android.BioKey.SessionRulesTest",
+            "com.android.BioKey.RecentsGestureTest",
+            "com.android.BioKey.OwnSessionTest",
+        )
+        val testSet = providers.gradleProperty("biokey.tests").getOrElse("all")
+        require(testSet in setOf("all", "gantlet", "others")) { "biokey.tests is all, gantlet or others, not $testSet" }
+        // The design screenshots (DesignScreenshotTest) are recorded for review, never compared, and
+        // render every screen, which is slow: they run only when asked for, with
+        // -Pbiokey.screenshots=true (CI does, and keeps the PNGs from app/build/screenshots).
+        val screenshots = providers.gradleProperty("biokey.screenshots").map { it.toBoolean() }.getOrElse(false)
+        val gantletResults = layout.buildDirectory.dir("test-results/gantlet")
+        val gantletReport = layout.buildDirectory.dir("reports/tests/gantlet")
+
+        unitTests.all { test ->
+            // Test classes run in parallel JVMs, each with its own copy of BioKey's singletons
+            // (SecurityVault, LockStateTracker), so no class can lean on what another left behind.
+            // Half the cores, at most four: two on GitHub's four-core runners, where two of these
+            // and the Gradle daemon fit in 16 GB, and a desktop isn't swamped. Robolectric keeps a
+            // sandbox per Android version in each JVM, which 2 GB holds.
+            test.maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).coerceIn(1, 4)
+            test.maxHeapSize = "2g"
+
+            if (screenshots) {
+                test.systemProperty("roborazzi.test.record", "true")
+            } else {
+                test.filter.excludeTestsMatching("com.android.BioKey.DesignScreenshotTest")
+            }
+
+            when (testSet) {
+                "gantlet" -> {
+                    gantlet.forEach(test.filter::includeTestsMatching)
+                    // Reports of their own, so the run after the gantlet's doesn't replace them.
+                    test.reports.junitXml.outputLocation.set(gantletResults)
+                    test.reports.html.outputLocation.set(gantletReport)
+                    // Gradle only fails a filter when nothing at all matches, so a renamed or
+                    // deleted class would quietly drop out of the gantlet: each entry must have run.
+                    test.doLast {
+                        val ran = gantletResults.get().asFile.list().orEmpty()
+                        val missing = gantlet.filter { entry ->
+                            val name = Regex("TEST-" + entry.split("*").joinToString(".*") { Regex.escape(it) } + "\\.xml")
+                            ran.none(name::matches)
+                        }
+                        if (missing.isNotEmpty()) {
+                            throw GradleException(
+                                "The gantlet lists tests that don't exist (renamed or deleted?): " +
+                                    "${missing.joinToString()}. Update the list in app/build.gradle.kts."
+                            )
+                        }
+                    }
+                }
+                "others" -> gantlet.forEach(test.filter::excludeTestsMatching)
+            }
         }
     }
 

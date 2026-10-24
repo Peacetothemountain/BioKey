@@ -65,7 +65,7 @@ import org.robolectric.shadows.ShadowUsageStatsManager
  * apps) it needs, as on the owner's phone. (36 and up would need Java 21 to run.)
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34, 35], shadows = [CompatibilityEngineTest.PackageFilteringUsageStats::class])
+@Config(sdk = [31, 35], shadows = [CompatibilityEngineTest.PackageFilteringUsageStats::class, InstallTimePermissions::class])
 class CompatibilityEngineTest {
 
     /**

@@ -1,8 +1,11 @@
 #!/bin/sh
 # Runs the lock screen's gantlet (tools/gantlet_tests.sh) before anything is pushed to main, and
 # refuses the push if it fails. GitHub can't require CI to pass on this private repository without
-# GitHub Pro, so this is what holds main to it on a computer that pushes. It tests the working
-# tree, so commit (or stash) what isn't part of the push first.
+# GitHub Pro, so this is what holds main to it on a computer that pushes.
+#
+# The gantlet tests the checkout, not the commits being pushed, so it only lets a push to main
+# through when the two are the same: the commit pushed is the one checked out, with nothing changed,
+# staged or new beside it. Otherwise a fix that was never committed could pass a broken commit.
 #
 # Turn it on once per clone:   git config core.hooksPath .githooks
 # Skip it in an emergency:     git push --no-verify
@@ -10,9 +13,22 @@ zero=0000000000000000000000000000000000000000
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ "$remote_ref" = "refs/heads/main" ] || continue
   [ "$local_sha" = "$zero" ] && continue # Deleting main: nothing to test.
+  if [ "$local_sha" != "$(git rev-parse HEAD)" ]; then
+    echo "Not pushing to main: the gantlet tests what's checked out, and $local_ref isn't it." >&2
+    echo "Check out what you're pushing (git switch), then push again." >&2
+    exit 1
+  fi
+  # New files count too: Gradle builds every source file in app/, committed or not.
+  untracked=$(git ls-files --others --exclude-standard -- app gradle tools '*.gradle.kts' gradle.properties)
+  if ! git diff --quiet HEAD -- 2>/dev/null || ! git diff --cached --quiet -- 2>/dev/null || [ -n "$untracked" ]; then
+    echo "Not pushing to main: the gantlet would test changes that aren't in the push:" >&2
+    git status --short >&2
+    echo "Commit them, or set them aside (git stash push -u), then push again." >&2
+    exit 1
+  fi
   echo "Pushing to main: running the lock-screen gantlet first..."
   if ! sh "$(git rev-parse --show-toplevel)/tools/gantlet_tests.sh" --console=plain -q; then
-    echo "The lock-screen gantlet failed: not pushing to main (reports in app/build/reports/tests)." >&2
+    echo "The lock-screen gantlet failed: not pushing to main (reports in app/build/reports/tests/gantlet)." >&2
     exit 1
   fi
   echo "The lock-screen gantlet passed."
