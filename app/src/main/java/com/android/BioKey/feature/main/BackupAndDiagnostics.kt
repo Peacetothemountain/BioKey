@@ -34,6 +34,8 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -65,6 +67,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -332,7 +335,8 @@ private fun java.io.InputStream.readNBytesCompat(limit: Int): ByteArray {
  * A password, once: backing up ([creating]) or opening a backup. The field tells an autofill
  * service which it is (a new password, or the one a backup was saved with), and a new one is
  * handed to it on Confirm, so a password manager can offer to keep it and fill it in at restore.
- * The field is a pill, and autofill's highlight is clear, so a filled field looks like any other.
+ * The field is a pill, and autofill's highlight is clear, so a filled field looks like any other;
+ * its eye shows what was typed, as nothing asks for it twice.
  */
 @Composable
 private fun PasswordDialog(
@@ -346,6 +350,8 @@ private fun PasswordDialog(
     onDismiss: () -> Unit
 ) {
     var password by remember { mutableStateOf("") }
+    // Shown on request: with the password asked only once, a typo is caught by reading it.
+    var shown by remember { mutableStateOf(false) }
     val ready = password.length >= VaultBackup.MIN_PASSWORD_LENGTH && !busy
     val autofill = LocalAutofillManager.current
     val confirm = {
@@ -375,7 +381,15 @@ private fun PasswordDialog(
                         label = { Text("Password") },
                         singleLine = true,
                         shape = CircleShape,
-                        visualTransformation = PasswordVisualTransformation(),
+                        visualTransformation = if (shown) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { shown = !shown }) {
+                                Icon(
+                                    if (shown) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (shown) "Hide password" else "Show password"
+                                )
+                            }
+                        },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = { confirm() }),
                         supportingText = if (creating) {
