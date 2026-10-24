@@ -74,7 +74,7 @@ An app lock running as a regular app can't defend against everything:
 - **Closing an app from Recents** ends its session only with the accessibility engine (on launchers built on Android's own, like the Pixel's). Compatibility mode can't see it: Android doesn't tell apps when another app is closed, so the session ends by time.
 - **Compatibility mode on warm launches**: an app that was still in memory can show its last screen for about half a second before the cover. Android holds back app overlays while an app's opening animation runs; the accessibility engine's cover isn't held.
 - **Apps that hide other apps' overlays** (some banking and payment apps): in compatibility mode Android hides BioKey's cover over them, so their screen can show for a moment on each launch until the lock screen appears; the lock itself still applies.
-- **Launches without a tap** (links from other apps, the quick-switch gesture) are covered when the app's window appears, which can be a frame later than a tap-started launch.
+- **Launches without a tap** (links from other apps, notifications, the quick-switch gesture) are covered when Android reports the app's window, not at the tap. BioKey covers within about 30 to 50 ms of hearing of it, but on a cold start Android can report it late: measured at up to about half a second on an emulator (the engine trace shows when the event was made and when it arrived). A tap on an app's icon, its Recents card or a search result is covered at the tap.
 - **Apps that hide their windows from accessibility services** (Android 14 and later; many banking apps do): the accessibility engine covers them when they're opened by a tap on their icon or Recents card, or when a window of theirs it has already seen comes back. Opened another way (a link, a notification), they can open uncovered.
 - **Picture-in-picture**: with the accessibility engine, a locked app's picture-in-picture window is covered by a patch of its own. The window can show for a moment right after the phone is unlocked or while it's being moved, and an app that won't leave picture-in-picture shows dimmed under the unlock prompt. Compatibility mode can't see where that window is, or close it: a locked app left in picture-in-picture when the phone locks (or when every session ends, protection resumes or compatibility mode starts) is covered about a second after the phone is unlocked, by BioKey opening it full screen where it can, and otherwise by a cover over the whole screen, which stays until you unlock the app. Over another locked app, BioKey itself or a screen the app in front opened (a sign-in tab, say), beside an unlocked app or BioKey in split screen, or while another app's unlock prompt is up, BioKey doesn't open it (that would count as leaving the apps on screen): the cover goes up and its prompt follows, once any other prompt is done, and the apps on screen (BioKey included) stay unlocked. An app's own lock screen coming up doesn't count as leaving it either, so a playing video doesn't go into picture-in-picture over it.
 - **Split screen, desktop windows and other displays** (DeX, an external screen): a locked app's lock screen takes the whole display (desktop windows, Android 14 and later) or sends you Home, so the app is never usable beside the prompt. Windows of locked apps beside the lock screen, or on another display, are covered by patches.
@@ -107,7 +107,8 @@ core/data          LockTimeoutMode, SecurityProfile, AppClassifier, PasswordMana
 core/security      SecurityVault (settings, locked apps, profiles), LockStateTracker (sessions),
                    SecurityEngine (BiometricPrompt), ProtectionEngine (which engine runs),
                    AdvancedProtection, WindowProtection, ProtectionAlerts, VaultBackup
-core/diagnostics   DiagnosticLog (on-phone log of lock decisions)
+core/diagnostics   DiagnosticLog (on-phone log of lock decisions), LatencyMarks (debug builds:
+                   the gantlet's latency marks)
 core/receiver      Boot receiver
 feature/lock       BioKeyAccessibilityService, UsageWatchService (compatibility mode),
                    ForegroundRules, SessionRules, LockLauncher, InstantShieldOverlay, WindowMask,
@@ -119,7 +120,8 @@ feature/setup      First-run setup
 feature/notification  Notification shield
 feature/tile       Quick Settings tile
 ui                 AppIcons
-ui/brand           BioKeyLogo, LogoArt/LogoLayer, VineSlither, WordmarkView, header constellation
+ui/brand           KeyMark (the launcher icon's key, in vector), BioKeyLogo and WordmarkView (it, still),
+                   BioKeyMarkSideways (the home header's, swirling), header constellation
 ui/theme           BioKeyTheme, components, messages, system haptics, press animation
 ```
 
@@ -151,6 +153,32 @@ A relative `storeFile` path is resolved from the project root. Without `key.prop
 ```
 
 Its version name ends in `-debugsigned`, so it can't be mistaken for a real release.
+
+### Latency
+
+The device gantlet (`tools/device_gantlet.py`, on a test phone or emulator with the debug build) also reports how fast each cover goes up: per engine and scenario, the milliseconds from the launch (the tap on its icon, or its window opening; in compatibility mode, its resume) until the cover is drawn and until the prompt is asked for, as count, median, 90th percentile and slowest. The debug build logs those moments to logcat under `BioKeyLatency` (`core/diagnostics/LatencyMarks.kt`), on the phone's uptime clock; release builds never do, since the lines name locked apps.
+
+No baseline is checked in yet: numbers only mean something from the phone they were measured on. To record one, run the gantlet with `--record-latency-baseline` on that phone (every scenario must pass), which writes `tools/gantlet-latency-baseline.json`; commit it. From then on, `--latency-budget` fails a run whose median for any engine, scenario and mark is more than 20% and at least 16 ms slower than the baseline's (`--latency-budget 30,25` for another budget).
+
+### Baseline profile
+
+The baseline profile (code Android compiles ahead of time, so the first cover after an install isn't drawn by interpreted code) is generated by `baselineprofile/` (`BaselineProfileGenerator`): BioKey starting to its main screen, and the lock path, a locked app opened, covered, its lock screen up and cancelled. It needs a device or emulator on Android 13 or later prepared as the emulator gantlet prepares one (BioKey's debug build installed and set up, its accessibility engine on, `com.biokey.gantlet.plain` locked; the steps are in the generator's KDoc), so it isn't part of CI:
+
+```bash
+./gradlew :app:generateBaselineProfile
+```
+
+It writes `app/src/release/generated/baselineProfiles/` (the baseline and startup profiles), which AGP merges with the hand-written `app/src/main/baseline-prof.txt`; check the generated files in.
+
+### Engine traces
+
+The debug build records what each protection engine is told and what it decides (`core/diagnostics/EngineTrace.kt`): window events and window lists, usage events, the screen and keyguard, the lock screen and its prompt, unlocks and cancels; then every cover, lock screen started and trip Home. A problem seen on a phone can then be replayed on the JVM, without the phone. Release builds record nothing, since the trace names locked apps.
+
+1. Reproduce the problem on the phone with the debug build.
+2. Copy the trace off it: `adb shell run-as com.android.BioKey cat files/engine-trace.txt > app/src/test/resources/traces/<name>.trace`.
+3. `EngineReplayTest` replays every trace there into the real engine and checks it decides what the trace says it did. To turn a bug into a test, edit the trace's decisions (its `o.*` lines) to what should have happened: the test fails until the engine does that.
+
+A replay sets up the phone from the trace (locked apps, their re-lock delays and names, home screens, helper apps, keyboards) and plays every input at the time it came. It doesn't replay BioKey's own lock screen (only what the engines were told of it) or the notification shield.
 
 ## License
 

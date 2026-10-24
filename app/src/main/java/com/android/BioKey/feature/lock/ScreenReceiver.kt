@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import androidx.core.content.ContextCompat
+import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.security.LockStateTracker
 
 /**
@@ -28,6 +29,7 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        EngineTrace.record("d.bc", intent.action)
         when (intent.action) {
             Intent.ACTION_SCREEN_OFF,
             Intent.ACTION_DREAMING_STARTED,

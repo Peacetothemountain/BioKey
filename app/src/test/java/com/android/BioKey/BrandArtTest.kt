@@ -1,31 +1,31 @@
 package com.android.BioKey
 
 import android.content.Context
-import android.os.Looper
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.os.SystemClock
+import android.view.View
 import androidx.compose.material3.SnackbarDuration
 import androidx.test.core.app.ApplicationProvider
-import com.android.BioKey.ui.brand.LogoArt
-import com.android.BioKey.ui.brand.breathAt
+import com.android.BioKey.ui.brand.KeyMark
+import com.android.BioKey.ui.brand.WordmarkView
+import com.android.BioKey.ui.brand.at
 import com.android.BioKey.ui.theme.BioKeyMessages
-import org.junit.Assert.assertArrayEquals
+import kotlin.math.abs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * The logo is drawn from copies sized to where it's drawn, shared between logos (the shield's
- * cover and every lock screen), and its aura breathes on the shared clock like the transition it
- * replaced. Messages that waited too long for a screen are dropped.
+ * BioKey's mark is the launcher icon's key, drawn in the phone's colours, fitted and centred in
+ * whatever box it is given, the header's swirling smoothly; the small icon loads. Messages that waited too long for a screen are dropped.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -34,74 +34,103 @@ class BrandArtTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
 
-    @Test
-    fun fitsLikeContentScaleFitAndCentres() {
-        // Wider box than the artwork: height-bound, centred horizontally.
-        val wide = LogoArt.fit(1600, 709, 400f, 100f)
-        assertEquals(100f / 709, wide.scale, 1e-6f)
-        assertEquals(100f, wide.height, 1e-3f)
-        assertEquals((400f - wide.width) / 2f, wide.left, 1e-3f)
-        assertEquals(0f, wide.top, 1e-3f)
-        assertEquals(226, wide.pixelWidth)
-        assertEquals(100, wide.pixelHeight)
-        // Taller box: width-bound, centred vertically.
-        val tall = LogoArt.fit(1600, 709, 320f, 400f)
-        assertEquals(320f, tall.width, 1e-3f)
-        assertEquals((400f - tall.height) / 2f, tall.top, 1e-3f)
-        assertEquals(0f, tall.left, 1e-3f)
-        // Never a zero-sized copy.
-        assertEquals(1, LogoArt.fit(1600, 709, 0.2f, 0.2f).pixelHeight)
-    }
+    private val primary = Color.rgb(200, 30, 30)
 
-    @Test
-    fun copiesAreSizedAndShared() {
-        val res = context.resources
-        assertArrayEquals(intArrayOf(1600, 709), LogoArt.artSize(res, R.drawable.ic_title_logo_letters))
-        val first = LogoArt.sized(res, R.drawable.ic_title_logo_letters, 338, 150)
-        assertNotNull(first)
-        assertEquals(338, first!!.width)
-        assertEquals(150, first.height)
-        // A second logo of the same size (the lock screen after the shield) reuses the copy.
-        assertSame(first, LogoArt.sized(res, R.drawable.ic_title_logo_letters, 338, 150))
-    }
-
-    @Test
-    fun preparedCopyIsTheOneDrawn() {
-        val res = context.resources
-        LogoArt.prepare(res, R.drawable.ic_title_logo_tentacles, 300, 133)
-        val sized = LogoArt.sized(res, R.drawable.ic_title_logo_tentacles, 300, 133)
-        assertEquals(300, sized!!.width)
-        assertEquals(133, sized.height)
-        assertSame(sized, LogoArt.sized(res, R.drawable.ic_title_logo_tentacles, 300, 133))
-    }
-
-    @Test
-    fun aCoverNeverWaitsForItsLogo() {
-        val res = context.resources
-        var ready = 0
-        // Not there yet: nothing to draw, nothing decoded on the spot, the copy made in the background.
-        assertNull(LogoArt.sizedIfReady(res, R.drawable.ic_title_logo_letters, 271, 120) { ready++ })
-        val deadline = System.currentTimeMillis() + 10_000L
-        while (ready == 0 && System.currentTimeMillis() < deadline) {
-            shadowOf(Looper.getMainLooper()).idle()
-            Thread.sleep(10L)
+    /** The box (left, top, right, bottom) of what was drawn on [bitmap], or null if nothing was. */
+    private fun drawnBounds(bitmap: Bitmap): IntArray? {
+        var l = Int.MAX_VALUE; var t = Int.MAX_VALUE; var r = -1; var b = -1
+        for (y in 0 until bitmap.height) for (x in 0 until bitmap.width) {
+            if (Color.alpha(bitmap.getPixel(x, y)) > 40) {
+                l = minOf(l, x); t = minOf(t, y); r = maxOf(r, x); b = maxOf(b, y)
+            }
         }
-        // The cover is told, and finds it.
-        assertEquals(1, ready)
-        val copy = LogoArt.sizedIfReady(res, R.drawable.ic_title_logo_letters, 271, 120) { ready++ }
-        assertEquals(271, copy!!.width)
-        assertSame(copy, LogoArt.sized(res, R.drawable.ic_title_logo_letters, 271, 120))
+        return if (r < 0) null else intArrayOf(l, t, r, b)
     }
 
     @Test
-    fun auraBreathesInAndOutOverFivePointSixSeconds() {
-        assertEquals(0f, breathAt(0L), 1e-6f)
-        assertEquals(1f, breathAt(2_800L), 1e-6f)
-        assertEquals(0f, breathAt(5_600L), 1e-6f)
-        assertEquals(0.5f, breathAt(1_400L), 1e-3f)
-        // Out is the way in, reversed, like the RepeatMode.Reverse transition it replaces.
-        assertEquals(breathAt(1_000L), breathAt(4_600L), 1e-5f)
-        assertTrue(breathAt(700L) < 0.5f)
+    fun theMarkFitsItsBoxCentredInThePhonesColours() {
+        // A wide box: the mark takes its height, centred across.
+        val bitmap = Bitmap.createBitmap(400, 200, Bitmap.Config.ARGB_8888)
+        KeyMark.draw(Canvas(bitmap), 0f, 0f, 400f, 200f, primary)
+        val (l, t, r, b) = drawnBounds(bitmap) ?: error("nothing drawn")
+        val expectedWidth = 200f * KeyMark.ASPECT
+        assertTrue("fills the height: $t..$b", t <= 12 && b >= 188)
+        assertEquals("centred across", 200f, (l + r) / 2f, 8f)
+        assertTrue("no wider than it should be: ${r - l}", r - l <= expectedWidth + 2)
+        // One colour, as the themed icon is: every solid pixel the colour it was given.
+        var solid = 0
+        var other = 0
+        for (y in 0 until 200) for (x in 0 until 400) {
+            val c = bitmap.getPixel(x, y)
+            if (Color.alpha(c) < 250) continue
+            solid++
+            if (abs(Color.red(c) - Color.red(primary)) > 8 || abs(Color.green(c) - Color.green(primary)) > 8 || abs(Color.blue(c) - Color.blue(primary)) > 8) other++
+        }
+        assertTrue("drawn: $solid", solid > 200)
+        assertEquals("pixels in another colour", 0, other)
+    }
+
+    @Test
+    fun theMarkDrawsNothingInAnEmptyBox() {
+        val bitmap = Bitmap.createBitmap(20, 20, Bitmap.Config.ARGB_8888)
+        KeyMark.draw(Canvas(bitmap), 0f, 0f, 0f, 20f, primary)
+        assertEquals(null, drawnBounds(bitmap))
+    }
+
+    @Test
+    fun theCoversLogoIsTheMarkCentred() {
+        val view = WordmarkView(context).apply { setColor(primary) }
+        view.measure(View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(120, View.MeasureSpec.EXACTLY))
+        view.layout(0, 0, 200, 120)
+        val bitmap = Bitmap.createBitmap(200, 120, Bitmap.Config.ARGB_8888)
+        view.draw(Canvas(bitmap))
+        val (l, t, r, b) = drawnBounds(bitmap) ?: error("nothing drawn")
+        assertEquals("centred across", 100f, (l + r) / 2f, 6f)
+        assertTrue("fills the height: $t..$b", t <= 8 && b >= 112)
+    }
+
+    @Test
+    fun theHeadersLinesFlowSmoothlyEachRidgeAtItsOwnPace() {
+        val a = KeyMark.Motion().apply { at(1.234f) }
+        val b = KeyMark.Motion().apply { at(1.234f + 0.016f) }
+        // One frame later: a small step along every ridge and for every sparkle, never a jump.
+        for (i in a.ridgeFlow.indices) {
+            val step = b.ridgeFlow[i] - a.ridgeFlow[i]
+            assertTrue("ridge $i stepped $step", step > 0f && step < 0.2f)
+        }
+        for (k in a.sparkleScale.indices) assertTrue("sparkle $k", abs(a.sparkleScale[k] - b.sparkleScale[k]) < 0.05f)
+        // Every ridge at its own pace: their gaps never stay lined up.
+        val later = KeyMark.Motion().apply { at(5f) }
+        val start = KeyMark.Motion().apply { at(0f) }
+        val travelled = later.ridgeFlow.indices.map { later.ridgeFlow[it] - start.ridgeFlow[it] }
+        assertEquals(travelled.size, travelled.map { (it * 10).toInt() }.toSet().size)
+    }
+
+    @Test
+    fun theFlowingPrintKeepsItsForm() {
+        // Still and flowing, the print covers the same ground: only small gaps move along it.
+        fun drawn(motion: KeyMark.Motion?): Bitmap = Bitmap.createBitmap(300, 340, Bitmap.Config.ARGB_8888).also {
+            KeyMark.draw(Canvas(it), 0f, 0f, 300f, 340f, primary, motion)
+        }
+        val still = drawn(null)
+        val flowing = drawn(KeyMark.Motion().apply { at(2.5f) })
+        var outside = 0
+        var inked = 0
+        for (y in 0 until 340) for (x in 0 until 300) {
+            val s = Color.alpha(still.getPixel(x, y)) > 40
+            val f = Color.alpha(flowing.getPixel(x, y)) > 40
+            if (f) inked++
+            if (f && !s) outside++
+        }
+        assertTrue("drawn where the still print isn't: $outside of $inked", outside < inked / 50)
+        assertTrue("most of the print still there", inked > 0)
+    }
+
+    @Test
+    fun theSmallIconLoads() {
+        val icon = context.getDrawable(R.drawable.ic_biokey_mark)
+        assertNotNull(icon)
+        assertEquals((24 * context.resources.displayMetrics.density).toInt(), icon!!.intrinsicWidth)
     }
 
     @Test

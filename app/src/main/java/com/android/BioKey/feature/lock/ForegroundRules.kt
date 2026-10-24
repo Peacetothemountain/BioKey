@@ -10,6 +10,7 @@ import android.view.inputmethod.InputMethodManager
 import androidx.annotation.VisibleForTesting
 import com.android.BioKey.BioKeyApplication
 import com.android.BioKey.core.data.PasswordManager
+import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.security.SecurityVault
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -145,8 +146,11 @@ object ForegroundRules {
         @Volatile private var readAt = 0L
         @Volatile private var readForPackages = 0
         private val reading = AtomicBoolean(false)
+        /** Set by a replay ([pinSystemLists]): this, never read from the system. */
+        @Volatile private var pinned: T? = null
 
         fun get(context: Context, maxAgeMs: Long = this.maxAgeMs): T {
+            pinned?.let { return it }
             val current = value ?: return readNow(context.applicationContext)
             if (SystemClock.elapsedRealtime() - readAt > maxAgeMs || readForPackages != BioKeyApplication.packageChangeVersion.value) {
                 refresh(context)
@@ -179,6 +183,11 @@ object ForegroundRules {
         fun reset() {
             value = null
             readAt = 0L
+            pinned = null
+        }
+
+        fun pin(list: T) {
+            pinned = list
         }
     }
 
@@ -256,12 +265,42 @@ object ForegroundRules {
     /** The user enabled or disabled a keyboard. */
     fun onInputMethodsChanged(context: Context) = keyboards.refresh(context)
 
+    /**
+     * Reads every list in the background now, as an engine starts: read on first use instead, they
+     * would be read on the main thread at the first app switch (about ten package-manager queries
+     * on the way to a cover).
+     */
+    fun warmUp(context: Context) {
+        homes.refresh(context)
+        pickers.refresh(context)
+        keyboards.refresh(context)
+    }
+
     /** Forgets every list read so far (tests register apps between cases). */
     @VisibleForTesting
     internal fun resetSystemLists() {
         homes.reset()
         pickers.reset()
         keyboards.reset()
+    }
+
+    /**
+     * The lists as a trace records them (EngineTrace's `env` records): home screens (whether each
+     * is a system app, and the one in use), helper apps and keyboards, as last read.
+     */
+    internal fun traceEnvironment(context: Context): List<String> = buildList {
+        val h = homes.get(context)
+        for ((pkg, system) in h.apps) add(EngineTrace.line("env", "home", pkg, if (system) 1 else 0, if (pkg == h.default) 1 else 0))
+        for (pkg in pickers.get(context)) add(EngineTrace.line("env", "picker", pkg))
+        for (pkg in keyboards.get(context)) add(EngineTrace.line("env", "keyboard", pkg))
+    }
+
+    /** A replay's lists, from its trace's `env` records, in place of the system's until [resetSystemLists]. */
+    @VisibleForTesting
+    internal fun pinSystemLists(homeApps: Map<String, Boolean>, defaultHome: String?, helpers: Set<String>, inputMethods: Set<String>) {
+        homes.pin(Homes(homeApps, defaultHome))
+        pickers.pin(helpers)
+        keyboards.pin(inputMethods)
     }
 
     /**

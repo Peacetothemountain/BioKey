@@ -74,6 +74,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -93,7 +96,6 @@ import com.android.BioKey.ui.theme.GroupGap
 import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.SectionHeader
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** A profile's icon: [key] is what's saved, [label] what TalkBack reads in the icon picker. */
@@ -160,7 +162,7 @@ internal fun AppIcon(app: AppItem, size: Dp = 40.dp) {
     val key = AppIconCache.key(app, sizePx)
     var icon by remember(key) { mutableStateOf(AppIconCache.peek(key)) }
     LaunchedEffect(key) {
-        if (icon == null) icon = withContext(Dispatchers.IO) { AppIconCache.load(context, app, sizePx) }
+        if (icon == null) icon = withContext(AppIconCache.loading) { AppIconCache.load(context, app, sizePx) }
     }
     val bitmap = icon
     if (bitmap != null) {
@@ -184,7 +186,7 @@ private fun SheetTitle(title: String, subtitle: String? = null, action: @Composa
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.headlineSmall)
+            Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
             if (subtitle != null) {
                 Spacer(Modifier.height(4.dp))
                 Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -315,7 +317,8 @@ internal fun RelockSheet(
             SheetTitle(title, "Apps stay unlocked while you use them. This sets when they lock again after you leave.")
             Spacer(Modifier.height(12.dp))
             val modes = LockTimeoutMode.entries
-            Group(count = modes.size) { i ->
+            // One set of choices for screen readers, not radio buttons each on their own.
+            Group(count = modes.size, modifier = Modifier.selectableGroup()) { i ->
                 val mode = modes[i]
                 GroupRow(
                     index = i,
@@ -640,8 +643,10 @@ internal fun SearchPill(query: String, onChange: (String) -> Unit, modifier: Mod
             focusedIndicatorColor = Color.Transparent,
             unfocusedIndicatorColor = Color.Transparent
         ),
+        // Named the way Material's own search field is: the placeholder goes once something is typed.
         modifier = modifier
             .fillMaxWidth()
             .clip(CircleShape)
+            .semantics { contentDescription = "Search apps" }
     )
 }

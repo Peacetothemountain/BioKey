@@ -35,9 +35,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -161,6 +158,7 @@ private suspend fun showOnce(state: SnackbarHostState, message: BioKeyMessages.M
     }
 }
 
+/** One message. [SnackbarHost] makes it a live region (and a pane), so it is read out once as it comes up. */
 @Composable
 internal fun MessageBar(data: SnackbarData) {
     val visuals = data.visuals
@@ -174,7 +172,6 @@ internal fun MessageBar(data: SnackbarData) {
         modifier = Modifier
             .padding(horizontal = 16.dp, vertical = 12.dp)
             .widthIn(max = 560.dp)
-            .semantics { liveRegion = LiveRegionMode.Polite }
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,

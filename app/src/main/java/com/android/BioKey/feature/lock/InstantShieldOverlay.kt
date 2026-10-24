@@ -15,6 +15,8 @@ import android.window.OnBackInvokedDispatcher
 import androidx.annotation.RequiresApi
 import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.diagnostics.EngineTrace
+import com.android.BioKey.core.diagnostics.LatencyMarks
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
 
@@ -261,8 +263,8 @@ class InstantShieldOverlay(
             if (isPredicted) {
                 // The predicted app arrived: from here on it's a regular cover.
                 endPrediction()
-                cover.setOnClickListener { onTapped() }
-                cover.onUnlock = onTapped
+                cover.setOnClickListener { tapped(onTapped) }
+                cover.onUnlock = { tapped(onTapped) }
                 if (takeFocus) {
                     setFocusable(true)
                     runCatching { windowManager.updateViewLayout(cover, layoutParams) }
@@ -275,6 +277,12 @@ class InstantShieldOverlay(
         if (!showCover(targetPackage, onTapped, focusable = takeFocus)) return false
         startVerification()
         return true
+    }
+
+    /** A tap on the cover (or its Unlock): what the engine is told, recorded for a replay ([EngineTrace]). */
+    private fun tapped(onTapped: () -> Unit) {
+        EngineTrace.record("s.tap", targetPackage)
+        onTapped()
     }
 
     private fun endPrediction() {
@@ -299,9 +307,10 @@ class InstantShieldOverlay(
         bindTarget(targetPackage)
         // Same look as the lock activity while its prompt comes up: identity only, no buttons.
         cover.setActionsVisible(false)
-        cover.setOnClickListener { onTapped() }
-        cover.onUnlock = onTapped
+        cover.setOnClickListener { tapped(onTapped) }
+        cover.onUnlock = { tapped(onTapped) }
         cover.onCancel = {
+            EngineTrace.record("s.cancel", targetPackage)
             LockStateTracker.markLockAbandoned(targetPackage)
             if (targetPackage != BioKeyAccessibilityService.SELF_PROTECTION_PENDING_KEY ||
                 !BioKeyAccessibilityService.dismissSelfProtection()
@@ -313,23 +322,51 @@ class InstantShieldOverlay(
         // After a lockout (a held cover saying so) the primary button locks the phone, as on the
         // lock screen, where that can be done; it is hidden where it can't.
         cover.onLockDevice = {
+            EngineTrace.record("s.lockDevice", targetPackage)
             LockStateTracker.markLockAbandoned(targetPackage)
             if (!BioKeyAccessibilityService.lockDevice()) goHome()
             hide()
         }
-        return try {
-            cover.visibility = View.VISIBLE
-            layoutParams.flags = layoutParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-            setFocusable(focusable)
-            if (windowAdded) {
+        cover.visibility = View.VISIBLE
+        layoutParams.flags = layoutParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        setFocusable(focusable)
+        if (!putUp()) {
+            // Nothing covers: the caller fails closed. The cover mustn't be left touchable and
+            // visible in a window that may come back by itself.
+            cover.visibility = View.GONE
+            layoutParams.flags = layoutParams.flags or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            return false
+        }
+        isShowing = true
+        LatencyMarks.markOnNextDraw(cover, "cover", targetPackage)
+        activeInstance = this
+        return true
+    }
+
+    /**
+     * Applies [layoutParams] to the window, adding it if it isn't there. A window Android has lost
+     * (the view no longer attached) is added again, once: kept as if it were there, every cover
+     * after it would fail the same way until the service restarted.
+     */
+    private fun putUp(): Boolean {
+        if (windowAdded) {
+            try {
                 windowManager.updateViewLayout(cover, layoutParams)
-            } else {
-                applyInsets()
-                windowManager.addView(cover, layoutParams)
-                windowAdded = true
+                return true
+            } catch (e: IllegalArgumentException) {
+                Log.e(TAG, "Shield window was lost; adding it again")
+                windowAdded = false
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not show shield: ${e.javaClass.simpleName}")
+                return false
             }
-            isShowing = true
-            activeInstance = this
+        }
+        return try {
+            applyInsets()
+            windowManager.addView(cover, layoutParams)
+            windowAdded = true
             true
         } catch (e: Exception) {
             Log.e(TAG, "Could not show shield: ${e.javaClass.simpleName}")
@@ -355,9 +392,15 @@ class InstantShieldOverlay(
             cover.bind(cached.label, cached.icon, isBioKey = false, accent = cached.accent)
             return
         }
-        cover.bind(AppInfoCache.quickLabel(service, target), null, isBioKey = false)
+        // Nothing is asked of the package manager before the first frame: the name, when it isn't
+        // known yet, comes with the icon a moment later.
+        val label = AppInfoCache.cachedLabel(target)
+        cover.bind(label.orEmpty(), null, isBioKey = false)
         AppInfoCache.load(service, target) { loaded ->
-            if (isShowing && targetPackage == target) cover.setIcon(loaded.icon, loaded.accent)
+            if (isShowing && targetPackage == target) {
+                if (label == null) cover.setLabel(loaded.label)
+                cover.setIcon(loaded.icon, loaded.accent)
+            }
         }
     }
 

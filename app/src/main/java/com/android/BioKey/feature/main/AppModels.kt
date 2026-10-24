@@ -1,5 +1,6 @@
 package com.android.BioKey.feature.main
 
+import android.content.pm.LauncherActivityInfo
 import android.os.UserHandle
 import com.android.BioKey.core.data.AppCategory
 
@@ -17,7 +18,12 @@ data class AppItem(
      * Also (or only) installed in another profile. Compatibility mode can't see apps there:
      * Android shares app-usage events only within one profile.
      */
-    val inOtherProfile: Boolean = false
+    val inOtherProfile: Boolean = false,
+    /**
+     * The launcher activity it was listed from, so its icon is drawn without asking the system
+     * for it again. Null for an app listed another way.
+     */
+    val launcher: LauncherActivityInfo? = null
 ) {
     val isWorkProfile: Boolean get() = user != null
 }

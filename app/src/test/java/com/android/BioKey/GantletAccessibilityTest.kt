@@ -64,6 +64,9 @@ class GantletAccessibilityTest {
         context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE).edit().clear().commit()
         SecurityVault.resetForTests()
         LockStateTracker.lockAll()
+        // Robolectric's clock starts again for each test; a lock screen "resumed" in an earlier one
+        // in this JVM would otherwise look newer than anything started here.
+        LockScreenActivity::class.java.getDeclaredField("resumedAt").apply { isAccessible = true }.setLong(null, 0L)
         vault = SecurityVault.getInstance(context)
         vault.setSetupCompletedSync(true)
         vault.setAppLock(x, true)
@@ -246,5 +249,50 @@ class GantletAccessibilityTest {
         assertTrue(covered(x).toString(), covered(x).all { it == "Covered $x (opened)" })
         assertFalse(LockStateTracker.isAppUnlocked(x, LockTimeoutMode.IMMEDIATE))
         assertFalse(LockStateTracker.isRecentlyAbandoned(x))
+    }
+
+    /** Lock screens started since the last look, as Android was asked to start them. */
+    private fun lockScreensStarted(): Int {
+        var started = 0
+        while (true) {
+            val intent = shadowOf(context).nextStartedActivity ?: return started
+            if (intent.component?.className == LockScreenActivity::class.java.name) started++
+        }
+    }
+
+    @Test
+    fun anAppStillStartingIsCoveredOnceNotOnceForEachOfItsEvents() {
+        onScreen(window(2, x))
+        lockScreensStarted()
+        // A cold start: several window events in a row, before its lock screen has come up.
+        repeat(4) {
+            engine.get().onAccessibilityEvent(AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply {
+                packageName = x
+                className = "$x.MainActivity"
+            })
+        }
+        assertEquals(1, lockScreensStarted())
+        assertEquals(listOf("Covered $x (opened)"), covered(x))
+        assertTrue(shield().isShowing)
+        // Still not up after the shield's first check: started again, whatever else happened.
+        idle(100)
+        assertTrue(lockScreensStarted() >= 1)
+    }
+
+    @Test
+    fun aLockScreenPushedAwayAtOnceIsStartedAgain() {
+        xOpens()
+        lockScreensStarted()
+        // Its lock screen came up, then the app opened over it within moments of being started.
+        lockScreenUp(x)
+        LockScreenActivity::class.java.getDeclaredField("resumedAt").apply { isAccessible = true }
+            .setLong(null, android.os.SystemClock.uptimeMillis())
+        LockStateTracker.markLockDisplaced(x)
+        lockScreenUp(null)
+        engine.get().onAccessibilityEvent(AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply {
+            packageName = x
+            className = "$x.MainActivity"
+        })
+        assertEquals(1, lockScreensStarted())
     }
 }

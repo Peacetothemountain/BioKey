@@ -26,9 +26,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.android.BioKey.R
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
@@ -101,10 +104,15 @@ class MainActivity : ComponentActivity() {
             val accessibilityRunning by BioKeyAccessibilityService.running.collectAsStateWithLifecycle()
             LaunchedEffect(accessibilityRunning) { protectionMode = ProtectionEngine.mode(this@MainActivity) }
 
+            // Only while BioKey is on screen: stopped on a trip of its own, it needn't wake every
+            // few seconds. A session that ran out meanwhile is found as BioKey comes back (onResume).
             LaunchedEffect(isAuthenticated) {
-                while (isAuthenticated) {
-                    delay(IDLE_CHECK_INTERVAL_MS)
-                    if (!LockStateTracker.isOwnAppUnlocked()) lockForInactivity()
+                if (!isAuthenticated) return@LaunchedEffect
+                lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    while (isAuthenticated) {
+                        delay(IDLE_CHECK_INTERVAL_MS)
+                        if (!LockStateTracker.isOwnAppUnlocked()) lockForInactivity()
+                    }
                 }
             }
 
@@ -171,6 +179,9 @@ class MainActivity : ComponentActivity() {
             promptAutoLaunched = true
             return
         }
+        // Still unlocked here only after a trip of BioKey's own, whose session ran out while it
+        // was away: the lock says why, as the idle check did when it ran in the background.
+        if (isAuthenticated) lockForInactivity()
         isAuthenticated = false
         if (!promptAutoLaunched && !isPermanentLockout && !engine.isAuthenticatingFor(packageName)) {
             promptAutoLaunched = true
@@ -333,7 +344,9 @@ internal fun PauseProtectionDialog(onPause: (Long?) -> Unit, onDismiss: () -> Un
             Text(
                 "Pause protection",
                 style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.padding(horizontal = 28.dp)
+                modifier = Modifier
+                    .padding(horizontal = 28.dp)
+                    .semantics { heading() }
             )
             Spacer(Modifier.height(4.dp))
             Text(

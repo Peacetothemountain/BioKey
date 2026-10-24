@@ -32,7 +32,7 @@ import org.robolectric.annotation.Config
  * neither: the engines cover the app again rather than sending it Home.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34, 35])
+@Config(sdk = [31, 37], shadows = [InstallTimePermissions::class])
 class GantletLockScreenTest {
 
     private val context: Application = ApplicationProvider.getApplicationContext()

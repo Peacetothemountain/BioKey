@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -40,6 +41,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -214,9 +219,9 @@ fun SetupScreenExpressive(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(Modifier.height(48.dp))
-            BioKeyLogo(Modifier.size(280.dp, 96.dp))
+            BioKeyLogo(Modifier.size(104.dp, 118.dp))
             Spacer(Modifier.height(28.dp))
-            Text("Set up BioKey", style = MaterialTheme.typography.headlineMedium)
+            Text("Set up BioKey", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
             Spacer(Modifier.height(8.dp))
             Text(
                 "Lock any app behind your face, fingerprint or screen lock.",
@@ -236,7 +241,15 @@ fun SetupScreenExpressive(
                     icon = if (step.done) Icons.Default.CheckCircle else step.icon,
                     iconTint = if (step.done) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer,
                     iconContainer = if (step.done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
-                    onClick = step.onClick.takeIf { !step.done }
+                    onClick = step.onClick.takeIf { !step.done },
+                    // Said aloud, as the tick and the colour only show it. Only the last step is
+                    // ever without an action: until the ones above are done, or while it runs.
+                    stateDescription = when {
+                        step.done -> "Done"
+                        step.onClick != null -> "Not done"
+                        isAuthenticating -> "Confirming"
+                        else -> "Available after the steps above"
+                    }
                 ) {
                     if (!step.done && step.onClick != null && step.opensExternally) {
                         Icon(
@@ -248,16 +261,18 @@ fun SetupScreenExpressive(
                     }
                 }
             }
-            if (authError != null) {
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    authError,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 32.dp)
-                )
-            }
+            if (authError != null) Spacer(Modifier.height(16.dp))
+            // Always there, empty without an error, so the error is read out as it comes up after
+            // the system prompt: a live region is read when its text changes, not when it first appears.
+            Text(
+                authError.orEmpty(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .padding(horizontal = 32.dp)
+                    .semantics { liveRegion = LiveRegionMode.Polite }
+            )
         }
 
         Button(
@@ -276,7 +291,7 @@ fun SetupScreenExpressive(
                 .padding(horizontal = 32.dp, vertical = 24.dp)
                 .widthIn(max = 360.dp)
                 .fillMaxWidth()
-                .height(56.dp)
+                .heightIn(min = 56.dp)
                 .springPress(enabled = !isAuthenticating)
         ) {
             Icon(

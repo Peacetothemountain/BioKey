@@ -1,0 +1,48 @@
+{
+  "compatibility": {
+    "device": "Pixel 11 Pro XL, Android 17",
+    "medians_ms": {
+      "Back from the lock screen": {
+        "cover": 73,
+        "prompt": 92
+      },
+      "Home from the lock screen stays Home": {
+        "cover": 121,
+        "prompt": 147
+      },
+      "Home, then straight back": {
+        "cover": 131,
+        "prompt": 154
+      },
+      "cold start": {
+        "cover": 52,
+        "prompt": 79
+      },
+      "opened three times in a row": {
+        "cover": 89,
+        "prompt": 110
+      },
+      "tapped in the app drawer three times in a row": {
+        "cover": 130,
+        "prompt": 151
+      },
+      "tapped in the app drawer, cold": {
+        "cover": 25,
+        "prompt": 86
+      },
+      "tapped in the app drawer, warm": {
+        "cover": 96,
+        "prompt": 119
+      },
+      "tapped on the home screen (in a folder)": {
+        "cover": 49,
+        "prompt": 118
+      },
+      "warm start": {
+        "cover": 107,
+        "prompt": 126
+      }
+    },
+    "recorded": "2026-10-23"
+  }
+}

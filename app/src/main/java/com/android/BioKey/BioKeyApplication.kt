@@ -18,7 +18,6 @@ import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.ScreenReceiver
-import com.android.BioKey.ui.brand.LogoArt
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,6 +34,18 @@ class BioKeyApplication : Application() {
         }
         private val _packageChangeVersion = MutableStateFlow(0)
         val packageChangeVersion: StateFlow<Int> = _packageChangeVersion.asStateFlow()
+
+        /**
+         * Whether an app uninstalled (not replaced) keeps its lock. A copy in another profile (a
+         * work twin), an archived app, or one uninstalled with "keep app data" still has its data,
+         * which a reinstall would open: it keeps its lock. [installedInAnyProfile] is only asked
+         * when the broadcast hasn't already settled it.
+         */
+        internal fun keepsLockAfterRemoval(
+            archival: Boolean,
+            dataRemoved: Boolean,
+            installedInAnyProfile: () -> Boolean,
+        ): Boolean = archival || !dataRemoved || installedInAnyProfile()
     }
 
     private val credentialInitDone = AtomicBoolean(false)
@@ -58,15 +69,6 @@ class BioKeyApplication : Application() {
         // Look again: an unlock between the first look and the registration sent its one
         // broadcast to nobody, and nothing would load for the whole process.
         if (isUserUnlocked()) initCredentialProtectedComponents()
-    }
-
-    /**
-     * BioKey's screens went to the background: the logo copies kept for them go. The process
-     * keeps running (a protection engine lives in it), and the shield's cover keeps its own.
-     */
-    override fun onTrimMemory(level: Int) {
-        super.onTrimMemory(level)
-        if (level >= TRIM_MEMORY_UI_HIDDEN) LogoArt.trim()
     }
 
     private fun isUserUnlocked(): Boolean = getSystemService(UserManager::class.java)?.isUserUnlocked ?: true
@@ -137,11 +139,11 @@ class BioKeyApplication : Application() {
                                 }
                                 Intent.ACTION_PACKAGE_REMOVED -> {
                                     if (!replacing) {
-                                        // A copy in another profile (a work twin), an archived
-                                        // app, or one uninstalled with "keep app data" still has
-                                        // its data, which a reinstall would open: it keeps its lock.
-                                        if (isArchival(intent) || !intent.getBooleanExtra(Intent.EXTRA_DATA_REMOVED, true) ||
-                                            isInstalledInAnyProfile(pkg)
+                                        if (keepsLockAfterRemoval(
+                                                archival = isArchival(intent),
+                                                dataRemoved = intent.getBooleanExtra(Intent.EXTRA_DATA_REMOVED, true),
+                                                installedInAnyProfile = { isInstalledInAnyProfile(pkg) },
+                                            )
                                         ) {
                                             if (pkg in vault.selectedAppsFlow.value) {
                                                 DiagnosticLog.log("Kept the lock on $pkg: its data is still on the phone")

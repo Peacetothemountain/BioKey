@@ -1,9 +1,13 @@
-# Builds BioKey and runs its tests on every push and pull request: first the lock screen's
-# gantlet (the gantlet job), then the locking rules
-# (SessionRulesTest, PickerHopTest, ProfileLockRulesTest, RecentsGestureTest), the design
-# screenshots, lint, a debug build and a release build shrunk by R8 like a real one, so breakage
-# that only shows up after shrinking is caught here. The release key never comes near CI: that
-# APK is signed with the runner's throwaway debug key, and its version name ends in -debugsigned.
+# Builds BioKey and runs its tests on every pull request and every push to main: first the lock
+# screen's gantlet, then the rest of the unit tests (the locking rules among them: PickerHopTest,
+# ProfileLockRulesTest), the design screenshots, lint, a debug build and a release build shrunk by
+# R8 like a real one, so breakage that only shows up after shrinking is caught here. The release key
+# never comes near CI: that APK is signed with the runner's throwaway debug key, and its version
+# name ends in -debugsigned.
+#
+# A push to any other branch is tested through its pull request: running on the push as well ran
+# everything twice. To test a branch without one, run this by hand (Actions, Run workflow). A
+# change to the documents alone (README.md, PRIVACY.md, LICENSE) builds nothing, so it runs nothing.
 #
 # Actions are pinned to full commit SHAs (Dependabot keeps them current), so a moved tag can't
 # change what runs.
@@ -11,7 +15,11 @@ name: Build and test
 
 on:
   push:
+    branches: [main]
+    paths-ignore: ['**.md', LICENSE]
   pull_request:
+    paths-ignore: ['**.md', LICENSE]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,32 +29,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The lock screen's gantlet: the tests that stand between a release and a locked app being sent
-  # Home, or shown, on some phone. Every screen size (phones, foldables' cover and main screens,
-  # tablets), every way of leaving or covering the lock screen, both engines. Fast, and first: the
-  # build below only starts once these pass. The full device and emulator gantlet
-  # (tools/device_gantlet.py, tools/emulator_gantlet.py) runs on real phones and emulators, by hand.
-  gantlet:
-    name: Lock-screen gantlet
+  build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # No later step runs git against GitHub, so the token isn't left in .git/config, where
+          # the build could read it.
           persist-credentials: false
 
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '17'
 
+      # Installs the SDK and accepts its licences, so Gradle can fetch compileSdk 37.2 itself.
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
 
-      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
+          # Fails the job if gradle-wrapper.jar isn't a genuine Gradle release.
           validate-wrappers: true
 
-      # The same list the pre-push hook runs (.githooks/pre-push).
+      # The lock screen's gantlet: the tests that stand between a release and a locked app being
+      # sent Home, or shown, on some phone. Every screen size (phones, foldables' cover and main
+      # screens, tablets), every way of leaving or covering the lock screen, both engines. Fast,
+      # and first: if it fails, nothing else runs. The same list the pre-push hook runs
+      # (.githooks/pre-push); its reports go to app/build/reports/tests/gantlet. The full device
+      # and emulator gantlet (tools/device_gantlet.py, tools/emulator_gantlet.py) runs on real
+      # phones and emulators, by hand.
       - name: Lock screen, launch options and engines on every screen
         run: sh tools/gantlet_tests.sh --stacktrace
 
@@ -57,42 +69,16 @@ jobs:
           python3 tools/emulator_gantlet.py --help > /dev/null
           ./gradlew -p tools/gantlet-targets assembleDebug --stacktrace
 
-      - name: Keep the gantlet's test reports
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: gantlet-reports
-          path: app/build/reports/tests/
-          retention-days: 14
-
-  build:
-    needs: gantlet
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # No later step runs git against GitHub, so the token isn't left in .git/config, where
-          # the build could read it.
-          persist-credentials: false
-
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      # Installs the SDK and accepts its licences, so Gradle can fetch compileSdk 37.2 itself.
-      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
-
-      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
-        with:
-          # Fails the job if gradle-wrapper.jar isn't a genuine Gradle release.
-          validate-wrappers: true
-
+      # The rest of the unit tests (the gantlet's already passed, so they're left out) and the
+      # design screenshots, recorded for review. assembleRelease would also run lint's check for
+      # fatal issues on the release build (lintVitalRelease), a second lint of the same code:
+      # lintDebug runs every check, the fatal ones included, so CI leaves it out. A release built
+      # anywhere else still runs it.
       - name: Test, lint and build
         run: >-
           ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease
-          -Pbiokey.allowDebugSignedRelease=true --stacktrace
+          -Pbiokey.tests=others -Pbiokey.screenshots=true -Pbiokey.allowDebugSignedRelease=true
+          -x lintVitalRelease --stacktrace
 
       - name: Keep test reports, design screenshots and the R8 mapping
         if: always()

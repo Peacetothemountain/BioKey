@@ -20,7 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -45,6 +45,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
@@ -268,7 +271,7 @@ private fun DisclosureSheet(disclosure: Disclosure, onAgree: () -> Unit, onDecli
         ) {
             IconBadge(disclosure.icon, size = 52.dp)
             Spacer(Modifier.height(16.dp))
-            Text(disclosure.title, style = MaterialTheme.typography.headlineSmall)
+            Text(disclosure.title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
             Spacer(Modifier.height(20.dp))
             DisclosureSection("What BioKey reads", disclosure.reads)
             DisclosureSection("What it's used for", disclosure.usedFor)
@@ -290,11 +293,17 @@ private fun DisclosureSheet(disclosure: Disclosure, onAgree: () -> Unit, onDecli
 
 @Composable
 private fun DisclosureSection(title: String, lines: List<String>) {
-    Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+    Text(
+        title,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.semantics { heading() }
+    )
     Spacer(Modifier.height(6.dp))
     lines.forEach { line ->
         Row(Modifier.padding(bottom = 6.dp)) {
-            Text("•", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.size(width = 16.dp, height = 20.dp))
+            // Only drawn: screen readers go from line to line, not stopping at each bullet.
+            Text("•", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(16.dp).clearAndSetSemantics { })
             Text(line, style = MaterialTheme.typography.bodyMedium)
         }
     }

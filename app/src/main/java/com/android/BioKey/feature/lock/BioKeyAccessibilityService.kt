@@ -27,6 +27,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.util.forEach
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.diagnostics.EngineTrace
+import com.android.BioKey.core.diagnostics.LatencyMarks
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
@@ -74,6 +76,15 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
         /** After an unlock, how long an unreadable window that opens is taken to be the unlocked app's. */
         private const val UNLOCK_ATTRIBUTION_MS = 2_000L
+
+        /**
+         * A lock screen started this recently, and not resumed yet, isn't started again by another
+         * event ([launchLockScreen]); the shield's own checks (after 60 ms, then every 700 ms) do.
+         */
+        private const val LAUNCH_REPEAT_MS = 300L
+
+        /** A window that couldn't be read isn't asked again for this long ([packageOf]). */
+        private const val UNREADABLE_RECHECK_MS = 1_000L
 
         /** How many unreadable windows are remembered as some app's ([attributedWindows]). */
         private const val MAX_ATTRIBUTED_WINDOWS = 16
@@ -182,6 +193,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     private val deviceStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            EngineTrace.record("d.bc", intent.action)
             // First, and whatever goes wrong below: the screen going off ends every session.
             if (intent.action == Intent.ACTION_SCREEN_OFF) LockStateTracker.onScreenTurnedOff()
             if (!isRunning) return
@@ -266,13 +278,14 @@ class BioKeyAccessibilityService : AccessibilityService() {
         shield = InstantShieldOverlay(
             this,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            goHome = { performGlobalAction(GLOBAL_ACTION_HOME) },
+            goHome = { pressHome() },
             onTimeout = ::onShieldTimeout
         )
         masks = WindowMask(this, ::onMaskTapped)
         selfProtection = SelfProtectionDetector(this)
-        // Read once now rather than on the first event.
-        ForegroundRules.inputMethods(this)
+        // Read now, in the background, rather than on the main thread at the first app switch.
+        ForegroundRules.warmUp(this)
+        AppInfoCache.onConfiguration(resources.configuration)
         runCatching {
             contentResolver.registerContentObserver(
                 Settings.Secure.getUriFor(Settings.Secure.ENABLED_INPUT_METHODS), false, inputMethodObserver
@@ -295,6 +308,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         ProtectionAlerts.serviceRestored(this)
         // The accessibility engine is the better one: compatibility mode stands down.
         UsageWatchService.stop(this)
+        startEngineTrace(this, vault, "accessibility")
         // A locked app may already be in front (service restarted, or enabled over it).
         mainHandler.postDelayed(::reevaluateForeground, 250)
         Log.i(TAG, "Accessibility service connected & components initialized")
@@ -347,9 +361,25 @@ class BioKeyAccessibilityService : AccessibilityService() {
         mainHandler.post { if (isRunning && ::vault.isInitialized && launcherInFront) watchLauncher(true) }
     }
 
-    private fun isInteractive() = power?.isInteractive == true
+    private fun isInteractive() = (power?.isInteractive == true).also { EngineTrace.answer("interactive", it) }
 
-    private fun isDeviceLocked() = keyguard?.isDeviceLocked == true
+    private fun isDeviceLocked() = (keyguard?.isDeviceLocked == true).also { EngineTrace.answer("deviceLocked", it) }
+
+    private fun isKeyguardLocked() = (keyguard?.isKeyguardLocked == true).also { EngineTrace.answer("keyguard", it) }
+
+    /** Home, as the service presses it. Recorded for a replay ([EngineTrace]). */
+    private fun pressHome(): Boolean {
+        EngineTrace.record("o.home")
+        return performGlobalAction(GLOBAL_ACTION_HOME)
+    }
+
+    /**
+     * Whose [w] reads as, for a trace ([EngineTrace.windows]): known from its events, or asked; a
+     * window known to be unreadable is left empty, without asking it again (nor, as [packageOf]
+     * would, remembering the answer: a debug build must decide as a release build does).
+     */
+    private fun traceRootPackage(w: AccessibilityWindowInfo): String? =
+        windowPackages[w.id] ?: if (w.id in attributedWindows || w.id in unreadableAt) null else windowPackage(w)
 
     // -------------------------------------------------------------------------------------------
     // Event handling
@@ -469,6 +499,17 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || !::vault.isInitialized) return
+        EngineTrace.event(event)
+        handlingEvent = true
+        try {
+            handleEvent(event)
+        } finally {
+            handlingEvent = false
+            eventWindows = null
+        }
+    }
+
+    private fun handleEvent(event: AccessibilityEvent) {
         try {
             val type = event.eventType
             val eventPkg = event.packageName?.toString()
@@ -482,7 +523,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 return
             }
             if (type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && contentForRecents && eventPkg != null && isLauncher(eventPkg)) {
-                recents.onLauncherChanged(eventPkg)
+                recents.onLauncherChanged(eventPkg, event.contentChangeTypes)
             }
             if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
                 onWindowsChanged(event)
@@ -502,6 +543,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 val target = resolveForegroundPackage(event)
                 if (target != null && !isSystemOrOverlay(target, eventCls) && needsCover(target)) {
                     exitTransition = isExitTransition(target)
+                    if (exitTransition == false && isPhoneScreen(display)) LatencyMarks.trigger("accessibility", target, event.eventTime)
                     if (exitTransition == false && isPhoneScreen(display)) shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
                 }
                 if (event.windowId >= 0) windowPackages[event.windowId] = target ?: eventPkg
@@ -632,6 +674,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             LockStateTracker.clearAbandoned(target)
             expectedLaunch = target to SystemClock.elapsedRealtime()
             DiagnosticLog.log("Tap on $target: covering it before it opens")
+            LatencyMarks.trigger("accessibility", target, event.eventTime)
             shield.showPredicted(
                 targetPackage = target,
                 waitMs = PREDICTION_WAIT_MS,
@@ -837,20 +880,54 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun isCoverableByVisibility(pkg: String) =
         pkg != packageName && pkg != PasswordManager.CREDENTIAL_MANAGER && pkg != PasswordManager.GMS
 
-    /** Every window on every display, the phone's own screen first (each display's top first); null if they can't be read. */
-    private fun windowList(): List<AccessibilityWindowInfo>? = try {
-        val byDisplay = windowsOnAllDisplays
-        buildList {
-            byDisplay[Display.DEFAULT_DISPLAY]?.let { addAll(it) }
-            byDisplay.forEach { display, windows -> if (display != Display.DEFAULT_DISPLAY) addAll(windows) }
+    /**
+     * Every window on every display, the phone's own screen first (each display's top first); null
+     * if they can't be read. Read once per event ([eventWindows]): handling one asks for them up to
+     * four times, and nothing changes on screen in between, as the next event says.
+     */
+    private fun windowList(): List<AccessibilityWindowInfo>? {
+        if (handlingEvent) eventWindows?.let { return it }
+        val list: List<AccessibilityWindowInfo>? = try {
+            val byDisplay = windowsOnAllDisplays
+            buildList<AccessibilityWindowInfo> {
+                byDisplay[Display.DEFAULT_DISPLAY]?.let { addAll(it) }
+                byDisplay.forEach { display, windows -> if (display != Display.DEFAULT_DISPLAY) addAll(windows) }
+            }
+        } catch (_: Exception) {
+            null
         }
-    } catch (_: Exception) {
-        null
+        if (handlingEvent) eventWindows = list
+        if (list != null && EngineTrace.enabled) EngineTrace.windows(list, ::traceRootPackage)
+        return list
     }
 
-    /** Whose window [w] is: learned from its events, attributed, or read from the window itself (an IPC). */
-    private fun packageOf(w: AccessibilityWindowInfo): String? =
-        windowPackages[w.id] ?: attributedWindows[w.id] ?: windowPackage(w)?.also { windowPackages[w.id] = it }
+    /** While [onAccessibilityEvent] runs: [windowList] as read for that event. */
+    private var handlingEvent = false
+    private var eventWindows: List<AccessibilityWindowInfo>? = null
+
+    /**
+     * Whose window [w] is: learned from its events, attributed, or read from the window itself (an
+     * IPC into its app). A window that can't be read (BioKey's own, a banking app's) isn't asked
+     * again for [UNREADABLE_RECHECK_MS]: every visibility pass would ask it, all the while a lock
+     * screen is up. Asked again after that, as one still being made can become readable.
+     */
+    private fun packageOf(w: AccessibilityWindowInfo): String? {
+        windowPackages[w.id]?.let { return it }
+        attributedWindows[w.id]?.let { return it }
+        val now = SystemClock.uptimeMillis()
+        unreadableAt[w.id]?.let { if (now - it < UNREADABLE_RECHECK_MS) return null }
+        val pkg = windowPackage(w)
+        if (pkg == null) {
+            unreadableAt[w.id] = now
+        } else {
+            unreadableAt.remove(w.id)
+            windowPackages[w.id] = pkg
+        }
+        return pkg
+    }
+
+    /** Windows that couldn't be read, and when that was last found ([packageOf]). */
+    private val unreadableAt = HashMap<Int, Long>()
 
     /**
      * Brings sessions in line with what is actually on screen. See the class comment. A pass that
@@ -907,6 +984,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (visible.isEmpty()) return
         windowPackages.keys.retainAll(liveIds)
         windowTypes.keys.retainAll(liveIds)
+        unreadableAt.keys.retainAll(liveIds)
 
         updateMasks(windowList, full = true)
 
@@ -1033,7 +1111,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             maskedApps = emptySet()
             return
         }
-        if (!isInteractive() || keyguard?.isKeyguardLocked == true || apps.isEmpty()) {
+        if (!isInteractive() || isKeyguardLocked() || apps.isEmpty()) {
             masks.setHidden(true)
             masks.add(targets)
             return
@@ -1244,7 +1322,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         ) {
             Log.i(TAG, "Overview opened from locked $previous; going Home")
             foregroundPackage = target
-            performGlobalAction(GLOBAL_ACTION_HOME)
+            pressHome()
             shield.hide()
             return
         }
@@ -1293,7 +1371,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     lock(target, "came back over its lock screen", displayId)
                     return
                 }
-                performGlobalAction(GLOBAL_ACTION_HOME)
+                pressHome()
             }
             shield.hide()
             return
@@ -1344,11 +1422,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
     /** Covers [target] and starts its lock screen, on [displayId] when known (the display its window is on). */
     private fun lock(target: String, why: String, displayId: Int? = null) {
         foregroundPackage = target
-        DiagnosticLog.log("Covered $target ($why)")
         if (LockStateTracker.isRegularLockPending(target) &&
             LockScreenActivity.isLockScreenResumed &&
             LockScreenActivity.activeLockedTarget == target
         ) return
+        // Once per cover, not once per event of an app still starting under it.
+        if (!isLockScreenOnItsWay(target, displayId)) DiagnosticLog.log("Covered $target ($why)")
         LockStateTracker.setRegularLockPending(target)
         // The shield covers the phone's own screen; on another display the app's patch is its
         // cover, put up by the visibility pass: brought forward, so it doesn't wait for one.
@@ -1364,36 +1443,45 @@ class BioKeyAccessibilityService : AccessibilityService() {
         // Also posted with a delay: the service may have stopped meanwhile.
         if (!isRunning || !::vault.isInitialized) return
         try {
-            val root = rootInActiveWindow
-            if (root == null) {
+            // The window in front, from the window list: its app is known from its events, and only
+            // a window never seen is asked (an IPC into the app, which waits for its UI thread),
+            // at the very moment a locked app left on screen is to be covered.
+            val front = windowList()?.let(::frontWindow)
+            val pkg: String?
+            val windowId: Int
+            if (front != null) {
+                pkg = packageOf(front)
+                windowId = front.id
+            } else {
+                val root = rootInActiveWindow
+                pkg = root?.packageName?.toString()
+                windowId = root?.windowId ?: -1
+                root?.release()
+            }
+            if (pkg == null) {
                 // Unreadable (an app hiding its windows, the keyguard on its way out): the window list
                 // still says what is on screen.
                 scheduleReconcile(0L)
                 return
             }
-            val pkg = root.packageName?.toString()
-            val cls = root.className?.toString().orEmpty()
-            val windowId = root.windowId
-            root.release()
-            if (pkg != null) {
-                if (selfProtection.isHost(pkg) && !isConfirmingDeviceCredential) {
-                    activeSelfProtectionHost = pkg
-                    updateContentMonitoring(needsSelfProtectionMonitoring())
-                    if (shouldGuardSelf() && selfProtection.isGuardedScreen(pkg, null)) {
-                        triggerSelfProtection()
-                        return
-                    }
+            if (selfProtection.isHost(pkg) && !isConfirmingDeviceCredential) {
+                activeSelfProtectionHost = pkg
+                updateContentMonitoring(needsSelfProtectionMonitoring())
+                if (shouldGuardSelf() && selfProtection.isGuardedScreen(pkg, null)) {
+                    triggerSelfProtection()
+                    return
                 }
-                // A root says which package, not which screen ([cls] is a view class here): Credential
-                // Manager or Play services is the password manager only if a window event of its own
-                // said so. Otherwise it is a sign-in sheet over another app.
-                val target = if (pkg == PasswordManager.CREDENTIAL_MANAGER || pkg == PasswordManager.GMS) {
-                    if (windowPackages[windowId] == PasswordManager.VIRTUAL_PACKAGE || foregroundPackage == PasswordManager.VIRTUAL_PACKAGE) {
-                        PasswordManager.VIRTUAL_PACKAGE
-                    } else pkg
-                } else pkg
-                handleForeground(target, cls)
             }
+            // A window says which package, not which screen: Credential Manager or Play services
+            // is the password manager only if a window event of its own said so. Otherwise it is a
+            // sign-in sheet over another app.
+            val target = if (pkg == PasswordManager.CREDENTIAL_MANAGER || pkg == PasswordManager.GMS) {
+                if (windowPackages[windowId] == PasswordManager.VIRTUAL_PACKAGE || foregroundPackage == PasswordManager.VIRTUAL_PACKAGE) {
+                    PasswordManager.VIRTUAL_PACKAGE
+                } else pkg
+            } else pkg
+            // No activity class: neither a window nor a root (whose class is a view's) has one.
+            handleForeground(target, cls = "")
             scheduleReconcile()
         } catch (t: Throwable) {
             Log.e(TAG, "Foreground check failed: ${describe(t)}")
@@ -1451,7 +1539,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     guarded("Leaving a guarded page") {
                         val host = activeSelfProtectionHost
                         if (host != null && shouldGuardSelf() && selfProtection.isGuardedScreen(host, null)) {
-                            performGlobalAction(GLOBAL_ACTION_HOME)
+                            pressHome()
                         }
                     }
                 }, 220L)
@@ -1512,7 +1600,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             if (!stillExposed) return false
             if (attempt > 0) Log.w(TAG, "Lock screen missing after shield timeout (attempt $attempt); relaunching")
             LockStateTracker.setRegularLockPending(target)
-            launchLockScreen(target, isSelfProtection = target == SELF_PROTECTION_PENDING_KEY)
+            launchLockScreen(target, isSelfProtection = target == SELF_PROTECTION_PENDING_KEY, force = true)
             return true
         } catch (t: Throwable) {
             Log.e(TAG, "Shield check failed: ${describe(t)}")
@@ -1537,14 +1625,46 @@ class BioKeyAccessibilityService : AccessibilityService() {
         } == true
     }
 
-    private fun launchLockScreen(targetPkg: String, isSelfProtection: Boolean, displayId: Int? = null, reprompt: Boolean = false) {
-        if (!LockLauncher.launch(this, targetPkg, isSelfProtection, displayId, reprompt)) {
+    /**
+     * Starts [targetPkg]'s lock screen. An app still starting sends several window events before
+     * the lock screen it already has on its way resumes, and each would start it again (a pending
+     * intent made and sent, then the lock screen's onNewIntent on the main thread drawing the
+     * cover): a start for the same app and display within [LAUNCH_REPEAT_MS] is skipped. The
+     * shield's checks start it again whenever it hasn't appeared, with [force], as does a start
+     * asked for on purpose ([reprompt]).
+     */
+    private fun launchLockScreen(
+        targetPkg: String,
+        isSelfProtection: Boolean,
+        displayId: Int? = null,
+        reprompt: Boolean = false,
+        force: Boolean = false
+    ) {
+        if (!force && !reprompt && isLockScreenOnItsWay(targetPkg, displayId)) return
+        if (LockLauncher.launch(this, targetPkg, isSelfProtection, displayId, reprompt)) {
+            lastLaunch = Triple(targetPkg, displayId ?: Display.DEFAULT_DISPLAY, SystemClock.uptimeMillis())
+        } else {
+            lastLaunch = null
             // Could not cover the app: fail closed by leaving it (on another display its patch stays over it).
             if (isPhoneScreen(displayId)) {
-                performGlobalAction(GLOBAL_ACTION_HOME)
+                pressHome()
                 shield.hide()
             }
         }
+    }
+
+    /** The last lock screen started (app, display, when), for [isLockScreenOnItsWay]. */
+    private var lastLaunch: Triple<String, Int, Long>? = null
+
+    /**
+     * [targetPkg]'s lock screen was started on [displayId] moments ago and no lock screen has
+     * resumed since: one that came up and was pushed away (an app opening over it) must start again.
+     */
+    private fun isLockScreenOnItsWay(targetPkg: String, displayId: Int?): Boolean {
+        val (pkg, display, at) = lastLaunch ?: return false
+        if (pkg != targetPkg || display != (displayId ?: Display.DEFAULT_DISPLAY)) return false
+        if (LockScreenActivity.isLockScreenResumed || LockScreenActivity.resumedAt >= at) return false
+        return SystemClock.uptimeMillis() - at < LAUNCH_REPEAT_MS
     }
 
     // -------------------------------------------------------------------------------------------
@@ -1555,6 +1675,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         super.onConfigurationChanged(newConfig)
         if (::shield.isInitialized) shield.onConfigurationChanged()
         if (::masks.isInitialized) masks.refreshPalette()
+        if (::vault.isInitialized && AppInfoCache.onConfiguration(newConfig)) AppInfoCache.reload(this, vault.getLockedPackages())
     }
 
     override fun onInterrupt() {
@@ -1588,6 +1709,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
         mainHandler.removeCallbacks(revokeSelfProtectionAfterExitRunnable)
         mainHandler.removeCallbacks(maskRecheckRunnable)
         mainHandler.removeCallbacksAndMessages(ABANDON_TOKEN)
+        // A Recents look still pending would end a session after the service has gone.
+        recents.reset()
         LockStateTracker.removeLockAllListener(onLockAll)
         LockStateTracker.removeLockAbandonedListener(onLockAbandoned)
         LockStateTracker.removeAppUnlockListener(onAppUnlocked)

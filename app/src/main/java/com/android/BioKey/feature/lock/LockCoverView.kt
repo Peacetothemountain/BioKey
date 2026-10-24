@@ -13,9 +13,12 @@ import android.graphics.drawable.RippleDrawable
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.view.WindowInsets
+import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -77,11 +80,14 @@ class LockCoverView(context: Context) : FrameLayout(context) {
 
     private val backdrop = CoverBackdrop(context)
 
-    /** Large logo: the identity when BioKey itself is locked. */
-    private val logo = WordmarkView(context, releaseWhenHidden = true).apply { visibility = GONE }
+    /** Large logo: the identity when BioKey itself is locked; screen readers hear "BioKey is locked" ([describeLocked]). */
+    private val logo = WordmarkView(context).apply {
+        visibility = GONE
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
+    }
 
-    /** Small logo at the bottom while the system prompt is up: who is asking. */
-    private val brandMark = WordmarkView(context).apply { alpha = 0.55f }
+    /** Small logo at the bottom while the system prompt is up: who is asking. Faint, but at least 3:1 on the light wash. */
+    private val brandMark = WordmarkView(context).apply { alpha = 0.8f }
 
     private val icon = ImageView(context).apply {
         scaleType = ImageView.ScaleType.FIT_CENTER
@@ -91,21 +97,22 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         clipToOutline = true
     }
 
-    /** The locked app's name under its icon. */
+    /** The locked app's name under its icon; screen readers hear "<name> is locked" ([describeLocked]). */
     private val name = TextView(context).apply {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         gravity = Gravity.CENTER
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
-        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
     }
 
+    /** A screen reader stop of its own: the shield's tappable cover would otherwise read it as part of itself. */
     private val status = TextView(context).apply {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
         gravity = Gravity.CENTER
         visibility = GONE
         accessibilityLiveRegion = ACCESSIBILITY_LIVE_REGION_POLITE
+        isScreenReaderFocusable = true
     }
 
     private val primaryButton = TextView(context).apply {
@@ -114,6 +121,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         gravity = Gravity.CENTER
         isClickable = true
         isFocusable = true
+        accessibilityDelegate = ButtonRole
         setOnClickListener { if (lockoutMode) onLockDevice?.invoke() else onUnlock?.invoke() }
     }
 
@@ -122,8 +130,12 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         gravity = Gravity.CENTER
+        // At least 48dp each way, as for any button: the word alone is narrower than a fingertip.
+        minWidth = dp(88)
+        setPadding(dp(16), 0, dp(16), 0)
         isClickable = true
         isFocusable = true
+        accessibilityDelegate = ButtonRole
         setOnClickListener { onCancel?.invoke() }
     }
 
@@ -139,7 +151,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     private val identity = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
-        addView(logo, LinearLayout.LayoutParams(dp(280), dp(118)))
+        addView(logo, LinearLayout.LayoutParams(dp(120), dp(136)))
         addView(icon, LinearLayout.LayoutParams(dp(ICON_DP), dp(ICON_DP)))
         addView(name, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(22)
@@ -153,7 +165,9 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     private var palette = Palette(context)
 
     init {
-        isClickable = true
+        // Not clickable in itself, or screen readers would offer a double-tap that does nothing on
+        // the lock screen: [onTouchEvent] keeps touches from what's below. The shield's tap
+        // listener makes it clickable, as a tap there brings the lock screen up.
         filterTouchesWhenObscured = true
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
         WindowProtection.hideFromNonToolAccessibilityServices(this)
@@ -164,12 +178,31 @@ class LockCoverView(context: Context) : FrameLayout(context) {
             rightMargin = dp(32)
             bottomMargin = dp(96)
         })
-        addView(brandMark, LayoutParams(dp(120), dp(50), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+        addView(brandMark, LayoutParams(dp(40), dp(44), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
             bottomMargin = dp(40)
         })
-        addView(actions, LayoutParams(minOf(resources.displayMetrics.widthPixels - dp(64), dp(360)), LayoutParams.WRAP_CONTENT,
+        // Its width follows the window's at every measure ([onMeasure]): the shield's cover lives as
+        // long as the service, through folds, unfolds and rotations.
+        addView(actions, LayoutParams(dp(360), LayoutParams.WRAP_CONTENT,
             Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(24) })
         applyPalette()
+    }
+
+    /** Every touch on the cover ends here, tap listener or not: none may reach the app below. */
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        super.onTouchEvent(event)
+        return true
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        // Unlock and Cancel are a held cover's only way out: on a narrow screen (a foldable's cover
+        // screen) they must never be wider than it, as they would be at the width of a screen the
+        // phone has since folded away.
+        val available = MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight - dp(64)
+        val width = minOf(available, dp(360)).coerceAtLeast(0)
+        if (MeasureSpec.getMode(widthMeasureSpec) != MeasureSpec.UNSPECIFIED) actions.layoutParams.width = width
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
 
     private val iconLocation = IntArray(2)
@@ -212,8 +245,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         cancelButton.background = ripple(Color.TRANSPARENT, p.primary)
         primaryButton.setTextColor(p.onPrimary)
         primaryButton.background = ripple(p.primary, p.onPrimary)
-        logo.setColors(p.primary, p.tertiary)
-        brandMark.setColors(p.primary, p.tertiary)
+        logo.setColor(p.primary)
+        brandMark.setColor(p.primary)
     }
 
     private fun ripple(fill: Int, rippleColor: Int): Drawable {
@@ -246,9 +279,26 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         name.text = label
         brandMark.isVisible = !isBioKey && !actions.isVisible
         setIcon(appIcon, accent)
-        contentDescription = if (isBioKey) "BioKey is locked" else "$label is locked"
+        describeLocked(if (isBioKey) "BioKey is locked" else "$label is locked")
         setStatus(null, permanentLockout = false)
         requestLayout()
+    }
+
+    /** The app's name, once it has been loaded (a cover put up on a cache miss has none at first). */
+    fun setLabel(label: String) {
+        name.text = label
+        describeLocked("$label is locked")
+    }
+
+    /**
+     * What is locked, for screen readers: announced as the cover appears (its pane title), and
+     * read from the app's name, or BioKey's logo, as the user moves through the cover. Not the
+     * cover's own description, which would be read in place of everything in it.
+     */
+    private fun describeLocked(text: String) {
+        accessibilityPaneTitle = text
+        name.contentDescription = text
+        logo.contentDescription = text
     }
 
     fun setIcon(appIcon: Drawable?, accent: Int? = appIcon?.let { AppInfoCache.accentOf(it, resources) }) {
@@ -295,5 +345,13 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
         setPadding(bars.left, bars.top, bars.right, bars.bottom)
         return insets
+    }
+
+    /** Unlock and Cancel are text drawn as buttons: screen readers are told they are buttons. */
+    private object ButtonRole : AccessibilityDelegate() {
+        override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+            super.onInitializeAccessibilityNodeInfo(host, info)
+            info.className = Button::class.java.name
+        }
     }
 }

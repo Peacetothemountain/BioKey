@@ -21,8 +21,11 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.LocalAutofillHighlightBrush
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -31,6 +34,8 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -44,7 +49,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,16 +57,25 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalAutofillManager
+import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.error
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
@@ -109,7 +123,7 @@ internal class PendingBackup : ViewModel() {
 }
 
 /**
- * Backing up: a password (twice), then where to save the file. Restoring: the file, its
+ * Backing up: a password, then where to save the file. Restoring: the file, its
  * password, then a confirmation, since it replaces the current setup. The sealing, opening and
  * restoring run off the main thread ([VaultBackup] is slow on purpose).
  *
@@ -319,6 +333,13 @@ private fun java.io.InputStream.readNBytesCompat(limit: Int): ByteArray {
     return out.toByteArray()
 }
 
+/**
+ * A password, once: backing up ([creating]) or opening a backup. The field tells an autofill
+ * service which it is (a new password, or the one a backup was saved with), and a new one is
+ * handed to it on Confirm, so a password manager can offer to keep it and fill it in at restore.
+ * The field is a pill, and autofill's highlight is clear, so a filled field looks like any other;
+ * its eye shows what was typed, as nothing asks for it twice.
+ */
 @Composable
 private fun PasswordDialog(
     title: String,
@@ -331,10 +352,17 @@ private fun PasswordDialog(
     onDismiss: () -> Unit
 ) {
     var password by remember { mutableStateOf("") }
-    var again by remember { mutableStateOf("") }
-    val longEnough = password.length >= VaultBackup.MIN_PASSWORD_LENGTH
-    val matches = !creating || password == again
-    val ready = longEnough && matches && !busy
+    // Shown on request: with the password asked only once, a typo is caught by reading it.
+    var shown by remember { mutableStateOf(false) }
+    val ready = password.length >= VaultBackup.MIN_PASSWORD_LENGTH && !busy
+    val autofill = LocalAutofillManager.current
+    val confirm = {
+        if (ready) {
+            // The password manager offers to save a new password once the form is done with.
+            if (creating) autofill?.commit()
+            onConfirm(password.toCharArray())
+        }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Default.Lock, contentDescription = null) },
@@ -343,49 +371,50 @@ private fun PasswordDialog(
             ProtectDialogWindow()
             Column(Modifier.rejectObscuredTouches(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(text)
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = {
-                        // Typing counts as using BioKey: the soft keyboard's input never passes
-                        // through its own touch handling, so a long password could hit the idle lock.
-                        LockStateTracker.onOwnAppInteraction()
-                        password = it
-                    },
-                    label = { Text("Password") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = if (creating) ImeAction.Next else ImeAction.Done),
-                    supportingText = if (creating) {
-                        { Text("At least ${VaultBackup.MIN_PASSWORD_LENGTH} characters") }
-                    } else null,
-                    isError = error != null,
-                    enabled = !busy,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (creating) {
+                CompositionLocalProvider(LocalAutofillHighlightBrush provides SolidColor(Color.Transparent)) {
                     OutlinedTextField(
-                        value = again,
+                        value = password,
                         onValueChange = {
+                            // Typing counts as using BioKey: the soft keyboard's input never passes
+                            // through its own touch handling, so a long password could hit the idle lock.
                             LockStateTracker.onOwnAppInteraction()
-                            again = it
+                            password = it
                         },
-                        label = { Text("Password again") },
+                        label = { Text("Password") },
                         singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
+                        shape = CircleShape,
+                        visualTransformation = if (shown) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { shown = !shown }) {
+                                Icon(
+                                    if (shown) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (shown) "Hide password" else "Show password"
+                                )
+                            }
+                        },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                        isError = again.isNotEmpty() && !matches,
-                        supportingText = if (again.isNotEmpty() && !matches) {
-                            { Text("The passwords don't match") }
-                        } else null,
-                        modifier = Modifier.fillMaxWidth()
+                        keyboardActions = KeyboardActions(onDone = { confirm() }),
+                        // The error belongs to the field, so screen readers say it with the field.
+                        supportingText = when {
+                            error != null -> { { Text(error) } }
+                            creating -> { { Text("At least ${VaultBackup.MIN_PASSWORD_LENGTH} characters") } }
+                            else -> null
+                        },
+                        isError = error != null,
+                        enabled = !busy,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics {
+                                contentType = if (creating) ContentType.NewPassword else ContentType.Password
+                                if (error != null) error(error)
+                            }
                     )
                 }
-                if (error != null) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(password.toCharArray()) }, enabled = ready) { Text(confirmLabel) }
+            TextButton(onClick = confirm, enabled = ready) { Text(confirmLabel) }
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Cancel") } }
     )
@@ -399,8 +428,14 @@ private fun PasswordDialog(
 @Composable
 internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val version by DiagnosticLog.version.collectAsState()
+    val version by DiagnosticLog.version.collectAsStateWithLifecycle()
     val entries = remember(version) { DiagnosticLog.entries().asReversed() }
+    // Each row's key: its entry's time, numbered among any logged in the same millisecond, oldest
+    // first, so new entries leave the keys of the rows below them as they were.
+    val keys = remember(entries) {
+        val seen = HashMap<Long, Int>()
+        entries.asReversed().map { "${it.at}/${seen.merge(it.at, 1, Int::plus)}" }.asReversed()
+    }
     val time = remember { SimpleDateFormat("MMM d, HH:mm:ss", Locale.getDefault()) }
     var confirmDelete by remember { mutableStateOf(false) }
 
@@ -452,8 +487,9 @@ internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
                                 )
                             }
                         }
-                        items(entries) { entry ->
-                            Column {
+                        itemsIndexed(entries, key = { i, _ -> keys[i] }) { _, entry ->
+                            // Its time and what happened, read as one.
+                            Column(Modifier.semantics(mergeDescendants = true) { }) {
                                 Text(time.format(Date(entry.at)), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                                 Text(entry.text, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
                             }

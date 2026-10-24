@@ -7,6 +7,8 @@ import android.hardware.biometrics.BiometricPrompt
 import android.os.CancellationSignal
 import android.util.Log
 import com.android.BioKey.R
+import com.android.BioKey.core.diagnostics.EngineTrace
+import com.android.BioKey.core.diagnostics.LatencyMarks
 import java.lang.ref.WeakReference
 
 /**
@@ -41,6 +43,11 @@ class SecurityEngine private constructor() {
     private class Attempt(val packageName: String, val host: WeakReference<Activity>, val cancel: CancellationSignal)
 
     @Volatile private var active: Attempt? = null
+        set(value) {
+            // The prompt coming and going is what the engines are told, for a replay (EngineTrace).
+            if (value !== field) EngineTrace.record(if (value != null) "p.up" else "p.down", value?.packageName ?: field?.packageName)
+            field = value
+        }
 
     fun isAuthenticating(): Boolean = active != null
 
@@ -116,6 +123,7 @@ class SecurityEngine private constructor() {
                 .setConfirmationRequired(false)
                 .build()
                 .authenticate(attempt.cancel, activity.mainExecutor, callback)
+            LatencyMarks.mark("prompt", packageName)
         } catch (e: Exception) {
             Log.e(TAG, "Failed starting BiometricPrompt: ${e.javaClass.simpleName}")
             if (active === attempt) active = null

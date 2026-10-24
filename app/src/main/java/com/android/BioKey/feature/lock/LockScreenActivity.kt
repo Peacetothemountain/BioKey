@@ -21,6 +21,7 @@ import androidx.core.view.WindowCompat
 import com.android.BioKey.R
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
@@ -70,12 +71,24 @@ class LockScreenActivity : ComponentActivity() {
         internal fun coversDisplay(inMultiWindow: Boolean, window: Rect, display: Rect): Boolean =
             !inMultiWindow || window.contains(display)
 
+        // Both are what the engines are told about the lock screen: recorded for a replay (EngineTrace).
         @Volatile
         var isLockScreenResumed: Boolean = false
-            private set
+            private set(value) {
+                if (value != field) EngineTrace.record("l.resumed", if (value) 1 else 0)
+                field = value
+            }
 
         @Volatile
         var activeLockedTarget: String? = null
+            private set(value) {
+                if (value != field) EngineTrace.record("l.target", value)
+                field = value
+            }
+
+        /** When a lock screen last resumed ([SystemClock.uptimeMillis]): a start before it has arrived. */
+        @Volatile
+        var resumedAt: Long = 0L
             private set
 
         /**
@@ -211,10 +224,14 @@ class LockScreenActivity : ComponentActivity() {
             val pkg = lockedPackage
             val cached = AppInfoCache.get(pkg)
             // The icon's colour comes worked out with it: nothing is computed here on the way to the prompt.
-            cover.bind(cached?.label ?: AppInfoCache.quickLabel(this, pkg), cached?.icon, isBioKey = false, accent = cached?.accent)
-            // Never load on the way to the prompt: the icon follows as soon as it's ready.
+            val label = AppInfoCache.cachedLabel(pkg)
+            cover.bind(label.orEmpty(), cached?.icon, isBioKey = false, accent = cached?.accent)
+            // Never load on the way to the prompt: the name and icon follow as soon as they're ready.
             if (cached == null) AppInfoCache.load(this, pkg) { info ->
-                if (!isFinishing && lockedPackage == pkg) cover.setIcon(info.icon, info.accent)
+                if (!isFinishing && lockedPackage == pkg) {
+                    if (label == null) cover.setLabel(info.label)
+                    cover.setIcon(info.icon, info.accent)
+                }
             }
         }
         cover.setActionsVisible(false)
@@ -237,6 +254,7 @@ class LockScreenActivity : ComponentActivity() {
         current = WeakReference(this)
         shownAt = SystemClock.elapsedRealtime()
         isLockScreenResumed = true
+        resumedAt = SystemClock.uptimeMillis()
         activeLockedTarget = lockedPackage
         if (!isSelfProtection && isTargetUnlocked(lockedPackage)) {
             finishSilently()
@@ -474,6 +492,7 @@ class LockScreenActivity : ComponentActivity() {
         } else {
             // Taken first: the unlock lets the notification shield restore (and forget) them.
             val deepLinks = if (launchAfterUnlock) BioKeyNotificationShieldService.takeDeepLinks(pkg) else null
+            EngineTrace.record("u.unlock", pkg)
             if (!LockStateTracker.onAppUnlocked(pkg, generation)) {
                 // Still hidden: the stand-in keeps its links for the next unlock.
                 deepLinks?.let { BioKeyNotificationShieldService.cachedPendingIntents.putIfAbsent(pkg, ConcurrentHashMap(it)) }
@@ -539,6 +558,7 @@ class LockScreenActivity : ComponentActivity() {
      */
     private fun abandon(displaced: Boolean = false) {
         DiagnosticLog.log("Lock screen for $lockedPackage ${if (displaced) "covered by another screen" else "left"} without unlocking")
+        EngineTrace.record(if (displaced) "u.displaced" else "u.abandon", lockedPackage)
         if (displaced) LockStateTracker.markLockDisplaced(lockedPackage) else LockStateTracker.markLockAbandoned(lockedPackage)
         if (isSelfProtection) LockStateTracker.clearSelfProtection()
     }
@@ -564,7 +584,9 @@ class LockScreenActivity : ComponentActivity() {
      * lock screen has taken over from us.
      */
     private fun dismissShield(upToGeneration: Long = Long.MAX_VALUE) {
-        if (isCurrent) InstantShieldOverlay.dismiss(lockedPackage, upToGeneration)
+        if (!isCurrent) return
+        EngineTrace.record("l.dismiss", lockedPackage)
+        InstantShieldOverlay.dismiss(lockedPackage, upToGeneration)
     }
 
     /**
@@ -574,6 +596,9 @@ class LockScreenActivity : ComponentActivity() {
      * waits behind the keyguard until the phone is unlocked.
      */
     private fun showOverKeyguard(show: Boolean) {
+        // Asked again on every new intent, usually with no change (off, as the manifest leaves
+        // it): each call makes the system work out again what shows over the keyguard.
+        if (show == showsOverKeyguard) return
         showsOverKeyguard = show
         setShowWhenLocked(show)
     }

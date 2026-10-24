@@ -1,0 +1,30 @@
+# BioKey engine trace v1
+100	env	engine	compatibility
+100	env	protection	1
+100	env	locked	com.example.bank	IMMEDIATE	Bank
+100	d.interactive	1
+100	o.log	Compatibility engine started
+330	d.deviceLocked	0
+330	c.poll	1
+330	d.keyguard	0
+530	c.poll	0	1%2Ccom.google.android.apps.nexuslauncher%2Ccom.google.android.apps.nexuslauncher.NexusLauncherActivity%2C3
+730	c.poll	0	2%2Ccom.google.android.apps.nexuslauncher%2Ccom.google.android.apps.nexuslauncher.NexusLauncherActivity%2C6	1%2Ccom.example.bank%2Ccom.example.bank.MainActivity%2C3
+730	o.log	Covered com.example.bank (opened)
+745	o.launch	com.example.bank	0	0
+745	l.target	com.example.bank
+745	l.resumed	1
+945	c.poll	0	2%2Ccom.example.bank%2Ccom.example.bank.MainActivity%2C6	1%2Ccom.android.BioKey%2Ccom.android.BioKey.feature.lock.LockScreenActivity%2C3
+945	l.dismiss	com.example.bank
+960	u.unlock	com.example.bank
+960	o.log	Unlocked com.example.bank
+960	l.dismiss	com.example.bank
+960	l.target	
+960	l.resumed	0
+1160	c.poll	0	2%2Ccom.android.BioKey%2Ccom.android.BioKey.feature.lock.LockScreenActivity%2C8	1%2Ccom.example.bank%2Ccom.example.bank.MainActivity%2C4
+2160	c.poll	0	2%2Ccom.example.bank%2Ccom.example.bank.MainActivity%2C12	1%2Ccom.google.android.apps.nexuslauncher%2Ccom.google.android.apps.nexuslauncher.NexusLauncherActivity%2C8	23%2Ccom.example.bank%2Ccom.example.bank.MainActivity%2C5
+2160	o.log	com.example.bank left the screen · re-lock: immediate
+2160	o.log	Session ended: com.example.bank (left%2C re-locks immediately)
+3160	c.poll	0	2%2Ccom.google.android.apps.nexuslauncher%2Ccom.google.android.apps.nexuslauncher.NexusLauncherActivity%2C7	1%2Ccom.example.bank%2Ccom.example.bank.MainActivity%2C3
+3160	o.log	Covered com.example.bank (opened)
+3175	o.launch	com.example.bank	0	0
+3175	z.end

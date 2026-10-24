@@ -1,130 +1,148 @@
 package com.android.BioKey.ui.brand
 
-import android.os.SystemClock
-import androidx.compose.animation.core.EaseInOutCubic
-import androidx.compose.animation.core.withInfiniteAnimationFrameMillis
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.Canvas
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.util.lerp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.android.BioKey.R
-import com.android.BioKey.ui.brand.LogoLayer
-import com.android.BioKey.ui.brand.VineSlither
 import com.android.BioKey.ui.theme.animationsEnabled
-
-/** One breath of the aura, in and out. */
-private const val BREATH_MS = 5_600L
-/** Not moved yet: the vines and aura draw plain, unwarped and unscaled. */
-private const val STILL = -1f
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlinx.coroutines.isActive
 
 /**
- * How far into its breath the aura is at [uptimeMs], 0 (smallest) to 1 (fullest): eased in and
- * out, on the shared uptime clock.
+ * BioKey's logo: its mark ([KeyMark]), upright, as large as fits [modifier]'s size, centred, in the
+ * phone's colours. Still. BioKey's own lock and setup show it; the lock cover shows the same mark
+ * ([WordmarkView]).
  */
-internal fun breathAt(uptimeMs: Long): Float {
-    val t = (uptimeMs % BREATH_MS) / BREATH_MS.toFloat()
-    return EaseInOutCubic.transform(if (t < 0.5f) t * 2f else 2f - t * 2f)
+@Composable
+fun BioKeyLogo(modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val name = stringResource(R.string.brand_name)
+    Canvas(modifier.clearAndSetSemantics { contentDescription = name; role = Role.Image }) {
+        drawMark(colors.primary.toArgb(), motion = null)
+    }
+}
+
+/** At most one frame per this long (~60 fps): the motion is slow, and time-based. */
+private const val FRAME_INTERVAL_NANOS = 16_000_000L
+
+/** One twinkle of the sparkles. */
+private const val TWINKLE_SECONDS = 2.6f
+/** One slow circle of each sparkle round where it sits. */
+private const val DRIFT_SECONDS = 9f
+
+/**
+ * How fast the lines flow along each ridge (in the icon's units a second), outermost first: slow,
+ * and each at its own pace, so the ridges chase each other and their gaps never line up.
+ */
+private val FLOW_SPEED = floatArrayOf(5.2f, 4.6f, 4.1f, 3.5f, 3f)
+
+/** Where each ridge's gaps start, so they begin spread through the print rather than in a line. */
+private val FLOW_START = floatArrayOf(3f, 17f, 9f, 22f, 6f)
+/** How far each sparkle drifts round where it sits (in the icon's units). */
+private const val DRIFT = 1.4f
+
+/**
+ * Sets [this] to the mark's pose [seconds] into its loop: the lines flowing along each ridge at
+ * its own pace (the print keeps its form); the sparkles twinkling (growing and brightening) out of
+ * step, each drifting round in a small circle. Every pose is a smooth function of time, so the
+ * loop never jumps.
+ */
+internal fun KeyMark.Motion.at(seconds: Float) {
+    for (i in ridgeFlow.indices) ridgeFlow[i] = FLOW_START[i] + FLOW_SPEED[i] * seconds
+    for (k in sparkleScale.indices) {
+        val twinkle = (sin(2f * PI.toFloat() * seconds / TWINKLE_SECONDS + k * 2.1f) + 1f) / 2f
+        sparkleScale[k] = 0.65f + 0.5f * twinkle
+        sparkleAlpha[k] = 0.45f + 0.55f * twinkle
+        val drift = 2f * PI.toFloat() * seconds / DRIFT_SECONDS + k * 2.3f
+        sparkleDx[k] = DRIFT * cos(drift)
+        sparkleDy[k] = DRIFT * sin(drift)
+    }
 }
 
 /**
- * The two-layer BioKey wordmark over its breathing aura. Both layers are white shapes with
- * two-tone detail in their alpha, filled with the theme: letters in primary, the
- * fingerprint-ridge vines in tertiary, so the logo follows the wallpaper palette.
+ * BioKey's mark turned a quarter-turn clockwise (the fingerprint on the right, the key on the
+ * left), for the home header between the status and Settings tiles. As large as fits [modifier]'s
+ * size, centred, in the phone's colours.
  *
- * The vines slither like snakes ([VineSlither]); the letters stay still. One frame loop moves
- * both the wave and the aura, and both are read only while drawing, so each frame redraws the
- * logo's own layers: no recomposition, no re-layout. Capped at 60 fps, paused off screen; still
- * when [animated] is false (lock screens, or hidden behind another page) or with "Remove
- * animations", holding the frame it was on.
+ * Moves on its own, never from the phone's sensors: the print keeps its form while its lines flow
+ * slowly round along each ridge, up one leg, over the top and down the other, each ridge at its
+ * own pace so they chase each other; the key holds still, and the sparkles twinkle and drift round
+ * it ([at]). Only while
+ * [animated] (the header uncovered), the screen resumed and "Remove animations" off; otherwise it
+ * holds its pose. Like the constellation behind it: its own graphics layer, the frame read only
+ * while drawing (no recomposition per frame), at most 60 fps, nothing allocated per frame.
  */
 @Composable
-fun BioKeyLogo(modifier: Modifier = Modifier, animated: Boolean = true) {
-    val primary = MaterialTheme.colorScheme.primary
-    val tertiary = MaterialTheme.colorScheme.tertiary
-    val auraBrush = remember(primary, tertiary) {
-        Brush.radialGradient(listOf(primary.copy(alpha = 0.22f), tertiary.copy(alpha = 0.09f), Color.Transparent))
-    }
-    val resources = LocalResources.current
-    val letters = remember(resources) { LogoLayer(resources, R.drawable.ic_title_logo_letters) }
-    val vines = remember(resources) { VineSlither(resources) }
-    val animate = animated && animationsEnabled()
-    val slither = animate && VineSlither.canAnimate
-    // A logo that comes on screen moving starts where the shared clock is, rather than jumping
-    // there from the plain disc on its second frame.
-    val phase = remember { mutableFloatStateOf(if (slither) VineSlither.phaseAt(SystemClock.uptimeMillis()) else STILL) }
-    val breath = remember { mutableFloatStateOf(if (animate) breathAt(SystemClock.uptimeMillis()) else STILL) }
-    LaunchedEffect(animate) {
-        if (!animate) return@LaunchedEffect
-        var last = 0L
-        while (true) {
-            withInfiniteAnimationFrameMillis { ms ->
-                if (ms - last >= 16) {
-                    last = ms
-                    val now = SystemClock.uptimeMillis()
-                    if (slither) phase.floatValue = VineSlither.phaseAt(now)
-                    breath.floatValue = breathAt(now)
+fun BioKeyMarkSideways(modifier: Modifier = Modifier, animated: Boolean = true) {
+    val colors = MaterialTheme.colorScheme
+    val name = stringResource(R.string.brand_name)
+    val motion = remember { KeyMark.Motion() }
+    val moving = animated && animationsEnabled()
+    var frameNanos by remember { mutableLongStateOf(0L) }
+    val startNanos = remember { longArrayOf(0L) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner, moving) {
+        if (!moving) return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            var lastPublished = 0L
+            while (isActive) {
+                withFrameNanos { now ->
+                    if (startNanos[0] == 0L) startNanos[0] = now
+                    if (now - lastPublished >= FRAME_INTERVAL_NANOS) {
+                        lastPublished = now
+                        frameNanos = now
+                    }
                 }
             }
         }
     }
-    val name = stringResource(R.string.brand_name)
-    Box(modifier, contentAlignment = Alignment.Center) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    val b = breath.floatValue
-                    if (b > STILL) {
-                        scaleX = lerp(0.94f, 1.08f, b)
-                        scaleY = scaleX
-                        alpha = lerp(0.75f, 1f, b)
-                    }
-                }
-                .background(auraBrush, CircleShape)
-        )
-        Spacer(
-            Modifier
-                .fillMaxSize()
-                .semantics {
-                    contentDescription = name
-                    role = Role.Image
-                }
-                .drawBehind {
-                    letters.setTint(primary.toArgb())
-                    drawIntoCanvas { letters.draw(it.nativeCanvas, size.width, size.height) }
-                }
-        )
-        Spacer(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer()
-                .drawBehind {
-                    val p = phase.floatValue.takeIf { it > STILL }
-                    vines.setTint(tertiary.toArgb())
-                    drawIntoCanvas { vines.draw(it.nativeCanvas, size.width, size.height, p) }
-                }
-        )
+    Canvas(modifier.graphicsLayer().clearAndSetSemantics { contentDescription = name; role = Role.Image }) {
+        val now = frameNanos
+        // Held at its first pose until it moves, so it never changes look as it starts.
+        motion.at(if (now == 0L) 0f else (now - startNanos[0]) / 1e9f)
+        // Laid out upright in the box turned on its side, then turned with it.
+        rotate(90f) {
+            drawMark(
+                colors.primary.toArgb(),
+                motion = motion,
+                width = size.height,
+                height = size.width
+            )
+        }
+    }
+}
+
+/** Draws the mark centred in this scope, in a [width] x [height] box (the scope's own by default). */
+private fun DrawScope.drawMark(
+    color: Int,
+    motion: KeyMark.Motion?,
+    width: Float = size.width,
+    height: Float = size.height
+) {
+    drawIntoCanvas {
+        KeyMark.draw(it.nativeCanvas, (size.width - width) / 2f, (size.height - height) / 2f, width, height, color, motion)
     }
 }

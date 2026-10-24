@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -90,6 +91,9 @@ fun Group(
  * One row of a group: optional leading icon badge, title and supporting text, trailing content.
  * Pass [onClick] for a tappable row, or a [Modifier.toggleable]/[Modifier.selectable] via
  * [interaction] for switches and choices (so the whole row is the touch target).
+ *
+ * [stateDescription] is what screen readers say of the row's state ("Done") where only its look
+ * shows it; the row is then one stop, tappable or not.
  */
 @Composable
 fun GroupRow(
@@ -105,9 +109,13 @@ fun GroupRow(
     onClick: (() -> Unit)? = null,
     interaction: Modifier = Modifier,
     subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    stateDescription: String? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null
 ) {
     val shape = groupShape(index, count)
+    val described = if (stateDescription != null) {
+        modifier.semantics(mergeDescendants = true) { this.stateDescription = stateDescription }
+    } else modifier
     val content: @Composable () -> Unit = {
         Row(
             modifier = interaction
@@ -128,14 +136,9 @@ fun GroupRow(
             }
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                // In full, however large the text: its end is often what to do ("· tap to grant").
                 if (!subtitle.isNullOrEmpty()) {
-                    Text(
-                        subtitle,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = subtitleColor,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = subtitleColor)
                 }
             }
             if (trailing != null) {
@@ -145,9 +148,9 @@ fun GroupRow(
         }
     }
     if (onClick != null) {
-        Surface(onClick = onClick, shape = shape, color = groupColor, modifier = modifier.fillMaxWidth(), content = content)
+        Surface(onClick = onClick, shape = shape, color = groupColor, modifier = described.fillMaxWidth(), content = content)
     } else {
-        Surface(shape = shape, color = groupColor, modifier = modifier.fillMaxWidth(), content = content)
+        Surface(shape = shape, color = groupColor, modifier = described.fillMaxWidth(), content = content)
     }
 }
 

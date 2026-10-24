@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -27,15 +28,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.ui.brand.BioKeyLogo
 import com.android.BioKey.ui.theme.springPress
+
+/** The logo's size, as on [LockCoverView]. */
+private val LOGO_WIDTH = 120.dp
+private val LOGO_HEIGHT = 136.dp
 
 /**
  * BioKey's own lock, drawn in Compose. Laid out like [LockCoverView] showing BioKey (the logo,
@@ -59,7 +65,8 @@ fun BioKeyLockScreen(
         modifier = Modifier
             .fillMaxSize()
             .rejectObscuredTouches()
-            .semantics { contentDescription = "BioKey is locked" }
+            // Announced as it appears; the logo already says "BioKey" when moving through it.
+            .semantics { paneTitle = "BioKey is locked" }
             .background(coverWash())
     ) {
 
@@ -72,18 +79,23 @@ fun BioKeyLockScreen(
                 .padding(bottom = 200.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            BioKeyLogo(Modifier.size(280.dp, 118.dp), animated = false)
+            val status = statusMessage?.takeIf { it.isNotBlank() }
+            val statusStyle = MaterialTheme.typography.bodyMedium
+            // With nothing to say, the status's empty line below is balanced by one above, so the
+            // logo stays in the middle.
+            if (status == null) Spacer(Modifier.height(with(LocalDensity.current) { statusStyle.lineHeight.toDp() }))
+            BioKeyLogo(Modifier.size(LOGO_WIDTH, LOGO_HEIGHT))
             // No "is locked" caption: the logo says what is locked; screen readers get it above.
-            if (!statusMessage.isNullOrBlank()) {
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    text = statusMessage,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
-                )
-            }
+            if (status != null) Spacer(Modifier.height(16.dp))
+            // Always there, empty when there's nothing to say: a live region is read out when its
+            // text changes, not when it first appears.
+            Text(
+                text = status.orEmpty(),
+                style = statusStyle,
+                color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+            )
         }
 
         Column(
@@ -102,7 +114,7 @@ fun BioKeyLockScreen(
                     shape = CircleShape,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp)
+                        .heightIn(min = 56.dp)
                         .springPress()
                 ) {
                     if (!isPermanentLockout) {
@@ -112,7 +124,7 @@ fun BioKeyLockScreen(
                     Text(if (isPermanentLockout) "Lock screen" else "Unlock", style = MaterialTheme.typography.titleMedium)
                 }
             }
-            TextButton(onClick = onCancelClicked, modifier = Modifier.height(48.dp)) {
+            TextButton(onClick = onCancelClicked, modifier = Modifier.heightIn(min = 48.dp)) {
                 Text("Cancel", style = MaterialTheme.typography.titleSmall)
             }
         }

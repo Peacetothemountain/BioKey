@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- BioKey's mark (ui/brand/KeyMark.kt) for the status bar and the Quick Settings tile: the
+     launcher icon's key and three of its five ridges (all five run together this small), in one
+     colour, with strokes thick enough to read at 24dp. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <group android:translateX="-29.875" android:translateY="-22.7">
+        <path
+            android:pathData="M41,46.875 L41,37.65 A12.875,12.875 0 0 1 66.75,37.65 L66.75,45.625 M46.25,54.375 L46.25,37.65 A7.625,7.625 0 0 1 61.5,37.65 L61.5,48.125 M51.25,49.375 L51.25,37.65 A2.625,2.625 0 0 1 56.5,37.65 L56.5,46.875"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="2.4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M53.875,40.375 L53.875,68.625 M53.875,60.75 L58.375,60.75 M53.875,66 L56.625,66"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="2.4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+    </group>
+</vector>

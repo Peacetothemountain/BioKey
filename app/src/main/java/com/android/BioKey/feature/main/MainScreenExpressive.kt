@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -79,8 +80,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -98,7 +102,8 @@ import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.ForegroundRules
-import com.android.BioKey.ui.brand.BioKeyLogo
+import com.android.BioKey.ui.brand.BioKeyMarkSideways
+import com.android.BioKey.ui.brand.KeyMark
 import com.android.BioKey.ui.brand.HeaderMatrixDotsExpressive
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.GroupGap
@@ -113,8 +118,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 
 private const val FILTER_ALL = "filter:all"
+
+/** The list's kinds of row, so a row scrolled away is reused for another of its kind. */
+private const val CONTENT_APP = "app"
+private const val CONTENT_HEADER = "header"
 
 /** Shown wherever a home-screen app's lock switch can't be turned on. */
 internal const val HOME_SCREEN_NOTE = "Home screens can't be locked"
@@ -244,11 +258,19 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         val pkg = optionsForPackage
         if (!isLoadingApps && pkg != null && installedApps.none { it.packageName == pkg }) optionsForPackage = null
     }
+    // Sheets, dialogs and the notification shade take the window's focus, while BioKey stays
+    // resumed behind their scrim. Only once it has had focus: before, the header moves from its
+    // first frame, as it always has.
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    var hadFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(windowFocused) { if (windowFocused) hadFocus = true }
     /**
-     * Home's decorations animate only while nothing covers them: the app picker, or Settings once
-     * it has slid in (stopping as it starts would show them jump to a still frame).
+     * Home's decorations animate only while nothing covers them: the app picker, Settings once
+     * it has slid in (stopping as it starts would show them jump to a still frame), or a window
+     * over BioKey's.
      */
-    val headerActive = !(settingsVisibility.currentState && settingsVisibility.isIdle) && !(showAddApps && currentProfile != null)
+    val headerActive = !(settingsVisibility.currentState && settingsVisibility.isIdle) && !(showAddApps && currentProfile != null) &&
+        (windowFocused || !hadFocus)
 
     val profileByPackage = remember(profiles) {
         HashMap<String, SecurityProfile>().apply { for (p in profiles) for (pkg in p.packages) put(pkg, p) }
@@ -294,9 +316,12 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         }
     }
 
-    /** A group of app rows in the list. */
-    fun LazyListScope.appGroup(key: String, apps: List<AppItem>, showProfile: Boolean) {
-        itemsIndexed(apps, key = { _, app -> "$key/${app.packageName}" }) { i, app ->
+    /**
+     * A group of app rows in the list. Keyed by package alone (the groups split one list without
+     * repeats), so a row whose lock is switched moves to its new group rather than being rebuilt.
+     */
+    fun LazyListScope.appGroup(apps: List<AppItem>, showProfile: Boolean) {
+        itemsIndexed(apps, key = { _, app -> app.packageName }, contentType = { _, _ -> CONTENT_APP }) { i, app ->
             val profile = if (showProfile) profileOf(app.packageName) else null
             // The lock stays on: it still hides the app's notifications, and protects it again as
             // soon as the accessibility engine is back.
@@ -342,7 +367,13 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         }
     }
 
-    Box(Modifier.fillMaxSize().rejectObscuredTouches()) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .rejectObscuredTouches()
+            // Out of screen readers' reach while Settings is over it, as it is out of the eye's.
+            .then(if (showSettings) Modifier.clearAndSetSemantics { } else Modifier)
+    ) {
         val listState = key(filter) { rememberLazyListState() }
         LazyColumn(
             state = listState,
@@ -355,14 +386,23 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
             contentPadding = PaddingValues(bottom = 96.dp)
         ) {
             item(key = "header") {
-                Box {
-                    HeaderMatrixDotsExpressive(Modifier.matchParentSize(), animated = headerActive)
+                // Where the header and its logo are on screen: the constellation thins out round
+                // the logo, so no link cuts through the name.
+                var headerOrigin by remember { mutableStateOf(Offset.Zero) }
+                var logoBounds by remember { mutableStateOf<Rect?>(null) }
+                Box(Modifier.onGloballyPositioned { headerOrigin = it.positionInRoot() }) {
+                    HeaderMatrixDotsExpressive(
+                        Modifier.matchParentSize(),
+                        animated = headerActive,
+                        quiet = logoBounds?.translate(-headerOrigin)
+                    )
                     Column(Modifier.statusBarsPadding()) {
                         MainHeader(
                             status = look,
                             animated = headerActive,
                             onOpenStatus = { showProtectionSheet = true },
-                            onOpenSettings = { showSettings = true }
+                            onOpenSettings = { showSettings = true },
+                            onLogoPlaced = { logoBounds = it }
                         )
                     }
                 }
@@ -402,8 +442,14 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                             FilterChoice("All apps", Icons.Default.Apps, filter == FILTER_ALL) { filter = FILTER_ALL }
                         }
                         items(profiles, key = { it.id }) { profile ->
+                            val apps = appCountByProfile[profile.id] ?: 0
                             FilterChoice(
-                                label = "${profile.name} · " + if (profile.enabled) "${appCountByProfile[profile.id] ?: 0}" else "off",
+                                label = "${profile.name} · " + if (profile.enabled) "$apps" else "off",
+                                description = "${profile.name} profile, " + when {
+                                    !profile.enabled -> "off"
+                                    apps == 1 -> "1 app"
+                                    else -> "$apps apps"
+                                },
                                 icon = profileIcon(profile.iconKey),
                                 selected = filter == profile.id
                             ) { filter = profile.id }
@@ -460,17 +506,17 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                     )
                 }
                 currentProfile != null -> {
-                    item(key = "h_profile") { SectionHeader("Apps in ${currentProfile.name}") }
-                    appGroup("profile", matching, showProfile = false)
+                    item(key = "h_profile", contentType = CONTENT_HEADER) { SectionHeader("Apps in ${currentProfile.name}") }
+                    appGroup(matching, showProfile = false)
                 }
                 else -> {
                     if (lockedShown.isNotEmpty()) {
-                        item(key = "h_locked") { SectionHeader("Locked · ${lockedShown.size}") }
-                        appGroup("locked", lockedShown, showProfile = true)
+                        item(key = "h_locked", contentType = CONTENT_HEADER) { SectionHeader("Locked · ${lockedShown.size}") }
+                        appGroup(lockedShown, showProfile = true)
                     }
                     if (unlockedShown.isNotEmpty()) {
-                        item(key = "h_unlocked") { SectionHeader(if (lockedShown.isEmpty()) "Choose apps to lock" else "Not locked") }
-                        appGroup("unlocked", unlockedShown, showProfile = false)
+                        item(key = "h_unlocked", contentType = CONTENT_HEADER) { SectionHeader(if (lockedShown.isEmpty()) "Choose apps to lock" else "Not locked") }
+                        appGroup(unlockedShown, showProfile = false)
                     }
                 }
             }
@@ -608,11 +654,17 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
 }
 
 /**
- * Status and Settings as equal-width tiles at the edges, the logo centred between them. The logo
- * holds still unless [animated].
+ * Status and Settings as equal-width tiles at the edges, BioKey's mark centred between them,
+ * moving unless [animated] is false (the header covered).
  */
 @Composable
-private fun MainHeader(status: ProtectionLook, animated: Boolean, onOpenStatus: () -> Unit, onOpenSettings: () -> Unit) {
+private fun MainHeader(
+    status: ProtectionLook,
+    animated: Boolean,
+    onOpenStatus: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onLogoPlaced: (Rect) -> Unit = {}
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -629,10 +681,13 @@ private fun MainHeader(status: ProtectionLook, animated: Boolean, onOpenStatus: 
         )
         // Centred between the two equal-width tiles, with breathing room on both sides.
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-            BioKeyLogo(
+            // The mark alone, on its side (the fingerprint on the right, the key on the left), as
+            // large as the header holds; its print swirls while the header is uncovered.
+            BioKeyMarkSideways(
                 Modifier
-                    .fillMaxWidth(0.84f)
-                    .aspectRatio(2.26f), // the artwork's own proportions
+                    .height(104.dp)
+                    .aspectRatio(1f / KeyMark.ASPECT)
+                    .onGloballyPositioned { onLogoPlaced(it.boundsInRoot()) },
                 animated = animated
             )
         }
@@ -676,11 +731,13 @@ private fun HeaderTile(
             Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(32.dp))
         }
         Spacer(Modifier.height(8.dp))
+        // Two lines, so large text still shows the whole of "Protected" or "Not running".
         Text(
             label,
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
     }
@@ -780,7 +837,12 @@ private fun ProtectionSheet(
                 Icon(look.icon, contentDescription = null, tint = look.content, modifier = Modifier.size(36.dp))
             }
             Spacer(Modifier.height(16.dp))
-            Text(look.title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+            Text(
+                look.title,
+                style = MaterialTheme.typography.headlineSmall,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.semantics { heading() }
+            )
             Spacer(Modifier.height(8.dp))
             Text(
                 look.body,
@@ -790,9 +852,9 @@ private fun ProtectionSheet(
             )
             Spacer(Modifier.height(24.dp))
             if (look.action != null) {
-                Button(onClick = onAction, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text(look.action) }
+                Button(onClick = onAction, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text(look.action) }
             } else {
-                OutlinedButton(onClick = onPause, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                OutlinedButton(onClick = onPause, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                     Icon(Icons.Default.PauseCircle, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("Pause protection")
@@ -802,15 +864,17 @@ private fun ProtectionSheet(
     }
 }
 
+/** [description]: what screen readers say in place of a short [label] ("Finance profile, 2 apps" for "Finance · 2"). */
 @Composable
-private fun FilterChoice(label: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) {
+private fun FilterChoice(label: String, icon: ImageVector, selected: Boolean, description: String? = null, onClick: () -> Unit) {
     FilterChip(
         selected = selected,
         onClick = onClick,
         label = { Text(label) },
         leadingIcon = { Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
         shape = CircleShape,
-        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer)
+        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer),
+        modifier = if (description != null) Modifier.semantics { contentDescription = description } else Modifier
     )
 }
 

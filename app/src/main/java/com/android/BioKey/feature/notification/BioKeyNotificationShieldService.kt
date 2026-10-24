@@ -74,6 +74,13 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
          */
         private const val WITHDRAWN_CHECK_EVERY_MS = 60_000L
 
+        /**
+         * A lock-all this soon after a sweep that left nothing a lock-all could hide, with nothing
+         * shown since, skips its own sweep ([LockAllSweeps]). Later ones sweep whatever the
+         * bookkeeping says, as a safety net.
+         */
+        private const val SWEEP_SKIP_WINDOW_MS = 60_000L
+
         private val IGNORED_PACKAGES = setOf("android", "com.android.systemui")
 
         /** Deep-link intents cached per locked package and notification key with post-time metadata. */
@@ -142,6 +149,16 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     /** Keys currently being un-snoozed via snoozeNotification(key, 50L), mapped to package and expiry elapsedRealtime. */
     private val restoringKeys = HashMap<String, RestoringEntry>()
 
+    /**
+     * The count each locked app's stand-in was last posted with. A hidden notification that leaves
+     * it as it was (an app updating its message) posts nothing: each post makes the shade redraw
+     * the stand-in. Forgotten whenever the stand-in goes (cancelled, or dismissed by the user), at
+     * every lock-all and on disconnecting, so a stand-in that may be gone is always posted again.
+     */
+    private val standInCounts = HashMap<String, Int>()
+
+    private val lockAllSweeps = LockAllSweeps(SWEEP_SKIP_WINDOW_MS)
+
     @Volatile private var connected = false
     private var sweepPending = false
     private var withdrawnCheckedAt = 0L
@@ -159,7 +176,11 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     // Sessions are reported under the name the app was unlocked by: Google Password Manager's
     // virtual package, while its notifications come from Credential Manager.
     private val onAppUnlocked: (String) -> Unit = { pkg ->
-        main.post { if (connected) PasswordManager.aliasesOf(pkg).forEach(::restoreNotificationsForPackage) }
+        main.post {
+            // Its notifications show from now on: the next lock-all must sweep.
+            lockAllSweeps.onShowing()
+            if (connected) PasswordManager.aliasesOf(pkg).forEach(::restoreNotificationsForPackage)
+        }
     }
     // Told once per batch: a restore or auto-sort that turns on 40 locks is one post and one sweep.
     private val onAppsLocked: (Set<String>) -> Unit = { pkgs ->
@@ -186,6 +207,9 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         super.onListenerConnected()
         activeService = this
         connected = true
+        // Nothing seen while unbound is known: the stand-ins are posted afresh, the next lock-all sweeps.
+        standInCounts.clear()
+        lockAllSweeps.onShowing()
         LockStateTracker.addLockAllListener(onLockAll)
         LockStateTracker.addAppUnlockListener(onAppUnlocked)
         LockStateTracker.addAppsLockListener(onAppsLocked)
@@ -233,7 +257,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             touched += pkg
         }
         // Stand-ins whose notifications are all gone are stale.
-        for (pkg in standIns - touched) NotificationManagerCompat.from(this).cancel(TAG_PREFIX + pkg, SUMMARY_ID)
+        for (pkg in standIns - touched) cancelStandIn(pkg)
         for (pkg in touched) {
             val stillHidden = vault.isAppLocked(pkg) && vault.isProtectionActive() && vault.isNotificationShieldEnabled() &&
                 !LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))
@@ -250,6 +274,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     override fun onListenerDisconnected() {
         connected = false
         activeService = null
+        standInCounts.clear()
         scope?.cancel()
         scope = null
         LockStateTracker.removeLockAllListener(onLockAll)
@@ -273,10 +298,19 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        if (shouldHide(sbn) && hide(sbn)) updateStandIn(sbn.packageName)
+        if (shouldHide(sbn) && hide(sbn)) {
+            updateStandIn(sbn.packageName)
+        } else if (mayHideLater(sbn)) {
+            lockAllSweeps.onShowing()
+        }
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification, rankingMap: RankingMap?, reason: Int) {
+        // One of BioKey's stand-ins, gone however it went (dismissed, snoozed by the user): the
+        // next hidden notification posts it again, even with the same count.
+        if (sbn.packageName == packageName) {
+            sbn.tag?.takeIf { it.startsWith(TAG_PREFIX) }?.let { standInCounts.remove(it.removePrefix(TAG_PREFIX)) }
+        }
         if (reason == REASON_SNOOZED) {
             // Ignored: triggered by our own snoozeNotification(sbn.key, SNOOZE_24_HOURS_MS) call.
             return
@@ -300,7 +334,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             val remainingCount = hiddenNotificationKeys[pkg]?.size ?: 0
             if (remainingCount == 0) {
                 // No hidden notifications remain; dismiss the stand-in and un-snooze any orphaned group summaries
-                NotificationManagerCompat.from(this).cancel(TAG_PREFIX + pkg, SUMMARY_ID)
+                cancelStandIn(pkg)
                 cachedPendingIntents.remove(pkg)
                 hiddenNotificationKeys.remove(pkg)
                 unsnooze(pkg, hiddenSummaryKeys.remove(pkg).orEmpty())
@@ -313,15 +347,17 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
 
     /**
      * Every session ended (screen off, lock-all, protection resumed): locked apps' notifications
-     * hide again. Always a sweep: what was left showing since the last one (during a session, a
-     * pause, with the shield off) can't be told from what that sweep skipped, and a device lock
-     * must never leave a locked app's message on the keyguard.
+     * hide again. A sweep, unless one moments ago left nothing a lock-all could hide and nothing
+     * has shown since ([LockAllSweeps]): a screen-off is reported two or three times over. What
+     * was left showing (during a session, a pause, with the shield off) always counts, so a
+     * device lock never leaves a locked app's message on the keyguard.
      */
     private fun onAllSessionsEnded() {
         restoringKeys.clear()
+        standInCounts.clear()
         if (!connected) return
         extendSnoozes(force = false)
-        requestSweep()
+        if (lockAllSweeps.needsSweep(SystemClock.elapsedRealtime())) requestSweep()
     }
 
     /**
@@ -333,12 +369,25 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             activeNotifications
         } catch (e: Exception) {
             Log.w(TAG, "Listener not bound or active notifications unavailable: ${e.javaClass.simpleName}")
+            lockAllSweeps.onShowing()
             return
-        } ?: return
+        }
+        if (active == null) {
+            lockAllSweeps.onShowing()
+            return
+        }
         val changed = HashSet<String>()
-        for (sbn in active) if (shouldHide(sbn) && hide(sbn)) changed += sbn.packageName
+        var leftShowing = false
+        for (sbn in active) {
+            if (shouldHide(sbn) && hide(sbn)) {
+                changed += sbn.packageName
+            } else if (mayHideLater(sbn)) {
+                leftShowing = true
+            }
+        }
         // Only while something is hidden, and not at every sweep: it fetches the whole snoozed list.
         val now = SystemClock.elapsedRealtime()
+        lockAllSweeps.onSwept(leftShowing, now)
         val anyHidden = hiddenNotificationKeys.isNotEmpty() || hiddenSummaryKeys.isNotEmpty()
         if (anyHidden && (withdrawnCheckedAt == 0L || now - withdrawnCheckedAt >= WITHDRAWN_CHECK_EVERY_MS)) {
             withdrawnCheckedAt = now
@@ -373,6 +422,18 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         if (!vault.isProtectionActive() || !vault.isNotificationShieldEnabled()) return false
         if (!vault.isAppLocked(pkg)) return false
         return !LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))
+    }
+
+    /**
+     * Whether [sbn], left showing, is one a later lock-all could hide: any of a locked app's (a
+     * lock-all ends its session and its restore window), and while protection is paused or the
+     * shield is off any at all (protection resuming is a lock-all). An app that isn't locked
+     * only becomes hideable by being locked, which sweeps by itself ([onAppsLocked]).
+     */
+    private fun mayHideLater(sbn: StatusBarNotification): Boolean {
+        val pkg = sbn.packageName ?: return false
+        if (pkg == packageName || pkg in IGNORED_PACKAGES || !isHideableKind(sbn)) return false
+        return pkg in vault.getLockedPackages() || !vault.isProtectionActive() || !vault.isNotificationShieldEnabled()
     }
 
     /** Whether [sbn] is a kind that is ever hidden: never calls, alarms, media, ongoing ones and the like. */
@@ -469,7 +530,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
 
     private fun restoreNotificationsForPackage(pkg: String) {
         // Dismiss stand-in notification immediately
-        NotificationManagerCompat.from(this).cancel(TAG_PREFIX + pkg, SUMMARY_ID)
+        cancelStandIn(pkg)
         cachedPendingIntents.remove(pkg)
         val childKeys = hiddenNotificationKeys.remove(pkg).orEmpty()
         val summaryKeys = hiddenSummaryKeys.remove(pkg).orEmpty()
@@ -479,6 +540,8 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     /** Brings [keys] back into the shade; they aren't hidden again for [RESTORE_WINDOW_MS]. */
     private fun unsnooze(pkg: String, keys: Collection<String>) {
         if (keys.isEmpty()) return
+        // They show again: the next lock-all must sweep.
+        lockAllSweeps.onShowing()
         val expiry = SystemClock.elapsedRealtime() + RESTORE_WINDOW_MS
         for (key in keys) {
             restoringKeys[key] = RestoringEntry(pkg, expiry)
@@ -495,13 +558,20 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             postReplacement(pkg, children.coerceAtLeast(1))
             return
         }
-        NotificationManagerCompat.from(this).cancel(TAG_PREFIX + pkg, SUMMARY_ID)
+        cancelStandIn(pkg)
         hiddenNotificationKeys.remove(pkg)
         hiddenSummaryKeys.remove(pkg)
         cachedPendingIntents.remove(pkg)
     }
 
+    private fun cancelStandIn(pkg: String) {
+        standInCounts.remove(pkg)
+        NotificationManagerCompat.from(this).cancel(TAG_PREFIX + pkg, SUMMARY_ID)
+    }
+
+    /** Posts [lockedPackage]'s stand-in with [count], unless it is showing with that count already. */
     private fun postReplacement(lockedPackage: String, count: Int) {
+        if (standInCounts[lockedPackage] == count) return
         val manager = NotificationManagerCompat.from(this)
         if (!manager.areNotificationsEnabled()) return
         ensureChannel()
@@ -521,14 +591,14 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
 
         val label = AppInfoCache.quickLabel(this, lockedPackage)
         val publicVersion = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_lock_key)
+            .setSmallIcon(R.drawable.ic_biokey_mark)
             .setContentTitle("Locked app")
             .setContentText("Notification hidden by BioKey")
             .build()
         val text = if (count == 1) "1 hidden notification" else "$count hidden notifications"
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_lock_key)
+            .setSmallIcon(R.drawable.ic_biokey_mark)
             .setContentTitle(label)
             .setContentText("$text · tap to unlock")
             .setNumber(count)
@@ -542,6 +612,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             .build()
         try {
             manager.notify(TAG_PREFIX + lockedPackage, SUMMARY_ID, notification)
+            standInCounts[lockedPackage] = count
         } catch (_: SecurityException) {
             // POST_NOTIFICATIONS revoked between the check and notify.
         }
@@ -560,4 +631,30 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         }
         channelReady = true
     }
+}
+
+/**
+ * Whether a lock-all needs a sweep of the shade. Every screen-off is reported two or three times
+ * (the app's screen receiver and the accessibility service, then the keyguard as "phone
+ * locked"), and a sweep fetches every notification showing. A lock-all may skip it only when the
+ * last sweep, under [skipWindowMs] ago, left nothing showing that a lock-all could hide, and
+ * nothing has shown since: no app unlocked, nothing restored, no such notification posted. Any
+ * doubt (a sweep that failed, a reconnect) counts as something showing.
+ */
+internal class LockAllSweeps(private val skipWindowMs: Long) {
+    private var clean = false
+    private var cleanAt = 0L
+
+    /** Something a lock-all could hide may be showing. */
+    fun onShowing() {
+        clean = false
+    }
+
+    /** A sweep ran at [now] and left [leftShowing] something a lock-all could hide. */
+    fun onSwept(leftShowing: Boolean, now: Long) {
+        clean = !leftShowing
+        cleanAt = now
+    }
+
+    fun needsSweep(now: Long): Boolean = !clean || now - cleanAt !in 0 until skipWindowMs
 }
