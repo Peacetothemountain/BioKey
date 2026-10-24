@@ -13,6 +13,7 @@ import android.graphics.Shader
 import android.os.Handler
 import android.os.Looper
 import androidx.annotation.DrawableRes
+import androidx.annotation.VisibleForTesting
 import androidx.core.graphics.scale
 import com.android.BioKey.R
 import java.lang.ref.WeakReference
@@ -90,7 +91,7 @@ internal object LogoArt {
             .apply { allowCoreThreadTimeOut(true) }
     }
 
-    /** The artwork's own size (read from the PNG header, nothing decoded), or null if unreadable. */
+    /** The artwork's own size (read from the WebP header, nothing decoded), or null if unreadable. */
     fun artSize(resources: Resources, @DrawableRes id: Int): IntArray? {
         artSizes[id]?.let { return it }
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true; inScaled = false }
@@ -133,6 +134,10 @@ internal object LogoArt {
         waiting.getOrPut(key, ::ArrayList) += onReady
         return null
     }
+
+    /** Whether no copy is being made, and no logo waits to be told of one: for screenshots of the settled screen. */
+    @VisibleForTesting
+    fun isIdle(): Boolean = waiting.isEmpty() && preparing.values.all { it.isDone }
 
     /** Whether [sized]'s copy is being made in the background right now. */
     fun isPreparing(@DrawableRes id: Int, width: Int, height: Int): Boolean = preparing[Key(id, width, height)]?.isDone == false

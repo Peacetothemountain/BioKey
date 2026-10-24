@@ -3,10 +3,14 @@ package com.android.BioKey
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.os.Looper
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.security.SecurityVault
@@ -17,6 +21,7 @@ import com.android.BioKey.feature.main.InstalledAppsCache
 import com.android.BioKey.feature.main.MainScreenExpressive
 import com.android.BioKey.feature.main.SettingsScreenExpressive
 import com.android.BioKey.feature.setup.SetupScreenExpressive
+import com.android.BioKey.ui.brand.LogoArt
 import com.android.BioKey.ui.theme.BioKeyTheme
 import com.github.takahirom.roborazzi.captureRoboImage
 import org.junit.Before
@@ -24,8 +29,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import java.time.Duration
 import kotlin.math.roundToInt
 
 /**
@@ -90,7 +97,30 @@ class DesignScreenshotTest {
     private fun shoot(name: String, content: @Composable () -> Unit) {
         listOf("light" to "", "dark" to "+night").forEach { (mode, qualifier) ->
             RuntimeEnvironment.setQualifiers(qualifier.ifEmpty { "+notnight" })
+            settleLogo(content)
             captureRoboImage("build/screenshots/${name}_$mode.png") { BioKeyTheme(content) }
+        }
+    }
+
+    /**
+     * Shows [content] once, uncaptured, until the logo's copies (made in the background) are
+     * ready: the capture then shows the settled screen, not a logo still on its way.
+     */
+    private fun settleLogo(content: @Composable () -> Unit) {
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { it.setContent { BioKeyTheme(content) } }
+            val looper = shadowOf(Looper.getMainLooper())
+            looper.idleFor(Duration.ofMillis(100))
+            // Nothing is drawn here unless asked: drawing is what asks for the copies.
+            scenario.onActivity {
+                val root = it.window.decorView
+                root.draw(Canvas(Bitmap.createBitmap(root.width.coerceAtLeast(1), root.height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)))
+            }
+            val deadline = System.currentTimeMillis() + 10_000L
+            while (!LogoArt.isIdle() && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10L)
+                looper.idle()
+            }
         }
     }
 
