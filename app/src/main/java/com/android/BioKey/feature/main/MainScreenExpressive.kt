@@ -79,6 +79,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -115,6 +116,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val FILTER_ALL = "filter:all"
+
+/** The list's kinds of row, so a row scrolled away is reused for another of its kind. */
+private const val CONTENT_APP = "app"
+private const val CONTENT_HEADER = "header"
 
 /** Shown wherever a home-screen app's lock switch can't be turned on. */
 internal const val HOME_SCREEN_NOTE = "Home screens can't be locked"
@@ -244,11 +249,19 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         val pkg = optionsForPackage
         if (!isLoadingApps && pkg != null && installedApps.none { it.packageName == pkg }) optionsForPackage = null
     }
+    // Sheets, dialogs and the notification shade take the window's focus, while BioKey stays
+    // resumed behind their scrim. Only once it has had focus: before, the header moves from its
+    // first frame, as it always has.
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    var hadFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(windowFocused) { if (windowFocused) hadFocus = true }
     /**
-     * Home's decorations animate only while nothing covers them: the app picker, or Settings once
-     * it has slid in (stopping as it starts would show them jump to a still frame).
+     * Home's decorations animate only while nothing covers them: the app picker, Settings once
+     * it has slid in (stopping as it starts would show them jump to a still frame), or a window
+     * over BioKey's.
      */
-    val headerActive = !(settingsVisibility.currentState && settingsVisibility.isIdle) && !(showAddApps && currentProfile != null)
+    val headerActive = !(settingsVisibility.currentState && settingsVisibility.isIdle) && !(showAddApps && currentProfile != null) &&
+        (windowFocused || !hadFocus)
 
     val profileByPackage = remember(profiles) {
         HashMap<String, SecurityProfile>().apply { for (p in profiles) for (pkg in p.packages) put(pkg, p) }
@@ -294,9 +307,12 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         }
     }
 
-    /** A group of app rows in the list. */
-    fun LazyListScope.appGroup(key: String, apps: List<AppItem>, showProfile: Boolean) {
-        itemsIndexed(apps, key = { _, app -> "$key/${app.packageName}" }) { i, app ->
+    /**
+     * A group of app rows in the list. Keyed by package alone (the groups split one list without
+     * repeats), so a row whose lock is switched moves to its new group rather than being rebuilt.
+     */
+    fun LazyListScope.appGroup(apps: List<AppItem>, showProfile: Boolean) {
+        itemsIndexed(apps, key = { _, app -> app.packageName }, contentType = { _, _ -> CONTENT_APP }) { i, app ->
             val profile = if (showProfile) profileOf(app.packageName) else null
             // The lock stays on: it still hides the app's notifications, and protects it again as
             // soon as the accessibility engine is back.
@@ -460,17 +476,17 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                     )
                 }
                 currentProfile != null -> {
-                    item(key = "h_profile") { SectionHeader("Apps in ${currentProfile.name}") }
-                    appGroup("profile", matching, showProfile = false)
+                    item(key = "h_profile", contentType = CONTENT_HEADER) { SectionHeader("Apps in ${currentProfile.name}") }
+                    appGroup(matching, showProfile = false)
                 }
                 else -> {
                     if (lockedShown.isNotEmpty()) {
-                        item(key = "h_locked") { SectionHeader("Locked · ${lockedShown.size}") }
-                        appGroup("locked", lockedShown, showProfile = true)
+                        item(key = "h_locked", contentType = CONTENT_HEADER) { SectionHeader("Locked · ${lockedShown.size}") }
+                        appGroup(lockedShown, showProfile = true)
                     }
                     if (unlockedShown.isNotEmpty()) {
-                        item(key = "h_unlocked") { SectionHeader(if (lockedShown.isEmpty()) "Choose apps to lock" else "Not locked") }
-                        appGroup("unlocked", unlockedShown, showProfile = false)
+                        item(key = "h_unlocked", contentType = CONTENT_HEADER) { SectionHeader(if (lockedShown.isEmpty()) "Choose apps to lock" else "Not locked") }
+                        appGroup(unlockedShown, showProfile = false)
                     }
                 }
             }
