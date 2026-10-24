@@ -591,14 +591,14 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
 
         val label = AppInfoCache.quickLabel(this, lockedPackage)
         val publicVersion = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_lock_key)
+            .setSmallIcon(R.drawable.ic_biokey_mark)
             .setContentTitle("Locked app")
             .setContentText("Notification hidden by BioKey")
             .build()
         val text = if (count == 1) "1 hidden notification" else "$count hidden notifications"
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_lock_key)
+            .setSmallIcon(R.drawable.ic_biokey_mark)
             .setContentTitle(label)
             .setContentText("$text · tap to unlock")
             .setNumber(count)

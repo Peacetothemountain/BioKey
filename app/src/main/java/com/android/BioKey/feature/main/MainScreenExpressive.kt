@@ -376,7 +376,6 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                     Column(Modifier.statusBarsPadding()) {
                         MainHeader(
                             status = look,
-                            animated = headerActive,
                             onOpenStatus = { showProtectionSheet = true },
                             onOpenSettings = { showSettings = true }
                         )
@@ -623,12 +622,9 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     }
 }
 
-/**
- * Status and Settings as equal-width tiles at the edges, the logo centred between them. The logo
- * holds still unless [animated].
- */
+/** Status and Settings as equal-width tiles at the edges, the logo centred between them. */
 @Composable
-private fun MainHeader(status: ProtectionLook, animated: Boolean, onOpenStatus: () -> Unit, onOpenSettings: () -> Unit) {
+private fun MainHeader(status: ProtectionLook, onOpenStatus: () -> Unit, onOpenSettings: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -647,9 +643,8 @@ private fun MainHeader(status: ProtectionLook, animated: Boolean, onOpenStatus: 
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
             BioKeyLogo(
                 Modifier
-                    .fillMaxWidth(0.84f)
-                    .aspectRatio(2.26f), // the artwork's own proportions
-                animated = animated
+                    .fillMaxWidth(0.9f)
+                    .aspectRatio(3.1f) // the mark beside the name
             )
         }
         HeaderTile(

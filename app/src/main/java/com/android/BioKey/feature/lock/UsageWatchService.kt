@@ -1400,7 +1400,7 @@ class UsageWatchService : Service() {
             PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_lock_key)
+            .setSmallIcon(R.drawable.ic_biokey_mark)
             .setContentTitle("BioKey is protecting your apps")
             .setContentText("Compatibility mode: works with Advanced Protection")
             .setContentIntent(open)

@@ -1,6 +1,5 @@
 package com.android.BioKey.feature.lock
 
-import android.content.res.Resources
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,18 +35,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.ui.brand.BioKeyLogo
-import com.android.BioKey.ui.brand.prepareBioKeyLogo
 import com.android.BioKey.ui.theme.springPress
 
 /** The logo's size, as on [LockCoverView]. */
 private val LOGO_WIDTH = 280.dp
-private val LOGO_HEIGHT = 118.dp
-
-/**
- * Starts making the logo's copies in the background ([prepareBioKeyLogo]), so the lock shows it
- * on its first frame: called as BioKey's screen is created.
- */
-fun prepareBioKeyLockScreen(resources: Resources) = prepareBioKeyLogo(resources, LOGO_WIDTH, LOGO_HEIGHT)
+private val LOGO_HEIGHT = 80.dp
 
 /**
  * BioKey's own lock, drawn in Compose. Laid out like [LockCoverView] showing BioKey (the logo,
@@ -84,7 +76,7 @@ fun BioKeyLockScreen(
                 .padding(bottom = 200.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            BioKeyLogo(Modifier.size(LOGO_WIDTH, LOGO_HEIGHT), animated = false)
+            BioKeyLogo(Modifier.size(LOGO_WIDTH, LOGO_HEIGHT))
             // No "is locked" caption: the logo says what is locked; screen readers get it above.
             if (!statusMessage.isNullOrBlank()) {
                 Spacer(Modifier.height(16.dp))

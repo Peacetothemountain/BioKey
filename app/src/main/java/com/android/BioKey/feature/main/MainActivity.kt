@@ -39,7 +39,6 @@ import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.lock.BioKeyLockScreen
-import com.android.BioKey.feature.lock.prepareBioKeyLockScreen
 import com.android.BioKey.feature.setup.SetupScreenExpressive
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.BioKeyTheme
@@ -95,9 +94,6 @@ class MainActivity : ComponentActivity() {
             if (pauseRequested && !LockStateTracker.hasActiveOwnerSession()) LockStateTracker.lockOwnApp()
         }
         WindowProtection.countAccessibilityInteractions(window.decorView)
-        // BioKey's lock shows the logo on its first frame; once unlocked, Home's logo draws that
-        // copy scaled until its own is made.
-        prepareBioKeyLockScreen(resources)
 
         setContent {
             val setupCompleted by vault.setupCompletedFlow.collectAsStateWithLifecycle()

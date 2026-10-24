@@ -120,7 +120,8 @@ feature/setup      First-run setup
 feature/notification  Notification shield
 feature/tile       Quick Settings tile
 ui                 AppIcons
-ui/brand           BioKeyLogo, LogoArt/LogoLayer, VineSlither, WordmarkView, header constellation
+ui/brand           KeyMark (the launcher icon's key, in vector), BioKeyLogo and WordmarkView (it beside
+                   the name, in Google Sans Flex), header constellation
 ui/theme           BioKeyTheme, components, messages, system haptics, press animation
 ```
 

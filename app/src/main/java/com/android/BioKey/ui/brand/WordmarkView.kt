@@ -3,90 +3,72 @@ package com.android.BioKey.ui.brand
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.view.View
+import androidx.core.content.res.ResourcesCompat
 import com.android.BioKey.R
+import kotlin.math.min
 
 /**
- * BioKey's two-layer wordmark for plain-View screens (the lock cover): letters and vines, held
- * still (the cover is no place for motion), fitted and centred.
+ * BioKey's logo for plain-View screens (the lock cover): its mark ([KeyMark]) beside its name, as
+ * [BioKeyLogo] sets them, fitted and centred. Still.
  *
- * Lives as long as the protection service, inside the shield's cover, so it draws from copies
- * sized to the mark ([LogoLayer]) rather than the full-size artwork. It never waits for one: with
- * a fixed size, the copies are made in the background as soon as the view is attached and
- * visible, and held here once ready; until then the mark is left out. So the cover's first frame,
- * the moment a locked app is covered, is never held back for a decode.
- *
- * [releaseWhenHidden]: a mark that is rarely shown (the cover's large logo, for BioKey's own
- * settings pages) lets its copies go [RELEASE_AFTER_MS] after it is hidden, rather than keep them
- * for the life of the service.
+ * Lives as long as the protection service, inside the shield's cover, and draws straight from the
+ * mark's paths and a 3 KB font: nothing to decode, so the cover's first frame never waits for it.
  */
 @SuppressLint("ViewConstructor")
-class WordmarkView(context: Context, private val releaseWhenHidden: Boolean = false) : View(context) {
+class WordmarkView(context: Context) : View(context) {
 
     private companion object {
-        const val RELEASE_AFTER_MS = 3 * 60_000L
+        /** As [BioKeyLogo]: the name's size and the gap before it, as parts of the mark's height. */
+        const val NAME_SIZE = 0.6f
+        const val GAP = 0.2f
+
+        /** The name's typeface, loaded once for the process (Google Sans Flex, bold, cut down to "BioKey"). */
+        @Volatile var typeface: Typeface? = null
     }
 
-    private val letters = LogoLayer(resources, R.drawable.ic_title_logo_letters)
-    private val vines = VineSlither(resources)
+    private var primary = 0
+    private var secondary = 0
+    private var tertiary = 0
 
-    /** A copy made in the background is ready: taken in now (so nothing else can make it go first), and drawn. */
-    private val onCopyReady: () -> Unit = {
-        if (isAttachedToWindow) {
-            prepare()
-            invalidate()
-        }
-    }
-
-    private val release = Runnable {
-        letters.release()
-        vines.release()
+    private val name = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = Companion.typeface ?: (ResourcesCompat.getFont(context, R.font.biokey_wordmark) ?: Typeface.DEFAULT_BOLD)
+            .also { Companion.typeface = it }
+        textAlign = Paint.Align.LEFT
     }
 
     init {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
     }
 
-    /** Letters in [letters] (the theme's primary), vines in [vines] (its tertiary). */
-    fun setColors(letters: Int, vines: Int) {
-        this.letters.setTint(letters)
-        this.vines.setTint(vines)
+    /** The mark in [primary], [secondary] and [tertiary] (the theme's), the name in [text]. */
+    fun setColors(primary: Int, secondary: Int, tertiary: Int, text: Int) {
+        this.primary = primary
+        this.secondary = secondary
+        this.tertiary = tertiary
+        name.color = text
         invalidate()
     }
 
-    override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
-        prepare()
-    }
-
-    override fun onDetachedFromWindow() {
-        removeCallbacks(release)
-        release.run()
-        super.onDetachedFromWindow()
-    }
-
-    override fun onVisibilityChanged(changedView: View, visibility: Int) {
-        super.onVisibilityChanged(changedView, visibility)
-        if (changedView !== this) return
-        if (visibility == VISIBLE) {
-            removeCallbacks(release)
-            prepare()
-        } else if (releaseWhenHidden) {
-            removeCallbacks(release)
-            postDelayed(release, RELEASE_AFTER_MS)
-        }
-    }
-
-    /** Lays both layers out at the view's fixed size, ahead of its first frame (see the class comment). */
-    private fun prepare() {
-        val lp = layoutParams ?: return
-        if (!isAttachedToWindow || visibility != VISIBLE || lp.width <= 0 || lp.height <= 0) return
-        letters.layout(lp.width.toFloat(), lp.height.toFloat(), onCopyReady)
-        vines.prepare(lp.width.toFloat(), lp.height.toFloat(), onCopyReady)
-    }
-
     override fun onDraw(canvas: Canvas) {
-        letters.draw(canvas, width.toFloat(), height.toFloat(), onCopyReady)
-        vines.draw(canvas, width.toFloat(), height.toFloat(), null, onCopyReady)
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+        // The name's width for each pixel of its size, then the mark's height that fits both ways.
+        name.textSize = 100f
+        val namePerPx = name.measureText("BioKey") / 100f
+        val markHeight = min(h, w / (KeyMark.ASPECT + GAP + NAME_SIZE * namePerPx))
+        val markWidth = markHeight * KeyMark.ASPECT
+        name.textSize = markHeight * NAME_SIZE
+        val total = markWidth + markHeight * GAP + name.measureText("BioKey")
+        val left = (w - total) / 2f
+        val top = (h - markHeight) / 2f
+        KeyMark.draw(canvas, left, top, markWidth, markHeight, primary, secondary, tertiary)
+        // The name centred on the mark: halfway between its cap height and baseline.
+        val fm = name.fontMetrics
+        val baseline = h / 2f - (fm.ascent + fm.descent) / 2f
+        canvas.drawText("BioKey", left + markWidth + markHeight * GAP, baseline, name)
     }
 }
