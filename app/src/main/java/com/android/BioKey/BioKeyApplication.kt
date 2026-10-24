@@ -35,6 +35,18 @@ class BioKeyApplication : Application() {
         }
         private val _packageChangeVersion = MutableStateFlow(0)
         val packageChangeVersion: StateFlow<Int> = _packageChangeVersion.asStateFlow()
+
+        /**
+         * Whether an app uninstalled (not replaced) keeps its lock. A copy in another profile (a
+         * work twin), an archived app, or one uninstalled with "keep app data" still has its data,
+         * which a reinstall would open: it keeps its lock. [installedInAnyProfile] is only asked
+         * when the broadcast hasn't already settled it.
+         */
+        internal fun keepsLockAfterRemoval(
+            archival: Boolean,
+            dataRemoved: Boolean,
+            installedInAnyProfile: () -> Boolean,
+        ): Boolean = archival || !dataRemoved || installedInAnyProfile()
     }
 
     private val credentialInitDone = AtomicBoolean(false)
@@ -137,11 +149,11 @@ class BioKeyApplication : Application() {
                                 }
                                 Intent.ACTION_PACKAGE_REMOVED -> {
                                     if (!replacing) {
-                                        // A copy in another profile (a work twin), an archived
-                                        // app, or one uninstalled with "keep app data" still has
-                                        // its data, which a reinstall would open: it keeps its lock.
-                                        if (isArchival(intent) || !intent.getBooleanExtra(Intent.EXTRA_DATA_REMOVED, true) ||
-                                            isInstalledInAnyProfile(pkg)
+                                        if (keepsLockAfterRemoval(
+                                                archival = isArchival(intent),
+                                                dataRemoved = intent.getBooleanExtra(Intent.EXTRA_DATA_REMOVED, true),
+                                                installedInAnyProfile = { isInstalledInAnyProfile(pkg) },
+                                            )
                                         ) {
                                             if (pkg in vault.selectedAppsFlow.value) {
                                                 DiagnosticLog.log("Kept the lock on $pkg: its data is still on the phone")
