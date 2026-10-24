@@ -61,6 +61,7 @@ import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalAutofillManager
 import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.error
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -392,17 +393,22 @@ private fun PasswordDialog(
                         },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = { confirm() }),
-                        supportingText = if (creating) {
-                            { Text("At least ${VaultBackup.MIN_PASSWORD_LENGTH} characters") }
-                        } else null,
+                        // The error belongs to the field, so screen readers say it with the field.
+                        supportingText = when {
+                            error != null -> { { Text(error) } }
+                            creating -> { { Text("At least ${VaultBackup.MIN_PASSWORD_LENGTH} characters") } }
+                            else -> null
+                        },
                         isError = error != null,
                         enabled = !busy,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .semantics { contentType = if (creating) ContentType.NewPassword else ContentType.Password }
+                            .semantics {
+                                contentType = if (creating) ContentType.NewPassword else ContentType.Password
+                                if (error != null) error(error)
+                            }
                     )
                 }
-                if (error != null) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             }
         },
@@ -481,7 +487,8 @@ internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
                             }
                         }
                         itemsIndexed(entries, key = { i, _ -> keys[i] }) { _, entry ->
-                            Column {
+                            // Its time and what happened, read as one.
+                            Column(Modifier.semantics(mergeDescendants = true) { }) {
                                 Text(time.format(Date(entry.at)), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                                 Text(entry.text, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
                             }
