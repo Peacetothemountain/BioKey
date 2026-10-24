@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -66,6 +68,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -76,9 +79,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.Role
@@ -103,8 +115,8 @@ import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.ForegroundRules
 import com.android.BioKey.ui.brand.BioKeyMarkSideways
-import com.android.BioKey.ui.brand.KeyMark
 import com.android.BioKey.ui.brand.HeaderMatrixDotsExpressive
+import com.android.BioKey.ui.brand.KeyMark
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.GroupGap
 import com.android.BioKey.ui.theme.GroupInset
@@ -118,11 +130,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
 
 private const val FILTER_ALL = "filter:all"
 
@@ -375,6 +382,19 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
             .then(if (showSettings) Modifier.clearAndSetSemantics { } else Modifier)
     ) {
         val listState = key(filter) { rememberLazyListState() }
+        // The list runs under the status bar, and so would the search bar pinned at its top: by as
+        // much as it would be under the status bar, it moves down, over a band of the page's colour.
+        val statusBarTop = WindowInsets.statusBars.getTop(LocalDensity.current)
+        val controlsInset by remember(listState, statusBarTop) {
+            derivedStateOf {
+                val items = listState.layoutInfo.visibleItemsInfo
+                val controls = items.firstOrNull { it.key == "controls" } ?: return@derivedStateOf 0
+                // Where it would be if it didn't stick: just after the item before it.
+                val before = items.lastOrNull { it.index == controls.index - 1 }
+                val natural = before?.let { it.offset + it.size } ?: Int.MIN_VALUE
+                (statusBarTop.toLong() - natural).coerceIn(0L, statusBarTop.toLong()).toInt()
+            }
+        }
         LazyColumn(
             state = listState,
             // Phones use the full width; on tablets and in landscape the list keeps a readable width.
@@ -426,10 +446,14 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
             }
 
             stickyHeader(key = "controls") {
+                val surface = MaterialTheme.colorScheme.surface
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surface)
+                        .graphicsLayer { translationY = controlsInset.toFloat() }
+                        .drawBehind {
+                            drawRect(surface, topLeft = Offset(0f, -controlsInset.toFloat()), size = Size(size.width, size.height + controlsInset))
+                        }
                         .padding(top = 12.dp, bottom = 4.dp)
                 ) {
                     SearchPill(searchQuery, onChange = { searchQuery = it }, modifier = Modifier.padding(horizontal = GroupInset))
@@ -472,6 +496,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                     ProfileCard(
                         profile = currentProfile,
                         appCount = appCountByProfile[currentProfile.id] ?: 0,
+                        defaultTimeout = defaultTimeout,
                         onEnabledChange = { on ->
                             Haptics.toggle(view, on)
                             vault.setProfileEnabled(currentProfile.id, on)
@@ -595,7 +620,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
             existing = null,
             onDismiss = { showNewProfile = false; newProfileForPackage = null },
             onSave = { name, iconKey ->
-                val created = vault.createProfile(name, iconKey, defaultTimeout)
+                val created = vault.createProfile(name, iconKey)
                 showNewProfile = false
                 filter = created.id
                 val forPkg = newProfileForPackage
@@ -629,10 +654,11 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
             title = "Re-lock ${currentProfile.name}",
             current = currentProfile.timeoutMode,
             onSelect = { mode ->
-                vault.updateProfileDetails(currentProfile.id, timeoutMode = mode)
+                vault.setProfileTimeout(currentProfile.id, mode)
                 showRelock = false
             },
-            onDismiss = { showRelock = false }
+            onDismiss = { showRelock = false },
+            settingsDefault = defaultTimeout
         )
     }
 
@@ -883,6 +909,7 @@ private fun FilterChoice(label: String, icon: ImageVector, selected: Boolean, de
 private fun ProfileCard(
     profile: SecurityProfile,
     appCount: Int,
+    defaultTimeout: LockTimeoutMode,
     onEnabledChange: (Boolean) -> Unit,
     onEdit: () -> Unit,
     onRelock: () -> Unit,
@@ -904,7 +931,7 @@ private fun ProfileCard(
                     Text(profile.name, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         text = (if (appCount == 1) "1 app" else "$appCount apps") + " · " +
-                            if (profile.enabled) profile.timeoutMode.relockPhrase.lowercase() else "off",
+                            if (profile.enabled) (profile.timeoutMode ?: defaultTimeout).relockPhrase.lowercase() else "off",
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }

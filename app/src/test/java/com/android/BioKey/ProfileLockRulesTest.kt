@@ -231,7 +231,7 @@ class ProfileLockRulesTest {
 
         freshVault()
         waitForWrites()
-        assertEquals(2, prefs.getInt("lock_model_version", 0))
+        assertEquals(3, prefs.getInt("lock_model_version", 0))
         assertEquals(setOf(bank, chat), prefs.getStringSet("locked_apps_set", null))
         assertTrue(prefs.getBoolean("setup_completed", false))
         assertTrue(prefs.getBoolean("accessibility_self_protection_enabled", false))
@@ -353,6 +353,89 @@ class ProfileLockRulesTest {
         assertEquals(SecurityProfile.PRESET_FINANCE, vault.profileOf(bank)?.id)
         assertEquals("Copy", vault.profileOf(chat)?.name)
         assertEquals("Profile", vault.profilesFlow.value[2].name)
+    }
+
+    @Test
+    fun theDefaultReLockDelayReachesAppsInBuiltInProfiles() {
+        val vault = freshVault()
+        vault.addAppsToProfile(SecurityProfile.PRESET_SOCIAL, listOf(chat))
+        vault.addAppsToProfile(SecurityProfile.PRESET_WORK, listOf(bank))
+
+        vault.setTimeoutMode(LockTimeoutMode.ON_SCREEN_OFF)
+
+        assertEquals(LockTimeoutMode.ON_SCREEN_OFF, vault.getTimeoutMode(chat))
+        assertEquals(LockTimeoutMode.ON_SCREEN_OFF, vault.getTimeoutMode(bank))
+        assertEquals(LockTimeoutMode.ON_SCREEN_OFF, vault.getTimeoutMode(other)) // in no profile
+    }
+
+    @Test
+    fun aProfilesOwnDelayWinsUntilItFollowsSettingsAgain() {
+        val vault = freshVault()
+        vault.addAppsToProfile(SecurityProfile.PRESET_FINANCE, listOf(bank))
+        vault.setTimeoutMode(LockTimeoutMode.ON_SCREEN_OFF)
+
+        vault.setProfileTimeout(SecurityProfile.PRESET_FINANCE, LockTimeoutMode.IMMEDIATE)
+        assertEquals(LockTimeoutMode.IMMEDIATE, vault.getTimeoutMode(bank))
+        waitForWrites()
+        val again = freshVault()
+        assertEquals(LockTimeoutMode.IMMEDIATE, again.getTimeoutMode(bank)) // kept
+
+        again.setProfileTimeout(SecurityProfile.PRESET_FINANCE, null)
+        assertEquals(LockTimeoutMode.ON_SCREEN_OFF, again.getTimeoutMode(bank))
+        waitForWrites()
+        assertEquals(LockTimeoutMode.ON_SCREEN_OFF, freshVault().getTimeoutMode(bank))
+    }
+
+    @Test
+    fun aNewProfileFollowsSettings() {
+        val vault = freshVault()
+        val profile = vault.createProfile("Money", "wallet")
+        vault.addAppsToProfile(profile.id, listOf(bank))
+        vault.setTimeoutMode(LockTimeoutMode.GRACE_1_MINUTE)
+        assertEquals(LockTimeoutMode.GRACE_1_MINUTE, vault.getTimeoutMode(bank))
+    }
+
+    @Test
+    fun upgradingLetsUntouchedBuiltInProfilesFollowSettings() {
+        // As version 2 stored them: every profile with a delay of its own.
+        val profiles = JSONArray()
+            .put(SecurityProfile(SecurityProfile.PRESET_SOCIAL, "Social", "social", setOf(chat), LockTimeoutMode.IMMEDIATE).toJson())
+            .put(SecurityProfile(SecurityProfile.PRESET_WORK, "Work", "work", setOf(bank), LockTimeoutMode.GRACE_5_MINUTES).toJson())
+            .put(SecurityProfile(SecurityProfile.PRESET_PERSONAL, "Personal", "shield", setOf(other), LockTimeoutMode.GRACE_15_MINUTES).toJson())
+        val custom = "com.example.custom"
+        profiles.put(SecurityProfile("profile_mine", "Mine", "shield", setOf(custom), LockTimeoutMode.IMMEDIATE).toJson())
+        prefs.edit()
+            .putString("security_profiles_json", profiles.toString())
+            .putStringSet("locked_apps_set", setOf(chat, bank, other, custom))
+            .putString("timeout_mode", "ON_SCREEN_OFF")
+            .putInt("lock_model_version", 2)
+            .commit()
+
+        val vault = freshVault()
+        assertEquals(LockTimeoutMode.ON_SCREEN_OFF, vault.getTimeoutMode(chat)) // was the built-in default
+        assertEquals(LockTimeoutMode.ON_SCREEN_OFF, vault.getTimeoutMode(bank)) // Work's built-in 5 minutes
+        assertEquals(LockTimeoutMode.GRACE_15_MINUTES, vault.getTimeoutMode(other)) // chosen by the owner
+        assertEquals(LockTimeoutMode.IMMEDIATE, vault.getTimeoutMode(custom)) // the owner's own profile
+        assertEquals(setOf(chat, bank, other, custom), vault.lockedAppsFlow.value)
+        waitForWrites()
+        assertEquals(3, prefs.getInt("lock_model_version", 0))
+        assertEquals(LockTimeoutMode.ON_SCREEN_OFF, freshVault().getTimeoutMode(chat))
+    }
+
+    @Test
+    fun anOlderBackupsUntouchedBuiltInProfilesFollowSettings() {
+        val vault = freshVault()
+        vault.addAppsToProfile(SecurityProfile.PRESET_SOCIAL, listOf(chat))
+        vault.setTimeoutMode(LockTimeoutMode.ON_SCREEN_OFF)
+        val backup = vault.exportState()
+        // As version 2 wrote it: no model version, and the built-in delay spelled out.
+        backup.remove("modelVersion")
+        val social = backup.getJSONArray("profiles").let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
+            .first { it.getString("id") == SecurityProfile.PRESET_SOCIAL }
+        social.put("timeoutMode", "IMMEDIATE")
+
+        vault.restoreState(backup)
+        assertEquals(LockTimeoutMode.ON_SCREEN_OFF, vault.getTimeoutMode(chat))
     }
 
     private fun seedEarlierProfiles() {

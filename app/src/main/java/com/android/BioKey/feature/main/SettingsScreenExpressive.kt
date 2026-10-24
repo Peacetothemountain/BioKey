@@ -205,7 +205,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             SettingItem(
                 icon = Icons.Default.LockClock,
                 title = "Default re-lock delay",
-                subtitle = "${defaultTimeout.shortLabel} · for apps not in a profile",
+                subtitle = "${defaultTimeout.shortLabel} · unless a profile has its own",
                 onClick = { showRelockSheet = true }
             )
         )
@@ -409,7 +409,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             title = "Default re-lock delay",
             current = defaultTimeout,
             onSelect = { mode ->
-                vault.setTimeoutMode(mode)
+                if (mode != null) vault.setTimeoutMode(mode)
                 showRelockSheet = false
             },
             onDismiss = { showRelockSheet = false }

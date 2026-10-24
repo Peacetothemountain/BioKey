@@ -62,7 +62,7 @@ class SecurityVault private constructor(private val context: Context) {
         private const val KEY_SELF_PROTECTION = "accessibility_self_protection_enabled"
         /** 2: profile membership no longer implies locked; [KEY_LOCKED] holds each app's own switch. */
         private const val KEY_MODEL_VERSION = "lock_model_version"
-        private const val MODEL_VERSION = 2
+        private const val MODEL_VERSION = 3
 
         /** A timed pause restored after a reboot never runs longer than this (wall clock can lie). */
         private const val MAX_RESTORED_PAUSE_MS = 60 * 60_000L
@@ -172,6 +172,7 @@ class SecurityVault private constructor(private val context: Context) {
 
     fun getLockedPackages(): Set<String> = _lockedAppsFlow.value
 
+    /** The re-lock delay [packageName] follows: its profile's own, or the default in Settings. */
     fun getTimeoutMode(packageName: String): LockTimeoutMode = profileTimeouts[packageName] ?: _timeoutModeFlow.value
 
     fun profileOf(packageName: String): SecurityProfile? =
@@ -275,7 +276,8 @@ class SecurityVault private constructor(private val context: Context) {
         }
     }
 
-    fun createProfile(name: String, iconKey: String, timeoutMode: LockTimeoutMode): SecurityProfile {
+    /** A new profile follows the default re-lock delay in Settings unless given its own [timeoutMode]. */
+    fun createProfile(name: String, iconKey: String, timeoutMode: LockTimeoutMode? = null): SecurityProfile {
         val profile = SecurityProfile(
             id = "$PROFILE_ID_PREFIX${UUID.randomUUID()}",
             name = name.trim().ifBlank { "New profile" },
@@ -286,16 +288,17 @@ class SecurityVault private constructor(private val context: Context) {
         return profile
     }
 
-    fun updateProfileDetails(profileId: String, name: String? = null, iconKey: String? = null, timeoutMode: LockTimeoutMode? = null) {
+    fun updateProfileDetails(profileId: String, name: String? = null, iconKey: String? = null) {
         mutate { _, profiles ->
             profiles.update(profileId) { p ->
-                p.copy(
-                    name = name?.trim()?.ifBlank { null } ?: p.name,
-                    iconKey = iconKey ?: p.iconKey,
-                    timeoutMode = timeoutMode ?: p.timeoutMode
-                )
+                p.copy(name = name?.trim()?.ifBlank { null } ?: p.name, iconKey = iconKey ?: p.iconKey)
             }
         }
+    }
+
+    /** Gives a profile its own re-lock delay, or with null, has it follow the default in Settings. */
+    fun setProfileTimeout(profileId: String, timeoutMode: LockTimeoutMode?) {
+        mutate { _, profiles -> profiles.update(profileId) { it.copy(timeoutMode = timeoutMode) } }
     }
 
     /**
@@ -338,6 +341,7 @@ class SecurityVault private constructor(private val context: Context) {
             .put("selected", JSONArray(_selectedAppsFlow.value.sorted()))
             .put("profiles", JSONArray().apply { _profilesFlow.value.forEach { put(it.toJson()) } })
             .put("defaultTimeout", _timeoutModeFlow.value.name)
+            .put("modelVersion", MODEL_VERSION)
             .put("notificationShield", _notificationShieldFlow.value)
             .put("selfProtection", _accessibilitySelfProtectionFlow.value)
             .put("autoSort", _autoSortProfilesFlow.value)
@@ -367,7 +371,8 @@ class SecurityVault private constructor(private val context: Context) {
             sel.clear()
             sel += selected
             profs.clear()
-            profs += sanitizeProfiles(profiles)
+            // A backup from before profiles followed Settings: its untouched built-in profiles do now.
+            profs += sanitizeProfiles(profiles).let { if (state.optInt("modelVersion", 2) < 3) followSettings(it) else it }
             // Set with the locks, so what reacts to them (the notification shield) follows these.
             autoSortExcluded = excluded
             _timeoutModeFlow.value = LockTimeoutMode.fromName(state.optString("defaultTimeout"))
@@ -525,7 +530,16 @@ class SecurityVault private constructor(private val context: Context) {
     }
 
     private fun rebuildProfileTimeouts() {
-        profileTimeouts = buildMap { for (p in _profilesFlow.value) for (pkg in p.packages) put(pkg, p.timeoutMode) }
+        profileTimeouts = buildMap { for (p in _profilesFlow.value) p.timeoutMode?.let { mode -> for (pkg in p.packages) put(pkg, mode) } }
+    }
+
+    /**
+     * Built-in profiles still on the re-lock delays they came with (before version 3) follow the
+     * default in Settings: otherwise the default reaches almost no app, as auto-sort files nearly
+     * every app into one of them.
+     */
+    private fun followSettings(profiles: List<SecurityProfile>): List<SecurityProfile> = profiles.map { p ->
+        if (p.timeoutMode != null && SecurityProfile.FORMER_PRESET_TIMEOUTS[p.id] == p.timeoutMode) p.copy(timeoutMode = null) else p
     }
 
     /** What looks like a package name, but not BioKey's own, at most [MAX_PACKAGES]. */
@@ -553,11 +567,12 @@ class SecurityVault private constructor(private val context: Context) {
             }.getOrNull()
         } ?: SecurityProfile.DEFAULTS
         // Enforce the invariants on whatever was stored.
-        val clean = cleanProfiles(sanitizeProfiles(stored))
+        val version = prefs.getInt(KEY_MODEL_VERSION, 1)
+        val migrating = version < MODEL_VERSION
+        val clean = cleanProfiles(sanitizeProfiles(stored)).let { if (version < 3) followSettings(it) else it }
         var selected = PasswordManager.expand(validPackages(prefs.getStringSet(KEY_LOCKED, emptySet()).orEmpty()))
         // Before version 2 every app in a profile was locked: keep each of them switched on.
-        val migrating = prefs.getInt(KEY_MODEL_VERSION, 1) < MODEL_VERSION
-        if (migrating) selected = selected + clean.flatMap { it.packages }
+        if (version < 2) selected = selected + clean.flatMap { it.packages }
         _profilesFlow.value = clean
         _selectedAppsFlow.value = selected
         _lockedAppsFlow.value = effectiveLocks(selected, clean)
