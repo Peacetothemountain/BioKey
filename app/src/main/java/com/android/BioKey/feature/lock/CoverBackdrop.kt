@@ -27,6 +27,8 @@ internal class CoverBackdrop(context: Context) : View(context) {
     companion object {
         /** One full breath (in and out): slow, so it reads as light rather than motion. */
         private const val BREATH_MS = 7_000.0
+        /** How often the breath is redrawn ([onDraw]). */
+        private const val BREATH_FRAME_MS = 66L
         /** The ring hugs the icon: a thin bezel, not a gap. */
         private const val RING_GAP_DP = 3.5f
         /** How far the glow reaches, in icon radii. */
@@ -120,8 +122,18 @@ internal class CoverBackdrop(context: Context) : View(context) {
         ringPaint.color = withAlpha(accent, 0.38f + 0.14f * breath)
         canvas.drawCircle(focusX, focusY, ringRadius, ringPaint)
 
-        if (animate && isShown) postInvalidateOnAnimation()
+        // About 15 frames a second, not one per display refresh (60-120 Hz) for as long as the
+        // prompt waits: the breath moves the glow by a few pixels a second, so every frame of a
+        // fast display would redraw it for a fraction of a pixel. The frame-rate request above
+        // only exists from Android 15.
+        // One pending redraw at most, whatever else asked for a frame meanwhile.
+        if (animate && isShown) {
+            removeCallbacks(breathe)
+            postDelayed(breathe, BREATH_FRAME_MS)
+        }
     }
+
+    private val breathe = Runnable { invalidate() }
 
     private fun withAlpha(color: Int, alpha: Float): Int =
         Color.argb((alpha.coerceIn(0f, 1f) * 255).toInt(), Color.red(color), Color.green(color), Color.blue(color))

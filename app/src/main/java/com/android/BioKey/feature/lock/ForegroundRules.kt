@@ -256,6 +256,17 @@ object ForegroundRules {
     /** The user enabled or disabled a keyboard. */
     fun onInputMethodsChanged(context: Context) = keyboards.refresh(context)
 
+    /**
+     * Reads every list in the background now, as an engine starts: read on first use instead, they
+     * would be read on the main thread at the first app switch (about ten package-manager queries
+     * on the way to a cover).
+     */
+    fun warmUp(context: Context) {
+        homes.refresh(context)
+        pickers.refresh(context)
+        keyboards.refresh(context)
+    }
+
     /** Forgets every list read so far (tests register apps between cases). */
     @VisibleForTesting
     internal fun resetSystemLists() {

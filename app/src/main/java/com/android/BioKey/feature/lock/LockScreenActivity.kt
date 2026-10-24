@@ -78,6 +78,11 @@ class LockScreenActivity : ComponentActivity() {
         var activeLockedTarget: String? = null
             private set
 
+        /** When a lock screen last resumed ([SystemClock.uptimeMillis]): a start before it has arrived. */
+        @Volatile
+        var resumedAt: Long = 0L
+            private set
+
         /**
          * The newest lock screen. A new one can start while the last one is still finishing: only
          * the newest may change the state above or lower the shield.
@@ -211,10 +216,14 @@ class LockScreenActivity : ComponentActivity() {
             val pkg = lockedPackage
             val cached = AppInfoCache.get(pkg)
             // The icon's colour comes worked out with it: nothing is computed here on the way to the prompt.
-            cover.bind(cached?.label ?: AppInfoCache.quickLabel(this, pkg), cached?.icon, isBioKey = false, accent = cached?.accent)
-            // Never load on the way to the prompt: the icon follows as soon as it's ready.
+            val label = AppInfoCache.cachedLabel(pkg)
+            cover.bind(label.orEmpty(), cached?.icon, isBioKey = false, accent = cached?.accent)
+            // Never load on the way to the prompt: the name and icon follow as soon as they're ready.
             if (cached == null) AppInfoCache.load(this, pkg) { info ->
-                if (!isFinishing && lockedPackage == pkg) cover.setIcon(info.icon, info.accent)
+                if (!isFinishing && lockedPackage == pkg) {
+                    if (label == null) cover.setLabel(info.label)
+                    cover.setIcon(info.icon, info.accent)
+                }
             }
         }
         cover.setActionsVisible(false)
@@ -237,6 +246,7 @@ class LockScreenActivity : ComponentActivity() {
         current = WeakReference(this)
         shownAt = SystemClock.elapsedRealtime()
         isLockScreenResumed = true
+        resumedAt = SystemClock.uptimeMillis()
         activeLockedTarget = lockedPackage
         if (!isSelfProtection && isTargetUnlocked(lockedPackage)) {
             finishSilently()
@@ -574,6 +584,9 @@ class LockScreenActivity : ComponentActivity() {
      * waits behind the keyguard until the phone is unlocked.
      */
     private fun showOverKeyguard(show: Boolean) {
+        // Asked again on every new intent, usually with no change (off, as the manifest leaves
+        // it): each call makes the system work out again what shows over the keyguard.
+        if (show == showsOverKeyguard) return
         showsOverKeyguard = show
         setShowWhenLocked(show)
     }

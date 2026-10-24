@@ -3,11 +3,13 @@ package com.android.BioKey.feature.lock
 import android.content.Context
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.content.res.Resources
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.drawable.Drawable
 import android.os.Handler
+import android.os.LocaleList
 import android.os.Looper
 import android.os.UserHandle
 import android.os.UserManager
@@ -47,14 +49,45 @@ object AppInfoCache {
     private const val HUE_BUCKETS = 18
 
     private val cache = ConcurrentHashMap<String, CachedAppInfo>()
+    /** Names looked up by [quickLabel], which has no icon to cache them with. */
+    private val labels = ConcurrentHashMap<String, String>()
     private val loader = Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-app-info").apply { isDaemon = true } }
     private val mainHandler = Handler(Looper.getMainLooper())
     private val following = AtomicBoolean(false)
 
     fun get(packageName: String): CachedAppInfo? = cache[packageName]
 
+    /** [packageName]'s name if it is known already, without asking the package manager. */
+    fun cachedLabel(packageName: String): String? =
+        cache[packageName]?.label ?: labels[packageName] ?: PasswordManager.LABEL.takeIf { packageName in PasswordManager.ALIASES }
+
     fun invalidate(packageName: String) {
         cache.remove(packageName)
+        labels.remove(packageName)
+    }
+
+    /**
+     * Forgets everything and loads [packages] again: names are in the old language after a
+     * language change, and icons at the old size after a display-size change.
+     */
+    fun reload(context: Context, packages: Collection<String>) {
+        cache.clear()
+        labels.clear()
+        preWarm(context, packages)
+    }
+
+    /** The language and display density names and icons were last loaded for ([onConfiguration]). */
+    @Volatile private var loadedFor: Pair<LocaleList, Int>? = null
+
+    /**
+     * The engine's configuration is now [config]. True if its language or display density changed
+     * since the last one seen, so what is cached is out of date ([reload]); false the first time.
+     */
+    fun onConfiguration(config: Configuration): Boolean {
+        val now = config.locales to config.densityDpi
+        val before = loadedFor
+        loadedFor = now
+        return before != null && before != now
     }
 
     /**
@@ -64,7 +97,10 @@ object AppInfoCache {
     fun follow(vault: SecurityVault) {
         if (!following.compareAndSet(false, true)) return
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
-            vault.lockedAppsFlow.collect { locked -> cache.keys.retainAll(locked) }
+            vault.lockedAppsFlow.collect { locked ->
+                cache.keys.retainAll(locked)
+                labels.keys.retainAll(locked)
+            }
         }
     }
 
@@ -87,14 +123,17 @@ object AppInfoCache {
         }
     }
 
-    /** Label only (no icon), for the first frame of a cover on a cache miss. */
+    /**
+     * Label only (no icon), where a name is needed at once (the prompt's title) and the icon may
+     * not be loaded yet. Blocking the first time for each app (it asks the package manager), so
+     * never on the way to a cover's first frame: see [cachedLabel].
+     */
     fun quickLabel(context: Context, pkg: String): String {
-        cache[pkg]?.let { return it.label }
-        if (pkg in PasswordManager.ALIASES) return PasswordManager.LABEL
+        cachedLabel(pkg)?.let { return it }
         return runCatching {
             val pm = context.packageManager
             pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
-        }.getOrDefault("This app")
+        }.getOrNull()?.also { labels[pkg] = it } ?: "This app"
     }
 
     /** Blocking: loads and caches [pkg]'s label and icon. */

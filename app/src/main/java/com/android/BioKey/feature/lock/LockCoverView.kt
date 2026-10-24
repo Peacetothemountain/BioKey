@@ -167,9 +167,21 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         addView(brandMark, LayoutParams(dp(120), dp(50), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
             bottomMargin = dp(40)
         })
-        addView(actions, LayoutParams(minOf(resources.displayMetrics.widthPixels - dp(64), dp(360)), LayoutParams.WRAP_CONTENT,
+        // Its width follows the window's at every measure ([onMeasure]): the shield's cover lives as
+        // long as the service, through folds, unfolds and rotations.
+        addView(actions, LayoutParams(dp(360), LayoutParams.WRAP_CONTENT,
             Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(24) })
         applyPalette()
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        // Unlock and Cancel are a held cover's only way out: on a narrow screen (a foldable's cover
+        // screen) they must never be wider than it, as they would be at the width of a screen the
+        // phone has since folded away.
+        val available = MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight - dp(64)
+        val width = minOf(available, dp(360)).coerceAtLeast(0)
+        if (MeasureSpec.getMode(widthMeasureSpec) != MeasureSpec.UNSPECIFIED) actions.layoutParams.width = width
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
 
     private val iconLocation = IntArray(2)
@@ -249,6 +261,12 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         contentDescription = if (isBioKey) "BioKey is locked" else "$label is locked"
         setStatus(null, permanentLockout = false)
         requestLayout()
+    }
+
+    /** The app's name, once it has been loaded (a cover put up on a cache miss has none at first). */
+    fun setLabel(label: String) {
+        name.text = label
+        contentDescription = "$label is locked"
     }
 
     fun setIcon(appIcon: Drawable?, accent: Int? = appIcon?.let { AppInfoCache.accentOf(it, resources) }) {
