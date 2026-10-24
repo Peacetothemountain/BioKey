@@ -810,6 +810,12 @@ class UsageWatchService : Service() {
             return
         }
         if (LockStateTracker.isRecentlyAbandoned(pkg)) {
+            // Back in front over its own lock screen, which it displaced (opening its main screen
+            // from its launch one, as it starts): covered again. Left on purpose: Home.
+            if (LockStateTracker.coverAgainAfterDisplaced(pkg)) {
+                lock(pkg, "came back over its lock screen")
+                return
+            }
             hideShieldUnlessLocking(pkg)
             goHome()
             return

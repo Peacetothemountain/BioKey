@@ -118,13 +118,19 @@ object LockLauncher {
     }
 
     /**
-     * The whole of [displayId], where windows can be freeform (desktop windowing, DeX): the lock
-     * screen asks to open that big, not as a small window with the locked app's windows beside
-     * it, which it would have to wait out or leave by going Home. Null where windows can't be
-     * freeform (Android ignores launch bounds there anyway) or the display can't be read: the
-     * lock screen then opens as before.
+     * The whole of [displayId], another display than the phone's own where windows can be
+     * freeform (a monitor in desktop mode, DeX): the lock screen asks to open that big, not as a
+     * small window with the locked app's windows beside it, which it would have to wait out or
+     * leave by going Home. Null on the phone's own screen, where windows can't be freeform, or
+     * the display can't be read: the lock screen then opens as any app does.
+     *
+     * Never on the phone's own screen, freeform or not: a Pixel ignores launch bounds there, but
+     * Samsung's phones and foldables (which report freeform windows, for pop-up view) open an
+     * activity started with them in a pop-up window, which can't be made full screen, as it
+     * never was one. The lock screen would fail closed, Home, every time.
      */
-    private fun wholeDisplay(context: Context, displayId: Int): Rect? {
+    internal fun wholeDisplay(context: Context, displayId: Int): Rect? {
+        if (displayId == Display.DEFAULT_DISPLAY) return null
         if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_FREEFORM_WINDOW_MANAGEMENT)) return null
         return runCatching {
             val display = context.getSystemService(DisplayManager::class.java)?.getDisplay(displayId) ?: return null

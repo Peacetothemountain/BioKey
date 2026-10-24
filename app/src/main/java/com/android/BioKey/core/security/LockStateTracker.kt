@@ -49,6 +49,17 @@ object LockStateTracker {
     const val ABANDONED_LOCK_COOLDOWN_MS = 900L
 
     /**
+     * How many times within [DISPLACED_WINDOW_MS] an app back over its own lock screen is covered
+     * again at once ([coverAgainAfterDisplaced]). Past that it keeps doing it, and goes Home. Only
+     * straight back counts: anything else in front between ends the run ([onForegroundChanged]).
+     */
+    private const val MAX_DISPLACED_COVERS = 2
+    private const val DISPLACED_WINDOW_MS = 10_000L
+
+    /** BioKey's own package: its lock screen in front is no app's run of returns ending. */
+    private const val OWN_PACKAGE = "com.android.BioKey"
+
+    /**
      * A new session must reach the screen within this long. One whose app never appears (its
      * notification opened another app, it crashed, Home was pressed first) ends instead of
      * waiting, unaged, for whoever opens the app next. A session whose lock screen closed onto a
@@ -98,6 +109,10 @@ object LockStateTracker {
     private val sessions = ConcurrentHashMap<String, Session>()
     private val pendingLocks = ConcurrentHashMap<String, Long>()
     private val abandonedAt = ConcurrentHashMap<String, Long>()
+    /** When an app's lock screen was last displaced rather than left ([markLockDisplaced]). */
+    private val displacedAt = ConcurrentHashMap<String, Long>()
+    /** When an app was last covered again over a displaced lock screen ([coverAgainAfterDisplaced]). */
+    private val displacedCovers = ConcurrentHashMap<String, List<Long>>()
     private val leftAt = ConcurrentHashMap<String, Long>()
 
     @Volatile private var selfProtectionGrantedAt = 0L
@@ -194,6 +209,8 @@ object LockStateTracker {
             sessions[pkg] = session
             pendingLocks.remove(pkg)
             abandonedAt.remove(pkg)
+            displacedAt.remove(pkg)
+            displacedCovers.remove(pkg)
         }
         // A lock-all on another thread may have cleared the sessions just before these went in:
         // it bumps the generation first, so looking again catches it.
@@ -253,12 +270,21 @@ object LockStateTracker {
      * (another helper, a system screen, BioKey's own lock screen: a sign-in sheet that sends the
      * user to an authenticator, say); anywhere else ends it, and the app ages as a normal exit.
      * Coming back to the app itself is [onAppVisible]'s job.
+     *
+     * Also ends other apps' runs of returns over their own lock screen ([coverAgainAfterDisplaced]):
+     * one opened again after Home or another app is the owner opening it, every time, however
+     * quickly (compatibility mode sees no tap on its icon to end the cooldown), not an app that
+     * keeps putting itself back.
      */
     fun onForegroundChanged(
         foregroundPackage: String,
         timeoutModeOf: (String) -> LockTimeoutMode,
         continuesHop: (String) -> Boolean = { false }
     ) {
+        if (foregroundPackage != OWN_PACKAGE) {
+            val front = PasswordManager.aliasesOf(foregroundPackage)
+            displacedCovers.keys.removeAll { it !in front }
+        }
         for ((pkg, session) in sessions) {
             val hop = session.hopTarget ?: continue
             if (hop == foregroundPackage || pkg in PasswordManager.aliasesOf(foregroundPackage) || continuesHop(foregroundPackage)) continue
@@ -355,6 +381,8 @@ object LockStateTracker {
         sessions.clear()
         pendingLocks.clear()
         abandonedAt.clear()
+        displacedAt.clear()
+        displacedCovers.clear()
         leftAt.clear()
         clearSelfProtection()
         if (includeOwnApp) lockOwnApp()
@@ -412,13 +440,45 @@ object LockStateTracker {
         for (pkg in PasswordManager.aliasesOf(packageName)) pendingLocks.remove(pkg)
     }
 
-    fun markLockAbandoned(packageName: String) {
+    /** The owner left [packageName]'s lock screen on purpose (Cancel, Back) without unlocking. */
+    fun markLockAbandoned(packageName: String) = abandon(packageName, displaced = false)
+
+    /**
+     * [packageName]'s lock screen went to the background without an unlock, without the owner
+     * leaving it on purpose: something else came over it. Often the locked app itself (a launch
+     * screen opening the app's main one, a sign-in check), which brings it back in front during
+     * the cooldown: it is then covered again at once ([coverAgainAfterDisplaced]), not sent Home.
+     */
+    fun markLockDisplaced(packageName: String) = abandon(packageName, displaced = true)
+
+    private fun abandon(packageName: String, displaced: Boolean) {
         val t = now()
         for (pkg in PasswordManager.aliasesOf(packageName)) {
             pendingLocks.remove(pkg)
             abandonedAt[pkg] = t
+            if (displaced) displacedAt[pkg] = t else displacedAt.remove(pkg)
         }
         lockAbandonedListeners.forEach { runCatching { it(packageName) } }
+    }
+
+    /**
+     * Whether [packageName], back in front during its cooldown, is to be covered again at once:
+     * its lock screen was displaced ([markLockDisplaced]), not left, and it hasn't come back over
+     * it [MAX_DISPLACED_COVERS] times already within [DISPLACED_WINDOW_MS] (an app that keeps
+     * putting itself over its lock screen goes Home instead). True counts as one of those covers.
+     */
+    fun coverAgainAfterDisplaced(packageName: String): Boolean {
+        val t = now()
+        val aliases = PasswordManager.aliasesOf(packageName)
+        val stamp = aliases.firstNotNullOfOrNull { displacedAt[it] } ?: return false
+        if (t - stamp >= ABANDONED_LOCK_COOLDOWN_MS) return false
+        val recent = aliases.firstNotNullOfOrNull { displacedCovers[it] }.orEmpty().filter { t - it < DISPLACED_WINDOW_MS }
+        if (recent.size >= MAX_DISPLACED_COVERS) return false
+        for (pkg in aliases) {
+            displacedAt.remove(pkg)
+            displacedCovers[pkg] = recent + t
+        }
+        return true
     }
 
     fun isRecentlyAbandoned(packageName: String): Boolean = abandonCooldownRemainingMs(packageName) > 0L
@@ -434,7 +494,10 @@ object LockStateTracker {
 
     /** Ends [packageName]'s abandon cooldown early, e.g. when the user taps the app again. */
     fun clearAbandoned(packageName: String) {
-        for (pkg in PasswordManager.aliasesOf(packageName)) abandonedAt.remove(pkg)
+        for (pkg in PasswordManager.aliasesOf(packageName)) {
+            abandonedAt.remove(pkg)
+            displacedAt.remove(pkg)
+        }
     }
 
     // ---------------------------------------------------------------------------------------

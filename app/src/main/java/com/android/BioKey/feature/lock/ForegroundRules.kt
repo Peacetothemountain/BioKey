@@ -28,7 +28,13 @@ object ForegroundRules {
         "com.miui.home",
         "com.oppo.launcher",
         "com.oneplus.launcher",
-        "com.huawei.android.launcher"
+        "net.oneplus.launcher",
+        "com.huawei.android.launcher",
+        "com.bbk.launcher2", // vivo (Funtouch OS, OriginOS)
+        "com.hihonor.android.launcher",
+        "com.mi.android.globallauncher", // POCO
+        "com.motorola.launcher3",
+        "com.nothing.launcher"
     )
 
     /**

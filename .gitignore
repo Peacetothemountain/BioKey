@@ -68,3 +68,7 @@ key.properties
 # OS specific
 .DS_Store
 Thumbs.db
+
+# Python
+__pycache__/
+tools/out/

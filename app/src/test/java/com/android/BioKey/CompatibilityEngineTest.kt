@@ -993,6 +993,184 @@ class CompatibilityEngineTest {
         assertFalse(LockStateTracker.isOwnAppUnlocked())
     }
 
+    /**
+     * The bank opens on a launch screen, its lock screen comes up over it, then the bank opens its
+     * main screen over that lock screen, which goes to the background and gives up.
+     */
+    private fun bankOpensItsMainScreenOverItsLockScreen() {
+        lockScreenOpensOver(bank, bank, frontClass = "$bank.StartActivity")
+        started()
+        LockStateTracker.markLockDisplaced(bank)
+        lockScreenUp(null)
+        event(ACTIVITY_PAUSED, context.packageName, lockScreen)
+        event(ACTIVITY_RESUMED, bank)
+        step()
+    }
+
+    @Test
+    fun aLockedAppThatOpensItsMainScreenOverItsLockScreenIsCoveredAgainNotSentHome() {
+        event(ACTIVITY_RESUMED, bank, "$bank.StartActivity")
+        step()
+        bankOpensItsMainScreenOverItsLockScreen()
+        val starts = started()
+        assertTrue(starts.toString(), starts.none { it.hasCategory(Intent.CATEGORY_HOME) })
+        assertTrue(starts.toString(), lockScreensFor(starts, bank) > 0)
+        assertEquals("Covered $bank (came back over its lock screen)", covered(bank).last())
+        assertTrue(shield().isShowing)
+        assertEquals(bank, shield().targetPackage)
+    }
+
+    @Test
+    fun aLockedAppThatKeepsComingBackOverItsLockScreenGoesHome() {
+        event(ACTIVITY_RESUMED, bank, "$bank.StartActivity")
+        step()
+        repeat(2) {
+            bankOpensItsMainScreenOverItsLockScreen()
+            assertTrue(started().none { it.hasCategory(Intent.CATEGORY_HOME) })
+        }
+        bankOpensItsMainScreenOverItsLockScreen()
+        assertTrue(started().any { it.hasCategory(Intent.CATEGORY_HOME) })
+    }
+
+    @Test
+    fun gantletAPermissionDialogOverTheLockScreenThenTheAppIsCoveredAgainNotSentHome() {
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        lockScreenOpensOver(bank, bank)
+        started()
+        // The bank asks for a permission as it starts: the dialog comes over its lock screen,
+        // which gives up; the bank is back in front once it is answered.
+        val permissions = "com.google.android.permissioncontroller"
+        LockStateTracker.markLockDisplaced(bank)
+        lockScreenUp(null)
+        event(ACTIVITY_PAUSED, context.packageName, lockScreen)
+        event(ACTIVITY_RESUMED, permissions, "com.android.permissioncontroller.permission.ui.GrantPermissionsActivity")
+        step()
+        event(ACTIVITY_PAUSED, permissions, "com.android.permissioncontroller.permission.ui.GrantPermissionsActivity")
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        val starts = started()
+        assertTrue(starts.toString(), starts.none { it.hasCategory(Intent.CATEGORY_HOME) })
+        assertTrue(starts.toString(), lockScreensFor(starts, bank) > 0)
+        assertTrue(shield().isShowing)
+    }
+
+    @Test
+    fun gantletFromEveryHomeScreenALockedAppIsCoveredOnceAndCancellingCoversNothing() {
+        val homes = listOf(
+            "com.sec.android.app.launcher" to "com.sec.android.app.launcher.activities.LauncherActivity",
+            "com.teslacoilsw.launcher" to "com.teslacoilsw.launcher.NovaLauncher",
+            launcher to "$launcher.NexusLauncherActivity"
+        )
+        val pm = shadowOf(context.packageManager)
+        for ((pkg, cls) in homes) {
+            val home = ComponentName(pkg, cls)
+            pm.addActivityIfNotPresent(home)
+            pm.addIntentFilterForActivity(home, IntentFilter(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                addCategory(Intent.CATEGORY_DEFAULT)
+            })
+        }
+        ForegroundRules.resetSystemLists()
+        for ((home, cls) in homes) {
+            DiagnosticLog.clear()
+            event(ACTIVITY_RESUMED, home, cls)
+            step()
+            event(ACTIVITY_PAUSED, home, cls)
+            event(ACTIVITY_RESUMED, bank)
+            step()
+            assertEquals(home, listOf("Covered $bank (opened)"), covered(bank))
+            lockScreenOpensOver(bank, bank)
+            started()
+            // Cancel: the lock screen goes Home itself, and the home screen comes to the front.
+            lockScreenClosesOnto(home, bank, unlocked = false, frontClass = cls)
+            step(LockStateTracker.ABANDONED_LOCK_COOLDOWN_MS + 100)
+            repeat(3) { step() }
+            assertEquals(home, 1, covered(bank).size)
+            assertFalse(home, shield().isShowing)
+            assertTrue(home, started().none { it.hasCategory(Intent.CATEGORY_HOME) })
+            event(ACTIVITY_STOPPED, bank)
+            step(2_000)
+        }
+    }
+
+    @Test
+    fun gantletFoldingOrUnfoldingAnUnlockedAppKeepsItUnlockedAndUncovered() {
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        lockScreenOpensOver(bank, bank)
+        lockScreenClosesOnto(bank, bank, unlocked = true)
+        DiagnosticLog.clear()
+        started()
+        // Folded or unfolded, the bank is laid out again on the other screen: its activity is
+        // paused, stopped and resumed again (recreated), with nothing else in between.
+        repeat(3) {
+            event(ACTIVITY_PAUSED, bank)
+            event(ACTIVITY_STOPPED, bank)
+            event(ACTIVITY_RESUMED, bank)
+            step()
+        }
+        repeat(5) { step() }
+        assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+        assertEquals(emptyList<String>(), covered(bank))
+        assertTrue(started().none { it.hasCategory(Intent.CATEGORY_HOME) })
+    }
+
+    @Test
+    fun gantletFoldingOrUnfoldingUnderTheLockScreenNeverGoesHome() {
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        lockScreenOpensOver(bank, bank)
+        started()
+        // The lock screen handles the change itself; the bank under it is laid out again, stopped.
+        repeat(3) {
+            event(ACTIVITY_PAUSED, context.packageName, lockScreen)
+            event(ACTIVITY_RESUMED, context.packageName, lockScreen)
+            event(ACTIVITY_STOPPED, bank)
+            step()
+        }
+        repeat(5) { step() }
+        assertEquals(listOf("Covered $bank (opened)"), covered(bank))
+        assertTrue(started().none { it.hasCategory(Intent.CATEGORY_HOME) })
+        assertFalse(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+    }
+
+    @Test
+    fun aLockedAppOpenedAgainFromHomeAtOnceIsCoveredEveryTimeNeverSentHome() {
+        // As in the report: the owner opens it, goes Home from its lock screen and opens it again
+        // straight away, over and over. Compatibility mode sees no tap on the icon.
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        repeat(5) { attempt ->
+            lockScreenOpensOver(bank, bank)
+            started()
+            LockStateTracker.markLockDisplaced(bank) // Home: the lock screen goes to the background.
+            lockScreenUp(null)
+            event(ACTIVITY_PAUSED, context.packageName, lockScreen)
+            event(ACTIVITY_RESUMED, launcher, "$launcher.NexusLauncherActivity")
+            step()
+            event(ACTIVITY_PAUSED, launcher, "$launcher.NexusLauncherActivity")
+            event(ACTIVITY_RESUMED, bank)
+            step()
+            val starts = started()
+            assertTrue("attempt ${attempt + 1}: $starts", starts.none { it.hasCategory(Intent.CATEGORY_HOME) })
+            assertTrue("attempt ${attempt + 1}: $starts", lockScreensFor(starts, bank) > 0)
+            assertTrue(shield().isShowing)
+        }
+    }
+
+    @Test
+    fun aLockedAppBackOverALockScreenLeftOnPurposeGoesHome() {
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        lockScreenOpensOver(bank, bank)
+        started()
+        // Cancel, then a quick switch straight back to the bank.
+        lockScreenClosesOnto(bank, bank, unlocked = false)
+        assertTrue(started().any { it.hasCategory(Intent.CATEGORY_HOME) })
+        assertEquals(listOf("Covered $bank (opened)"), covered(bank))
+    }
+
     @Test
     fun aLockedAppBackBesideAnotherDuringItsCooldownIsCoveredOnceItEnds() {
         event(ACTIVITY_RESUMED, bank)

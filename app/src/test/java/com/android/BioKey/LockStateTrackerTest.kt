@@ -262,6 +262,41 @@ class LockStateTrackerTest {
     }
 
     @Test
+    fun anAppBackOverItsDisplacedLockScreenIsCoveredAgainButNotForever() {
+        // Its launch screen opened its main one over the lock screen: covered again, once.
+        LockStateTracker.markLockDisplaced(chat)
+        assertTrue(LockStateTracker.isRecentlyAbandoned(chat))
+        assertTrue(LockStateTracker.coverAgainAfterDisplaced(chat))
+        assertFalse(LockStateTracker.coverAgainAfterDisplaced(chat))
+        LockStateTracker.markLockDisplaced(chat)
+        assertTrue(LockStateTracker.coverAgainAfterDisplaced(chat))
+        // An app that keeps doing it goes Home instead, until a while has passed.
+        LockStateTracker.markLockDisplaced(chat)
+        assertFalse(LockStateTracker.coverAgainAfterDisplaced(chat))
+        advance(10_000L)
+        LockStateTracker.markLockDisplaced(chat)
+        assertTrue(LockStateTracker.coverAgainAfterDisplaced(chat))
+
+        // Opened again from Home each time, however quickly: covered every time, never sent Home.
+        advance(10_000L)
+        repeat(5) {
+            LockStateTracker.onForegroundChanged("com.google.android.apps.nexuslauncher", { LockTimeoutMode.IMMEDIATE })
+            LockStateTracker.markLockDisplaced(chat)
+            assertTrue("return ${it + 1}", LockStateTracker.coverAgainAfterDisplaced(chat))
+            // Its lock screen in front isn't anything else.
+            LockStateTracker.onForegroundChanged("com.android.BioKey", { LockTimeoutMode.IMMEDIATE })
+        }
+
+        // Left on purpose (Cancel, Back), or back only after the cooldown: not covered at once.
+        LockStateTracker.markLockDisplaced(bank)
+        LockStateTracker.markLockAbandoned(bank)
+        assertFalse(LockStateTracker.coverAgainAfterDisplaced(bank))
+        LockStateTracker.markLockDisplaced(bank)
+        advance(ABANDONED_LOCK_COOLDOWN_MS)
+        assertFalse(LockStateTracker.coverAgainAfterDisplaced(bank))
+    }
+
+    @Test
     fun lockingABatchEndsEverySessionBeforeTellingAnyone() {
         val batches = mutableListOf<Set<String>>()
         val singles = mutableListOf<String>()

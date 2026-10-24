@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <application
+        android:label="@string/app_name"
+        android:theme="@android:style/Theme.DeviceDefault.DayNight">
+
+        <!-- The launch screen: does what the flavor's scenario says. -->
+        <activity
+            android:name=".LaunchActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity android:name=".SignInActivity" android:exported="false" />
+
+        <activity android:name=".MainActivity" android:exported="false" />
+
+        <!-- The main screen in a task of its own ("newtask"). -->
+        <activity
+            android:name=".OwnTaskActivity"
+            android:exported="false"
+            android:taskAffinity="com.biokey.gantlet.owntask" />
+    </application>
+</manifest>

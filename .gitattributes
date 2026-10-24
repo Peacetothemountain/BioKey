@@ -1,0 +1,5 @@
+# Shell scripts run with sh, which breaks on Windows line endings: always LF, even in a
+# checkout with core.autocrlf on.
+*.sh text eol=lf
+.githooks/* text eol=lf
+gradlew text eol=lf
