@@ -54,24 +54,24 @@ private const val TWINKLE_SECONDS = 2.6f
 private const val DRIFT_SECONDS = 9f
 
 /**
- * How long each ring takes to go once round the print, outermost first: slow, and each at its own
- * pace, so the rings chase each other and their gaps never line up.
+ * How fast the lines flow along each ridge (in the icon's units a second), outermost first: slow,
+ * and each at its own pace, so the ridges chase each other and their gaps never line up.
  */
-private val SWIRL_SECONDS = floatArrayOf(16f, 13f, 10.5f, 8.5f, 7f)
+private val FLOW_SPEED = floatArrayOf(5.2f, 4.6f, 4.1f, 3.5f, 3f)
 
-/** Where each ring's gap starts, so they begin spread round the print rather than in a line. */
-private val SWIRL_START = floatArrayOf(10f, 140f, 260f, 40f, 200f)
+/** Where each ridge's gaps start, so they begin spread through the print rather than in a line. */
+private val FLOW_START = floatArrayOf(3f, 17f, 9f, 22f, 6f)
 /** How far each sparkle drifts round where it sits (in the icon's units). */
 private const val DRIFT = 1.4f
 
 /**
- * Sets [this] to the mark's pose [seconds] into its loop: each ring of the whorl turned round the
- * print's centre at its own pace; the sparkles twinkling (growing and brightening) out of step,
- * each drifting round in a small circle. Every pose is a smooth function of time, so the loop
- * never jumps.
+ * Sets [this] to the mark's pose [seconds] into its loop: the lines flowing along each ridge at
+ * its own pace (the print keeps its form); the sparkles twinkling (growing and brightening) out of
+ * step, each drifting round in a small circle. Every pose is a smooth function of time, so the
+ * loop never jumps.
  */
 internal fun KeyMark.Motion.at(seconds: Float) {
-    for (i in ridgeAngle.indices) ridgeAngle[i] = (SWIRL_START[i] + 360f * seconds / SWIRL_SECONDS[i]) % 360f
+    for (i in ridgeFlow.indices) ridgeFlow[i] = FLOW_START[i] + FLOW_SPEED[i] * seconds
     for (k in sparkleScale.indices) {
         val twinkle = (sin(2f * PI.toFloat() * seconds / TWINKLE_SECONDS + k * 2.1f) + 1f) / 2f
         sparkleScale[k] = 0.65f + 0.5f * twinkle
@@ -87,9 +87,10 @@ internal fun KeyMark.Motion.at(seconds: Float) {
  * left), for the home header between the status and Settings tiles. As large as fits [modifier]'s
  * size, centred, in the phone's colours.
  *
- * Moves on its own, never from the phone's sensors: the print becomes a whorl, its ridges open
- * rings slowly going round its centre, each at its own pace so they chase each other; the key
- * holds still through the middle, and the sparkles twinkle and drift round it ([at]). Only while
+ * Moves on its own, never from the phone's sensors: the print keeps its form while its lines flow
+ * slowly round along each ridge, up one leg, over the top and down the other, each ridge at its
+ * own pace so they chase each other; the key holds still, and the sparkles twinkle and drift round
+ * it ([at]). Only while
  * [animated] (the header uncovered), the screen resumed and "Remove animations" off; otherwise it
  * holds its pose. Like the constellation behind it: its own graphics layer, the frame read only
  * while drawing (no recomposition per frame), at most 60 fps, nothing allocated per frame.

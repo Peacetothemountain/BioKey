@@ -91,19 +91,40 @@ class BrandArtTest {
     }
 
     @Test
-    fun theHeadersRingsGoRoundSmoothlyEachAtItsOwnPace() {
+    fun theHeadersLinesFlowSmoothlyEachRidgeAtItsOwnPace() {
         val a = KeyMark.Motion().apply { at(1.234f) }
         val b = KeyMark.Motion().apply { at(1.234f + 0.016f) }
-        // One frame later: a small step round for every ring and every sparkle, never a jump.
-        for (i in a.ridgeAngle.indices) {
-            val step = (b.ridgeAngle[i] - a.ridgeAngle[i] + 360f) % 360f
-            assertTrue("ring $i stepped $step", step > 0f && step < 2f)
+        // One frame later: a small step along every ridge and for every sparkle, never a jump.
+        for (i in a.ridgeFlow.indices) {
+            val step = b.ridgeFlow[i] - a.ridgeFlow[i]
+            assertTrue("ridge $i stepped $step", step > 0f && step < 0.2f)
         }
         for (k in a.sparkleScale.indices) assertTrue("sparkle $k", abs(a.sparkleScale[k] - b.sparkleScale[k]) < 0.05f)
-        // Every ring at its own pace: their gaps never stay lined up.
+        // Every ridge at its own pace: their gaps never stay lined up.
         val later = KeyMark.Motion().apply { at(5f) }
-        val steps = later.ridgeAngle.indices.map { (later.ridgeAngle[it] - KeyMark.Motion().apply { at(0f) }.ridgeAngle[it] + 360f) % 360f }
-        assertEquals(steps.size, steps.map { it.toInt() }.toSet().size)
+        val start = KeyMark.Motion().apply { at(0f) }
+        val travelled = later.ridgeFlow.indices.map { later.ridgeFlow[it] - start.ridgeFlow[it] }
+        assertEquals(travelled.size, travelled.map { (it * 10).toInt() }.toSet().size)
+    }
+
+    @Test
+    fun theFlowingPrintKeepsItsForm() {
+        // Still and flowing, the print covers the same ground: only small gaps move along it.
+        fun drawn(motion: KeyMark.Motion?): Bitmap = Bitmap.createBitmap(300, 340, Bitmap.Config.ARGB_8888).also {
+            KeyMark.draw(Canvas(it), 0f, 0f, 300f, 340f, primary, secondary, tertiary, motion)
+        }
+        val still = drawn(null)
+        val flowing = drawn(KeyMark.Motion().apply { at(2.5f) })
+        var outside = 0
+        var inked = 0
+        for (y in 0 until 340) for (x in 0 until 300) {
+            val s = Color.alpha(still.getPixel(x, y)) > 40
+            val f = Color.alpha(flowing.getPixel(x, y)) > 40
+            if (f) inked++
+            if (f && !s) outside++
+        }
+        assertTrue("drawn where the still print isn't: $outside of $inked", outside < inked / 50)
+        assertTrue("most of the print still there", inked > 0)
     }
 
     @Test

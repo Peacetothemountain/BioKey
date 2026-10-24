@@ -5,9 +5,9 @@ import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PathMeasure
 import android.graphics.RectF
 import android.graphics.Shader
-import androidx.core.graphics.withSave
 import androidx.core.graphics.withScale
 import androidx.core.graphics.withTranslation
 import kotlin.math.min
@@ -93,14 +93,15 @@ internal object KeyMark {
     val SPARKLE_COUNT = SPARKLES.size
 
     /**
-     * How the mark moves at one moment. Moving, the print is a whorl: each ridge an open ring round
-     * its centre, its gap turned to [ridgeAngle] degrees, so the rings go round and chase each other
-     * while the key holds still through the middle. Each sparkle is scaled by [sparkleScale] about
-     * its centre, shifted by [sparkleDx], [sparkleDy] (in the icon's units) and faded to
-     * [sparkleAlpha]. Updated in place: nothing is allocated per frame.
+     * How the mark moves at one moment. The print keeps its form: along each ridge, up one leg, over
+     * the top and down the other, small gaps travel round, [ridgeFlow] along it (in the icon's
+     * units; it goes round and round), so the lines flow and chase each other while the key holds
+     * still. Each sparkle is scaled by [sparkleScale] about its centre, shifted by [sparkleDx],
+     * [sparkleDy] (in the icon's units) and faded to [sparkleAlpha]. Updated in place: nothing is
+     * allocated per frame.
      */
     class Motion {
-        val ridgeAngle = FloatArray(RIDGE_COUNT)
+        val ridgeFlow = FloatArray(RIDGE_COUNT)
         val sparkleScale = FloatArray(SPARKLE_COUNT) { 1f }
         val sparkleDx = FloatArray(SPARKLE_COUNT)
         val sparkleDy = FloatArray(SPARKLE_COUNT)
@@ -117,17 +118,18 @@ internal object KeyMark {
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private var shaderFor: Pair<Int, Int>? = null
 
-    /** Each ridge as a ring round the print's centre, for the whorl ([Motion]). */
-    private val RINGS = RIDGES.map { (r, _, _) -> RectF(CX - r, CY - r, CX + r, CY + r) }
-
     /**
-     * How much of a full circle each ring is, outermost first: open, like a whorl print's ridges,
-     * each by a different amount so their gaps never line up.
+     * The gaps that travel along each ridge while it flows ([Motion]): how long each is (round caps
+     * take [STROKE] of it, leaving a small break), and how many each ridge has, outermost first (the
+     * longer ridges two, so a gap is never far).
      */
-    private val RING_SWEEPS = floatArrayOf(292f, 262f, 278f, 246f, 230f)
+    private const val FLOW_GAP = 4f
+    private val FLOW_GAPS = intArrayOf(2, 2, 2, 1, 1)
 
-    /** Where the rings part for the blade, from the print's centre down (half its width). */
-    private const val BLADE_CLEARANCE = STROKE * 1.35f
+    /** Each ridge's path, measured, to cut the flowing pieces from; and where those are drawn. */
+    private val ridgeMeasures = ridges.map { PathMeasure(it, false) }
+    private val ridgeLengths = ridgeMeasures.map { it.length }
+    private val flowing = Path()
 
     /**
      * Draws the mark fitted into [width] x [height] at [left], [top] (centred, its proportions
@@ -160,12 +162,8 @@ internal object KeyMark {
             if (motion == null) {
                 for (ridge in ridges) drawPath(ridge, stroke)
             } else {
-                // A whorl: open rings going round, parted where the blade runs down from the centre,
-                // so the key stays clean. The gradient holds still while the rings move through it.
-                withSave {
-                    clipOutRect(CX - BLADE_CLEARANCE, CY + RIDGES.last().first + STROKE, CX + BLADE_CLEARANCE, BOUNDS.bottom)
-                    for (i in RINGS.indices) drawArc(RINGS[i], motion.ridgeAngle[i], RING_SWEEPS[i], false, stroke)
-                }
+                // The same ridges, with their gaps flowing along them: the form stays, the lines go round.
+                for (i in ridges.indices) drawPath(flowingRidge(i, motion.ridgeFlow[i]), stroke)
             }
             drawPath(key, stroke)
             for ((i, path) in sparkles.withIndex()) {
@@ -185,6 +183,39 @@ internal object KeyMark {
                     withScale(motion.sparkleScale[i], motion.sparkleScale[i], cx, cy) { drawPath(path, fill) }
                 }
             }
+        }
+    }
+
+    /**
+     * Ridge [i] with its gaps [flow] along it ([FLOW_GAPS] of them, evenly spaced, each [FLOW_GAP]
+     * long, going round from one leg's end over the top to the other's and on again): the pieces
+     * between them, cut from the ridge itself, so the ridge keeps its exact form.
+     */
+    private fun flowingRidge(i: Int, flow: Float): Path {
+        val length = ridgeLengths[i]
+        val gaps = FLOW_GAPS[i]
+        val spacing = length / gaps
+        val first = ((flow % spacing) + spacing) % spacing
+        flowing.reset()
+        for (g in 0 until gaps) {
+            // The piece from this gap's end to the next gap's start, round the ridge's end if need be.
+            val from = first + g * spacing + FLOW_GAP
+            val to = first + (g + 1) * spacing
+            if (to <= from) continue
+            cut(i, from, to, length)
+        }
+        return flowing
+    }
+
+    /** Adds ridge [i] from [from] to [to] (either past its [length], going round) to [flowing]. */
+    private fun cut(i: Int, from: Float, to: Float, length: Float) {
+        val a = from % length
+        val b = to % length
+        if (a < b || (to - from) >= length) {
+            ridgeMeasures[i].getSegment(a, if (b == 0f) length else b, flowing, true)
+        } else {
+            ridgeMeasures[i].getSegment(a, length, flowing, true)
+            ridgeMeasures[i].getSegment(0f, b, flowing, true)
         }
     }
 
