@@ -128,14 +128,9 @@ fun GroupRow(
             }
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                // In full, however large the text: its end is often what to do ("· tap to grant").
                 if (!subtitle.isNullOrEmpty()) {
-                    Text(
-                        subtitle,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = subtitleColor,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = subtitleColor)
                 }
             }
             if (trailing != null) {

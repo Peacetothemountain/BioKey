@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -716,11 +717,13 @@ private fun HeaderTile(
             Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(32.dp))
         }
         Spacer(Modifier.height(8.dp))
+        // Two lines, so large text still shows the whole of "Protected" or "Not running".
         Text(
             label,
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
     }
@@ -830,9 +833,9 @@ private fun ProtectionSheet(
             )
             Spacer(Modifier.height(24.dp))
             if (look.action != null) {
-                Button(onClick = onAction, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text(look.action) }
+                Button(onClick = onAction, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text(look.action) }
             } else {
-                OutlinedButton(onClick = onPause, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                OutlinedButton(onClick = onPause, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                     Icon(Icons.Default.PauseCircle, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("Pause protection")

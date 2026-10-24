@@ -20,7 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -294,7 +294,7 @@ private fun DisclosureSection(title: String, lines: List<String>) {
     Spacer(Modifier.height(6.dp))
     lines.forEach { line ->
         Row(Modifier.padding(bottom = 6.dp)) {
-            Text("•", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.size(width = 16.dp, height = 20.dp))
+            Text("•", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(16.dp))
             Text(line, style = MaterialTheme.typography.bodyMedium)
         }
     }

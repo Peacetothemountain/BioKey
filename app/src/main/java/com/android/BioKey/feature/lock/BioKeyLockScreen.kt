@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -113,7 +114,7 @@ fun BioKeyLockScreen(
                     shape = CircleShape,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp)
+                        .heightIn(min = 56.dp)
                         .springPress()
                 ) {
                     if (!isPermanentLockout) {
@@ -123,7 +124,7 @@ fun BioKeyLockScreen(
                     Text(if (isPermanentLockout) "Lock screen" else "Unlock", style = MaterialTheme.typography.titleMedium)
                 }
             }
-            TextButton(onClick = onCancelClicked, modifier = Modifier.height(48.dp)) {
+            TextButton(onClick = onCancelClicked, modifier = Modifier.heightIn(min = 48.dp)) {
                 Text("Cancel", style = MaterialTheme.typography.titleSmall)
             }
         }
