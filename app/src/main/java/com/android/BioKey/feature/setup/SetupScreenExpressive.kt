@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -220,7 +221,7 @@ fun SetupScreenExpressive(
             Spacer(Modifier.height(48.dp))
             BioKeyLogo(Modifier.size(104.dp, 118.dp))
             Spacer(Modifier.height(28.dp))
-            Text("Set up BioKey", style = MaterialTheme.typography.headlineMedium)
+            Text("Set up BioKey", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
             Spacer(Modifier.height(8.dp))
             Text(
                 "Lock any app behind your face, fingerprint or screen lock.",
@@ -240,7 +241,15 @@ fun SetupScreenExpressive(
                     icon = if (step.done) Icons.Default.CheckCircle else step.icon,
                     iconTint = if (step.done) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer,
                     iconContainer = if (step.done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
-                    onClick = step.onClick.takeIf { !step.done }
+                    onClick = step.onClick.takeIf { !step.done },
+                    // Said aloud, as the tick and the colour only show it. Only the last step is
+                    // ever without an action: until the ones above are done, or while it runs.
+                    stateDescription = when {
+                        step.done -> "Done"
+                        step.onClick != null -> "Not done"
+                        isAuthenticating -> "Confirming"
+                        else -> "Available after the steps above"
+                    }
                 ) {
                     if (!step.done && step.onClick != null && step.opensExternally) {
                         Icon(
