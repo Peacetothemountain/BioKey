@@ -390,6 +390,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                     Column(Modifier.statusBarsPadding()) {
                         MainHeader(
                             status = look,
+                            animated = headerActive,
                             onOpenStatus = { showProtectionSheet = true },
                             onOpenSettings = { showSettings = true },
                             onLogoPlaced = { logoBounds = it }
@@ -637,9 +638,18 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     }
 }
 
-/** Status and Settings as equal-width tiles at the edges, the logo centred between them. */
+/**
+ * Status and Settings as equal-width tiles at the edges, BioKey's mark centred between them,
+ * moving unless [animated] is false (the header covered).
+ */
 @Composable
-private fun MainHeader(status: ProtectionLook, onOpenStatus: () -> Unit, onOpenSettings: () -> Unit, onLogoPlaced: (Rect) -> Unit = {}) {
+private fun MainHeader(
+    status: ProtectionLook,
+    animated: Boolean,
+    onOpenStatus: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onLogoPlaced: (Rect) -> Unit = {}
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -656,12 +666,14 @@ private fun MainHeader(status: ProtectionLook, onOpenStatus: () -> Unit, onOpenS
         )
         // Centred between the two equal-width tiles, with breathing room on both sides.
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-            // The mark alone, on its side: the fingerprint on the right, the key on the left.
+            // The mark alone, on its side (the fingerprint on the right, the key on the left), as
+            // large as the header holds; its print swirls while the header is uncovered.
             BioKeyMarkSideways(
                 Modifier
-                    .height(64.dp)
+                    .height(104.dp)
                     .aspectRatio(1f / KeyMark.ASPECT)
-                    .onGloballyPositioned { onLogoPlaced(it.boundsInRoot()) }
+                    .onGloballyPositioned { onLogoPlaced(it.boundsInRoot()) },
+                animated = animated
             )
         }
         HeaderTile(

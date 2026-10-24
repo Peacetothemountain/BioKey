@@ -214,7 +214,7 @@ fun SetupScreenExpressive(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(Modifier.height(48.dp))
-            BioKeyLogo(Modifier.size(280.dp, 80.dp))
+            BioKeyLogo(Modifier.size(104.dp, 118.dp))
             Spacer(Modifier.height(28.dp))
             Text("Set up BioKey", style = MaterialTheme.typography.headlineMedium)
             Spacer(Modifier.height(8.dp))

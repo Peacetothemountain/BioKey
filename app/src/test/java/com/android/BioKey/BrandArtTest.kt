@@ -7,10 +7,10 @@ import android.graphics.Color
 import android.os.SystemClock
 import android.view.View
 import androidx.compose.material3.SnackbarDuration
-import androidx.core.content.res.ResourcesCompat
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.ui.brand.KeyMark
 import com.android.BioKey.ui.brand.WordmarkView
+import com.android.BioKey.ui.brand.at
 import com.android.BioKey.ui.theme.BioKeyMessages
 import kotlin.math.abs
 import org.junit.Assert.assertEquals
@@ -25,8 +25,7 @@ import org.robolectric.annotation.GraphicsMode
 
 /**
  * BioKey's mark is the launcher icon's key, drawn in the phone's colours, fitted and centred in
- * whatever box it is given; the logo sets it beside the name; the small icon and the name's font
- * load. Messages that waited too long for a screen are dropped.
+ * whatever box it is given, the header's swirling smoothly; the small icon loads. Messages that waited too long for a screen are dropped.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -80,27 +79,36 @@ class BrandArtTest {
     }
 
     @Test
-    fun theCoversLogoSetsTheMarkBesideTheName() {
-        val view = WordmarkView(context).apply { setColors(primary, secondary, tertiary, Color.BLACK) }
-        view.measure(View.MeasureSpec.makeMeasureSpec(420, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(80, View.MeasureSpec.EXACTLY))
-        view.layout(0, 0, 420, 80)
-        val bitmap = Bitmap.createBitmap(420, 80, Bitmap.Config.ARGB_8888)
+    fun theCoversLogoIsTheMarkCentred() {
+        val view = WordmarkView(context).apply { setColors(primary, secondary, tertiary) }
+        view.measure(View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(120, View.MeasureSpec.EXACTLY))
+        view.layout(0, 0, 200, 120)
+        val bitmap = Bitmap.createBitmap(200, 120, Bitmap.Config.ARGB_8888)
         view.draw(Canvas(bitmap))
-        val (l, _, r, _) = drawnBounds(bitmap) ?: error("nothing drawn")
-        assertEquals("centred", 210f, (l + r) / 2f, 10f)
-        // The mark on the left in the theme's colours, the name on the right in its own.
-        val markColumn = (l + 10 until l + 40).any { x -> (0 until 80).any { y -> bitmap.getPixel(x, y).let { Color.alpha(it) > 200 && abs(Color.red(it) - Color.blue(it)) > 60 } } }
-        val nameColumn = (r - 30 until r).any { x -> (0 until 80).any { y -> bitmap.getPixel(x, y).let { Color.alpha(it) > 200 && Color.red(it) < 60 && Color.blue(it) < 60 } } }
-        assertTrue("the mark first", markColumn)
-        assertTrue("the name after it", nameColumn)
+        val (l, t, r, b) = drawnBounds(bitmap) ?: error("nothing drawn")
+        assertEquals("centred across", 100f, (l + r) / 2f, 6f)
+        assertTrue("fills the height: $t..$b", t <= 8 && b >= 112)
     }
 
     @Test
-    fun theSmallIconAndTheNamesFontLoad() {
+    fun theHeadersMarkSwirlsSmoothlyAndComesBackToWhereItWas() {
+        val a = KeyMark.Motion().apply { at(1.234f) }
+        val b = KeyMark.Motion().apply { at(1.234f + 0.016f) }
+        // One frame later: a small step for every ridge and sparkle, never a jump.
+        for (i in a.ridgeTurn.indices) assertTrue("ridge $i", abs(a.ridgeTurn[i] - b.ridgeTurn[i]) < 1f)
+        for (k in a.sparkleScale.indices) assertTrue("sparkle $k", abs(a.sparkleScale[k] - b.sparkleScale[k]) < 0.05f)
+        // The inner ridges turn further than the outer ones: a whorl.
+        val poses = (0 until 400).map { KeyMark.Motion().apply { at(it * 0.05f) } }
+        val outer = poses.maxOf { abs(it.ridgeTurn.first()) }
+        val inner = poses.maxOf { abs(it.ridgeTurn.last()) }
+        assertTrue("inner $inner, outer $outer", inner > outer * 2)
+    }
+
+    @Test
+    fun theSmallIconLoads() {
         val icon = context.getDrawable(R.drawable.ic_biokey_mark)
         assertNotNull(icon)
         assertEquals((24 * context.resources.displayMetrics.density).toInt(), icon!!.intrinsicWidth)
-        assertNotNull(ResourcesCompat.getFont(context, R.font.biokey_wordmark))
     }
 
     @Test

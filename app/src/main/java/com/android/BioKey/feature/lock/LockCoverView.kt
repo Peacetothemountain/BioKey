@@ -140,7 +140,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     private val identity = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
-        addView(logo, LinearLayout.LayoutParams(dp(280), dp(80)))
+        addView(logo, LinearLayout.LayoutParams(dp(120), dp(136)))
         addView(icon, LinearLayout.LayoutParams(dp(ICON_DP), dp(ICON_DP)))
         addView(name, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(22)
@@ -165,7 +165,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
             rightMargin = dp(32)
             bottomMargin = dp(96)
         })
-        addView(brandMark, LayoutParams(dp(136), dp(32), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+        addView(brandMark, LayoutParams(dp(40), dp(44), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
             bottomMargin = dp(40)
         })
         // Its width follows the window's at every measure ([onMeasure]): the shield's cover lives as
@@ -225,8 +225,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         cancelButton.background = ripple(Color.TRANSPARENT, p.primary)
         primaryButton.setTextColor(p.onPrimary)
         primaryButton.background = ripple(p.primary, p.onPrimary)
-        logo.setColors(p.primary, p.secondary, p.tertiary, p.onSurface)
-        brandMark.setColors(p.primary, p.secondary, p.tertiary, p.onSurface)
+        logo.setColors(p.primary, p.secondary, p.tertiary)
+        brandMark.setColors(p.primary, p.secondary, p.tertiary)
     }
 
     private fun ripple(fill: Int, rippleColor: Int): Drawable {

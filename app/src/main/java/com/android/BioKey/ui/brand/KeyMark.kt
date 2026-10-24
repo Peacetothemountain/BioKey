@@ -7,6 +7,8 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
+import androidx.core.graphics.withRotation
+import androidx.core.graphics.withScale
 import androidx.core.graphics.withTranslation
 import kotlin.math.min
 
@@ -18,7 +20,7 @@ import kotlin.math.min
  * Its geometry is the icon's own, measured from the launcher artwork on its 108-unit grid, so the
  * mark inside BioKey and the icon on the home screen are the same key: five concentric ridges,
  * each with legs of its own length as a finger's ridges have, the blade with two teeth, and three
- * sparkles. Still: it never moves.
+ * sparkles. Still, unless given a [Motion] (the home header's: [BioKeyMarkSideways]).
  *
  * Shared by BioKey's Compose screens ([BioKeyLogo]) and the plain-View lock cover ([WordmarkView]).
  * The paths are made once, here; a draw only scales them.
@@ -50,15 +52,18 @@ internal object KeyMark {
         Triple(2.625f, 49.375f, 46.875f),
     )
 
-    /** The fingerprint's ridges, as one path. */
-    private val ridges = Path().apply {
-        for ((r, leftEnd, rightEnd) in RIDGES) {
+    /** The fingerprint's ridges, outermost first, each a path of its own so it can turn alone. */
+    private val ridges = RIDGES.map { (r, leftEnd, rightEnd) ->
+        Path().apply {
             moveTo(CX - r, leftEnd)
             lineTo(CX - r, CY)
             arcTo(RectF(CX - r, CY - r, CX + r, CY + r), 180f, 180f)
             lineTo(CX + r, rightEnd)
         }
     }
+
+    /** How many ridges there are, for a [Motion] to turn. */
+    val RIDGE_COUNT = RIDGES.size
 
     /** The blade, down the middle ridge, and its two teeth. */
     private val key = Path().apply {
@@ -80,9 +85,26 @@ internal object KeyMark {
         close()
     }
 
-    private val sparkleLarge = sparkle(36f, 34.5f, 3.2f)
-    private val sparkleRight = sparkle(71.1f, 40.9f, 2.15f)
-    private val sparkleSmall = sparkle(38.9f, 59f, 1.2f)
+    /** The sparkles: the large one by the ridges' top left, one to their right, a small one below. */
+    private val SPARKLES = listOf(Triple(36f, 34.5f, 3.2f), Triple(71.1f, 40.9f, 2.15f), Triple(38.9f, 59f, 1.2f))
+    private val sparkles = SPARKLES.map { (cx, cy, r) -> sparkle(cx, cy, r) }
+
+    /** How many sparkles there are, for a [Motion] to move. */
+    val SPARKLE_COUNT = SPARKLES.size
+
+    /**
+     * How the mark moves at one moment: each ridge turned about the fingerprint's centre by
+     * [ridgeTurn] degrees (the key never moves), each sparkle scaled by [sparkleScale] about its
+     * centre, shifted by [sparkleDx], [sparkleDy] (in the icon's units) and faded to
+     * [sparkleAlpha]. Updated in place: nothing is allocated per frame.
+     */
+    class Motion {
+        val ridgeTurn = FloatArray(RIDGE_COUNT)
+        val sparkleScale = FloatArray(SPARKLE_COUNT) { 1f }
+        val sparkleDx = FloatArray(SPARKLE_COUNT)
+        val sparkleDy = FloatArray(SPARKLE_COUNT)
+        val sparkleAlpha = FloatArray(SPARKLE_COUNT) { 1f }
+    }
 
     /** Draws with these, one set per caller's thread: the main thread, everywhere BioKey draws it. */
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -100,7 +122,17 @@ internal object KeyMark {
      * end), as the icon runs from blue to orange; the sparkles in [primary], [tertiary] and
      * [secondary], as the icon's are blue, orange and blue.
      */
-    fun draw(canvas: Canvas, left: Float, top: Float, width: Float, height: Float, primary: Int, secondary: Int, tertiary: Int) {
+    fun draw(
+        canvas: Canvas,
+        left: Float,
+        top: Float,
+        width: Float,
+        height: Float,
+        primary: Int,
+        secondary: Int,
+        tertiary: Int,
+        motion: Motion? = null
+    ) {
         if (width <= 0f || height <= 0f) return
         val scale = min(width / BOUNDS.width(), height / BOUNDS.height())
         val dx = left + (width - BOUNDS.width() * scale) / 2f - BOUNDS.left * scale
@@ -112,14 +144,28 @@ internal object KeyMark {
         }
         canvas.withTranslation(dx, dy) {
             scale(scale, scale)
-            drawPath(ridges, stroke)
+            for ((i, ridge) in ridges.withIndex()) {
+                val turn = motion?.ridgeTurn?.get(i) ?: 0f
+                if (turn == 0f) drawPath(ridge, stroke) else withRotation(turn, CX, CY) { drawPath(ridge, stroke) }
+            }
             drawPath(key, stroke)
-            fill.color = primary
-            drawPath(sparkleLarge, fill)
-            fill.color = tertiary
-            drawPath(sparkleRight, fill)
-            fill.color = withAlpha(secondary, 0.8f)
-            drawPath(sparkleSmall, fill)
+            for ((i, path) in sparkles.withIndex()) {
+                val color = when (i) {
+                    0 -> primary
+                    1 -> tertiary
+                    else -> withAlpha(secondary, 0.8f)
+                }
+                if (motion == null) {
+                    fill.color = color
+                    drawPath(path, fill)
+                    continue
+                }
+                val (cx, cy) = SPARKLES[i]
+                fill.color = withAlpha(color, motion.sparkleAlpha[i])
+                withTranslation(motion.sparkleDx[i], motion.sparkleDy[i]) {
+                    withScale(motion.sparkleScale[i], motion.sparkleScale[i], cx, cy) { drawPath(path, fill) }
+                }
+            }
         }
     }
 

@@ -38,8 +38,8 @@ import com.android.BioKey.ui.brand.BioKeyLogo
 import com.android.BioKey.ui.theme.springPress
 
 /** The logo's size, as on [LockCoverView]. */
-private val LOGO_WIDTH = 280.dp
-private val LOGO_HEIGHT = 80.dp
+private val LOGO_WIDTH = 120.dp
+private val LOGO_HEIGHT = 136.dp
 
 /**
  * BioKey's own lock, drawn in Compose. Laid out like [LockCoverView] showing BioKey (the logo,
