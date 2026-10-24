@@ -2,6 +2,7 @@ package com.android.BioKey.core.security
 
 import android.os.SystemClock
 import android.util.Log
+import com.android.BioKey.BuildConfig
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
@@ -58,7 +59,7 @@ object LockStateTracker {
     private const val DISPLACED_WINDOW_MS = 10_000L
 
     /** BioKey's own package: its lock screen in front is no app's run of returns ending. */
-    private const val OWN_PACKAGE = "com.android.BioKey"
+    private const val OWN_PACKAGE = BuildConfig.APPLICATION_ID
 
     /**
      * A new session must reach the screen within this long. One whose app never appears (its

@@ -13,14 +13,14 @@
 745	o.launch	com.example.bank	0	0
 745	l.target	com.example.bank
 745	l.resumed	1
-945	c.poll	0	2%2Ccom.example.bank%2Ccom.example.bank.MainActivity%2C6	1%2Ccom.android.BioKey%2Ccom.android.BioKey.feature.lock.LockScreenActivity%2C3
+945	c.poll	0	2%2Ccom.example.bank%2Ccom.example.bank.MainActivity%2C6	1%2Ccom.nbdesigns.biokey%2Ccom.android.BioKey.feature.lock.LockScreenActivity%2C3
 945	l.dismiss	com.example.bank
 960	u.unlock	com.example.bank
 960	o.log	Unlocked com.example.bank
 960	l.dismiss	com.example.bank
 960	l.target	
 960	l.resumed	0
-1160	c.poll	0	2%2Ccom.android.BioKey%2Ccom.android.BioKey.feature.lock.LockScreenActivity%2C8	1%2Ccom.example.bank%2Ccom.example.bank.MainActivity%2C4
+1160	c.poll	0	2%2Ccom.nbdesigns.biokey%2Ccom.android.BioKey.feature.lock.LockScreenActivity%2C8	1%2Ccom.example.bank%2Ccom.example.bank.MainActivity%2C4
 2160	c.poll	0	2%2Ccom.example.bank%2Ccom.example.bank.MainActivity%2C12	1%2Ccom.google.android.apps.nexuslauncher%2Ccom.google.android.apps.nexuslauncher.NexusLauncherActivity%2C8	23%2Ccom.example.bank%2Ccom.example.bank.MainActivity%2C5
 2160	o.log	com.example.bank left the screen · re-lock: immediate
 2160	o.log	Session ended: com.example.bank (left%2C re-locks immediately)

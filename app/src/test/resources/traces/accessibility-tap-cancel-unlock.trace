@@ -20,8 +20,8 @@
 1765	a.win	2%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.twitter.android
 2115	l.target	com.twitter.android
 2115	l.resumed	1
-2115	a.ev	32	com.android.BioKey	com.android.BioKey.feature.lock.LockScreenActivity	-1	-1	0	0	%00
-2265	a.win	3%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.android.BioKey	2%2C1%2C0%2C%2C-1%2C0 0 320 470%2C%2Ccom.twitter.android
+2115	a.ev	32	com.nbdesigns.biokey	com.android.BioKey.feature.lock.LockScreenActivity	-1	-1	0	0	%00
+2265	a.win	3%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.nbdesigns.biokey	2%2C1%2C0%2C%2C-1%2C0 0 320 470%2C%2Ccom.twitter.android
 2615	l.dismiss	com.twitter.android
 2630	u.abandon	com.twitter.android
 2630	l.target	

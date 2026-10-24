@@ -42,9 +42,9 @@ import sys
 import time
 from xml.etree import ElementTree
 
-BIOKEY = "com.android.BioKey"
+BIOKEY = "com.nbdesigns.biokey"
 LOCK_SCREEN = "com.android.BioKey.feature.lock.LockScreenActivity"
-LOCK_SCREEN_SHORT = "com.android.BioKey/.feature.lock.LockScreenActivity"
+LOCK_SCREEN_SHORT = "com.nbdesigns.biokey/com.android.BioKey.feature.lock.LockScreenActivity"
 
 # Screens to emulate: (name, size, density). A Galaxy Z Fold7's cover and main screens, turned,
 # and a Galaxy Z Flip7's cover screen.

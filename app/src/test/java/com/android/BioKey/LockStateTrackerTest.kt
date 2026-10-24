@@ -284,7 +284,7 @@ class LockStateTrackerTest {
             LockStateTracker.markLockDisplaced(chat)
             assertTrue("return ${it + 1}", LockStateTracker.coverAgainAfterDisplaced(chat))
             // Its lock screen in front isn't anything else.
-            LockStateTracker.onForegroundChanged("com.android.BioKey", { LockTimeoutMode.IMMEDIATE })
+            LockStateTracker.onForegroundChanged(BuildConfig.APPLICATION_ID, { LockTimeoutMode.IMMEDIATE })
         }
 
         // Left on purpose (Cancel, Back), or back only after the cooldown: not covered at once.
