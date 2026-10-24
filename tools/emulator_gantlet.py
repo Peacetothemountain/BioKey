@@ -285,8 +285,16 @@ def set_up(emu):
     emu.sh("input keyevent KEYCODE_HOME")
     emu.sh(f"am start -n {pkg}/.feature.main.MainActivity")
     time.sleep(3)
-    if emu.tap_text(r"unlock", wait=2.5):
-        emu.finger()
+    # BioKey locked itself when its accessibility engine stopped: its prompt is up already (it asks
+    # by itself as it opens), or its Unlock button brings it up. Either way, the fingerprint.
+    for _ in range(4):
+        nodes = emu.nodes()
+        if emu.find(r"search apps", nodes) is not None:
+            break
+        if emu.find(r"verify it's you|touch the fingerprint sensor", nodes) is not None:
+            emu.finger()
+        elif emu.tap_text(r"unlock", wait=2.5):
+            emu.finger()
         time.sleep(3)
     search = emu.find(r"search apps")
     if search is None:

@@ -40,6 +40,7 @@ import statistics
 import subprocess
 import sys
 import time
+from xml.etree import ElementTree
 
 BIOKEY = "com.android.BioKey"
 LOCK_SCREEN = "com.android.BioKey.feature.lock.LockScreenActivity"
@@ -457,11 +458,21 @@ def drawer_spots(labels):
     sh("uiautomator dump /sdcard/biokey_gantlet_ui.xml", check=False)
     xml = sh("cat /sdcard/biokey_gantlet_ui.xml", check=False)
     spots = {}
+    # Only icons in the drawer's own list: the home screen is still in the dump, under the drawer,
+    # and an app in its dock reads there too, where a tap lands on whatever drawer icon is on top.
+    drawer = None
+    try:
+        root = ElementTree.fromstring(xml[xml.index("<?xml"):] if "<?xml" in xml else xml)
+        drawer = next((n for n in root.iter("node") if n.get("resource-id", "").endswith(":id/apps_list_view")), None)
+    except (ElementTree.ParseError, ValueError):
+        pass
     for label in labels:
-        m = re.search(r'(?:text|content-desc)="' + re.escape(label) + r'"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
-        if m:
-            x1, y1, x2, y2 = map(int, m.groups())
+        for node in (drawer.iter("node") if drawer is not None else []):
+            if label not in (node.get("text"), node.get("content-desc")):
+                continue
+            x1, y1, x2, y2 = map(int, re.findall(r"\d+", node.get("bounds", "")))
             spots[label] = ((x1 + x2) // 2, (y1 + y2) // 2)
+            break
     go_home_fully()
     time.sleep(6)  # BioKey's accessibility engine reconnects.
     return spots
