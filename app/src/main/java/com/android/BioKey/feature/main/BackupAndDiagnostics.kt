@@ -487,7 +487,8 @@ internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
                             }
                         }
                         itemsIndexed(entries, key = { i, _ -> keys[i] }) { _, entry ->
-                            Column {
+                            // Its time and what happened, read as one.
+                            Column(Modifier.semantics(mergeDescendants = true) { }) {
                                 Text(time.format(Date(entry.at)), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                                 Text(entry.text, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
                             }
