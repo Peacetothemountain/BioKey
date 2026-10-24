@@ -40,6 +40,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -248,16 +251,18 @@ fun SetupScreenExpressive(
                     }
                 }
             }
-            if (authError != null) {
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    authError,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 32.dp)
-                )
-            }
+            if (authError != null) Spacer(Modifier.height(16.dp))
+            // Always there, empty without an error, so the error is read out as it comes up after
+            // the system prompt: a live region is read when its text changes, not when it first appears.
+            Text(
+                authError.orEmpty(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .padding(horizontal = 32.dp)
+                    .semantics { liveRegion = LiveRegionMode.Polite }
+            )
         }
 
         Button(

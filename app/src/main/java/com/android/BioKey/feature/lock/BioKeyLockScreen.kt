@@ -27,9 +27,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -63,7 +64,8 @@ fun BioKeyLockScreen(
         modifier = Modifier
             .fillMaxSize()
             .rejectObscuredTouches()
-            .semantics { contentDescription = "BioKey is locked" }
+            // Announced as it appears; the logo already says "BioKey" when moving through it.
+            .semantics { paneTitle = "BioKey is locked" }
             .background(coverWash())
     ) {
 
@@ -76,18 +78,23 @@ fun BioKeyLockScreen(
                 .padding(bottom = 200.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            val status = statusMessage?.takeIf { it.isNotBlank() }
+            val statusStyle = MaterialTheme.typography.bodyMedium
+            // With nothing to say, the status's empty line below is balanced by one above, so the
+            // logo stays in the middle.
+            if (status == null) Spacer(Modifier.height(with(LocalDensity.current) { statusStyle.lineHeight.toDp() }))
             BioKeyLogo(Modifier.size(LOGO_WIDTH, LOGO_HEIGHT))
             // No "is locked" caption: the logo says what is locked; screen readers get it above.
-            if (!statusMessage.isNullOrBlank()) {
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    text = statusMessage,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
-                )
-            }
+            if (status != null) Spacer(Modifier.height(16.dp))
+            // Always there, empty when there's nothing to say: a live region is read out when its
+            // text changes, not when it first appears.
+            Text(
+                text = status.orEmpty(),
+                style = statusStyle,
+                color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+            )
         }
 
         Column(
