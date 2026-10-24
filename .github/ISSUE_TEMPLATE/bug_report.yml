@@ -1,0 +1,93 @@
+name: Bug report
+description: Something in BioKey doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. A security problem (a way to open a locked app without
+        authenticating, say) shouldn't be reported here: see SECURITY.md and email it instead.
+
+        This issue is public. Leave out anything you'd rather keep private.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: As exactly as you can. Which app was locked, and how you opened it (its icon, Recents, a notification, a link).
+      placeholder: |
+        1. Lock an app in BioKey
+        2. ...
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Phone model
+      placeholder: Pixel 9, Galaxy Z Fold7, ...
+    validations:
+      required: true
+
+  - type: input
+    id: android
+    attributes:
+      label: Android version
+      placeholder: Android 16, Android 17 QPR2, One UI 8, ...
+    validations:
+      required: true
+
+  - type: input
+    id: biokey-version
+    attributes:
+      label: BioKey version
+      description: In Android's Settings > Apps > Bio Key, at the bottom of the page.
+      placeholder: "1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: engine
+    attributes:
+      label: How BioKey was working
+      description: BioKey's main screen says "Compatibility mode" when it's using that.
+      options:
+        - Accessibility service
+        - Compatibility mode (usage access and display over other apps)
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-source
+    attributes:
+      label: Where BioKey came from
+      options:
+        - Google Play
+        - Built from source
+        - Another APK
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Diagnostic log (optional)
+      description: |
+        In BioKey's settings, View diagnostic log > Share. It lists your locked apps by package
+        name; remove any lines you'd rather not post.
+      render: text
+
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Screenshots or recordings (BioKey's own screens can't be captured), other app locks or accessibility services on the phone, split screen or a foldable, Advanced Protection on.
