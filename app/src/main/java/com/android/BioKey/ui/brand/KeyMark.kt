@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
+import androidx.core.graphics.withSave
 import androidx.core.graphics.withScale
 import androidx.core.graphics.withTranslation
 import kotlin.math.min
@@ -161,10 +162,10 @@ internal object KeyMark {
             } else {
                 // A whorl: open rings going round, parted where the blade runs down from the centre,
                 // so the key stays clean. The gradient holds still while the rings move through it.
-                val save = save()
-                clipOutRect(CX - BLADE_CLEARANCE, CY + RIDGES.last().first + STROKE, CX + BLADE_CLEARANCE, BOUNDS.bottom)
-                for (i in RINGS.indices) drawArc(RINGS[i], motion.ridgeAngle[i], RING_SWEEPS[i], false, stroke)
-                restoreToCount(save)
+                withSave {
+                    clipOutRect(CX - BLADE_CLEARANCE, CY + RIDGES.last().first + STROKE, CX + BLADE_CLEARANCE, BOUNDS.bottom)
+                    for (i in RINGS.indices) drawArc(RINGS[i], motion.ridgeAngle[i], RING_SWEEPS[i], false, stroke)
+                }
             }
             drawPath(key, stroke)
             for ((i, path) in sparkles.withIndex()) {
