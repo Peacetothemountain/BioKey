@@ -324,7 +324,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         try {
             val key = WindowKey(pkg, root.windowId)
             if (event == null && answeredMomentsAgo(key)) return lastResult
-            val result = judge(root, pkg, isContentEvent, event == null, isWindowStateEvent && eventNamesBioKey, eventNamesBioKey)
+            val result = judge(root, pkg, isContentEvent, isWindowStateEvent && eventNamesBioKey, eventNamesBioKey)
             lastKey = key
             lastCheckAt = SystemClock.elapsedRealtime()
             lastResult = result
@@ -382,7 +382,6 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         root: AccessibilityNodeInfo,
         pkg: String,
         isContentEvent: Boolean,
-        isEventless: Boolean,
         windowTitleNamesBioKey: Boolean,
         eventNamesBioKey: Boolean
     ): Boolean {
@@ -399,20 +398,10 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
             val scan = scanWindowStructure(root, pkg, windowTitleNamesBioKey)
             return scan == Scan.GUARDED || (scan == Scan.NAMES_BIOKEY && hasBioKeyTitle(root, pkg))
         }
-        // So do the looks without an event that follow every burst of them once it settles. A
-        // title the IDs find is one the scan reads too (titles are text, which Android shows to
-        // accessibility services), unless the window is too big to read whole, or the title is
-        // the root itself, which the scan starts below: then the IDs are asked for as well.
-        // A window last found guarded is asked for the IDs first, as at its state event, so a
-        // title an app has hidden from accessibility (which no scan reads) keeps it guarded.
-        if (isEventless && !(lastResult && lastKey == WindowKey(pkg, root.windowId))) {
-            val scan = scanWindowStructure(root, pkg, windowTitleNamesBioKey)
-            val rootNamesBioKey = mentionsBioKey(root.text) || mentionsBioKey(root.contentDescription)
-            return scan == Scan.GUARDED ||
-                ((scan == Scan.NAMES_BIOKEY || scan == Scan.UNFINISHED || rootNamesBioKey) && hasBioKeyTitle(root, pkg))
-        }
-        // A window that has just opened (a state event, once per screen) is asked for the IDs
-        // first: they also find a title an app has hidden from accessibility, which no scan reads.
+        // A window that has just opened (a state event, once per screen), and the looks without an
+        // event that follow a burst of content events, ask for the IDs first: they also find a title
+        // an app has hidden from accessibility, which no scan reads. Self-protection must never miss
+        // a guarded page, so these looks pay the round trips.
         return hasBioKeyTitle(root, pkg) || scanWindowStructure(root, pkg, windowTitleNamesBioKey) == Scan.GUARDED
     }
 
