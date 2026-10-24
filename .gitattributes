@@ -3,3 +3,5 @@
 *.sh text eol=lf
 .githooks/* text eol=lf
 gradlew text eol=lf
+# Engine traces are read line by line, tab-separated: the same bytes on every checkout.
+*.trace text eol=lf
