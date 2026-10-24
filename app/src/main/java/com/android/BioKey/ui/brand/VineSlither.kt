@@ -116,7 +116,9 @@ half4 main(float2 p) {
     private fun wave(onReady: (() -> Unit)?): Wave? {
         val content = vines.content ?: return null
         val w = wave ?: run {
-            if (waveFailed) return null
+            // On its way: a moving logo draws every frame, so it is picked up once there, with no
+            // need to be told each frame.
+            if (waveFailed || (onReady != null && LogoArt.isFieldPreparing())) return null
             val field = LogoArt.field(resources, onReady)
             if (field == null) {
                 // Decorative: without the field the vines just hold still.
