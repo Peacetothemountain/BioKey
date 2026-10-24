@@ -2,6 +2,14 @@
 
 BioKey's releases, newest first. The version is the `versionName` in `app/build.gradle.kts`.
 
+## 1.0.1 (24 October 2026)
+
+- The default re-lock delay in Settings now applies to apps in profiles too. Profiles follow it
+  unless you give one its own delay (its re-lock sheet has "Same as Settings"). Before, built-in
+  profiles kept their own delays (immediately, or 5 minutes for Work), and as auto-sort files most
+  apps into them, changing the default did almost nothing.
+- The search bar no longer slides under the status bar when you scroll the app list.
+
 ## 1.0 (24 October 2026)
 
 The first release on Google Play, as `com.nbdesigns.biokey`. Android 12 and later.
