@@ -76,6 +76,18 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         )
 
         private const val CONTENT_CHECK_INTERVAL_MS = 120L
+
+        /**
+         * The Play Store redraws all the time (banners, carousels, download progress), and each
+         * look is a round trip run on its UI thread, so its pages are read less often. Its
+         * dialogs, uninstalling among them, open with a state event, which is always read at once.
+         */
+        private const val PLAY_STORE_CHECK_INTERVAL_MS = 500L
+
+        /** How long [pkg]'s last answer stands for a burst of content events. */
+        internal fun contentCheckIntervalMs(pkg: String): Long =
+            if (pkg == PLAY_STORE_PKG) PLAY_STORE_CHECK_INTERVAL_MS else CONTENT_CHECK_INTERVAL_MS
+
         private const val MAX_NODES_SCANNED = 400
 
         /** A host window that can't be read yet (it is still opening) is looked at again this often, this many times. */
@@ -174,6 +186,20 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         }
 
         /**
+         * The [labels] worth a text search: Android's finds any text that contains the label,
+         * ignoring case, so a label that contains a shorter one ("Bio Key App Lock Service",
+         * "Bio Key") finds nothing the shorter one doesn't. Only exact containment counts, so no
+         * language's rules for upper and lower case can make the two searches differ.
+         */
+        internal fun textSearchLabels(labels: Collection<String>): List<String> {
+            val kept = ArrayList<String>()
+            for (label in labels.filter { it.isNotBlank() }.sortedBy { it.length }) {
+                if (kept.none { label.contains(it) }) kept += label
+            }
+            return kept
+        }
+
+        /**
          * The [ids] a [host]'s window can actually contain: its own, the framework's and AndroidX's.
          * Asking a window for another app's IDs is a wasted round trip to that app. Google's builds
          * of AOSP apps (com.google.android.permissioncontroller) keep AOSP's resource package.
@@ -201,6 +227,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
     ).filter { it.isNotBlank() }.distinct()
 
     private val names = namePattern(labels)
+    private val searchLabels = textSearchLabels(labels)
 
     /**
      * The opening of BioKey's own accessibility description, shown only on its Accessibility
@@ -297,7 +324,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         try {
             val key = WindowKey(pkg, root.windowId)
             if (event == null && answeredMomentsAgo(key)) return lastResult
-            val result = judge(root, pkg, isContentEvent, isWindowStateEvent && eventNamesBioKey, eventNamesBioKey)
+            val result = judge(root, pkg, isContentEvent, event == null, isWindowStateEvent && eventNamesBioKey, eventNamesBioKey)
             lastKey = key
             lastCheckAt = SystemClock.elapsedRealtime()
             lastResult = result
@@ -308,14 +335,15 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
     }
 
     /**
-     * [key]'s window was read less than [CONTENT_CHECK_INTERVAL_MS] ago: its answer stands, and
+     * [key]'s window was read less than [contentCheckIntervalMs] ago: its answer stands, and
      * another look is scheduled for when the interval is over, so the last state is always read.
      */
     private fun answeredMomentsAgo(key: WindowKey): Boolean {
         val later = recheck ?: return false
         val elapsed = SystemClock.elapsedRealtime() - lastCheckAt
-        if (key != lastKey || elapsed >= CONTENT_CHECK_INTERVAL_MS) return false
-        later(CONTENT_CHECK_INTERVAL_MS - elapsed + 20L)
+        val interval = contentCheckIntervalMs(key.pkg)
+        if (key != lastKey || elapsed >= interval) return false
+        later(interval - elapsed + 20L)
         return true
     }
 
@@ -354,6 +382,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         root: AccessibilityNodeInfo,
         pkg: String,
         isContentEvent: Boolean,
+        isEventless: Boolean,
         windowTitleNamesBioKey: Boolean,
         eventNamesBioKey: Boolean
     ): Boolean {
@@ -362,13 +391,28 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
             return eventNamesBioKey || root.hasNodeNamingBioKey()
         }
 
-        // Steps 2 and 3 cost a round trip to the host per ID, and content events come many times a
-        // second (the Play Store redraws all the time). For those the scan goes first, and the IDs
-        // are only asked for when the window names BioKey somewhere.
+        // Steps 2 and 3 cost a round trip to the host per ID (up to 9 in Settings), run on its UI
+        // thread, and content events come many times a second (the Play Store redraws all the
+        // time). For those the scan goes first, and the IDs are only asked for when the window
+        // names BioKey somewhere.
         if (isContentEvent) {
             val scan = scanWindowStructure(root, pkg, windowTitleNamesBioKey)
             return scan == Scan.GUARDED || (scan == Scan.NAMES_BIOKEY && hasBioKeyTitle(root, pkg))
         }
+        // So do the looks without an event that follow every burst of them once it settles. A
+        // title the IDs find is one the scan reads too (titles are text, which Android shows to
+        // accessibility services), unless the window is too big to read whole, or the title is
+        // the root itself, which the scan starts below: then the IDs are asked for as well.
+        // A window last found guarded is asked for the IDs first, as at its state event, so a
+        // title an app has hidden from accessibility (which no scan reads) keeps it guarded.
+        if (isEventless && !(lastResult && lastKey == WindowKey(pkg, root.windowId))) {
+            val scan = scanWindowStructure(root, pkg, windowTitleNamesBioKey)
+            val rootNamesBioKey = mentionsBioKey(root.text) || mentionsBioKey(root.contentDescription)
+            return scan == Scan.GUARDED ||
+                ((scan == Scan.NAMES_BIOKEY || scan == Scan.UNFINISHED || rootNamesBioKey) && hasBioKeyTitle(root, pkg))
+        }
+        // A window that has just opened (a state event, once per screen) is asked for the IDs
+        // first: they also find a title an app has hidden from accessibility, which no scan reads.
         return hasBioKeyTitle(root, pkg) || scanWindowStructure(root, pkg, windowTitleNamesBioKey) == Scan.GUARDED
     }
 
@@ -399,7 +443,8 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         return false
     }
 
-    private enum class Scan { GUARDED, NAMES_BIOKEY, OTHER }
+    /** What a scan found. [UNFINISHED]: nothing named BioKey, but the window was too big to read whole. */
+    private enum class Scan { GUARDED, NAMES_BIOKEY, OTHER, UNFINISHED }
 
     /**
      * 4. Single-pass structural scan of the window for Compose SPA App Info, Accessibility detail
@@ -410,9 +455,23 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         // only the page's structure counts, never a single sentence that names BioKey.
         val trustSentences = pkg != PLAY_STORE_PKG
         val queue = ArrayDeque<AccessibilityNodeInfo>()
-        for (i in 0 until root.childCount) root.getChild(i)?.let(queue::addLast)
-
         var scanned = 0
+        var unfinished = false
+
+        // Each child is a round trip to the host, so only those that will be read are fetched:
+        // no more than MAX_NODES_SCANNED in all, counting those already waiting. The nodes read
+        // are the same first ones as when every child was fetched.
+        fun queueChildrenOf(node: AccessibilityNodeInfo) {
+            for (i in 0 until node.childCount) {
+                if (scanned + queue.size >= MAX_NODES_SCANNED) {
+                    unfinished = true
+                    return
+                }
+                node.getChild(i)?.let(queue::addLast)
+            }
+        }
+        queueChildrenOf(root)
+
         var mentionsBioKeyNode = windowTitleNamesBioKey
         var hasExactPackageName = false
         var hasVersionHeader = false
@@ -462,14 +521,14 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
                     if (node.isCheckable || cls.contains("Switch") || cls.contains("CheckBox")) {
                         hasToggle = true
                     }
-                    for (i in 0 until node.childCount) node.getChild(i)?.let(queue::addLast)
+                    queueChildrenOf(node)
                 }
             }
             node.release()
         }
 
         if (matchedDirectBioKeyControl) return Scan.GUARDED
-        if (!mentionsBioKeyNode) return Scan.OTHER
+        if (!mentionsBioKeyNode) return if (unfinished) Scan.UNFINISHED else Scan.OTHER
 
         // BioKey App Info / Storage page (XML or Android 14-17 Compose SpaActivity):
         // Names BioKey AND has an exact App Info action ("Force stop", "Uninstall", "Clear storage", etc.)
@@ -508,7 +567,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         !text.isNullOrEmpty() && names.containsMatchIn(text)
 
     /** Android's text search matches parts of words ("Bio Keyboard"): keep whole-name matches only. */
-    private fun AccessibilityNodeInfo.hasNodeNamingBioKey(): Boolean = labels.any { label ->
+    private fun AccessibilityNodeInfo.hasNodeNamingBioKey(): Boolean = searchLabels.any { label ->
         val nodes = findAccessibilityNodeInfosByText(label).orEmpty()
         val found = nodes.any { mentionsBioKey(it.text) || mentionsBioKey(it.contentDescription) }
         nodes.forEach { it.release() }

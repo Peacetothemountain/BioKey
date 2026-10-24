@@ -83,6 +83,27 @@ class SelfProtectionRulesTest {
     }
 
     @Test
+    fun installersAreOnlySearchedForNamesNoShorterOneContains() {
+        val labels = listOf("Bio Key", "BioKey", "com.android.BioKey", "Bio Key App Lock Service", "Bio Key notification shield")
+        // Android's text search finds parts of texts: "Bio Key" already finds the service's name.
+        assertEquals(listOf("BioKey", "Bio Key"), SelfProtectionDetector.textSearchLabels(labels))
+        // A name that is no part of another is kept, wherever it comes in the list.
+        assertEquals(
+            listOf("Clé Bio", "Bio Key"),
+            SelfProtectionDetector.textSearchLabels(listOf("Clé Bio", "Bio Key", "Service Bio Key"))
+        )
+        // Only exact containment counts: a case-folded match is searched for on its own.
+        assertEquals(listOf("BioKey", "com.android.biokey"), SelfProtectionDetector.textSearchLabels(listOf("BioKey", "com.android.biokey")))
+    }
+
+    @Test
+    fun thePlayStoreIsReadLessOftenThanSettings() {
+        assertEquals(500L, SelfProtectionDetector.contentCheckIntervalMs("com.android.vending"))
+        assertEquals(120L, SelfProtectionDetector.contentCheckIntervalMs("com.android.settings"))
+        assertEquals(120L, SelfProtectionDetector.contentCheckIntervalMs("com.google.android.packageinstaller"))
+    }
+
+    @Test
     fun anAccessibilityShortcutForBioKeyIsFound() {
         val pkg = "com.android.BioKey"
         val cls = "com.android.BioKey.feature.lock.BioKeyAccessibilityService"

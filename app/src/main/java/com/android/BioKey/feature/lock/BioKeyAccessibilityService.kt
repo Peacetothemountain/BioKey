@@ -503,7 +503,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 return
             }
             if (type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && contentForRecents && eventPkg != null && isLauncher(eventPkg)) {
-                recents.onLauncherChanged(eventPkg)
+                recents.onLauncherChanged(eventPkg, event.contentChangeTypes)
             }
             if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
                 onWindowsChanged(event)

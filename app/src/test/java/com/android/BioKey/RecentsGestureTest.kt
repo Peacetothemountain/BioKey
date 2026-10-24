@@ -1,6 +1,7 @@
 package com.android.BioKey
 
 import android.graphics.Rect
+import android.view.accessibility.AccessibilityEvent
 import com.android.BioKey.feature.lock.RecentsWatcher
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -12,7 +13,8 @@ import org.robolectric.annotation.Config
 
 /**
  * Telling a Recents card being closed from one being scrolled away or opened, with the card
- * sizes measured on a Pixel (1344 x 2992 screen, cards about 1100 x 2100).
+ * sizes measured on a Pixel (1344 x 2992 screen, cards about 1100 x 2100). Also how seldom the
+ * launcher is asked: each look is a round trip run on its UI thread.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -54,5 +56,78 @@ class RecentsGestureTest {
         assertEquals(RecentsWatcher.HOME_SCAN_INTERVAL_MS - 100, RecentsWatcher.scanDelayMs(sinceLastScanMs = 100, lastFoundRecents = false))
         // ...and never sooner than a burst takes to settle.
         assertEquals(RecentsWatcher.SETTLE_MS, RecentsWatcher.scanDelayMs(sinceLastScanMs = 10_000, lastFoundRecents = false))
+    }
+
+    @Test
+    fun aWidgetRewordingItselfOnTheHomeScreenIsNotLookedAt() {
+        val text = AccessibilityEvent.CONTENT_CHANGE_TYPE_TEXT
+        val description = AccessibilityEvent.CONTENT_CHANGE_TYPE_CONTENT_DESCRIPTION
+        val state = AccessibilityEvent.CONTENT_CHANGE_TYPE_STATE_DESCRIPTION
+        // A clock, a song title, a weather reading.
+        assertFalse(RecentsWatcher.changeNeedsScan(text, lastFoundRecents = false))
+        assertFalse(RecentsWatcher.changeNeedsScan(text or description or state, lastFoundRecents = false))
+        // Views coming and going could be Recents opening.
+        assertTrue(RecentsWatcher.changeNeedsScan(AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE, lastFoundRecents = false))
+        assertTrue(RecentsWatcher.changeNeedsScan(text or AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE, lastFoundRecents = false))
+        assertTrue(RecentsWatcher.changeNeedsScan(AccessibilityEvent.CONTENT_CHANGE_TYPE_PANE_APPEARED, lastFoundRecents = false))
+        // A change that doesn't say what changed, or one not known yet, is always looked at.
+        assertTrue(RecentsWatcher.changeNeedsScan(AccessibilityEvent.CONTENT_CHANGE_TYPE_UNDEFINED, lastFoundRecents = false))
+        assertTrue(RecentsWatcher.changeNeedsScan(1 shl 30, lastFoundRecents = false))
+        // In Recents every change counts.
+        assertTrue(RecentsWatcher.changeNeedsScan(text, lastFoundRecents = true))
+    }
+
+    /** A launcher whose cards are under [cardsById]; [asked] records each ID asked for. */
+    private class Launcher(val cardsById: Map<String, Map<String, Int>>) {
+        val asked = mutableListOf<String>()
+        fun read(id: String): Map<String, Int> = cardsById[id].orEmpty().also { asked += id }
+    }
+
+    @Test
+    fun recentsIsReadWithTheCardIdsThatNamedCardsLastTime() {
+        val launcher = Launcher(mapOf("task_thumbnail" to mapOf("Chat" to 1, "Bank" to 2)))
+        // The first look asks for every ID, and learns which one names cards.
+        val first = RecentsWatcher.readCards(null, emptySet(), launcher::read)
+        assertEquals(RecentsWatcher.CARD_IDS, launcher.asked)
+        assertEquals(setOf("task_thumbnail"), first.ids)
+        assertTrue(first.readEveryId)
+        // The next asks only for that one.
+        launcher.asked.clear()
+        val next = RecentsWatcher.readCards(first.ids, first.cards.keys, launcher::read)
+        assertEquals(listOf("task_thumbnail"), launcher.asked)
+        assertEquals(mapOf("Chat" to 1, "Bank" to 2), next.cards)
+        assertFalse(next.readEveryId)
+    }
+
+    @Test
+    fun aCardMissingFromTheRememberedIdsIsLookedForUnderEveryId() {
+        // The app Recents was opened from turned from a live tile into a plain card.
+        val launcher = Launcher(
+            mapOf(
+                "task_thumbnail" to mapOf("Bank" to 2),
+                "snapshot" to mapOf("Chat" to 1)
+            )
+        )
+        val read = RecentsWatcher.readCards(setOf("task_thumbnail"), setOf("Chat", "Bank"), launcher::read)
+        assertEquals(mapOf("Chat" to 1, "Bank" to 2), read.cards)
+        assertEquals(setOf("snapshot", "task_thumbnail"), read.ids)
+        assertTrue(read.readEveryId)
+        // Remembered IDs that name nothing any more: every ID too.
+        launcher.asked.clear()
+        val empty = RecentsWatcher.readCards(setOf("task_thumbnail_live_tile"), emptySet(), launcher::read)
+        assertEquals(RecentsWatcher.CARD_IDS.toSet(), launcher.asked.toSet())
+        assertEquals(mapOf("Chat" to 1, "Bank" to 2), empty.cards)
+    }
+
+    @Test
+    fun aCardNamedUnderTwoIdsKeepsTheFirstIdsBounds() {
+        val launcher = Launcher(
+            mapOf(
+                "task_thumbnail" to mapOf("Chat" to 1),
+                "task_thumbnail_live_tile" to mapOf("Chat" to 9)
+            )
+        )
+        val read = RecentsWatcher.readCards(setOf("task_thumbnail_live_tile"), setOf("Chat", "Bank"), launcher::read)
+        assertEquals(mapOf("Chat" to 1), read.cards)
     }
 }
