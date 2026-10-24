@@ -305,23 +305,28 @@ def set_up(emu):
     time.sleep(1)
     emu.sh("input keyevent KEYCODE_BACK")  # The keyboard goes; taps reach the list.
     time.sleep(1.5)
-    locked = set()
-    for _ in range(12):
-        nodes = emu.nodes()
-        switches = [n for n in nodes if re.fullmatch(r"Lock Gantlet \w+", emu.label(n))]
-        for switch in switches:
-            app = emu.label(switch).split()[-1].lower()
-            if switch.get("checked") == "true":
-                locked.add(app)
-        todo = [s for s in switches if s.get("checked") != "true"]
-        if not todo and len(locked) >= len(TARGETS):
+    # Which targets are locked is read from BioKey's own settings (the debug build lets run-as read
+    # them): a switch's state doesn't always reach uiautomator (Android 17 reports BioKey's as not
+    # checkable), and tapping by what it says would switch the same lock on and off.
+    def locked_now():
+        prefs = emu.sh(f"run-as {pkg} cat shared_prefs/biokey_vault.xml", check=False)
+        return {t for t in TARGETS if f"com.biokey.gantlet.{t}<" in prefs}
+
+    locked = locked_now()
+    for _ in range(20):
+        if len(locked) >= len(TARGETS):
             break
+        switches = [n for n in emu.nodes() if re.fullmatch(r"Lock Gantlet \w+", emu.label(n))]
+        todo = [s for s in switches if emu.label(s).split()[-1].lower() not in locked]
+        # A row just below the screen's edge is listed with no size: scrolled to, not tapped at 0,0.
+        todo = [s for s in todo if len(set(re.findall(r"\d+", s.get("bounds", "")))) > 1 and emu.center(s) != (0, 0)]
         if todo:
             emu.tap(todo[0])
             time.sleep(1.5)
         else:
             emu.sh("input swipe 500 1600 500 900 400")
             time.sleep(1.5)
+        locked = locked_now()
     if len(locked) < len(TARGETS):
         raise RuntimeError(f"locked only {sorted(locked)}")
     emu.sh("input keyevent KEYCODE_HOME")
