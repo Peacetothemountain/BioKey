@@ -3,12 +3,10 @@ package com.android.BioKey.ui.brand
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
-import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
-import android.graphics.SweepGradient
 import androidx.core.graphics.withScale
 import androidx.core.graphics.withTranslation
 import kotlin.math.min
@@ -94,14 +92,14 @@ internal object KeyMark {
     val SPARKLE_COUNT = SPARKLES.size
 
     /**
-     * How the mark moves at one moment. Its lines never move: each ridge's colour sweeps round the
-     * fingerprint's centre, turned to [ridgeSweep] degrees (the key keeps its still gradient). Each
-     * sparkle is scaled by [sparkleScale] about its centre, shifted by [sparkleDx], [sparkleDy] (in
-     * the icon's units) and faded to [sparkleAlpha]. Updated in place: nothing is allocated per
-     * frame.
+     * How the mark moves at one moment. Moving, the print is a whorl: each ridge an open ring round
+     * its centre, its gap turned to [ridgeAngle] degrees, so the rings go round and chase each other
+     * while the key holds still through the middle. Each sparkle is scaled by [sparkleScale] about
+     * its centre, shifted by [sparkleDx], [sparkleDy] (in the icon's units) and faded to
+     * [sparkleAlpha]. Updated in place: nothing is allocated per frame.
      */
     class Motion {
-        val ridgeSweep = FloatArray(RIDGE_COUNT)
+        val ridgeAngle = FloatArray(RIDGE_COUNT)
         val sparkleScale = FloatArray(SPARKLE_COUNT) { 1f }
         val sparkleDx = FloatArray(SPARKLE_COUNT)
         val sparkleDy = FloatArray(SPARKLE_COUNT)
@@ -118,11 +116,17 @@ internal object KeyMark {
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private var shaderFor: Pair<Int, Int>? = null
 
-    /** The ridges' strokes while they swirl: a colour sweep round the print's centre, turned per ridge. */
-    private val swirl = Paint(stroke)
-    private var swirlShader: SweepGradient? = null
-    private var swirlFor: Pair<Int, Int>? = null
-    private val swirlTurn = Matrix()
+    /** Each ridge as a ring round the print's centre, for the whorl ([Motion]). */
+    private val RINGS = RIDGES.map { (r, _, _) -> RectF(CX - r, CY - r, CX + r, CY + r) }
+
+    /**
+     * How much of a full circle each ring is, outermost first: open, like a whorl print's ridges,
+     * each by a different amount so their gaps never line up.
+     */
+    private val RING_SWEEPS = floatArrayOf(292f, 262f, 278f, 246f, 230f)
+
+    /** Where the rings part for the blade, from the print's centre down (half its width). */
+    private const val BLADE_CLEARANCE = STROKE * 1.35f
 
     /**
      * Draws the mark fitted into [width] x [height] at [left], [top] (centred, its proportions
@@ -155,13 +159,12 @@ internal object KeyMark {
             if (motion == null) {
                 for (ridge in ridges) drawPath(ridge, stroke)
             } else {
-                // The lines stay where they are; their colour swirls round the print's centre.
-                val shader = swirlShaderFor(primary, tertiary)
-                for ((i, ridge) in ridges.withIndex()) {
-                    swirlTurn.setRotate(motion.ridgeSweep[i], CX, CY)
-                    shader.setLocalMatrix(swirlTurn)
-                    drawPath(ridge, swirl)
-                }
+                // A whorl: open rings going round, parted where the blade runs down from the centre,
+                // so the key stays clean. The gradient holds still while the rings move through it.
+                val save = save()
+                clipOutRect(CX - BLADE_CLEARANCE, CY + RIDGES.last().first + STROKE, CX + BLADE_CLEARANCE, BOUNDS.bottom)
+                for (i in RINGS.indices) drawArc(RINGS[i], motion.ridgeAngle[i], RING_SWEEPS[i], false, stroke)
+                restoreToCount(save)
             }
             drawPath(key, stroke)
             for ((i, path) in sparkles.withIndex()) {
@@ -181,16 +184,6 @@ internal object KeyMark {
                     withScale(motion.sparkleScale[i], motion.sparkleScale[i], cx, cy) { drawPath(path, fill) }
                 }
             }
-        }
-    }
-
-    /** The sweep the ridges swirl in: primary, round to tertiary, and back, so it has no seam. */
-    private fun swirlShaderFor(primary: Int, tertiary: Int): SweepGradient {
-        swirlShader?.takeIf { swirlFor == primary to tertiary }?.let { return it }
-        return SweepGradient(CX, CY, intArrayOf(primary, tertiary, primary), null).also {
-            swirlShader = it
-            swirlFor = primary to tertiary
-            swirl.shader = it
         }
     }
 

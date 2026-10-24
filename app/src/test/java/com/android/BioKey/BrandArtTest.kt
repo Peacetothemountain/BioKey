@@ -91,18 +91,19 @@ class BrandArtTest {
     }
 
     @Test
-    fun theHeadersColourSwirlsSmoothlyQuickestInTheMiddle() {
+    fun theHeadersRingsGoRoundSmoothlyEachAtItsOwnPace() {
         val a = KeyMark.Motion().apply { at(1.234f) }
         val b = KeyMark.Motion().apply { at(1.234f + 0.016f) }
-        // One frame later: a small step for every ridge's colour and every sparkle, never a jump.
-        for (i in a.ridgeSweep.indices) {
-            val step = (b.ridgeSweep[i] - a.ridgeSweep[i] + 360f) % 360f
-            assertTrue("ridge $i stepped $step", step > 0f && step < 3f)
+        // One frame later: a small step round for every ring and every sparkle, never a jump.
+        for (i in a.ridgeAngle.indices) {
+            val step = (b.ridgeAngle[i] - a.ridgeAngle[i] + 360f) % 360f
+            assertTrue("ring $i stepped $step", step > 0f && step < 2f)
         }
         for (k in a.sparkleScale.indices) assertTrue("sparkle $k", abs(a.sparkleScale[k] - b.sparkleScale[k]) < 0.05f)
-        // The inner ridges' colour goes round quicker than the outer ones': it spirals in.
-        val later = KeyMark.Motion().apply { at(1f) }
-        assertTrue(later.ridgeSweep.last() > later.ridgeSweep.first() * 2)
+        // Every ring at its own pace: their gaps never stay lined up.
+        val later = KeyMark.Motion().apply { at(5f) }
+        val steps = later.ridgeAngle.indices.map { (later.ridgeAngle[it] - KeyMark.Motion().apply { at(0f) }.ridgeAngle[it] + 360f) % 360f }
+        assertEquals(steps.size, steps.map { it.toInt() }.toSet().size)
     }
 
     @Test
