@@ -5,6 +5,11 @@
 # engines (accessibility events, compatibility mode, the cover and what it draws with, the lock
 # screen), the notification shield, and the session and settings state they read on every
 # event. Compose and the other libraries bring their own profiles.
+#
+# Written by hand, with wildcards. The generator (baselineprofile/, ./gradlew
+# :app:generateBaselineProfile) records the methods that really run instead, into
+# app/src/release/generated/baselineProfiles/, and AGP merges the two. This file can go once a
+# generated profile is checked in.
 
 # Process start.
 HSPLcom/android/BioKey/BioKeyApplication**->**(**)**

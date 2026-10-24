@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.androidx.baselineprofile)
 }
 
 val releaseKeystore = Properties().apply {
@@ -134,6 +135,8 @@ dependencies {
     // Installs the baseline profile (src/main/baseline-prof.txt) on installs that don't come from
     // Google Play, which installs it itself.
     implementation(libs.androidx.profileinstaller)
+    // Generates the baseline and startup profiles, by hand: ./gradlew :app:generateBaselineProfile
+    baselineProfile(project(":baselineprofile"))
 
     // Screenshot tests: render screens on the JVM (Robolectric + Roborazzi) for design review.
     testImplementation(libs.junit)
@@ -147,5 +150,13 @@ dependencies {
 
 kotlin {
     jvmToolchain(17)
+}
+
+// The baseline profile plugin's build types (nonMinifiedRelease, benchmarkRelease) are copies of
+// release that only ever go to a test device or emulator: signed with the debug key, as the debug
+// build the device was set up with is, they install over it and keep its settings and locked apps.
+androidComponents {
+    onVariants(selector().withBuildType("nonMinifiedRelease")) { it.signingConfig.setConfig(android.signingConfigs.getByName("debug")) }
+    onVariants(selector().withBuildType("benchmarkRelease")) { it.signingConfig.setConfig(android.signingConfigs.getByName("debug")) }
 }
 
