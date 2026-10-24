@@ -68,7 +68,6 @@ class EngineReplayTest {
 
     @Before
     fun start() {
-        EngineTrace.enabled = true
         EngineTrace.clear()
         replay = EngineReplay(context)
     }

@@ -37,11 +37,11 @@ object EngineTrace {
     private const val WRITE_DELAY_MS = 2_000L
     const val HEADER = "# BioKey engine trace v1"
 
-    /** Recording at all: debug builds, unless a test turns it off. */
-    @Volatile var enabled: Boolean = BuildConfig.DEBUG
+    /** Recording at all: debug builds only. A constant, so R8 drops every record from a release build. */
+    val enabled: Boolean get() = BuildConfig.DEBUG
 
     private val lines = ArrayDeque<String>()
-    private val io = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "biokey-engine-trace").apply { isDaemon = true } }
+    private val io by lazy { Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "biokey-engine-trace").apply { isDaemon = true } } }
     @Volatile private var file: File? = null
     @Volatile private var writeQueued = false
     /** Lines recorded since the trace started, and how many of them are in the file (under [lines]' lock). */
