@@ -7,6 +7,7 @@ import android.hardware.biometrics.BiometricPrompt
 import android.os.CancellationSignal
 import android.util.Log
 import com.android.BioKey.R
+import com.android.BioKey.core.diagnostics.LatencyMarks
 import java.lang.ref.WeakReference
 
 /**
@@ -116,6 +117,7 @@ class SecurityEngine private constructor() {
                 .setConfirmationRequired(false)
                 .build()
                 .authenticate(attempt.cancel, activity.mainExecutor, callback)
+            LatencyMarks.mark("prompt", packageName)
         } catch (e: Exception) {
             Log.e(TAG, "Failed starting BiometricPrompt: ${e.javaClass.simpleName}")
             if (active === attempt) active = null

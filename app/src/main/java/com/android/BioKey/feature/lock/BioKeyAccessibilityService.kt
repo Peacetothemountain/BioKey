@@ -27,6 +27,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.util.forEach
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.diagnostics.LatencyMarks
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
@@ -522,6 +523,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 val target = resolveForegroundPackage(event)
                 if (target != null && !isSystemOrOverlay(target, eventCls) && needsCover(target)) {
                     exitTransition = isExitTransition(target)
+                    if (exitTransition == false && isPhoneScreen(display)) LatencyMarks.trigger("accessibility", target, event.eventTime)
                     if (exitTransition == false && isPhoneScreen(display)) shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
                 }
                 if (event.windowId >= 0) windowPackages[event.windowId] = target ?: eventPkg
@@ -652,6 +654,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             LockStateTracker.clearAbandoned(target)
             expectedLaunch = target to SystemClock.elapsedRealtime()
             DiagnosticLog.log("Tap on $target: covering it before it opens")
+            LatencyMarks.trigger("accessibility", target, event.eventTime)
             shield.showPredicted(
                 targetPackage = target,
                 waitMs = PREDICTION_WAIT_MS,

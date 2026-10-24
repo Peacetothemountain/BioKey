@@ -15,6 +15,7 @@ import android.window.OnBackInvokedDispatcher
 import androidx.annotation.RequiresApi
 import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.diagnostics.LatencyMarks
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
 
@@ -330,6 +331,7 @@ class InstantShieldOverlay(
             return false
         }
         isShowing = true
+        LatencyMarks.markOnNextDraw(cover, "cover", targetPackage)
         activeInstance = this
         return true
     }
