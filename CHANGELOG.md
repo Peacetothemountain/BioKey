@@ -2,6 +2,14 @@
 
 BioKey's releases, newest first. The version is the `versionName` in `app/build.gradle.kts`.
 
+## 1.0.2 (26 October 2026)
+
+- An app in a profile that's switched off now shows its lock switch off (and greyed out), and is
+  listed under "Not locked". Before, its switch still showed on although the app wasn't locked.
+  Turning the profile back on brings back each app's own choice, as before.
+- Deleting a profile switches its apps off, with an Undo that brings the profile back. Before, they
+  kept their switches, so deleting a profile that was off locked all its apps.
+
 ## 1.0.1 (24 October 2026)
 
 - The default re-lock delay in Settings now applies to apps in profiles too. Profiles follow it
