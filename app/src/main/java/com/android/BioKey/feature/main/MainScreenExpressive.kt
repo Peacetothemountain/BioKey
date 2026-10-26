@@ -298,7 +298,8 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                 (searchQuery.isBlank() || app.label.contains(searchQuery.trim(), ignoreCase = true))
         }
     }
-    val (lockedShown, unlockedShown) = remember(matching, selectedApps, profiles) { matching.partition { isOn(it.packageName) } }
+    // Grouped by what actually happens: an app in a profile that's off is under "Not locked".
+    val (lockedShown, unlockedShown) = remember(matching, lockedApps, profiles) { matching.partition { isLocked(it.packageName) } }
     val appCountByProfile = remember(installedApps, profiles) {
         installedApps.mapNotNull { profileOf(it.packageName)?.id }.groupingBy { it }.eachCount()
     }
@@ -329,7 +330,8 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
      */
     fun LazyListScope.appGroup(apps: List<AppItem>, showProfile: Boolean) {
         itemsIndexed(apps, key = { _, app -> app.packageName }, contentType = { _, _ -> CONTENT_APP }) { i, app ->
-            val profile = if (showProfile) profileOf(app.packageName) else null
+            // An app whose profile is off always says so: it's why its switch is off.
+            val profile = profileOf(app.packageName)?.takeIf { showProfile || !it.enabled }
             // The lock stays on: it still hides the app's notifications, and protects it again as
             // soon as the accessibility engine is back.
             val unwatched = isUnwatched(app)
@@ -352,7 +354,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                     homeScreen && isOn(app.packageName) -> MaterialTheme.colorScheme.error
                     homeScreen -> MaterialTheme.colorScheme.onSurfaceVariant
                     unwatched -> MaterialTheme.colorScheme.error
-                    profile != null -> MaterialTheme.colorScheme.primary
+                    profile != null && profile.enabled -> MaterialTheme.colorScheme.primary
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
                 leading = { AppIcon(app) },
@@ -363,11 +365,13 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                     .padding(top = if (i == 0) 0.dp else GroupGap)
             ) {
                 // Its own TalkBack stop, so it says which app it locks. A home screen's can only
-                // be turned off.
+                // be turned off. While its profile is off it shows off and can't be changed (the
+                // subtitle says why); its own choice comes back with the profile.
+                val profileOff = profile?.enabled == false
                 Switch(
-                    checked = isOn(app.packageName),
+                    checked = isLocked(app.packageName),
                     onCheckedChange = { toggleLock(app, it) },
-                    enabled = !homeScreen || isOn(app.packageName),
+                    enabled = !profileOff && (!homeScreen || isOn(app.packageName)),
                     modifier = Modifier.semantics { contentDescription = "Lock ${app.label}" }
                 )
             }
@@ -641,10 +645,14 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
             },
             onDelete = {
                 val name = currentProfile.name
-                vault.deleteProfile(currentProfile.id)
+                val deleted = vault.deleteProfile(currentProfile.id)
                 showEditProfile = false
                 filter = FILTER_ALL
-                BioKeyMessages.show("Deleted $name. Its apps keep their own lock switches.", Icons.Default.Delete)
+                if (deleted != null) {
+                    BioKeyMessages.show("Deleted $name · its apps aren't locked", Icons.Default.Delete, actionLabel = "Undo") {
+                        vault.restoreDeletedProfile(deleted)
+                    }
+                }
             }
         )
     }

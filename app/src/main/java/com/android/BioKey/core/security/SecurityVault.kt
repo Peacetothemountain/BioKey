@@ -35,7 +35,7 @@ import org.json.JSONObject
  * state and feature switches.
  *
  * Invariants, kept by [mutate]:
- * - every app in a profile is also in [lockedAppsFlow];
+ * - an app is in [lockedAppsFlow] when it's in [selectedAppsFlow] and its profile, if any, is on;
  * - an app is in at most one profile;
  * - Google Password Manager's two package names always travel together.
  *
@@ -301,16 +301,36 @@ class SecurityVault private constructor(private val context: Context) {
         mutate { _, profiles -> profiles.update(profileId) { it.copy(timeoutMode = timeoutMode) } }
     }
 
+    /** A deleted profile, where it was in the list, and which of its apps were switched on: what an undo needs. */
+    class DeletedProfile internal constructor(val profile: SecurityProfile, val index: Int, val switchedOn: Set<String>)
+
     /**
-     * Deletes a profile. Its apps keep their own switches and use the default re-lock delay, and
-     * auto-sort leaves them alone as if each had been taken out by hand: it would otherwise file
-     * them straight into a built-in profile and switch their locks on.
+     * Deletes a profile and switches its apps off: they go with it. Auto-sort leaves them alone as
+     * if each had been taken out by hand: it would otherwise file them straight into a built-in
+     * profile and switch their locks back on. Returns what [restoreDeletedProfile] needs, or null
+     * if there was no such profile.
      */
-    fun deleteProfile(profileId: String) {
-        mutate { _, profiles ->
-            val removed = profiles.filter { it.id == profileId }.flatMap { it.packages }
-            profiles.removeAll { it.id == profileId }
-            autoSortExcluded = autoSortExcluded + removed
+    fun deleteProfile(profileId: String): DeletedProfile? {
+        var deleted: DeletedProfile? = null
+        mutate { selected, profiles ->
+            val index = profiles.indexOfFirst { it.id == profileId }
+            if (index < 0) return@mutate
+            val profile = profiles.removeAt(index)
+            deleted = DeletedProfile(profile, index, profile.packages.filterTo(HashSet()) { it in selected })
+            selected -= profile.packages
+            autoSortExcluded = autoSortExcluded + profile.packages
+        }
+        return deleted
+    }
+
+    /** Undoes [deleteProfile]: the profile is back where it was, with its apps and their switches. */
+    fun restoreDeletedProfile(deleted: DeletedProfile) {
+        mutate { selected, profiles ->
+            if (profiles.any { it.id == deleted.profile.id }) return@mutate
+            profiles.removePackages(deleted.profile.packages)
+            profiles.add(deleted.index.coerceAtMost(profiles.size), deleted.profile)
+            selected += deleted.switchedOn
+            autoSortExcluded = autoSortExcluded - deleted.profile.packages
         }
     }
 

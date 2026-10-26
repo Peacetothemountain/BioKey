@@ -218,7 +218,7 @@ internal fun ProfileDetailsDialog(
             title = { Text("Delete “${existing.name}”?") },
             text = {
                 ProtectDialogWindow()
-                Text("Its apps keep their own lock switches and use your default re-lock delay.")
+                Text("Its apps will no longer be locked. You can lock them again one by one.")
             },
             confirmButton = {
                 TextButton(onClick = { confirmDelete = false; onDelete() }) {
@@ -382,8 +382,8 @@ internal fun AppOptionsSheet(
                         Text(
                             text = when {
                                 isHomeScreen -> HOME_SCREEN_NOTE
-                                !isLocked -> "Not locked"
                                 currentProfile?.enabled == false -> "Not locked while ${currentProfile.name} is off"
+                                !isLocked -> "Not locked"
                                 else -> (currentProfile?.timeoutMode ?: defaultTimeout).relockPhrase
                             },
                             style = MaterialTheme.typography.bodyMedium,
@@ -392,20 +392,25 @@ internal fun AppOptionsSheet(
                     }
                     Spacer(Modifier.height(20.dp))
                     Group(count = 1) {
-                        val canChange = !isHomeScreen || isLocked
+                        // While its profile is off the switch shows what happens (off) and waits:
+                        // the app's own choice comes back with the profile.
+                        val offProfile = currentProfile?.takeIf { !it.enabled }
+                        val locked = isLocked && offProfile == null
+                        val canChange = offProfile == null && (!isHomeScreen || isLocked)
                         GroupRow(
                             index = 0,
                             count = 1,
                             title = "Lock app",
                             subtitle = when {
                                 isHomeScreen -> "BioKey never covers the home screen you use or your phone's own, so you can always get Home"
-                                isLocked -> "Needs your face, fingerprint or screen lock to open"
+                                offProfile != null -> "Turn ${offProfile.name} back on to lock it, or take it out of ${offProfile.name}"
+                                locked -> "Needs your face, fingerprint or screen lock to open"
                                 else -> "Opens without a check"
                             },
-                            icon = if (isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                            interaction = Modifier.toggleable(value = isLocked, enabled = canChange, role = Role.Switch, onValueChange = onLockedChange)
+                            icon = if (locked) Icons.Default.Lock else Icons.Default.LockOpen,
+                            interaction = Modifier.toggleable(value = locked, enabled = canChange, role = Role.Switch, onValueChange = onLockedChange)
                         ) {
-                            Switch(checked = isLocked, onCheckedChange = null, enabled = canChange)
+                            Switch(checked = locked, onCheckedChange = null, enabled = canChange)
                         }
                     }
                     if (!isHomeScreen || currentProfile != null) SectionHeader("Profile")
