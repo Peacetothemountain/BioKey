@@ -37,6 +37,12 @@ class BioKeyApplication : Application() {
         private val initExecutor = Executors.newSingleThreadExecutor { r ->
             Thread(r, "biokey-async-init").apply { isDaemon = true }
         }
+        /** Waits for the start-up work already queued, so a test's own setup isn't raced by it. */
+        @androidx.annotation.VisibleForTesting
+        internal fun awaitInitForTests() {
+            initExecutor.submit {}.get()
+        }
+
         private val _packageChangeVersion = MutableStateFlow(0)
         val packageChangeVersion: StateFlow<Int> = _packageChangeVersion.asStateFlow()
 

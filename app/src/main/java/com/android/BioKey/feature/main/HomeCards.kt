@@ -304,7 +304,11 @@ internal fun gapLine(context: Context, gap: ProtectionGaps.Gap): String {
                     else -> context.getString(R.string.card_gap_protection_changed)
                 }
                 context.getString(
-                    if (change?.first?.fromScreenLock == false) R.string.card_gap_event else R.string.card_gap_changed_with_screen_lock,
+                    when {
+                        change?.first?.fromScreenLock == false -> R.string.card_gap_event
+                        ProtectionGaps.Change.duringHold(gap.detail) -> R.string.card_gap_changed_during_hold
+                        else -> R.string.card_gap_changed_with_screen_lock
+                    },
                     time, what
                 )
             }
@@ -319,7 +323,7 @@ private fun timeRange(context: Context, gap: ProtectionGaps.Gap): String {
     val day = if (DateUtils.isToday(gap.to)) 0 else DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR
     // The dash binds both ways: a range never breaks around it.
     return DateUtils.formatDateRange(context, gap.from, gap.to, DateUtils.FORMAT_SHOW_TIME or day)
-        .replace(Regex("\\s([\u2013-])\\s"), "\u00A0$1\u00A0")
+        .replace(RANGE_DASH, "\u00A0$1\u00A0")
 }
 
 /** A stored change ([ProtectionGaps.Change]) in words: its arguments are names, a count or a delay. */
@@ -469,7 +473,8 @@ internal fun SecurityActivityDialog(
                                         ProtectionGaps.Kind.BIOMETRICS_CHANGED -> R.string.card_change_biometrics_changed_hint
                                         ProtectionGaps.Kind.BIOMETRICS_REMOVED -> R.string.card_change_biometrics_removed_hint
                                         ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED -> R.string.card_change_shield_access_hint
-                                        else -> R.string.card_change_screen_lock_hint
+                                        else -> if (ProtectionGaps.Change.duringHold(change.detail)) R.string.card_change_during_hold_hint
+                                        else R.string.card_change_screen_lock_hint
                                     }
                                 ),
                                 style = MaterialTheme.typography.bodyMedium,
@@ -562,3 +567,6 @@ private fun SectionLabel(text: String) {
 /** An action card's icon, and the gap after it: wrapped actions line up with the text after both. */
 private val CARD_ICON_SIZE = 40.dp
 private val CARD_ICON_GAP = 16.dp
+
+/** A range's dash with the spaces round it, thin ones included (ICU uses U+2009). */
+private val RANGE_DASH = Regex("[\\s\u2009\u202F]([\u2013-])[\\s\u2009\u202F]")

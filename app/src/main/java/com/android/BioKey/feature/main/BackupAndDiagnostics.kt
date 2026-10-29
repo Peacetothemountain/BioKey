@@ -303,7 +303,7 @@ internal fun rememberBackupActions(
                         }
                     }
                     }
-                    confirmOwner(activity, res.getString(R.string.backup_confirm_restore_prompt)) { restore() }
+                    confirmOwner(activity, res.getString(R.string.backup_confirm_restore_prompt), silencesRecords = true) { restore() }
                 }) { Text(stringResource(R.string.backup_restore)) }
             },
             dismissButton = { TextButton(onClick = { step = null }) { Text(stringResource(R.string.prompt_cancel)) } }

@@ -92,14 +92,23 @@ object ProtectionGaps {
 
         fun encode(vararg args: String) = (listOf(CODE_MARK + name) + args).joinToString(SEPARATOR)
 
+        /** As [encode], for a change made within a day of a face or fingerprint change ([UnlockAttempts.holding]). */
+        fun encodeDuringHold(vararg args: String) = HOLD_MARK + encode(*args)
+
         companion object {
             private const val CODE_MARK = "#"
             private const val SEPARATOR = "\u001F"
 
+            private const val HOLD_MARK = "!"
+
+            /** Made within a day of a face or fingerprint change, whatever opened BioKey. */
+            fun duringHold(detail: String) = detail.startsWith(HOLD_MARK + CODE_MARK)
+
             /** A stored detail's code and arguments; null for a record written as plain text (older ones). */
             fun decode(detail: String): Pair<Change, List<String>>? {
-                if (!detail.startsWith(CODE_MARK)) return null
-                val parts = detail.removePrefix(CODE_MARK).split(SEPARATOR)
+                val coded = detail.removePrefix(HOLD_MARK)
+                if (!coded.startsWith(CODE_MARK)) return null
+                val parts = coded.removePrefix(CODE_MARK).split(SEPARATOR)
                 val change = entries.find { it.name == parts.first() } ?: return null
                 return change to parts.drop(1)
             }
@@ -321,21 +330,11 @@ object ProtectionGaps {
     fun recordIfScreenLock(context: Context, change: Change, vararg args: String): java.util.concurrent.Future<Long?> {
         val app = context.applicationContext
         return recorder.submit<Long?> {
-            if (SecurityEngine.ownerProven(app)) null else recordEvent(app, Kind.CHANGED_WITH_SCREEN_LOCK, change.encode(*args))
-        }
-    }
-
-    /**
-     * Undo of a change moments after it: the record [recorded] for it ([recordIfScreenLock]) goes
-     * too, so an undone change doesn't read as a real one. That record and no other; in order with
-     * the recording.
-     */
-    fun retract(context: Context, recorded: java.util.concurrent.Future<Long?>) {
-        val app = context.applicationContext
-        recorder.execute {
-            val seq = runCatching { recorded.get() }.getOrNull() ?: return@execute
-            val p = load(app) ?: return@execute
-            synchronized(lock) { _gaps.value.firstOrNull { it.seq == seq }?.let { save(p, _gaps.value - it) } }
+            when {
+                SecurityEngine.ownerProven(app) -> null
+                UnlockAttempts.holding(app) -> recordEvent(app, Kind.CHANGED_WITH_SCREEN_LOCK, change.encodeDuringHold(*args))
+                else -> recordEvent(app, Kind.CHANGED_WITH_SCREEN_LOCK, change.encode(*args))
+            }
         }
     }
 
@@ -345,7 +344,7 @@ object ProtectionGaps {
         synchronized(lock) {
             val list = _gaps.value
             if (list.none { it.seq == seq }) return
-            save(p, list.map { if (it.seq == seq) it.copy(to = it.from) else it })
+            save(p, list.map { if (it.seq == seq) it.copy(to = it.from).stamped(context) else it })
         }
     }
 

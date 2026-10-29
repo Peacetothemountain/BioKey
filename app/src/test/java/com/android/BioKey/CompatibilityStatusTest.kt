@@ -40,6 +40,8 @@ class CompatibilityStatusTest {
 
     @Before
     fun freshVault() {
+        // BioKey's own start (refreshing the engines) finishes first: it mustn't start one mid-test.
+        BioKeyApplication.awaitInitForTests()
         // As the other test classes do: whatever the last vault was writing lands first.
         SecurityVault.getInstance(context).awaitPendingWrites()
         context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE).edit().clear().commit()

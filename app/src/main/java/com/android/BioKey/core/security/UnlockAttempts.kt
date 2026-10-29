@@ -354,10 +354,10 @@ object UnlockAttempts {
             // Up to the newest record actually there (and shown), not a number handed out a moment
             // ago to one another thread hasn't stored yet.
             val newest = maxOf(_attempts.value.maxOfOrNull { it.seq } ?: 0L, ProtectionGaps.gaps.value.maxOfOrNull { it.seq } ?: 0L)
-            // A face or fingerprint added or removed in the last day isn't counted as seen yet, nor
-            // anything after it: whoever did it could open BioKey and review the record away.
-            val held = heldBiometricChange(context, p.getLong(KEY_SEEN_SEQ, 0L))
-            val seen = minOf(newest, upTo, if (held != null) held - 1 else Long.MAX_VALUE)
+            // Within a day of a face or fingerprint added or removed, nothing is counted as seen:
+            // whoever made the change could open BioKey and review away what they did.
+            if (heldBiometricChange(context, p.getLong(KEY_SEEN_SEQ, 0L)) != null) return
+            val seen = minOf(newest, upTo)
             if (seen > p.getLong(KEY_SEEN_SEQ, 0L)) p.edit { putLong(KEY_SEEN_SEQ, seen) }
             if (seen > p.getLong(KEY_NOTIFIED_SEQ, 0L)) p.edit { putLong(KEY_NOTIFIED_SEQ, seen) }
         }
@@ -392,6 +392,8 @@ object UnlockAttempts {
      * a day: a restart mustn't be a way to release it.
      */
     private fun heldBiometricChange(context: Context, seen: Long): Long? {
+        // Its records must be there to be looked at: not read yet means not "nothing held".
+        ProtectionGaps.load(context)
         val boot = bootCount(context)
         val since = elapsed()
         val now = TrustedClock.now()

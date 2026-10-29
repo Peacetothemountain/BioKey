@@ -7,6 +7,7 @@ import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -153,13 +154,11 @@ class ProtectionGapsTest {
     }
 
     @Test
-    fun anUndoneChangeTakesBackItsOwnRecordAndNoOther() {
-        // Two of the same kind: Undo of the first takes back the first only.
-        val first = ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, ProtectionGaps.Change.SHIELD_OFF.encode())
-        val second = ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, ProtectionGaps.Change.SHIELD_OFF.encode())
-        ProtectionGaps.retract(context, java.util.concurrent.CompletableFuture.completedFuture(first))
-        ProtectionGaps.recorder.submit {}.get()
-        assertEquals(listOf(second), gaps.map { it.seq })
+    fun aChangeDuringAHoldSaysSo() {
+        val detail = ProtectionGaps.Change.LOCK_OFF.encodeDuringHold("Chase")
+        assertTrue(ProtectionGaps.Change.duringHold(detail))
+        assertEquals(ProtectionGaps.Change.LOCK_OFF to listOf("Chase"), ProtectionGaps.Change.decode(detail))
+        assertFalse(ProtectionGaps.Change.duringHold(ProtectionGaps.Change.LOCK_OFF.encode("Chase")))
     }
 
     @Test

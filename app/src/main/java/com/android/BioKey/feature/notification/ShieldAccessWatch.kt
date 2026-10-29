@@ -59,6 +59,12 @@ object ShieldAccessWatch {
         }
     }
 
+    /** Waits for the looks already queued ([checkSoon], [undoSwitchOffSoon]). */
+    @VisibleForTesting
+    internal fun awaitForTests() {
+        worker.submit {}.get()
+    }
+
     /** [check], off the calling thread. */
     fun checkSoon(context: Context) {
         val app = context.applicationContext
@@ -75,9 +81,10 @@ object ShieldAccessWatch {
         lastWithoutAccess = shieldOn && !access
         val had = p.getBoolean(KEY_HAD_ACCESS, false)
         when {
-            shieldOn && access -> if (!had) {
+            // Hiding on: no switch-off left to undo.
+            shieldOn && access -> if (!had || p.contains(KEY_ENDED_BY_SWITCH_OFF)) {
                 p.getLong(KEY_OPEN_RECORD, 0L).takeIf { it > 0L }?.let { ProtectionGaps.endEvent(app, it) }
-                p.edit { putBoolean(KEY_HAD_ACCESS, true).remove(KEY_OPEN_RECORD) }
+                p.edit { putBoolean(KEY_HAD_ACCESS, true).remove(KEY_OPEN_RECORD).remove(KEY_ENDED_BY_SWITCH_OFF) }
             }
             shieldOn && had -> {
                 val seq = ProtectionGaps.recordEvent(app, ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED)
@@ -87,7 +94,8 @@ object ShieldAccessWatch {
                 }
             }
             // Switched off in BioKey: the owner's choice, nothing to tell.
-            !shieldOn -> if (had || p.contains(KEY_OPEN_RECORD)) {
+            // Each switch-off notes what it ended, or that it ended nothing: Undo reopens only that.
+            !shieldOn -> {
                 // An open record ends here: from when access went to when hiding was switched off.
                 // Remembered, in case that switch-off is undone ([undoSwitchOffSoon]).
                 val open = p.getLong(KEY_OPEN_RECORD, 0L).takeIf { it > 0L }
@@ -97,6 +105,7 @@ object ShieldAccessWatch {
                     if (open != null) putLong(KEY_ENDED_BY_SWITCH_OFF, open) else remove(KEY_ENDED_BY_SWITCH_OFF)
                 }
             }
+            shieldOn && !had && !p.contains(KEY_OPEN_RECORD) -> p.edit { remove(KEY_ENDED_BY_SWITCH_OFF) }
         }
     }
 }

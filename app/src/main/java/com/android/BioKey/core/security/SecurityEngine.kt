@@ -85,10 +85,10 @@ class SecurityEngine private constructor() {
          * all there is). Otherwise it may be someone who only knows the PIN.
          */
         fun ownerProven(context: Context): Boolean =
-            !hasEnrolledStrongBiometric(context) ||
-                // Within a day of a face or fingerprint added or removed, the new one may be whoever
-                // made the change: it doesn't count ([UnlockAttempts.holding]).
-                (INSTANCE.ownAppOpenedWithBiometric && !UnlockAttempts.holding(context))
+            // Within a day of a face or fingerprint added or removed, nothing proves the owner: the
+            // new one may be whoever made the change, and with all of them removed, the screen lock
+            // is all anyone needs ([UnlockAttempts.holding]).
+            !UnlockAttempts.holding(context) && (!hasEnrolledStrongBiometric(context) || INSTANCE.ownAppOpenedWithBiometric)
 
         /**
          * "Face or fingerprint only" is on and can be honoured: then prompts don't offer the screen

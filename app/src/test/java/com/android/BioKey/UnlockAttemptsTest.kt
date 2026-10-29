@@ -313,6 +313,20 @@ class UnlockAttemptsTest {
     }
 
     @Test
+    fun duringTheHoldNothingIsMarkedSeenNotEvenWhatCameBefore() {
+        // A lock switched off, then a fingerprint added: the new fingerprint can't review the first away.
+        try {
+            Prompt().miss()
+            val before = kept.single().seq
+            biometricChange()
+            UnlockAttempts.markSeen(context)
+            assertTrue(UnlockAttempts.seenSeq(context) < before)
+        } finally {
+            restoreGapClocks()
+        }
+    }
+
+    @Test
     fun duringTheHoldItsHolding() {
         try {
             assertFalse(UnlockAttempts.holding(context))

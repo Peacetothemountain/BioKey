@@ -161,10 +161,11 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   (or none is set up); otherwise Review offers "Mark reviewed", which asks for one. A face or
   fingerprint added or removed stays new for a day whatever Review says (if its age can't be told
   after a restart, until the phone has been on for a day), so whoever made the change can't use it
-  to quiet the alert. Meanwhile a face or fingerprint doesn't count as you in BioKey (changes are
-  recorded as if made with the screen lock), and nothing that clears or silences BioKey's records
-  can be done: clearing them, turning the alerts or the diagnostic log off, deleting the log, or
-  stopping the reminders. After the day, review them again.
+  to quiet the alert. Meanwhile nothing proves it's you in BioKey: changes are recorded (marked as
+  made within a day of a face or fingerprint change), nothing is counted as seen, and nothing that
+  clears or silences BioKey's records can be done: clearing them, turning the alerts, their screen
+  lock option or the diagnostic log off, deleting the log, or restoring a backup. After the day,
+  review them again.
   Turning the alerts off deletes them; a restored backup that turns them off leaves them in place.
   Clearing them, or turning the alerts off, asks for your face or fingerprint where one is set up.
 - **Times app locking was off, and other changes:** when BioKey's protection was switched off or
@@ -178,10 +179,12 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   paused; an app's lock switched off; a locked app moved or added into a profile that's off or
   that re-locks later, or taken out of its profile so it's locked less; a profile switched off or
   deleted; a longer re-lock delay, for a
-  profile or the default; and "Hide notification content" switched off. These name the app or
-  profile. (Restoring a backup, stopping the reminders, and switching off face or fingerprint
-  only, the alerts or the diagnostic log can't be done with the screen lock at all on such a
-  phone: they ask for a face or fingerprint.) Shown on BioKey's home screen until you clear them, kept like
+  profile or the default; "Hide notification content" switched off; and, within a day of a face
+  or fingerprint change, "Face or fingerprint only" switched off. These name the app or profile.
+  (Restoring a backup, stopping the reminders, and switching off face or fingerprint only, the
+  alerts or the diagnostic log can't be done with the screen lock at all on such a phone: they ask
+  for a face or fingerprint; and within that day, restoring and switching off the alerts or the
+  log can't be done at all.) Shown on BioKey's home screen until you clear them, kept like
   failed unlocks (seen ones 7 days, at most 20); a face or fingerprint added or removed can't be
   cleared, only aged out, so whoever added one can't erase the record of it. To measure them BioKey keeps, while
   protection is off, when it stopped (on the phone's clock and on its clock since the last
@@ -259,7 +262,7 @@ to the place you choose.
   screen (Review > Clear), except a face or fingerprint added or removed, which ages out on its
   own. Turning failed unlock alerts off also deletes the failed unlocks. Both ask for your face or
   fingerprint (your screen lock where none is set up), so someone who only knows your screen lock
-  can't erase them.
+  can't erase them; within a day of a face or fingerprint added or removed, neither can be done.
 - **Backup files** are yours: delete them wherever you saved them.
 
 NB Designs holds no data about you, so there is nothing to request from us or delete on our side.
