@@ -3,14 +3,18 @@ package com.android.BioKey
 import android.app.ApplicationExitInfo
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.TrustedClock
 import com.android.BioKey.core.security.UnlockAttempts
+import java.io.File
+import java.nio.file.Files
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assume
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -394,14 +398,14 @@ class ProtectionGapsTest {
     @Test
     fun storageAgeIsToldFromItsFiles() {
         // The rule itself, on real files: one written before the process started means storage from before.
-        val dir = java.nio.file.Files.createTempDirectory("storage").toFile()
+        val dir = Files.createTempDirectory("storage").toFile()
         try {
             val started = System.currentTimeMillis()
-            val prefs = java.io.File(dir, "shared_prefs").apply { mkdirs() }
-            java.io.File(prefs, "new.xml").apply { writeText("x"); setLastModified(started + 1_000L) }
+            val prefs = File(dir, "shared_prefs").apply { mkdirs() }
+            File(prefs, "new.xml").apply { writeText("x"); setLastModified(started + 1_000L) }
             assertFalse(ProtectionGaps.hasFileOlderThan(dir, started))
             // Nested, and older: from before.
-            java.io.File(prefs, "old.xml").apply { writeText("x"); setLastModified(started - 60_000L) }
+            File(prefs, "old.xml").apply { writeText("x"); setLastModified(started - 60_000L) }
             assertTrue(ProtectionGaps.hasFileOlderThan(dir, started))
         } finally {
             dir.deleteRecursively()
@@ -410,12 +414,82 @@ class ProtectionGapsTest {
 
     @Test
     fun anEmptyStorageIsntFromBefore() {
-        val dir = java.nio.file.Files.createTempDirectory("storage").toFile()
+        val dir = Files.createTempDirectory("storage").toFile()
         try {
-            java.io.File(dir, "files").mkdirs()
+            File(dir, "files").mkdirs()
             assertFalse(ProtectionGaps.hasFileOlderThan(dir, System.currentTimeMillis()))
         } finally {
             dir.deleteRecursively()
         }
+    }
+
+    @Test
+    fun aLinkedOldFileIsntBioKeysStorage() {
+        // A link to old files elsewhere (an old-style lib link, say) mustn't make cleared storage look old.
+        val outside = Files.createTempDirectory("outside").toFile()
+        val dir = Files.createTempDirectory("storage").toFile()
+        try {
+            val started = System.currentTimeMillis()
+            File(outside, "old.so").apply { writeText("x"); setLastModified(started - 60_000L) }
+            val linked = runCatching {
+                Files.createSymbolicLink(File(dir, "lib").toPath(), outside.toPath())
+                Files.createSymbolicLink(File(dir, "old.so").toPath(), File(outside, "old.so").toPath())
+            }.isSuccess
+            // Where links can't be made (Windows without the right), there's nothing to check.
+            Assume.assumeTrue(linked)
+            assertFalse(ProtectionGaps.hasFileOlderThan(dir, started))
+        } finally {
+            dir.deleteRecursively()
+            outside.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun whatALinkPointsAtIsntLookedAt() {
+        // The rule on every platform: a folder or file taken as a link is skipped, old or not.
+        val dir = Files.createTempDirectory("storage").toFile()
+        try {
+            val started = System.currentTimeMillis()
+            val lib = File(dir, "lib").apply { mkdirs() }
+            File(lib, "old.so").apply { writeText("x"); setLastModified(started - 60_000L) }
+            File(dir, "old.xml").apply { writeText("x"); setLastModified(started - 60_000L) }
+            val links = setOf(lib.name, "old.xml")
+            assertFalse(ProtectionGaps.hasFileOlderThan(dir, started) { it.name in links })
+            // Not links: they're BioKey's, and old.
+            assertTrue(ProtectionGaps.hasFileOlderThan(dir, started) { false })
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun storageThatCantBeReadCountsAsFromBefore() {
+        // A failure can miss a clearing, never claim one.
+        val missing = File(Files.createTempDirectory("storage").toFile(), "gone")
+        assertTrue(ProtectionGaps.hasFileOlderThan(missing, System.currentTimeMillis()))
+    }
+
+    @Test
+    fun remindersResumeOnceNotificationsAreAllowedAgain() {
+        val scheduler = context.getSystemService(android.app.job.JobScheduler::class.java)
+        scheduler.cancelAll()
+        clearedStorage()
+        exits = listOf(now - 60_000L to ApplicationExitInfo.REASON_USER_REQUESTED)
+        ProtectionGaps.checkStorageCleared(context)
+        val shadow = org.robolectric.Shadows.shadowOf(context.getSystemService(android.app.NotificationManager::class.java))
+        // Taken back with the clearing: nothing scheduled.
+        shadow.setNotificationsEnabled(false)
+        scheduler.cancelAll()
+        ProtectionAlerts.resumeStorageClearedReminders(context)
+        assertTrue(scheduler.allPendingJobs.isEmpty())
+        // Allowed again in setup: the reminders start.
+        shadow.setNotificationsEnabled(true)
+        ProtectionAlerts.resumeStorageClearedReminders(context)
+        assertEquals(1, scheduler.allPendingJobs.size)
+        // Set up: nothing more to remind of.
+        scheduler.cancelAll()
+        SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        ProtectionAlerts.resumeStorageClearedReminders(context)
+        assertTrue(scheduler.allPendingJobs.isEmpty())
     }
 }

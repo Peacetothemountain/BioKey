@@ -230,7 +230,7 @@
     <string name="home_apps_locked_short">Apps locked</string>
     <string name="home_notifications_showing_title">Apps locked, notifications showing</string>
     <string name="home_notifications_showing_body">Locked apps\' notifications show in full: BioKey\'s notification access is off.</string>
-    <string name="home_protected_compat">Compatibility mode (works with Advanced Protection)</string>
+    <string name="home_protected_compat">Running in compatibility mode, which works with Advanced Protection.</string>
     <plurals name="home_unwatched">
         <item quantity="one">%d locked app isn\'t protected in your work profile: compatibility mode can\'t see apps there</item>
         <item quantity="other">%d locked apps aren\'t protected in your work profile: compatibility mode can\'t see apps there</item>

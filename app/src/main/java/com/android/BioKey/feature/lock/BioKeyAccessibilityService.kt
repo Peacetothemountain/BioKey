@@ -84,8 +84,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
          */
         private const val LAUNCH_REPEAT_MS = 300L
 
-        /** A window that couldn't be read isn't asked again for this long ([packageOf]). */
-
         /** How many unreadable windows are remembered as some app's ([attributedWindows]). */
         private const val MAX_ATTRIBUTED_WINDOWS = 16
 

@@ -8,11 +8,14 @@ import android.content.ComponentName
 import android.content.Context
 
 /**
- * While app locking is off, looks every 15 minutes or so (Android's shortest period) and brings
- * the "App lock is off" alert back if it was swiped away. The reminder at each unlock
- * ([ProtectionAlerts.remindIfOff]) needs BioKey's process alive; with no engine running, Android
- * may end it, and this keeps the reminder going. Scheduled when an engine stops, cancelled when
- * one runs again; kept across restarts of the phone.
+ * Every 15 minutes or so (Android's shortest period), brings an alert back if it was swiped away:
+ * first, while BioKey's storage has been cleared and it isn't set up again
+ * ([ProtectionGaps.awaitingSetupAfterClear], [ProtectionAlerts.remindIfStorageCleared]); else,
+ * while app locking is off, "App lock is off" ([ProtectionAlerts.remindIfOff]). The reminders at
+ * each unlock need BioKey's process alive; with no engine running, Android may end it, and this
+ * keeps them going. Scheduled when an engine stops, when a clearing is found, and when
+ * notifications are allowed again after one ([ProtectionAlerts.resumeStorageClearedReminders]);
+ * cancelled once an engine runs again (set up); kept across restarts of the phone.
  */
 class ProtectionCheckJob : JobService() {
 

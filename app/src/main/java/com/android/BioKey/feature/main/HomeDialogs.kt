@@ -19,7 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material3.Button
@@ -465,10 +464,11 @@ internal fun ProtectionSheetContent(
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     lines.drop(1).forEachIndexed { i, line ->
                         // With something to put right, the first is it: in the error colour, as its button is.
-                        if (i == 0 && look.fix != null) {
+                        val fixIcon = look.fixIcon
+                        if (i == 0 && look.fix != null && fixIcon != null) {
                             Row {
                                 Icon(
-                                    Icons.Default.NotificationsOff, contentDescription = null, tint = MaterialTheme.colorScheme.error,
+                                    fixIcon, contentDescription = null, tint = MaterialTheme.colorScheme.error,
                                     modifier = Modifier.padding(top = 1.dp, end = 8.dp).size(18.dp.scaledWithText())
                                 )
                                 Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)

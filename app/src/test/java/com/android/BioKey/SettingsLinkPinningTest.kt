@@ -9,7 +9,7 @@ import android.content.pm.ResolveInfo
 import android.provider.Settings
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.security.LockStateTracker
-import com.android.BioKey.feature.main.IntentNavigationHelper
+import com.android.BioKey.core.navigation.IntentNavigationHelper
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull

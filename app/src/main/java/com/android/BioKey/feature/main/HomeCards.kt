@@ -73,10 +73,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.android.BioKey.R
 import com.android.BioKey.core.data.LockTimeoutMode
+import com.android.BioKey.core.navigation.IntentNavigationHelper
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.UnlockAttempts
+import com.android.BioKey.ui.format.attemptTime
 import com.android.BioKey.ui.theme.Callout
 import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.scaledWithText
@@ -278,22 +280,6 @@ internal fun UnlockedNowCard(
             TextButton(onClick = onChoose) { Text(stringResource(R.string.card_see_apps)) }
             FilledTonalButton(onClick = onLockAll) { Text(stringResource(R.string.lock_all_tile_label)) }
         }
-    }
-}
-
-/** "2:14 PM" today, "Yesterday, 2:14 PM", else "Oct 27, 2:14 PM". */
-internal fun attemptTime(context: Context, at: Long): String {
-    // "Oct 30" and "3:02 PM" each stay on one line.
-    fun unbroken(text: String) = text.replace(' ', ' ')
-    val time = unbroken(DateUtils.formatDateTime(context, at, DateUtils.FORMAT_SHOW_TIME))
-    return when {
-        DateUtils.isToday(at) -> time
-        DateUtils.isToday(at + DateUtils.DAY_IN_MILLIS) -> context.getString(R.string.card_time_yesterday, time)
-        else -> context.getString(
-            R.string.card_time_date,
-            unbroken(DateUtils.formatDateTime(context, at, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR)),
-            time
-        )
     }
 }
 

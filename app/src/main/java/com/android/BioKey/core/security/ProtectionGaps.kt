@@ -6,6 +6,7 @@ import android.app.ApplicationExitInfo
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
+import android.os.Process
 import android.os.SystemClock
 import android.os.UserManager
 import android.provider.Settings
@@ -16,6 +17,8 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.edit
 import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import java.io.File
+import java.nio.file.Files
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -222,17 +225,29 @@ object ProtectionGaps {
      */
     @VisibleForTesting
     internal var storageFromBefore: (Context) -> Boolean = { context ->
-        val started = System.currentTimeMillis() - (SystemClock.elapsedRealtime() - android.os.Process.getStartElapsedRealtime())
-        // Unreadable: taken as from before, so a failure can miss a clearing but never claim one.
-        runCatching { hasFileOlderThan(context.dataDir, started - STORAGE_AGE_SLACK_MS) }.getOrDefault(true)
+        val started = System.currentTimeMillis() - (SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime())
+        hasFileOlderThan(context.dataDir, started - STORAGE_AGE_SLACK_MS)
     }
 
-    /** Any file under [dir] (links not followed) last written before [time], on the phone's clock. */
+    /**
+     * Any file under [dir] last written before [time], on the phone's clock. Links aren't followed
+     * (what they point at isn't BioKey's storage). Anything that can't be read, [dir] itself
+     * included, counts as older: a failure can miss a clearing, never claim one.
+     */
     @VisibleForTesting
-    internal fun hasFileOlderThan(dir: java.io.File, time: Long): Boolean =
-        dir.walkTopDown()
-            .onEnter { it == dir || !java.nio.file.Files.isSymbolicLink(it.toPath()) }
-            .any { it.isFile && !java.nio.file.Files.isSymbolicLink(it.toPath()) && it.lastModified() < time }
+    internal fun hasFileOlderThan(
+        dir: File,
+        time: Long,
+        isLink: (File) -> Boolean = { Files.isSymbolicLink(it.toPath()) }
+    ): Boolean = runCatching {
+        if (!dir.isDirectory || dir.listFiles() == null) return@runCatching true
+        var unreadable = false
+        val older = dir.walkTopDown()
+            .onEnter { it == dir || !isLink(it) }
+            .onFail { _, _ -> unreadable = true }
+            .any { it.isFile && !isLink(it) && it.lastModified() < time }
+        older || unreadable
+    }.getOrDefault(true)
     /** Files a little older than this process (written as it started) are still its own. */
     private const val STORAGE_AGE_SLACK_MS = 10_000L
 

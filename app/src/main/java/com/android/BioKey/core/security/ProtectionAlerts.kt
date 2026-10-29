@@ -285,6 +285,16 @@ object ProtectionAlerts {
         }
     }
 
+    /**
+     * Notifications allowed again (setup asks: a clearing took them back) while BioKey waits to be
+     * set up after a clearing: the reminders every so often start. Reads storage: off the main thread.
+     */
+    fun resumeStorageClearedReminders(context: Context) {
+        val app = context.applicationContext
+        if (!NotificationManagerCompat.from(app).areNotificationsEnabled()) return
+        if (ProtectionGaps.awaitingSetupAfterClear(app)) ProtectionCheckJob.schedule(app)
+    }
+
     fun cancelStorageCleared(context: Context) {
         NotificationManagerCompat.from(context).cancel(ID_STORAGE_CLEARED)
     }

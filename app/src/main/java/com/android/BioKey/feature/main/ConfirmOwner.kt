@@ -9,6 +9,7 @@ import com.android.BioKey.core.security.BiometricEnrollment
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.UnlockAttempts
+import com.android.BioKey.ui.format.attemptTime
 import com.android.BioKey.ui.theme.BioKeyMessages
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch

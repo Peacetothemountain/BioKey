@@ -18,7 +18,7 @@ import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.feature.lock.LockScreenActivity
-import com.android.BioKey.feature.main.IntentNavigationHelper
+import com.android.BioKey.core.navigation.IntentNavigationHelper
 import java.time.Duration
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame

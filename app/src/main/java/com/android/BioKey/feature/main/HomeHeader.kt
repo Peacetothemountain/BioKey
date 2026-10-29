@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GppMaybe
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VerifiedUser
@@ -250,7 +251,9 @@ internal data class ProtectionLook(
     /** Primary action, or null when protecting normally (then the sheet offers Pause). */
     val action: String?,
     /** While protecting: something to put right first in the sheet, above Lock all and Pause. */
-    val fix: String? = null
+    val fix: String? = null,
+    /** [fix]'s icon, beside the line in the sheet that says what's wrong (its body's second line). */
+    val fixIcon: ImageVector? = null
 )
 
 @Composable
@@ -305,7 +308,8 @@ internal fun protectionLook(
                 (if (unwatchedCount == 0) "" else "\n" + pluralStringResource(R.plurals.home_unwatched, unwatchedCount, unwatchedCount)) +
                 (if (mode == ProtectionEngine.Mode.COMPATIBILITY) "\n" + stringResource(R.string.home_protected_compat) else ""),
             null,
-            fix = stringResource(R.string.home_shield_no_access_action)
+            fix = stringResource(R.string.home_shield_no_access_action),
+            fixIcon = Icons.Default.NotificationsOff
         )
         else -> ProtectionLook(
             colors.primaryContainer, colors.onPrimaryContainer, Icons.Default.VerifiedUser, stringResource(R.string.home_protected),

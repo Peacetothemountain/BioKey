@@ -1,4 +1,4 @@
-package com.android.BioKey.feature.main
+package com.android.BioKey.ui.disclosure
 
 import android.Manifest
 import android.app.Activity
@@ -9,10 +9,10 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.LocalActivity
-import androidx.annotation.StringRes
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -59,6 +59,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.android.BioKey.R
+import com.android.BioKey.core.navigation.IntentNavigationHelper
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.SecurityVault

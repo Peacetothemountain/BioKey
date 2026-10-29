@@ -66,11 +66,11 @@ import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
-import com.android.BioKey.feature.main.Disclosure
-import com.android.BioKey.feature.main.IntentNavigationHelper
-import com.android.BioKey.feature.main.attemptTime
-import com.android.BioKey.feature.main.rememberDisclosureGate
-import com.android.BioKey.feature.main.rememberNotificationPermission
+import com.android.BioKey.ui.disclosure.Disclosure
+import com.android.BioKey.core.navigation.IntentNavigationHelper
+import com.android.BioKey.ui.format.attemptTime
+import com.android.BioKey.ui.disclosure.rememberDisclosureGate
+import com.android.BioKey.ui.disclosure.rememberNotificationPermission
 import com.android.BioKey.ui.brand.BioKeyLogo
 import com.android.BioKey.ui.brand.HeaderMatrixDotsExpressive
 import com.android.BioKey.ui.theme.Callout

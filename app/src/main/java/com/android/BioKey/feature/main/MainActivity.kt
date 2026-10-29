@@ -37,7 +37,7 @@ import com.android.BioKey.R
 import com.android.BioKey.core.security.BiometricEnrollment
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
-import com.android.BioKey.core.security.ProtectionCheckJob
+import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityEngine
@@ -51,6 +51,7 @@ import com.android.BioKey.ui.theme.BioKeyTheme
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.Haptics
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -200,11 +201,7 @@ class MainActivity : ComponentActivity() {
         refreshPermissions()
         BiometricEnrollment.checkSoon(this)
         // Reset and not set up again, notifications allowed again (setup asks): the reminders start.
-        if (!vault.isSetupCompleted() && androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled()) {
-            appScope.launch(kotlinx.coroutines.Dispatchers.Default) {
-                if (ProtectionGaps.awaitingSetupAfterClear(application)) ProtectionCheckJob.schedule(application)
-            }
-        }
+        if (!vault.isSetupCompleted()) appScope.launch(Dispatchers.Default) { ProtectionAlerts.resumeStorageClearedReminders(application) }
 
         // Back from setting a screen lock during setup: that step's done, and setup can finish.
         if (setupNeedsScreenLock && getSystemService(android.app.KeyguardManager::class.java)?.isDeviceSecure == true) {

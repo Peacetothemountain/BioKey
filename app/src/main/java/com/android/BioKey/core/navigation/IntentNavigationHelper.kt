@@ -1,4 +1,4 @@
-package com.android.BioKey.feature.main
+package com.android.BioKey.core.navigation
 
 import android.app.Activity
 import android.app.admin.DevicePolicyManager
