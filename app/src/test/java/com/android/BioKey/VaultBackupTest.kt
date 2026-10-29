@@ -105,7 +105,7 @@ class VaultBackupTest {
             DiagnosticLog.setEnabled(context, false)
             val saved = freshVault().exportState()
             DiagnosticLog.setEnabled(context, true)
-            freshVault().restoreState(saved)
+            freshVault().apply { restoreState(saved) }.awaitPendingWrites()
             assertFalse(DiagnosticLog.isEnabled())
         } finally {
             DiagnosticLog.setEnabled(context, true)
@@ -120,7 +120,7 @@ class VaultBackupTest {
         val saved = freshVault().exportState()
         assertFalse(saved.getBoolean("unlockAttemptAlertsChosen"))
 
-        freshVault().restoreState(saved)
+        freshVault().apply { restoreState(saved) }.awaitPendingWrites()
         // Not taken as "no": the one-time question still comes.
         assertFalse(UnlockAttempts.chosen.value)
 
@@ -130,7 +130,7 @@ class VaultBackupTest {
         UnlockAttempts.resetForTests()
         context.getSharedPreferences("biokey_unlock_attempts", Context.MODE_PRIVATE).edit().clear().commit()
         UnlockAttempts.load(context)
-        freshVault().restoreState(answered)
+        freshVault().apply { restoreState(answered) }.awaitPendingWrites()
         assertTrue(UnlockAttempts.chosen.value)
         assertFalse(UnlockAttempts.enabled.value)
     }
