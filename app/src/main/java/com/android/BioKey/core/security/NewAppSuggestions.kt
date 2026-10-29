@@ -12,8 +12,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.edit
 import com.android.BioKey.R
+import com.android.BioKey.core.FeatureLinks
 import com.android.BioKey.core.diagnostics.DiagnosticLog
-import com.android.BioKey.feature.main.MainActivity
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -89,8 +89,7 @@ object NewAppSuggestions {
         val open = PendingIntent.getActivity(
             context,
             notificationId(pkg),
-            Intent(context, MainActivity::class.java).putExtra(MainActivity.EXTRA_SEARCH, label)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            FeatureLinks.openMainScreen(context).putExtra(FeatureLinks.EXTRA_SEARCH, label),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val public = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -166,7 +165,7 @@ object NewAppSuggestions {
         val open = PendingIntent.getActivity(
             context,
             SUMMARY_ID,
-            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            FeatureLinks.openMainScreen(context),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val summary = NotificationCompat.Builder(context, CHANNEL_ID)

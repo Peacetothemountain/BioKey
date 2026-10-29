@@ -72,6 +72,9 @@ class SecurityVault private constructor(private val context: Context) {
             listeners.remove(listener)
         }
 
+        @VisibleForTesting
+        internal fun isListening(listener: Listener) = listener in listeners
+
         /**
          * Whether this build has self-protection at all. The Play build doesn't (see
          * app/build.gradle.kts): its switch is hidden, and a saved or restored "on" reads as off.

@@ -16,9 +16,9 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.edit
 import com.android.BioKey.R
+import com.android.BioKey.core.FeatureLinks
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
-import com.android.BioKey.feature.main.MainActivity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -570,7 +570,7 @@ object UnlockAttempts {
         val open = PendingIntent.getActivity(
             app,
             NOTIFICATION_ID,
-            Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            FeatureLinks.openMainScreen(app),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         // Which app is never said, and nothing at all shows on the phone's lock screen. It stays

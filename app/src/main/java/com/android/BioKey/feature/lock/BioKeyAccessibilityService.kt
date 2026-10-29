@@ -9,7 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.database.ContentObserver
-import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -24,7 +23,6 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.core.content.ContextCompat
-import androidx.core.util.forEach
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.diagnostics.EngineTrace
@@ -32,7 +30,6 @@ import com.android.BioKey.core.diagnostics.LatencyMarks
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
-import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.main.MainActivity
@@ -72,8 +69,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
         /** How long a cover raised by a tap waits for the tapped app's window (cold starts). */
         private const val PREDICTION_WAIT_MS = 3_000L
 
-        /** How long a locked app tapped in picture-in-picture has to come out of it before its lock screen goes up anyway. */
-        private const val PIP_EXPAND_WAIT_MS = 1_000L
 
         /** After an unlock, how long an unreadable window that opens is taken to be the unlocked app's. */
         private const val UNLOCK_ATTRIBUTION_MS = 2_000L
@@ -87,8 +82,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
         /** How many unreadable windows are remembered as some app's ([attributedWindows]). */
         private const val MAX_ATTRIBUTED_WINDOWS = 16
 
-        /** How often masks hidden for a prompt look whether it has gone. */
-        private const val MASK_RECHECK_MS = 400L
 
         /** Window events, always on. Clicks and content changes only while needed: see [applyEventTypes]. */
         private const val BASE_EVENT_TYPES = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
@@ -139,7 +132,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var vault: SecurityVault
     private lateinit var shield: InstantShieldOverlay
-    private lateinit var masks: WindowMask
+    /** Patches over windows a full-screen cover can't stay over: see [MaskController]. */
+    private lateinit var maskControl: MaskController
     private lateinit var labels: AppLabels
     /** Only in builds with self-protection: the Play build never reads Settings' pages. */
     private var selfProtection: SelfProtectionDetector? = null
@@ -173,8 +167,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private var expectedLaunch: Pair<String, Long>? = null
     /** The app unlocked last (package, when), for an unreadable window it opens: see [attributeUnreadable]. */
     private var recentUnlock: Pair<String, Long>? = null
-    /** Apps whose every window on screen has a [WindowMask] patch: covered already. */
-    private var maskedApps: Set<String> = emptySet()
 
     /** Which sessions are on screen, which have left, which locked apps to cover: see [SessionRules]. */
     private val rules = SessionRules(object : SessionRules.Env {
@@ -182,7 +174,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         override fun timeoutOf(pkg: String) = vault.getTimeoutMode(pkg)
         override fun isLauncher(pkg: String) = this@BioKeyAccessibilityService.isLauncher(pkg)
         override fun isHopTarget(pkg: String) = this@BioKeyAccessibilityService.isHopTarget(pkg)
-        override fun mayCover(pkg: String) = isCoverableByVisibility(pkg) && !isLauncher(pkg) && pkg !in maskedApps &&
+        override fun mayCover(pkg: String) = isCoverableByVisibility(pkg) && !isLauncher(pkg) && pkg !in maskedApps() &&
             needsCover(pkg) && !LockStateTracker.isRegularLockPending(pkg)
         override fun appTitled(title: String) = labels.appTitled(title, vault.getLockedPackages())?.takeIf { it != packageName }
         // App names and the screen titles apps declare (from the package manager) only: what a
@@ -205,7 +197,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                         recentUnlock = null
                         rules.reset()
                         isConfirmingDeviceCredential = false
-                        armMasks()
+                        maskControl.arm()
                     }
                     // Sessions ended with the screen, and it may come back on without a keyguard (it
                     // timed out moments ago): whatever is on screen is checked again.
@@ -218,7 +210,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     Intent.ACTION_USER_PRESENT -> {
                         // Cleared and not set up again: said at every unlock until it is.
                         ProtectionAlerts.remindIfStorageCleared(this@BioKeyAccessibilityService)
-                        windowList()?.let { updateMasks(it, full = false) }
+                        windowList()?.let { maskControl.update(it, full = false) }
                         reevaluateForeground()
                         mainHandler.postDelayed(::reevaluateForeground, 250)
                     }
@@ -282,7 +274,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             goHome = { pressHome() },
             onTimeout = ::onShieldTimeout
         )
-        masks = WindowMask(this, ::onMaskTapped)
+        maskControl = MaskController(this, vault, shield, mainHandler, maskHost)
         if (SecurityVault.selfProtectionAvailable) selfProtection = SelfProtectionDetector(this)
         // Read now, in the background, rather than on the main thread at the first app switch.
         ForegroundRules.warmUp(this)
@@ -326,7 +318,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             rules.reset()
             if (isRunning && ::vault.isInitialized && isInteractive()) {
                 // A locked app in picture-in-picture is masked at once.
-                guarded("Masks after lock-all") { windowList()?.let { updateMasks(it, full = false) } }
+                guarded("Masks after lock-all") { windowList()?.let { maskControl.update(it, full = false) } }
                 if (launcherInFront) watchLauncher(true)
                 reevaluateForeground()
             }
@@ -347,7 +339,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         mainHandler.post {
             if (!isRunning || !::vault.isInitialized) return@post
             // Its windows are the user's again.
-            for (alias in PasswordManager.aliasesOf(pkg)) masks.forget(alias)
+            for (alias in PasswordManager.aliasesOf(pkg)) maskControl.forget(alias)
             if (pkg != SELF_PROTECTION_PENDING_KEY) {
                 val now = SystemClock.elapsedRealtime()
                 recentUnlock = pkg to now
@@ -396,9 +388,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     private val revokeSelfProtectionAfterExitRunnable = Runnable { guarded("Self-protection exit check", ::revokeSelfProtectionAfterExit) }
     private val trailingSelfProtectionRunnable = Runnable { guarded("Self-protection check", ::checkSelfProtectionAgain) }
-    private val maskRecheckRunnable = Runnable {
-        guarded("Mask check") { windowList()?.let { updateMasks(it, full = false) } }
-    }
 
     /** Runs a Handler task, where an exception would crash the service: it is logged instead. */
     private inline fun guarded(what: String, block: () -> Unit) {
@@ -739,7 +728,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             else -> needsCover(known)
         }
         // Patches follow their windows, and a window going into picture-in-picture gets one at once.
-        val masksNeedLook = !masks.isEmpty || changes and AccessibilityEvent.WINDOWS_CHANGE_PIP != 0
+        val masksNeedLook = !maskControl.isEmpty || changes and AccessibilityEvent.WINDOWS_CHANGE_PIP != 0
         if (!surfacedNeedsLook && !masksNeedLook) {
             scheduleReconcile()
             return
@@ -747,7 +736,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         val list = windowList()
         if (list != null) {
             if (surfacedNeedsLook) list.firstOrNull { it.id == event.windowId }?.let(::onWindowSurfaced)
-            updateMasks(list, full = false)
+            maskControl.update(list, full = false)
         }
         scheduleReconcile()
     }
@@ -960,7 +949,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         windowTypes.keys.retainAll(liveIds)
         reader.forgetAllBut(liveIds)
 
-        updateMasks(windowList, full = true)
+        maskControl.update(windowList, full = true)
 
         if (foregroundPackage == PasswordManager.VIRTUAL_PACKAGE && (PasswordManager.GMS in visible || PasswordManager.CREDENTIAL_MANAGER in visible)) {
             visible += PasswordManager.VIRTUAL_PACKAGE
@@ -991,7 +980,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (cover != null) {
             if (outcome.coverInPip) {
                 Log.i(TAG, "Locked app $cover in picture-in-picture couldn't be masked; bringing it out")
-                coverFromPip(cover, pipWindows[cover])
+                maskControl.coverFromPip(cover, pipWindows[cover])
             } else {
                 // Beside BioKey's own screen, unlocked and in front (split screen, as protection
                 // resumes from it, say): its lock screen closes back onto BioKey, a trip BioKey
@@ -1054,184 +1043,26 @@ class BioKeyAccessibilityService : AccessibilityService() {
         }
     }
 
-    // -------------------------------------------------------------------------------------------
-    // Masks: picture-in-picture, windows beside the lock screen, other displays
-    // -------------------------------------------------------------------------------------------
+    /** Locked apps whose windows are patched: never covered by a full-screen cover too. */
+    private fun maskedApps(): Set<String> = if (::maskControl.isInitialized) maskControl.maskedApps else emptySet()
 
-    /**
-     * Puts [WindowMask] patches where a full-screen cover can't stay: over picture-in-picture
-     * windows of locked apps without a session, and over their windows beside the lock screen
-     * (split screen, freeform) or on another display. The latter only on [full] passes: right
-     * after a window change, such a window may still be on its way under the lock screen. A patch
-     * stays until its app has a session or stops being locked, or its window has gone. While the
-     * phone is locked, patches are only hidden (they would sit over the keyguard), never removed;
-     * while a prompt is up, likewise, but only on the display(s) it can be on: elsewhere they stay
-     * up and take taps, or a locked app on another display would be usable for as long as a
-     * prompt waits (a fingerprint prompt has no time limit).
-     */
-    private fun updateMasks(list: List<AccessibilityWindowInfo>, full: Boolean) {
-        if (!vault.isProtectionActive()) {
-            masks.clear()
-            maskedApps = emptySet()
-            return
-        }
-        val apps = list.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
-        val targets = apps.mapNotNull { maskTarget(it, list, full) }
-        if (targets.isEmpty() && masks.isEmpty) {
-            maskedApps = emptySet()
-            return
-        }
-        if (!isInteractive() || isKeyguardLocked() || apps.isEmpty()) {
-            masks.setHidden(true)
-            masks.add(targets)
-            return
-        }
-        if (SecurityEngine.INSTANCE.isAuthenticating()) {
-            // A patch over the prompt would hide its buttons and fingerprint area: none where it
-            // can be. The prompt's own scrim takes touches there meanwhile, and the windows under
-            // it drop out of the list, so patches there are kept, not followed.
-            val prompt = setOf(Display.DEFAULT_DISPLAY) + listOfNotNull(SecurityEngine.INSTANCE.promptDisplayId())
-            masks.setHiddenOn(prompt)
-            masks.show(targets, keepOn = prompt)
-            mainHandler.removeCallbacks(maskRecheckRunnable)
-            mainHandler.postDelayed(maskRecheckRunnable, MASK_RECHECK_MS)
-            return
-        }
-        val failed = masks.show(targets)
-        masks.setHidden(false)
-        val unmasked = apps.filterNot { masks.isMasking(it.id) }.mapNotNullTo(HashSet()) { windowPackages[it.id] ?: attributedWindows[it.id] }
-        maskedApps = targets.filter { masks.isMasking(it.windowId) }.mapTo(HashSet()) { it.pkg } - unmasked
-        // A patch that couldn't be put up: cover the app the usual way instead (fail closed).
-        for (target in failed) {
-            if (shield.isShowing || LockStateTracker.isRegularLockPending(target.pkg)) continue
-            if (target.inPip) coverFromPip(target.pkg, target.windowId) else lock(target.pkg, "its window couldn't be masked", target.displayId)
-        }
-    }
-
-    /** The patch window [w] needs, if any: see [updateMasks]. */
-    private fun maskTarget(w: AccessibilityWindowInfo, list: List<AccessibilityWindowInfo>, full: Boolean): WindowMask.Target? {
-        val pkg = windowPackages[w.id] ?: attributedWindows[w.id] ?: (if (w.isInPictureInPictureMode) packageOf(w) else null) ?: return null
-        if (pkg == packageName || !isCoverableByVisibility(pkg) || !vault.isAppLocked(pkg) ||
-            LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))
-        ) return null
-        val bounds = Rect().also(w::getBoundsInScreen)
-        val elsewhere = w.displayId != Display.DEFAULT_DISPLAY
-        // A full-screen window on the phone's own screen is for the shield and the lock screen to cover.
-        val fullScreen = !elsewhere && coversScreen(bounds)
-        val wanted = w.isInPictureInPictureMode ||
-            (!fullScreen && (masks.isMasking(w.id) || (full && (elsewhere || besideLockScreen(w, bounds, list)))))
-        if (!wanted) return null
-        val overlapped = list.any { other ->
-            other.type == AccessibilityWindowInfo.TYPE_SYSTEM && other.displayId == w.displayId && other.layer > w.layer &&
-                (other.isActive || other.isFocused) && Rect.intersects(bounds, Rect().also(other::getBoundsInScreen))
-        }
-        return WindowMask.Target(w.id, pkg, w.displayId, bounds, w.isInPictureInPictureMode, touchable = !overlapped)
-    }
-
-    /**
-     * While the lock screen is up, a window still listed is beside it, not under it (Android
-     * leaves windows that are wholly covered out of the list), unless BioKey's own window over it
-     * contains it.
-     */
-    private fun besideLockScreen(w: AccessibilityWindowInfo, bounds: Rect, list: List<AccessibilityWindowInfo>): Boolean {
-        if (!LockScreenActivity.isLockScreenResumed) return false
-        return list.none { own ->
-            own.type == AccessibilityWindowInfo.TYPE_APPLICATION && own.displayId == w.displayId && own.layer > w.layer &&
-                isOwnWindow(own) && Rect().also(own::getBoundsInScreen).contains(bounds)
-        }
-    }
-
-    private fun coversScreen(bounds: Rect): Boolean {
-        val screen = runCatching { getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds }.getOrNull() ?: return true
-        return bounds.width() >= screen.width() && bounds.height() >= screen.height()
-    }
-
-    /**
-     * The screen is going off, and every session with it. Locked apps in picture-in-picture are on
-     * screen again the moment the phone is unlocked, so their patches go up now, hidden.
-     */
-    private fun armMasks() {
-        masks.setHidden(true)
-        if (!vault.isProtectionActive()) return
-        val list = windowList() ?: return
-        val pips = list.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isInPictureInPictureMode }.mapNotNull { w ->
-            val pkg = packageOf(w) ?: return@mapNotNull null
-            if (pkg == packageName || !isCoverableByVisibility(pkg) || !vault.isAppLocked(pkg)) return@mapNotNull null
-            WindowMask.Target(w.id, pkg, w.displayId, Rect().also(w::getBoundsInScreen), inPip = true)
-        }
-        masks.add(pips)
-    }
-
-    /** A patch was tapped: the user wants that app. */
-    private fun onMaskTapped(target: WindowMask.Target) {
-        guarded("Mask tap") {
-            val pkg = target.pkg
-            // Asked for on purpose, like a tap on its icon.
-            LockStateTracker.clearAbandoned(pkg)
-            when {
-                // Its lock screen is already up, under the patch (picture-in-picture, or a window
-                // over a smaller lock screen, whose buttons the patch can hide): bring it to the
-                // front and ask again, even if the user had dismissed the prompt.
-                LockScreenActivity.isLockScreenResumed && LockScreenActivity.activeLockedTarget == pkg ->
-                    launchLockScreen(pkg, isSelfProtection = false, displayId = target.displayId, reprompt = true)
-                !target.inPip -> lock(pkg, "its window was tapped", target.displayId)
-                else -> coverFromPip(pkg, target.windowId)
-            }
-        }
-    }
-
-    /**
-     * Brings a locked app out of picture-in-picture so it can be locked: the screen is covered
-     * first, then the app is expanded (or started, which expands it), and the usual lock flow
-     * takes over once it is in front. Its lock screen can't go first: picture-in-picture floats
-     * above it, and expanding the app afterwards would push the lock screen away.
-     */
-    private fun coverFromPip(pkg: String, windowId: Int?) {
-        if (shield.isShowing) return
-        shield.showPredicted(
-            targetPackage = pkg,
-            waitMs = PIP_EXPAND_WAIT_MS,
-            onTapped = { onPipExpandOver(pkg) },
-            onExpired = ::onPipExpandOver
-        )
-        val window = windowId?.let { id -> windowList()?.firstOrNull { it.id == id } }
-        val root = window?.let { runCatching { it.root }.getOrNull() }
-        val expanded = root?.let { node -> runCatching { node.performAction(AccessibilityNodeInfo.ACTION_EXPAND) }.getOrDefault(false).also { node.release() } } == true
-        if (!expanded) startApp(pkg)
-    }
-
-    /** The app tapped in picture-in-picture had its time to come out of it. */
-    private fun onPipExpandOver(pkg: String) {
-        try {
-            if (!needsCover(pkg, ignoreAbandoned = true)) {
-                shield.hide()
-                return
-            }
-            val list = windowList()
-            val stillInPip = list?.any { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isInPictureInPictureMode && packageOf(it) == pkg } == true
-            val inFront = list?.let(::frontWindow)?.let(::packageOf)
-            when {
-                // It wouldn't leave: its lock screen goes up under it, its patch stays over it.
-                // Over BioKey's own screen, that lock screen closes back onto BioKey (a trip BioKey
-                // starts itself); one that did come out has pushed BioKey off screen itself.
-                stillInPip -> {
-                    if (isOwnScreenInFront(inFront)) LockStateTracker.beginOwnLockScreenHop(pkg)
-                    lock(pkg, "in picture-in-picture without a session")
-                }
-                mayBe(pkg, inFront) -> lock(pkg, "opened from picture-in-picture")
-                else -> shield.hide()
-            }
-        } catch (t: Throwable) {
-            Log.e(TAG, "Picture-in-picture check failed: ${describe(t)}")
-            // Nothing would take this cover down again: lock the app (it fails closed from there), or stand down.
-            if (vault.isAppLocked(pkg)) lock(pkg, "in picture-in-picture") else shield.hide()
-        }
-    }
-
-    private fun startApp(pkg: String) {
-        val launch = packageManager.getLaunchIntentForPackage(PasswordManager.launchPackage(pkg)) ?: return
-        runCatching { startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            .onFailure { Log.w(TAG, "Couldn't bring $pkg out of picture-in-picture: ${it.message}") }
+    /** What [MaskController] asks of the service. */
+    private val maskHost = object : MaskController.Host {
+        override fun windowList() = this@BioKeyAccessibilityService.windowList()
+        override fun knownPackage(windowId: Int) = windowPackages[windowId] ?: attributedWindows[windowId]
+        override fun packageOf(window: AccessibilityWindowInfo) = this@BioKeyAccessibilityService.packageOf(window)
+        override fun isCoverable(pkg: String) = isCoverableByVisibility(pkg)
+        override fun isOwnWindow(window: AccessibilityWindowInfo) = this@BioKeyAccessibilityService.isOwnWindow(window)
+        override fun isInteractive() = this@BioKeyAccessibilityService.isInteractive()
+        override fun isKeyguardLocked() = this@BioKeyAccessibilityService.isKeyguardLocked()
+        override fun needsCover(pkg: String) = this@BioKeyAccessibilityService.needsCover(pkg, ignoreAbandoned = true)
+        override fun isOwnScreenInFront(front: String?) = this@BioKeyAccessibilityService.isOwnScreenInFront(front)
+        override fun mayBe(target: String, pkg: String?) = this@BioKeyAccessibilityService.mayBe(target, pkg)
+        override fun lock(pkg: String, why: String, displayId: Int?) = this@BioKeyAccessibilityService.lock(pkg, why, displayId)
+        override fun bringLockScreenForward(pkg: String, displayId: Int) =
+            launchLockScreen(pkg, isSelfProtection = false, displayId = displayId, reprompt = true)
+        override fun guarded(what: String, block: () -> Unit) = this@BioKeyAccessibilityService.guarded(what, block)
+        override fun describe(t: Throwable) = this@BioKeyAccessibilityService.describe(t)
     }
 
     // -------------------------------------------------------------------------------------------
@@ -1650,7 +1481,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
         if (::shield.isInitialized) shield.onConfigurationChanged()
-        if (::masks.isInitialized) masks.refreshPalette()
+        if (::maskControl.isInitialized) maskControl.refreshPalette()
         if (::vault.isInitialized && AppInfoCache.onConfiguration(newConfig)) AppInfoCache.reload(this, vault.getLockedPackages())
     }
 
@@ -1683,7 +1514,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         reconcileDueAt = 0L
         mainHandler.removeCallbacks(trailingSelfProtectionRunnable)
         mainHandler.removeCallbacks(revokeSelfProtectionAfterExitRunnable)
-        mainHandler.removeCallbacks(maskRecheckRunnable)
+        if (::maskControl.isInitialized) maskControl.stop()
         mainHandler.removeCallbacksAndMessages(ABANDON_TOKEN)
         // A Recents look still pending would end a session after the service has gone.
         recents.reset()
@@ -1695,7 +1526,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         // Nothing enforces sessions while the service is gone, so none may outlive it.
         LockStateTracker.lockAll(reason = "accessibility engine stopped")
         if (::shield.isInitialized) shield.destroy()
-        if (::masks.isInitialized) masks.clear()
+        if (::maskControl.isInitialized) maskControl.clear()
         if (::labels.isInitialized) labels.shutdown()
         if (::vault.isInitialized && vault.isSetupCompleted()) {
             // Hand over to compatibility mode if it's set up (e.g. Advanced Protection was just turned on).

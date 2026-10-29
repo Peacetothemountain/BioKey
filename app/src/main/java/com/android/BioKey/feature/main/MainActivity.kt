@@ -34,6 +34,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.android.BioKey.R
+import com.android.BioKey.core.FeatureLinks
 import com.android.BioKey.core.security.BiometricEnrollment
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
@@ -74,7 +75,7 @@ class MainActivity : ComponentActivity() {
             intent?.action == ACTION_PAUSE_PROTECTION && intent.component?.className == PAUSE_PROTECTION_ALIAS
 
         /** An app's label to search for as home opens (the new-app offer): harmless from anyone, it only fills the search. */
-        const val EXTRA_SEARCH = "com.android.BioKey.extra.SEARCH"
+        const val EXTRA_SEARCH = FeatureLinks.EXTRA_SEARCH
 
         /** Opens the pause sheet (after BioKey's own check): the tile's way in, through the alias. */
         internal fun pauseIntent(context: Context): Intent =

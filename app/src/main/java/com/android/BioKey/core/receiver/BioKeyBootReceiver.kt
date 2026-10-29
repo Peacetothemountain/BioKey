@@ -6,12 +6,11 @@ import android.content.Intent
 import android.os.SystemClock
 import android.os.UserManager
 import android.util.Log
+import com.android.BioKey.core.FeatureLinks
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
-import com.android.BioKey.feature.lock.BioKeyAccessibilityService
-import com.android.BioKey.feature.lock.UsageWatchService
 import java.util.concurrent.Executors
 
 /**
@@ -54,9 +53,9 @@ class BioKeyBootReceiver : BroadcastReceiver() {
                         // Switched on: Android connects it moments after a boot or an update. An alert
                         // only if it still isn't running then, withdrawn as soon as it is.
                         ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING ->
-                            awaitRunning("Accessibility engine") { BioKeyAccessibilityService.isRunning }
+                            awaitRunning("Accessibility engine") { FeatureLinks.engines.accessibilityRunning }
                         // Its permissions don't mean it's running: the start can still fail.
-                        ProtectionEngine.Mode.COMPATIBILITY -> awaitRunning("Compatibility engine") { UsageWatchService.isRunning }
+                        ProtectionEngine.Mode.COMPATIBILITY -> awaitRunning("Compatibility engine") { FeatureLinks.engines.compatibilityRunning }
                         else -> false
                     }
                     if (!protecting) ProtectionAlerts.serviceStopped(appContext, now = true)

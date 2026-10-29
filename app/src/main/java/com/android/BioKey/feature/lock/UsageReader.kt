@@ -50,7 +50,7 @@ internal class UsageReader(
         pollsSinceLockCheck = LOCK_CHECK_POLLS
     }
 
-    /** The next look reads from [time] at the latest (the screen coming back: what happened shortly before too). */
+    /** The next look reads from [time] at the earliest (the screen coming back: what happened shortly before too). */
     fun readAgainFrom(time: Long) {
         queriedUntil = maxOf(queriedUntil, time)
     }
@@ -232,7 +232,7 @@ internal class UsageReader(
          * Re-read a little of the past each time, so no event slips between two polls: Android can
          * log an event after a poll that ends later than it happened. Generous, as how late events
          * really come hasn't been measured on enough phones; debug builds log the latest seen
-         * ([noteLateness]), so it can be brought down once it has.
+         * (UsageWatchService's noteLateness), so it can be brought down once it has.
          */
         internal const val OVERLAP_MS = 2_000L
         /**

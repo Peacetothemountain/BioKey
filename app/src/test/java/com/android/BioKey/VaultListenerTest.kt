@@ -2,6 +2,7 @@ package com.android.BioKey
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.android.BioKey.core.FeatureLinks
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.VaultReactions
 import org.junit.After
@@ -67,11 +68,27 @@ class VaultListenerTest {
 
     @Test
     fun theLockAndShieldAreRegisteredAsBioKeyStarts() {
-        // BioKeyApplication registers them before anything reads the vault: adding again changes nothing.
-        SecurityVault.addListener(VaultReactions)
-        SecurityVault.removeListener(listener)
+        // BioKeyApplication did it, before this test (or anything) read the vault.
+        assertTrue(SecurityVault.isListening(VaultReactions))
+        assertTrue(FeatureLinks.engines === com.android.BioKey.feature.lock.LockEngines)
+    }
+
+    @Test
+    fun aRestoreWithHidingOffIsHeard() {
+        vault.setNotificationShield(true)
+        val state = vault.exportState().put("notificationShield", false)
         heard.clear()
-        vault.pauseProtection(60_000L)
-        assertTrue(heard.isEmpty())
+        vault.restoreState(state)
+        assertTrue(heard.toString(), "shield off" in heard)
+    }
+
+    @Test
+    fun lockedAppsAreHeardAsTheVaultLoads() {
+        vault.setAppLock("com.example.bank", true)
+        vault.awaitPendingWrites()
+        heard.clear()
+        SecurityVault.resetForTests()
+        vault.isSetupCompleted()
+        assertTrue(heard.toString(), heard.any { it.startsWith("locked") && "com.example.bank" in it })
     }
 }

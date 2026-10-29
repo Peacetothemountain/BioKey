@@ -11,6 +11,7 @@ import android.os.UserManager
 import android.security.advancedprotection.AdvancedProtectionManager
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.android.BioKey.core.FeatureLinks
 import com.android.BioKey.core.data.AppClassifier
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.BiometricEnrollment
@@ -21,8 +22,10 @@ import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.feature.lock.AppInfoCache
+import com.android.BioKey.feature.lock.LockEngines
 import com.android.BioKey.feature.lock.ScreenReceiver
 import com.android.BioKey.feature.lock.VaultReactions
+import com.android.BioKey.feature.main.MainActivity
 import com.android.BioKey.feature.notification.ShieldAccessWatch
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -65,6 +68,8 @@ class BioKeyApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Before anything in core/ can ask: the engines and the main screen it opens.
+        FeatureLinks.install(LockEngines, MainActivity::class.java)
         // Before the vault first loads: the lock and the notification shield follow its changes.
         SecurityVault.addListener(VaultReactions)
         ScreenReceiver.register(this)

@@ -94,4 +94,57 @@ class UsageReaderTest {
         reader.read()
         assertEquals(before + 1, lockChecks)
     }
+
+    private fun event(pkg: String, at: Long, type: Int) {
+        shadowOf(usage).addEvent(
+            ShadowUsageStatsManager.EventBuilder.buildEvent().setPackage(pkg).setClass("$pkg.Main").setTimeStamp(at).setEventType(type).build()
+        )
+    }
+
+    @Test
+    fun theCursorNeverMovesBack() {
+        vault.setAppLock("com.example.bank", true)
+        val first = reader.read()
+        // Asked to read from long ago (the screen coming back): what was read stays read.
+        reader.readAgainFrom(0L)
+        assertTrue(reader.read().from >= first.readAt - UsageReader.OVERLAP_MS)
+    }
+
+    @Test
+    fun aLookBackReachesFurtherUntilItFindsTheAppInFront() {
+        vault.setAppLock("com.example.bank", true)
+        val now = System.currentTimeMillis()
+        // Two minutes ago: past the first 10 s, found by the look growing.
+        resumed("com.example.bank", now - 120_000L)
+        reader.lookBackNext()
+        val batch = reader.read()
+        assertTrue(batch.from <= now - 120_000L)
+        assertEquals(listOf("com.example.bank"), batch.events.map { it.pkg })
+    }
+
+    @Test
+    fun aLookBackNeverReachesBeforeThisBoot() {
+        vault.setAppLock("com.example.bank", true)
+        val now = System.currentTimeMillis()
+        // The phone has been up 10 minutes: an app resumed 20 minutes ago is from before.
+        resumed("com.example.bank", now - 20 * 60_000L)
+        reader.lookBackNext()
+        assertTrue(reader.read().events.isEmpty())
+    }
+
+    @Test
+    fun olderEventsCountOnlySinceTheScreenLastCameOn() {
+        vault.setAppLock("com.example.bank", true)
+        val now = System.currentTimeMillis()
+        // Something in front lately, so the look back stops at its first 10 s.
+        resumed("com.example.other", now - 5_000L)
+        // The locked app paused beside it earlier: kept as what it did last...
+        event("com.example.bank", now - 100_000L, UsageEvents.Event.ACTIVITY_PAUSED)
+        reader.lookBackNext()
+        assertEquals(listOf("com.example.bank"), reader.read().older.map { it.pkg })
+        // ...unless the screen has come on since: that stopped every activity.
+        event("android", now - 50_000L, UsageEvents.Event.SCREEN_INTERACTIVE)
+        reader.lookBackNext()
+        assertTrue(reader.read().older.isEmpty())
+    }
 }

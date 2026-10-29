@@ -304,6 +304,7 @@ It writes `app/src/release/generated/baselineProfiles/` (the baseline and startu
 
 ```
 app/src/main/java/com/android/BioKey/
+core               FeatureLinks (the engines and main screen, installed as BioKey starts)
 core/data          LockTimeoutMode, SecurityProfile, AppClassifier, PasswordManager
 core/security      SecurityVault (settings, locked apps, profiles), LockStateTracker (sessions),
                    SecurityEngine (BiometricPrompt), ProtectionEngine (which engine runs),
@@ -314,8 +315,10 @@ core/diagnostics   DiagnosticLog (on-phone log of lock decisions), EngineTrace (
                    latency marks)
 core/receiver      Boot receiver
 feature/lock       BioKeyAccessibilityService, WindowReader (every look at the screen),
+                   MaskController (patches over picture-in-picture and side-by-side windows),
                    UsageWatchService (compatibility mode) and UsageReader (its look at usage
-                   events), VaultReactions (what follows the vault's changes), ForegroundRules,
+                   events), VaultReactions (what follows the vault's changes), LockEngines
+                   (the engines, as core/ asks for them), ForegroundRules,
                    SessionRules, LockLauncher, InstantShieldOverlay, WindowMask,
                    LockScreenActivity, LockCoverView, SelfProtectionDetector, RecentsWatcher,
                    AppInfoCache, AppLabels, ScreenReceiver

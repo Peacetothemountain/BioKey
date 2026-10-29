@@ -12,10 +12,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.edit
 import com.android.BioKey.R
+import com.android.BioKey.core.FeatureLinks
 import com.android.BioKey.core.diagnostics.DiagnosticLog
-import com.android.BioKey.feature.lock.BioKeyAccessibilityService
-import com.android.BioKey.feature.lock.UsageWatchService
-import com.android.BioKey.feature.main.MainActivity
 
 /**
  * High-priority alerts for when BioKey's protection stops working.
@@ -96,7 +94,7 @@ object ProtectionAlerts {
         val open = PendingIntent.getActivity(
             context,
             id,
-            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            FeatureLinks.openMainScreen(context),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -146,7 +144,7 @@ object ProtectionAlerts {
             return
         }
         main.postDelayed({
-            if (!BioKeyAccessibilityService.isRunning && !UsageWatchService.isRunning) postServiceStopped(app)
+            if (!FeatureLinks.engines.accessibilityRunning && !FeatureLinks.engines.compatibilityRunning) postServiceStopped(app)
         }, STOP_TOKEN, HANDOVER_GRACE_MS)
     }
 
@@ -265,7 +263,7 @@ object ProtectionAlerts {
         val open = PendingIntent.getActivity(
             app,
             ID_STORAGE_CLEARED,
-            Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            FeatureLinks.openMainScreen(app),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val notification = NotificationCompat.Builder(app, UnlockAttempts.CHANNEL_ID)
