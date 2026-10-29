@@ -422,7 +422,8 @@ object UnlockAttempts {
 
     fun ensureChannel(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
-        if (nm.getNotificationChannel(CHANNEL_ID) != null) return
+        // Created, or updated: Android takes a new name and description, never touches the importance
+        // the owner chose.
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, context.getString(R.string.activity_channel_name), NotificationManager.IMPORTANCE_DEFAULT).apply {
                 description = context.getString(R.string.activity_channel_description)
@@ -483,6 +484,7 @@ object UnlockAttempts {
                 offs.isNotEmpty() -> R.string.gaps_notification_text
                 gaps.any { it.kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED || it.kind == ProtectionGaps.Kind.BIOMETRICS_REMOVED } ->
                     R.string.biometrics_changed_notification_text
+                gaps.any { it.kind == ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED } -> R.string.shield_access_notification_text
                 else -> R.string.changes_notification_text
             }
         )

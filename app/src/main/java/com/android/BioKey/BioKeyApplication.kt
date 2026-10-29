@@ -22,6 +22,7 @@ import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.ScreenReceiver
+import com.android.BioKey.feature.notification.ShieldAccessWatch
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -93,6 +94,7 @@ class BioKeyApplication : Application() {
                 NewAppSuggestions.load(app)
                 ProtectionGaps.load(app)
                 BiometricEnrollment.checkSoon(app)
+                ShieldAccessWatch.check(app)
                 // An engine that connected before the first unlock couldn't say so then.
                 if (ProtectionEngine.isProtecting(app)) ProtectionGaps.onEngineUp(app)
                 ProtectionEngine.refresh(app)

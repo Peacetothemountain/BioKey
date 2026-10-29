@@ -77,7 +77,8 @@ object ProtectionAlerts {
 
     fun ensureChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
-        if (nm.getNotificationChannel(CHANNEL_ID) != null) return
+        // Created, or updated: Android takes a new name and description, never touches the importance
+        // the owner chose.
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, context.getString(R.string.alerts_channel_name), NotificationManager.IMPORTANCE_HIGH).apply {
                 description = context.getString(R.string.alerts_channel_description)

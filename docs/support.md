@@ -84,6 +84,10 @@ opens the notification. Calls, alarms, media and navigation always show.
 
 A notification can still flash briefly as a heads-up, or on a watch, before BioKey hides it.
 
+If notification access is switched off while this is on, locked apps' notifications show in full
+again: BioKey records it, tells you at your next unlock, and home shows **Notifications aren't
+hidden** with **Allow access** until it's back.
+
 ### My hidden notifications didn't come back
 
 Unlocking the app brings them back. To bring them all back, switch off **Hide notification

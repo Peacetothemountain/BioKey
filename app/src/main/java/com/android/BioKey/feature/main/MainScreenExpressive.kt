@@ -151,6 +151,7 @@ import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.ForegroundRules
+import com.android.BioKey.feature.notification.ShieldAccessWatch
 import com.android.BioKey.ui.brand.BioKeyMarkSideways
 import com.android.BioKey.ui.brand.HeaderMatrixDotsExpressive
 import com.android.BioKey.ui.brand.KeyMark
@@ -414,12 +415,15 @@ fun MainScreenExpressive(
     var lockSettingsDismissed by remember { mutableStateOf<Boolean?>(null) }
     // Read again on every visit: an engine coming back clears it.
     var remindersStopped by remember { mutableStateOf(false) }
+    var shieldWithoutAccess by remember { mutableStateOf(false) }
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
             withContext(Dispatchers.IO) {
                 lockSettingsDismissed = homePrefs(context).getBoolean(KEY_LOCK_SETTINGS_DISMISSED, false)
                 remindersStopped = ProtectionAlerts.remindersStopped(context)
+                ShieldAccessWatch.check(context)
+                shieldWithoutAccess = ShieldAccessWatch.shieldWithoutAccess(context)
             }
         }
     }
@@ -668,6 +672,24 @@ fun MainScreenExpressive(
                             }
                             UrgentButton(look.action, ::onProtectionAction)
                         }
+                    }
+                }
+            }
+
+            // The shield is on but its access was taken away: notifications show in full. Calm: the
+            // owner may have meant it, and the record (if any) is the activity card's.
+            if (shieldWithoutAccess && vault.isSetupCompleted()) {
+                item(key = "shield_no_access") {
+                    ActionCard(
+                        icon = Icons.Default.NotificationsOff,
+                        title = stringResource(R.string.home_shield_no_access_title),
+                        subtitle = stringResource(R.string.home_shield_no_access_text),
+                        modifier = Modifier.animateItem()
+                    ) {
+                        FilledTonalButton(onClick = {
+                            // The explanation first, as everywhere notification access is asked for.
+                            disclosures.request(Disclosure.NOTIFICATIONS) { IntentNavigationHelper.openNotificationListenerSettings(context) }
+                        }) { Text(stringResource(R.string.home_shield_no_access_action)) }
                     }
                 }
             }

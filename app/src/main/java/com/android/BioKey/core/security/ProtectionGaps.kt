@@ -53,6 +53,8 @@ object ProtectionGaps {
         BIOMETRICS_CHANGED,
         /** The phone has no strong face or fingerprint any more. */
         BIOMETRICS_REMOVED,
+        /** Notification access taken away while "Hide notification content" was on. */
+        SHIELD_ACCESS_REVOKED,
         /**
          * Protection weakened (paused, an app's lock off, a profile off or deleted, the notification
          * shield off, a backup restored) from BioKey opened with the screen lock, not a face or

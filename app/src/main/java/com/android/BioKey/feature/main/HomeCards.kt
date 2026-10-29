@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.GppBad
 import androidx.compose.material.icons.filled.GppMaybe
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.RemoveModerator
 import androidx.compose.material3.AlertDialog
@@ -52,13 +53,13 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.res.pluralStringResource
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -195,6 +196,7 @@ internal fun SecurityActivityCard(
             gapIsNewest -> when (newestGap!!.kind) {
                 ProtectionGaps.Kind.BIOMETRICS_CHANGED, ProtectionGaps.Kind.BIOMETRICS_REMOVED -> Icons.Default.Fingerprint
                 ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK -> Icons.Default.Password
+                ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED -> Icons.Default.NotificationsOff
                 else -> Icons.Default.RemoveModerator
             }
             urgent -> Icons.Default.GppBad
@@ -286,6 +288,7 @@ internal fun gapLine(context: Context, gap: ProtectionGaps.Gap): String {
         return when (gap.kind) {
             ProtectionGaps.Kind.BIOMETRICS_CHANGED -> context.getString(R.string.card_gap_biometrics_changed, time)
             ProtectionGaps.Kind.BIOMETRICS_REMOVED -> context.getString(R.string.card_gap_biometrics_removed, time)
+            ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED -> context.getString(R.string.card_gap_shield_access_revoked, time)
             // The detail is the stored record of what changed, as it was written.
             else -> context.getString(
                 R.string.card_gap_changed_with_screen_lock,
@@ -419,6 +422,7 @@ internal fun SecurityActivityDialog(
                                     when (change.kind) {
                                         ProtectionGaps.Kind.BIOMETRICS_CHANGED -> R.string.card_change_biometrics_changed_hint
                                         ProtectionGaps.Kind.BIOMETRICS_REMOVED -> R.string.card_change_biometrics_removed_hint
+                                        ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED -> R.string.card_change_shield_access_hint
                                         else -> R.string.card_change_screen_lock_hint
                                     }
                                 ),

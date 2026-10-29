@@ -205,6 +205,8 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        val app = applicationContext
+        Thread { runCatching { ShieldAccessWatch.check(app) } }.start()
         activeService = this
         connected = true
         // Nothing seen while unbound is known: the stand-ins are posted afresh, the next lock-all sweeps.
@@ -272,6 +274,9 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     }
 
     override fun onListenerDisconnected() {
+        // Access taken away is the likeliest reason: recorded if so ([ShieldAccessWatch]).
+        val app = applicationContext
+        Thread { runCatching { ShieldAccessWatch.check(app) } }.start()
         connected = false
         activeService = null
         standInCounts.clear()

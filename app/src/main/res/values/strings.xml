@@ -361,6 +361,12 @@
     <string name="card_activity_changes">Changes</string>
     <string name="card_change_biometrics_changed_hint">If you didn\'t, check your faces and fingerprints in Android\'s settings</string>
     <string name="card_change_biometrics_removed_hint">Your screen lock opens locked apps again</string>
+    <string name="card_gap_shield_access_revoked">%1$s · notification access switched off while Hide notification content was on</string>
+    <string name="card_change_shield_access_hint">Locked apps\' notifications show in full until it\'s back on</string>
+    <string name="shield_access_notification_text">Notification access was switched off, so locked apps\' notifications show in full. Open BioKey to turn it back on.</string>
+    <string name="home_shield_no_access_title">Notifications aren\'t hidden</string>
+    <string name="home_shield_no_access_text">Hide notification content is on, but BioKey\'s notification access is off, so locked apps\' notifications show in full.</string>
+    <string name="home_shield_no_access_action">Allow access</string>
     <string name="card_change_screen_lock_hint">If it wasn\'t you, someone knows your screen lock</string>
     <string name="card_change_biometrics_note">Anyone who knows your screen lock can add their own face or fingerprint in Android\'s settings. These can\'t be cleared here: they go 7 days after you\'ve seen them.</string>
     <string name="card_gap_hint">Locked apps could be opened without a check</string>

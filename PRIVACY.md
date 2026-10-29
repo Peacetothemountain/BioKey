@@ -162,7 +162,8 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   Clearing them, or turning the alerts off, asks for your face or fingerprint where one is set up.
 - **Times app locking was off, and other changes:** when BioKey's protection was switched off or
   BioKey was force-stopped, and when it came back; when a face or fingerprint was added or removed
-  on the phone; and, on a phone with a face or fingerprint, each way protection was weakened from
+  on the phone; when notification access was switched off while "Hide notification content" was
+  on (whether BioKey had that access is also remembered, for this); and, on a phone with a face or fingerprint, each way protection was weakened from
   BioKey opened with the screen lock and not confirmed with a face or fingerprint: protection
   paused; an app's lock switched off; a locked app moved or added into a profile that's off, or
   taken out of its profile; a profile switched off or deleted; a longer re-lock delay, for a

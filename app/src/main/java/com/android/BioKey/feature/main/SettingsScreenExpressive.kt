@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,6 +24,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AddModerator
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -118,8 +121,13 @@ private class SettingItem(
     val onChange: (Boolean) -> Unit = {},
     val onClick: (() -> Unit)? = null,
     /** Something the user should fix: drawn in the error colours. */
-    val warning: Boolean = false
+    val warning: Boolean = false,
+    /** What a tappable row shows at its end: where it goes. */
+    val goes: Goes = Goes.ON
 )
+
+/** Where tapping a row takes you: on (a chevron), out of BioKey (open-in-new), or nowhere (an action). */
+private enum class Goes { ON, OUT, NOWHERE }
 
 /**
  * Settings' trip to Android's notification access page, kept with the activity rather than the
@@ -271,7 +279,8 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 onClick = {
                     val undo = vault.lockSettingsApp()
                     BioKeyMessages.show(res.getString(R.string.settings_lock_settings_done), Icons.Default.Lock, actionLabel = res.getString(R.string.common_undo), onAction = undo)
-                }
+                },
+                goes = Goes.NOWHERE
             ) else null
         ))
         add(
@@ -480,13 +489,15 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             icon = Icons.Default.Policy,
             title = stringResource(R.string.settings_privacy_policy_title),
             subtitle = stringResource(R.string.settings_privacy_policy_summary),
-            onClick = { openPage(IntentNavigationHelper.PRIVACY_POLICY_URL) }
+            onClick = { openPage(IntentNavigationHelper.PRIVACY_POLICY_URL) },
+            goes = Goes.OUT
         ),
         SettingItem(
             icon = Icons.AutoMirrored.Filled.HelpOutline,
             title = stringResource(R.string.settings_help_title),
             subtitle = stringResource(R.string.settings_help_summary, BuildConfig.VERSION_NAME),
-            onClick = { openPage(IntentNavigationHelper.SUPPORT_URL) }
+            onClick = { openPage(IntentNavigationHelper.SUPPORT_URL) },
+            goes = Goes.OUT
         )
     )
 
@@ -606,7 +617,17 @@ private fun SettingsSection(title: String, items: List<SettingItem>, footer: Str
                 icon = item.icon,
                 iconTint = if (item.warning) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
                 iconContainer = if (item.warning) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
-                onClick = item.onClick
+                onClick = item.onClick,
+                trailing = if (item.onClick == null || item.goes == Goes.NOWHERE) null else {
+                    {
+                        Icon(
+                            if (item.goes == Goes.OUT) Icons.AutoMirrored.Filled.OpenInNew else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(if (item.goes == Goes.OUT) 20.dp else 24.dp)
+                        )
+                    }
+                }
             )
         }
     }

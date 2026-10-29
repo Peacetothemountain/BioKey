@@ -10,6 +10,7 @@ import com.android.BioKey.core.security.BiometricEnrollment
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.UnlockAttempts
+import com.android.BioKey.feature.notification.ShieldAccessWatch
 
 /**
  * Ends every unlock session the moment the display turns off or a screensaver starts, so a
@@ -53,6 +54,7 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
                         UnlockAttempts.onUserPresent(app)
                         ProtectionAlerts.remindIfOff(app)
                         BiometricEnrollment.checkSoon(app)
+                        ShieldAccessWatch.check(app)
                     } finally {
                         pending?.finish()
                     }
