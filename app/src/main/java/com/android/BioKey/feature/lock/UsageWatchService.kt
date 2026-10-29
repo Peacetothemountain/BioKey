@@ -8,7 +8,6 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.app.usage.UsageEvents
-import android.app.usage.UsageEventsQuery
 import android.app.usage.UsageStatsManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -37,6 +36,7 @@ import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.feature.lock.UsageReader.Batch
 import com.android.BioKey.feature.main.MainActivity
 
 /**
@@ -64,36 +64,16 @@ class UsageWatchService : Service() {
         /** How often the foreground app is checked while the screen is on. */
         private const val POLL_MS = 150L
         /**
-         * Re-read a little of the past each time, so no event slips between two polls: Android can
-         * log an event after a poll that ends later than it happened. Generous, as how late events
-         * really come hasn't been measured on enough phones; debug builds log the latest seen
-         * ([noteLateness]), so it can be brought down once it has.
-         */
-        private const val OVERLAP_MS = 2_000L
-        /**
-         * Whether the phone is locked is asked every this many polls (about 0.45 s), and at once
-         * whenever a poll found something: the keyguard is up over anything a lock with the screen
-         * on (Lockdown) leaves, so ending the sessions that much later shows nothing.
-         */
-        private const val LOCK_CHECK_POLLS = 3
-        /**
          * A poll that found nothing, while nothing waits on the clock ([isQuiet]), isn't handed to
          * the main thread, except every this many (about 0.6 s): those keep the checks that only
          * look again (an uncovered locked app, a timed pause ending) running all the same.
          */
         private const val QUIET_HEARTBEAT_POLLS = 4
-        /** How far back to look for the app already in front when the engine starts. */
-        private const val STARTUP_LOOKBACK_MS = 6 * 60 * 60_000L
-        /** That look starts this far back and reaches [LOOKBACK_GROWTH] times further each time it finds nothing. */
-        private const val FIRST_LOOKBACK_MS = 10_000L
-        private const val LOOKBACK_GROWTH = 6
         /**
          * How much of the time the screen was off is read when it comes back on: generous, as the
          * broadcast can arrive after what happened just before it.
          */
         private const val WAKE_LOOKBACK_MS = 30_000L
-        /** Permissions are checked again every this many polls (about 2 s), in case a change was missed. */
-        private const val PERMISSION_CHECK_POLLS = 13
         /**
          * A locked app that opened and was paused at once behind another one is still showing if it
          * hasn't stopped by then (the one in front is see-through): it is covered.
@@ -109,20 +89,6 @@ class UsageWatchService : Service() {
         /** Play Store's review and update sheets float, see-through, over the app that asked for them. */
         private const val PKG_PLAY_STORE = "com.android.vending"
         private val LOCK_SCREEN_CLASS = LockScreenActivity::class.java.name
-        private val ACTIVITY_EVENTS = intArrayOf(
-            UsageEvents.Event.ACTIVITY_RESUMED,
-            UsageEvents.Event.ACTIVITY_PAUSED,
-            UsageEvents.Event.ACTIVITY_STOPPED
-        )
-        /** [ACTIVITY_EVENTS], and the screen coming on ([lockedAppsBefore]). */
-        private val ACTIVITY_AND_SCREEN_ON_EVENTS = intArrayOf(
-            UsageEvents.Event.ACTIVITY_RESUMED,
-            UsageEvents.Event.ACTIVITY_PAUSED,
-            UsageEvents.Event.ACTIVITY_STOPPED,
-            UsageEvents.Event.SCREEN_INTERACTIVE
-        )
-        /** Device-wide events (the screen coming on, say) are logged as this package's. */
-        private const val DEVICE_EVENTS_PACKAGE = "android"
 
         @Volatile
         var isRunning: Boolean = false
@@ -169,6 +135,8 @@ class UsageWatchService : Service() {
     private lateinit var power: PowerManager
     private lateinit var appOps: AppOpsManager
     private lateinit var shield: InstantShieldOverlay
+    /** Reads the screen on [worker]: see [UsageReader]. */
+    private val reader by lazy { UsageReader(this, usage, vault, epoch = { epoch }, deviceLockedNow = ::deviceLockedNow) }
 
     // Main thread: what is on screen.
 
@@ -215,17 +183,6 @@ class UsageWatchService : Service() {
     private var idle = false
     private var permissionLost = false
 
-    // Worker thread: the read cursor.
-
-    /** Wall-clock end of the last query: each poll reads only from here (minus [OVERLAP_MS]) on. */
-    private var queriedUntil = 0L
-    private var lookBackNext = false
-    private var rebaseNext = false
-    private var wasIdle = false
-    private var pollsSincePermissionCheck = 0
-    /** Polls since the phone's lock state was last asked, and what it was ([deviceLocked]). */
-    private var pollsSinceLockCheck = LOCK_CHECK_POLLS
-    private var lastDeviceLocked = false
     /** Quiet polls not handed over since the last one that was ([shouldHandOver]). */
     private var quietPolls = 0
     private var handedOverLocked = false
@@ -240,7 +197,7 @@ class UsageWatchService : Service() {
     private val pollTask = object : Runnable {
         override fun run() {
             if (!polling) return
-            val batch = readScreen()
+            val batch = reader.read()
             if (EngineTrace.enabled) traceBatch(batch)
             if (shouldHandOver(batch)) handler.post { onBatch(batch) }
             workerHandler.postDelayed(this, POLL_MS)
@@ -257,7 +214,7 @@ class UsageWatchService : Service() {
      */
     private fun traceBatch(batch: Batch) {
         val firstSeen = (batch.older + batch.events).filter { e -> tracedEvents.put("${e.time}|${e.type}|${e.activity}", e.time) == null }
-        tracedEvents.values.removeAll { it < batch.readAt - 2 * OVERLAP_MS }
+        tracedEvents.values.removeAll { it < batch.readAt - 2 * UsageReader.OVERLAP_MS }
         if (firstSeen.isEmpty() && !batch.fresh) return
         val fields = firstSeen.map { e -> listOf(e.type, e.pkg, e.cls.orEmpty(), batch.readAt - e.time).joinToString(",") { EngineTrace.escape(it.toString()) } }
         EngineTrace.record("c.poll", if (batch.fresh) 1 else 0, *fields.toTypedArray())
@@ -306,7 +263,7 @@ class UsageWatchService : Service() {
                 // now. They are UTC, so a time zone change moves nothing and isn't listened for.
                 Intent.ACTION_TIME_CHANGED -> {
                     DiagnosticLog.log("Clock changed: re-reading app launches from now")
-                    workerHandler.post { rebaseNext = true }
+                    workerHandler.post { reader.rebase() }
                 }
             }
         }
@@ -494,9 +451,9 @@ class UsageWatchService : Service() {
         // Rescheduled on the worker, so a poll running there right now can't leave a second chain
         // of polls behind (the screen coming on, then the phone being unlocked).
         workerHandler.post {
-            if (lookBack) lookBackNext = true
+            if (lookBack) reader.lookBackNext()
             // The first poll asks whether the phone is locked, and is handed over whatever it finds.
-            pollsSinceLockCheck = LOCK_CHECK_POLLS
+            reader.askLockStateNext()
             quietPolls = QUIET_HEARTBEAT_POLLS
             workerHandler.removeCallbacks(pollTask)
             pollTask.run()
@@ -512,7 +469,7 @@ class UsageWatchService : Service() {
     /** The screen is back (on, unlocked, out of a screensaver): look now, at what happened shortly before too. */
     private fun wake() {
         if (!isInteractive()) return
-        workerHandler.post { queriedUntil = maxOf(queriedUntil, System.currentTimeMillis() - WAKE_LOOKBACK_MS) }
+        workerHandler.post { reader.readAgainFrom(System.currentTimeMillis() - WAKE_LOOKBACK_MS) }
         startPolling()
     }
 
@@ -531,182 +488,6 @@ class UsageWatchService : Service() {
         expanding = null
         deferred = null
         frontSeeThrough = false
-    }
-
-    // -------------------------------------------------------------------------------------------
-    // Reading (worker thread)
-    // -------------------------------------------------------------------------------------------
-
-    /**
-     * What one look at the screen found ([readScreen]). Whether the keyguard is up as well is
-     * asked only where a cover depends on it ([onBatch]): another binder call, needless on the
-     * many looks that find nothing to act on.
-     */
-    private class Batch(
-        val epoch: Int,
-        val deviceLocked: Boolean,
-        /** What compatibility mode lacks, when this look checked and found something missing. */
-        val missing: String?,
-        /** Nothing to protect (paused, or no app locked): nothing was read. */
-        val idle: Boolean = false,
-        /** A look back: what was known about the screen no longer holds. */
-        val fresh: Boolean = false,
-        /** The clock was changed: earlier times can't be compared with these; acted on from here. */
-        val rebasedFrom: Long? = null,
-        /** Where the read began. */
-        val from: Long = 0L,
-        val events: List<UsageEvent> = emptyList(),
-        /** In a look back, locked apps' events from before [from]: what their activities did last ([lockedAppsBefore]). */
-        val older: List<UsageEvent> = emptyList(),
-        /** When the read was made (wall clock, as event times are). */
-        val readAt: Long = 0L
-    )
-
-    /** One look at the screen: the device's lock state and the activity events since the last look. */
-    private fun readScreen(): Batch {
-        val current = epoch
-        val missing = if (++pollsSincePermissionCheck < PERMISSION_CHECK_POLLS) null else {
-            pollsSincePermissionCheck = 0
-            ProtectionEngine.missingCompatibilityPermissions(this)
-        }
-        val now = System.currentTimeMillis()
-        // Nothing to protect: only the lock state matters, and a fresh look once there is again.
-        // (The switch itself: a pause that ran out is ended on the main thread, see onBatch.)
-        if (!vault.globalLockEnabledFlow.value || vault.getLockedPackages().isEmpty()) {
-            wasIdle = true
-            queriedUntil = now
-            return Batch(current, deviceLocked(force = false), missing, idle = true)
-        }
-        if (lookBackNext || wasIdle) {
-            lookBackNext = false
-            wasIdle = false
-            val floor = lookBackFloor(now)
-            val (from, events) = lookBack(now, floor)
-            val older = if (from > floor) lockedAppsBefore(floor, from, now) else emptyList()
-            queriedUntil = now
-            return Batch(current, deviceLocked(force = true), missing, fresh = true, from = from, events = events, older = older, readAt = now)
-        }
-        // The clock was changed, or went backwards (by hand, or corrected): nothing would look new any more.
-        var rebasedFrom: Long? = null
-        if (rebaseNext || now < queriedUntil) {
-            rebaseNext = false
-            queriedUntil = now
-            rebasedFrom = now - OVERLAP_MS
-        }
-        val from = queriedUntil - OVERLAP_MS
-        val events = query(from, now)
-        queriedUntil = now
-        // Asked at once when something happened: a cover may depend on it (onBatch).
-        val deviceLocked = deviceLocked(force = events.isNotEmpty() || rebasedFrom != null)
-        return Batch(current, deviceLocked, missing, rebasedFrom = rebasedFrom, from = from, events = events, readAt = now)
-    }
-
-    /**
-     * Whether the phone is locked (a binder call), asked every [LOCK_CHECK_POLLS] polls, or now
-     * with [force]; in between, as last asked. Locking the phone must end every session.
-     */
-    private fun deviceLocked(force: Boolean): Boolean {
-        if (force || ++pollsSinceLockCheck >= LOCK_CHECK_POLLS) {
-            pollsSinceLockCheck = 0
-            lastDeviceLocked = deviceLockedNow()
-        }
-        return lastDeviceLocked
-    }
-
-    /**
-     * How far back a look back may go: [STARTUP_LOOKBACK_MS], and never before this boot (usage
-     * history survives reboots; only this boot's events say what's on screen now).
-     */
-    private fun lookBackFloor(now: Long): Long = maxOf(now - STARTUP_LOOKBACK_MS, now - SystemClock.elapsedRealtime())
-
-    /**
-     * The activity events from far enough back to include the newest app-resumed one: the last
-     * 10 s first (usually enough), then further, down to [floor].
-     */
-    private fun lookBack(now: Long, floor: Long): Pair<Long, List<UsageEvent>> {
-        var span = FIRST_LOOKBACK_MS
-        while (true) {
-            val from = maxOf(now - span, floor)
-            val events = query(from, now)
-            if (from == floor || events.any { it.type == UsageEvents.Event.ACTIVITY_RESUMED }) return from to events
-            span *= LOOKBACK_GROWTH
-        }
-    }
-
-    /**
-     * Locked apps' activity events from [floor] to [to], where a look back's own window begins: a
-     * window left in picture-in-picture, or resumed beside another app (split screen, a desktop
-     * window), says nothing more until it changes, so only these tell a look back (after a pause,
-     * when the engine starts or takes over) that it still shows. They only say what each activity
-     * did last ([onBatch]), never what is in front.
-     *
-     * Only those since the screen last came on (up to [now]): the screen going off stops every
-     * activity, so a window floating now has been paused again since. An older pause is an
-     * activity whose process died without saying so, which would cover the screen for nothing.
-     */
-    private fun lockedAppsBefore(floor: Long, to: Long, now: Long): List<UsageEvent> {
-        val locked = vault.getLockedPackages()
-        val apps = PasswordManager.expand(locked).toMutableSet()
-        if (apps.isEmpty()) return emptyList()
-        // Google Password Manager's screens are Play services' activities.
-        if (PasswordManager.VIRTUAL_PACKAGE in apps) apps += PasswordManager.GMS
-        val events = read(floor, now, screenOnToo = true, packages = apps + DEVICE_EVENTS_PACKAGE) ?: return emptyList()
-        val found = ArrayList<UsageEvent>()
-        val event = UsageEvents.Event()
-        while (events.hasNextEvent()) {
-            events.getNextEvent(event)
-            when {
-                event.eventType == UsageEvents.Event.SCREEN_INTERACTIVE -> found.clear()
-                // From [to] on, the look back's own window has them.
-                event.timeStamp < to && event.eventType in ACTIVITY_EVENTS && event.packageName in apps ->
-                    usageEvent(event, locked)?.let(found::add)
-            }
-        }
-        return found
-    }
-
-    /** Activity events (resumed, paused, stopped) logged from [from] to [to], oldest first. */
-    private fun query(from: Long, to: Long): List<UsageEvent> {
-        val events = read(from, to) ?: return emptyList()
-        val found = ArrayList<UsageEvent>()
-        val event = UsageEvents.Event()
-        val locked = vault.getLockedPackages()
-        while (events.hasNextEvent()) {
-            events.getNextEvent(event)
-            if (event.eventType !in ACTIVITY_EVENTS) continue
-            usageEvent(event, locked)?.let(found::add)
-        }
-        return found
-    }
-
-    /**
-     * Usage events logged from [from] to [to]: activity events (and the screen coming on, with
-     * [screenOnToo]) of [packages], where Android can be asked for just those; the caller skips
-     * the rest. Null if they can't be read.
-     */
-    private fun read(from: Long, to: Long, screenOnToo: Boolean = false, packages: Set<String>? = null): UsageEvents? {
-        val begin = from.coerceIn(0L, to)
-        return try {
-            if (Build.VERSION.SDK_INT >= 35) {
-                // Only the events wanted: far less for Android to gather and send every poll.
-                val wanted = UsageEventsQuery.Builder(begin, to)
-                if (screenOnToo) wanted.setEventTypes(*ACTIVITY_AND_SCREEN_ON_EVENTS) else wanted.setEventTypes(*ACTIVITY_EVENTS)
-                if (packages != null) wanted.setPackageNames(*packages.toTypedArray())
-                usage.queryEvents(wanted.build())
-            } else {
-                @Suppress("DEPRECATION")
-                usage.queryEvents(begin, to)
-            }
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    /** [event], an activity event, as the engine sees it; [locked] are the apps locked now. */
-    private fun usageEvent(event: UsageEvents.Event, locked: Set<String>): UsageEvent? {
-        val pkg = event.packageName ?: return null
-        val lockedOverlay = pkg in ForegroundRules.SYSTEM_OVERLAYS && pkg in locked
-        return UsageEvent(event.eventType, pkg, event.className, event.timeStamp, lockedOverlay)
     }
 
     // -------------------------------------------------------------------------------------------
@@ -735,7 +516,7 @@ class UsageWatchService : Service() {
         quiet = false
     }
 
-    /** The latest an event has been seen after it happened (debug builds), to tell how much [OVERLAP_MS] is needed. */
+    /** The latest an event has been seen after it happened (debug builds), to tell how much [UsageReader.OVERLAP_MS] is needed. */
     private var latestSeen = 0L
 
     private fun noteLateness(batch: Batch, e: UsageEvent) {
@@ -1409,97 +1190,5 @@ class UsageWatchService : Service() {
             .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
-    }
-}
-
-/**
- * One activity event from usage access. [app] is what it means for locking: the package, Google
- * Password Manager's virtual one ([PasswordManager.resolve]), or null for a window that floats over
- * whichever app is below (a system dialog or sheet, a sign-in or passkey sheet). [lockedOverlay]:
- * [pkg] floats like those but the user locked it (Digital Wellbeing, with its icon turned on), so
- * every screen of it is that app's.
- */
-internal class UsageEvent(val type: Int, val pkg: String, val cls: String?, val time: Long, lockedOverlay: Boolean = false) {
-    val app: String? = if (pkg in ForegroundRules.SYSTEM_OVERLAYS && !lockedOverlay) null else PasswordManager.resolve(pkg, cls)
-    /** Which activity this is about. */
-    val activity: String get() = pkg + '/' + cls.orEmpty()
-}
-
-/**
- * Each activity's latest event, so the engine knows what is still showing: resumed, or paused
- * (under a floating window, in picture-in-picture, on its way out) and not yet stopped. Fed every
- * poll's events, re-read ones included, which change nothing. Floating windows aren't apps and
- * aren't kept.
- */
-internal class ActivityStates {
-
-    private companion object {
-        const val RESUMED = UsageEvents.Event.ACTIVITY_RESUMED
-        const val PAUSED = UsageEvents.Event.ACTIVITY_PAUSED
-        const val STOPPED = UsageEvents.Event.ACTIVITY_STOPPED
-    }
-
-    private class State(val app: String, var type: Int, var time: Long)
-
-    private val byActivity = HashMap<String, State>()
-
-    /** Records [event]. True if it is news, not an event already recorded. */
-    fun apply(event: UsageEvent): Boolean {
-        val app = event.app ?: return false
-        val key = event.activity
-        val known = byActivity[key]
-        if (known == null) {
-            byActivity[key] = State(app, event.type, event.time)
-            return true
-        }
-        // Within one millisecond, resumed, paused and stopped follow each other in that order.
-        if (event.time < known.time || (event.time == known.time && order(event.type) <= order(known.type))) return false
-        known.type = event.type
-        known.time = event.time
-        return true
-    }
-
-    /** The latest event recorded for [event]'s activity (resumed, paused or stopped), or null if none is. */
-    fun lastTypeOf(event: UsageEvent): Int? = byActivity[event.activity]?.type
-
-    /** Whether [activity] ([UsageEvent.activity]) is paused: showing, but not in front. */
-    fun isPaused(activity: String): Boolean = byActivity[activity]?.type == PAUSED
-
-    /** [app]'s activities that are paused. */
-    fun pausedActivitiesOf(app: String): List<String> = byActivity.filter { (_, s) -> s.app == app && s.type == PAUSED }.keys.toList()
-
-    fun isResumed(app: String): Boolean = byActivity.values.any { it.app == app && it.type == RESUMED }
-
-    /** Whether some activity of [app] other than [except] ([UsageEvent.activity]) is resumed. */
-    fun isResumed(app: String, except: String): Boolean = byActivity.any { (activity, s) -> activity != except && s.app == app && s.type == RESUMED }
-
-    /** Some activity of [app] is resumed or paused: it is (or may still be) on screen. */
-    fun isVisible(app: String): Boolean = byActivity.values.any { it.app == app && it.type != STOPPED }
-
-    fun knows(app: String): Boolean = byActivity.values.any { it.app == app }
-
-    /** Every activity of [app] seen has stopped. False for an app nothing is known of. */
-    fun isGone(app: String): Boolean = knows(app) && !isVisible(app)
-
-    /** Forgets activities that stopped before [time]: no re-read reaches back that far any more. */
-    fun prune(time: Long) {
-        byActivity.values.removeAll { it.type == STOPPED && it.time < time }
-    }
-
-    /**
-     * The clock was changed: what each activity did last still holds, but its time can't be
-     * compared with new ones. Each keeps its state, timed before anything on the new clock, so
-     * whatever is read next applies; stopped ones then go at the next [prune].
-     */
-    fun rebase() {
-        for (state in byActivity.values) state.time = Long.MIN_VALUE
-    }
-
-    fun clear() = byActivity.clear()
-
-    private fun order(type: Int) = when (type) {
-        RESUMED -> 0
-        PAUSED -> 1
-        else -> 2
     }
 }

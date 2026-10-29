@@ -22,6 +22,7 @@ import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.ScreenReceiver
+import com.android.BioKey.feature.lock.VaultReactions
 import com.android.BioKey.feature.notification.ShieldAccessWatch
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -64,6 +65,8 @@ class BioKeyApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Before the vault first loads: the lock and the notification shield follow its changes.
+        SecurityVault.addListener(VaultReactions)
         ScreenReceiver.register(this)
 
         if (isUserUnlocked()) {

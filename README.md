@@ -314,10 +314,11 @@ core/diagnostics   DiagnosticLog (on-phone log of lock decisions), EngineTrace (
                    latency marks)
 core/receiver      Boot receiver
 feature/lock       BioKeyAccessibilityService, WindowReader (every look at the screen),
-                   UsageWatchService (compatibility mode), ForegroundRules, SessionRules,
-                   LockLauncher, InstantShieldOverlay, WindowMask, LockScreenActivity,
-                   LockCoverView, SelfProtectionDetector, RecentsWatcher, AppInfoCache,
-                   AppLabels, ScreenReceiver
+                   UsageWatchService (compatibility mode) and UsageReader (its look at usage
+                   events), VaultReactions (what follows the vault's changes), ForegroundRules,
+                   SessionRules, LockLauncher, InstantShieldOverlay, WindowMask,
+                   LockScreenActivity, LockCoverView, SelfProtectionDetector, RecentsWatcher,
+                   AppInfoCache, AppLabels, ScreenReceiver
 feature/main       MainActivity (BioKey's own lock), main screen, profile sheets, settings,
                    backup and diagnostic log
 feature/setup      First-run setup

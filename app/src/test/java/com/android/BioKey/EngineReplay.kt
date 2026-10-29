@@ -30,6 +30,7 @@ import com.android.BioKey.feature.lock.ForegroundRules
 import com.android.BioKey.feature.lock.InstantShieldOverlay
 import com.android.BioKey.feature.lock.LockCoverView
 import com.android.BioKey.feature.lock.LockScreenActivity
+import com.android.BioKey.feature.lock.UsageReader
 import com.android.BioKey.feature.lock.UsageWatchService
 import java.lang.ref.WeakReference
 import java.time.Duration
@@ -325,7 +326,11 @@ internal class EngineReplay(private val context: Application) {
         // The engine's own next poll is put off: this one is it.
         val pollTask = UsageWatchService::class.java.getDeclaredField("pollTask").apply { isAccessible = true }.get(service) as Runnable
         val handler = UsageWatchService::class.java.getDeclaredField("workerHandler").apply { isAccessible = true }.get(service) as android.os.Handler
-        if (lookBack) UsageWatchService::class.java.getDeclaredField("lookBackNext").apply { isAccessible = true }.setBoolean(service, true)
+        if (lookBack) {
+            // The service reads through its UsageReader: that look is a look back.
+            val reader = UsageWatchService::class.java.getDeclaredField("reader\$delegate").apply { isAccessible = true }.get(service) as Lazy<*>
+            handler.post { (reader.value as UsageReader).lookBackNext() }
+        }
         handler.removeCallbacks(pollTask)
         handler.post(pollTask)
         worker?.let { shadowOf(it).idle() }

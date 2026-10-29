@@ -14,9 +14,6 @@ import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.data.SecurityProfile
 import com.android.BioKey.core.diagnostics.DiagnosticLog
-import com.android.BioKey.feature.lock.AppInfoCache
-import com.android.BioKey.feature.lock.InstantShieldOverlay
-import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
@@ -46,7 +43,35 @@ import org.json.JSONObject
  */
 class SecurityVault private constructor(private val context: Context) {
 
+    /**
+     * What the rest of BioKey does as the vault changes. The features that act on it register
+     * ([addListener], from BioKeyApplication), so storage never drives a window, a cache or a
+     * service itself.
+     */
+    interface Listener {
+        /** These apps are locked (all of them as the vault loads, or newly): worth having ready. */
+        fun onLocked(context: Context, packages: Collection<String>) {}
+        /** These apps aren't locked any more. */
+        fun onUnlocked(packages: Collection<String>) {}
+        /** Protection paused: nothing should stay covered. */
+        fun onPaused() {}
+        /** "Hide notification content" off (switched, or restored off): nothing stays hidden. */
+        fun onNotificationShieldOff() {}
+    }
+
     companion object {
+        private val listeners = java.util.concurrent.CopyOnWriteArrayList<Listener>()
+
+        /** Registers [listener] for the vault's changes; registering again does nothing. */
+        fun addListener(listener: Listener) {
+            listeners.addIfAbsent(listener)
+        }
+
+        @VisibleForTesting
+        internal fun removeListener(listener: Listener) {
+            listeners.remove(listener)
+        }
+
         /**
          * Whether this build has self-protection at all. The Play build doesn't (see
          * app/build.gradle.kts): its switch is hidden, and a saved or restored "on" reads as off.
@@ -170,7 +195,7 @@ class SecurityVault private constructor(private val context: Context) {
 
     init {
         load()
-        AppInfoCache.preWarm(context, getLockedPackages())
+        listeners.forEach { it.onLocked(context, getLockedPackages()) }
     }
 
     // ---------------------------------------------------------------------------------------
@@ -245,9 +270,9 @@ class SecurityVault private constructor(private val context: Context) {
         }
         if (newlyLocked.isNotEmpty()) {
             LockStateTracker.notifyLocked(newlyLocked)
-            AppInfoCache.preWarm(context, newlyLocked)
+            listeners.forEach { it.onLocked(context, newlyLocked) }
         }
-        if (newlyUnlocked.isNotEmpty()) BioKeyNotificationShieldService.restoreNotificationsForPackages(newlyUnlocked)
+        if (newlyUnlocked.isNotEmpty()) listeners.forEach { it.onUnlocked(newlyUnlocked) }
     }
 
     private fun MutableList<SecurityProfile>.removePackages(targets: Set<String>) {
@@ -432,7 +457,7 @@ class SecurityVault private constructor(private val context: Context) {
             _autoSortProfilesFlow.value = state.optBoolean("autoSort", true)
         }
         // As their own switches would.
-        if (!shield) BioKeyNotificationShieldService.restoreAllSnoozedNotifications()
+        if (!shield) listeners.forEach { it.onNotificationShieldOff() }
         if (!selfProtection) LockStateTracker.clearSelfProtection()
         // Older backups don't say: what's set on this phone stays. Records here are never deleted by a restore.
         if (state.has("unlockAttemptAlerts")) UnlockAttempts.setEnabled(context, state.optBoolean("unlockAttemptAlerts"), keepRecords = true)
@@ -516,8 +541,7 @@ class SecurityVault private constructor(private val context: Context) {
             schedulePauseExpiry(durationMillis ?: 0L)
             persist()
         }
-        InstantShieldOverlay.dismiss()
-        BioKeyNotificationShieldService.restoreAllSnoozedNotifications()
+        listeners.forEach { it.onPaused() }
         return true
     }
 
@@ -547,7 +571,7 @@ class SecurityVault private constructor(private val context: Context) {
 
     fun setNotificationShield(enabled: Boolean) {
         setPreference { _notificationShieldFlow.value = enabled }
-        if (!enabled) BioKeyNotificationShieldService.restoreAllSnoozedNotifications()
+        if (!enabled) listeners.forEach { it.onNotificationShieldOff() }
     }
 
     fun setAccessibilitySelfProtectionEnabled(enabled: Boolean) {
