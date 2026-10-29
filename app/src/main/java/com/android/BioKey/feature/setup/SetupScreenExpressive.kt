@@ -258,6 +258,9 @@ fun SetupScreenExpressive(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .verticalScroll(rememberScrollState())
+                // Room for the button below, which sits above the navigation bar: the last line
+                // scrolls clear of both.
+                .navigationBarsPadding()
                 .padding(bottom = 120.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

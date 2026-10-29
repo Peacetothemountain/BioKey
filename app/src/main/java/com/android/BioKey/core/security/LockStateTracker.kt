@@ -326,6 +326,8 @@ object LockStateTracker {
     }
 
     fun isAppUnlocked(packageName: String, timeoutMode: LockTimeoutMode): Boolean {
+        // The file picker BioKey opened itself, from its own unlocked screen: the owner's trip.
+        if (packageName in ownPickers && isOwnPickerActive()) return true
         val session = sessionOf(packageName) ?: return false
         if (!session.seen && now() - session.unlockedAt > ARRIVAL_GRACE_MS) {
             return !expire(packageName, session, "never reached the screen") && isAppUnlocked(packageName, timeoutMode)
@@ -647,12 +649,16 @@ object LockStateTracker {
      * that one trip (at most [OWN_PICKER_LEASE_MS], ended by coming back, by going anywhere but the
      * picker, or by any lock-all). Unlike [beginExternalNavigation], it grants no self-protection.
      */
-    fun beginOwnPicker() {
+    fun beginOwnPicker(pickers: Set<String> = emptySet()) {
         if (!hasActiveOwnerSession()) return
         val t = now()
         ownLastActiveAt = t
         ownPickerAt = t
+        ownPickers = pickers
     }
+
+    /** The file picker's own packages: locked themselves (a "Files" app), they open for BioKey's own trip. */
+    @Volatile private var ownPickers: Set<String> = emptySet()
 
     fun isOwnPickerActive(): Boolean {
         val started = ownPickerAt

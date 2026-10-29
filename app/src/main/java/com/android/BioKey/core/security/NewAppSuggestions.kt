@@ -118,6 +118,12 @@ object NewAppSuggestions {
         updateSummary(context)
     }
 
+    /** [pkg] was uninstalled: an offer to lock it would lock nothing. */
+    fun onUninstalled(context: Context, pkg: String) {
+        NotificationManagerCompat.from(context).cancel(notificationId(pkg))
+        updateSummary(context)
+    }
+
     /** The notification's Lock button. Not exported: only the notification BioKey posted can send it. */
     class LockReceiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {

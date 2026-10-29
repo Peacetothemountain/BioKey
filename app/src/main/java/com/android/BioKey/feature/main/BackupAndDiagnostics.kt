@@ -89,6 +89,7 @@ import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.VaultBackup
+import com.android.BioKey.feature.lock.ForegroundRules
 import com.android.BioKey.ui.security.ProtectDialogWindow
 import com.android.BioKey.ui.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.BioKeyMessageHost
@@ -323,7 +324,7 @@ internal fun rememberBackupActions(): BackupActions {
 
 /** Opens the system file picker, keeping BioKey's session for the trip. */
 private fun openPicker(res: Resources, launch: () -> Unit): Result<Unit> {
-    LockStateTracker.beginOwnPicker()
+    LockStateTracker.beginOwnPicker(ForegroundRules.DOCUMENTS_UI)
     return runCatching(launch).onFailure {
         // No file picker on this phone (or it's disabled).
         LockStateTracker.onOwnAppResumed()

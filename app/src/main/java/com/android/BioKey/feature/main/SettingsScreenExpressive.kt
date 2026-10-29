@@ -518,7 +518,7 @@ fun SettingsScreenExpressive(
         SettingItem(
             icon = Icons.Default.Description,
             title = stringResource(R.string.settings_view_log_title),
-            subtitle = if (logCount == 0) stringResource(R.string.diagnostics_empty)
+            subtitle = if (logCount == 0) stringResource(if (logEnabled) R.string.diagnostics_empty else R.string.diagnostics_off)
             else pluralStringResource(R.plurals.settings_view_log_entries, logCount, logCount),
             onClick = { showLog = true }
         )

@@ -379,7 +379,7 @@
     <string name="change_default_delay_longer">Default re-lock delay made longer: %1$s</string>
     <string name="change_shield_off">Hide notification content switched off</string>
     <string name="change_biometric_unavailable">Face or fingerprint couldn\'t be used, so the screen lock was allowed</string>
-    <string name="card_gap_switched_off">%1$s · Switched off</string>
+    <string name="card_gap_switched_off">%1$s · App locking stopped</string>
     <string name="card_gap_force_stopped">%1$s · BioKey was force-stopped</string>
     <string name="card_gap_storage_cleared">%1$s · BioKey reset: its storage was cleared, and every lock and record with it</string>
     <string name="card_gap_storage_cleared_unknown">Until %1$s · BioKey reset: its storage was cleared at a time that can\'t be told (the clock was changed)</string>
@@ -442,7 +442,7 @@
     <string name="compat_channel_name">Compatibility mode</string>
     <string name="compat_channel_description">Shown while BioKey locks apps without the accessibility service</string>
     <string name="compat_notification_title">BioKey is protecting your apps</string>
-    <string name="compat_notification_text">Compatibility mode: works with Advanced Protection</string>
+    <string name="compat_notification_text">Compatibility mode: watching which app is open</string>
     <string name="cover_held">Still on screen (in picture-in-picture, say). Unlock it to carry on.</string>
     <string name="cover_prompt_failed">The lock screen didn\'t open. Tap Unlock to try again.</string>
     <!-- Kinds of app (AppCategory). -->
@@ -462,7 +462,7 @@
     <string name="card_change_during_reset_hint">If it wasn\'t you, whoever reset BioKey may have done it</string>
     <string name="card_change_biometrics_note">Anyone who knows your screen lock can do this in Android\'s settings. It can\'t be cleared here; it goes 7 days after you\'ve seen it.</string>
     <string name="card_gap_hint">Locked apps could be opened without a check</string>
-    <string name="card_gaps_note">Switched off in Android\'s settings, or BioKey force-stopped. Android stopping BioKey on its own isn\'t listed, but some phone makers\' battery savers force-stop apps just as a person would.</string>
+    <string name="card_gaps_note">Switched off in Android\'s settings or stopped some other way, or BioKey force-stopped. Android stopping BioKey on its own isn\'t listed, but some phone makers\' battery savers force-stop apps just as a person would.</string>
     <string name="card_failed_unlocks">Failed unlocks</string>
     <!-- When · what happened. -->
     <string name="card_attempt_detail">%1$s · %2$s</string>

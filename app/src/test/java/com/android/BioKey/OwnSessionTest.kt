@@ -77,6 +77,17 @@ class OwnSessionTest {
     }
 
     @Test
+    fun bioKeysOwnFilePickerOpensEvenWhenFilesIsLocked() {
+        val picker = "com.google.android.documentsui"
+        LockStateTracker.onOwnAppUnlocked()
+        LockStateTracker.beginOwnPicker(setOf(picker))
+        assertTrue(LockStateTracker.isAppUnlocked(picker, com.android.BioKey.core.data.LockTimeoutMode.IMMEDIATE))
+        // Only for that trip: locking everything ends it.
+        LockStateTracker.lockAll(reason = "test")
+        assertFalse(LockStateTracker.isAppUnlocked(picker, com.android.BioKey.core.data.LockTimeoutMode.IMMEDIATE))
+    }
+
+    @Test
     fun aSessionThatRanOutIsATimeout() {
         LockStateTracker.onOwnAppUnlocked()
         advance(LockStateTracker.OWN_APP_IDLE_MS + 1_000)

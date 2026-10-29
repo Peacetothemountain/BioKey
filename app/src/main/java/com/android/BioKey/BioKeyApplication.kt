@@ -196,6 +196,7 @@ class BioKeyApplication : Application() {
                                 }
                                 Intent.ACTION_PACKAGE_REMOVED -> {
                                     if (!replacing) {
+                                        NewAppSuggestions.onUninstalled(this@BioKeyApplication, pkg)
                                         if (keepsLockAfterRemoval(
                                                 archival = isArchival(intent),
                                                 dataRemoved = intent.getBooleanExtra(Intent.EXTRA_DATA_REMOVED, true),
