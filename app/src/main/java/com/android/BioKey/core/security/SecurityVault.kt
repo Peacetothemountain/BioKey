@@ -50,8 +50,13 @@ class SecurityVault private constructor(private val context: Context) {
          * Whether this build has self-protection at all. The Play build doesn't (see
          * app/build.gradle.kts): its switch is hidden, and a saved or restored "on" reads as off.
          */
+        val selfProtectionAvailable: Boolean
+            // A constant in release builds, so R8 drops what only self-protection uses.
+            get() = BuildConfig.SELF_PROTECTION && !selfProtectionRemovedForTests
+
+        /** Tests of the Play build's behaviour, in a debug build. */
         @VisibleForTesting
-        internal var selfProtectionAvailable = BuildConfig.SELF_PROTECTION
+        internal var selfProtectionRemovedForTests = false
 
         private const val PREF_NAME = "biokey_vault"
         private const val KEY_LOCKED = "locked_apps_set"
@@ -374,6 +379,9 @@ class SecurityVault private constructor(private val context: Context) {
             .put("selfProtection", _accessibilitySelfProtectionFlow.value)
             .put("autoSort", _autoSortProfilesFlow.value)
             .put("autoSortExcluded", JSONArray(autoSortExcluded.sorted()))
+            // The two switches kept beside the vault: their choices, not what they recorded.
+            .put("unlockAttemptAlerts", UnlockAttempts.enabled.value)
+            .put("newAppOffers", NewAppSuggestions.enabled.value)
     }
 
     /**
@@ -411,6 +419,9 @@ class SecurityVault private constructor(private val context: Context) {
         // As their own switches would.
         if (!shield) BioKeyNotificationShieldService.restoreAllSnoozedNotifications()
         if (!selfProtection) LockStateTracker.clearSelfProtection()
+        // Older backups don't have these: what's set on this phone stays.
+        if (state.has("unlockAttemptAlerts")) UnlockAttempts.setEnabled(context, state.optBoolean("unlockAttemptAlerts"))
+        if (state.has("newAppOffers")) NewAppSuggestions.setEnabled(context, state.optBoolean("newAppOffers"))
         DiagnosticLog.log("Settings restored from a backup")
     }
 

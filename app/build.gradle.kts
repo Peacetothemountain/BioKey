@@ -80,6 +80,10 @@ android {
         }
     }
 
+    // What only self-protection needs (the accessibility config's view IDs): in the builds that have it.
+    sourceSets.getByName("debug").res.srcDir("src/selfProtection/res")
+    if (selfProtectionInRelease) sourceSets.getByName("release").res.srcDir("src/selfProtection/res")
+
     testOptions {
         unitTests.isIncludeAndroidResources = true
 

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
@@ -42,6 +43,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -104,6 +106,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.Role
@@ -114,17 +117,24 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.android.BioKey.BioKeyApplication
+import com.android.BioKey.R
 import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.data.SecurityProfile
+import com.android.BioKey.core.security.LockAllNow
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.ProtectionEngine
+import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.rejectObscuredTouches
@@ -332,7 +342,8 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     /**
      * Locked apps open right now. Every unlock and lock (an app's re-lock delay running out
      * included) says so, so the card and the rows follow sessions starting and ending while
-     * BioKey is open; read again on every resume too.
+     * BioKey is open; read again on every resume too. Read in an effect, not while composing:
+     * looking can end a session whose time ran out, which is logged and tells listeners.
      */
     var sessionsChanged by remember { mutableIntStateOf(0) }
     DisposableEffect(Unit) {
@@ -353,39 +364,38 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         sessionsChanged++
         onPauseOrDispose { }
     }
-    val unlockedNow = remember(sessionsChanged, lockedApps, profiles, defaultTimeout, globalLockEnabled) {
+    var unlockedNow by remember { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(sessionsChanged, lockedApps, profiles, defaultTimeout, globalLockEnabled) {
         // Paused, nothing is locked, so nothing is "unlocked" either.
-        if (globalLockEnabled) LockStateTracker.unlockedApps(vault::getTimeoutMode) else emptySet()
+        unlockedNow = if (globalLockEnabled) LockStateTracker.unlockedApps(vault::getTimeoutMode) else emptySet()
     }
     fun isUnlockedNow(pkg: String) = PasswordManager.aliasesOf(pkg).any { it in unlockedNow }
-    // The card counts down ("locks in 4 min"): read again every few seconds while it shows.
-    LaunchedEffect(unlockedNow.isNotEmpty()) {
-        while (unlockedNow.isNotEmpty()) {
-            delay(5_000)
-            sessionsChanged++
-        }
-    }
     val unlockedNowApps = remember(unlockedNow, installedApps, lockedApps, profiles) {
         installedApps.filter { isLocked(it.packageName) && isUnlockedNow(it.packageName) }
     }
+    var showUnlocked by rememberSaveable { mutableStateOf(false) }
 
-    // Failed unlocks since the owner last cleared them. Seeing them here is what the
-    // notification was for, so it goes.
+    // What happened while the owner was away: failed unlocks, and protection switched off.
+    // Seeing them here is what the notification was for, so it goes.
     val attempts by UnlockAttempts.attempts.collectAsStateWithLifecycle()
-    LifecycleResumeEffect(Unit) {
-        UnlockAttempts.load(context)
-        UnlockAttempts.markSeen(context)
-        onPauseOrDispose { }
-    }
-    var showAttempts by rememberSaveable { mutableStateOf(false) }
+    val attemptsChosen by UnlockAttempts.chosen.collectAsStateWithLifecycle()
+    val gaps by ProtectionGaps.gaps.collectAsStateWithLifecycle()
+    var showActivity by rememberSaveable { mutableStateOf(false) }
     val labelByPackage = remember(installedApps) { installedApps.associate { it.packageName to it.label } }
-    fun attemptLabel(pkg: String) = labelByPackage[pkg] ?: UnlockAttempts.labelOf(context, pkg)
+    fun attemptLabel(attempt: UnlockAttempts.Attempt) = labelByPackage[attempt.packageName] ?: attempt.label
 
     /** Ends every locked app's session at once; BioKey itself stays open, it's in use. */
     fun lockAllNow() {
         Haptics.confirm(view)
-        LockStateTracker.lockAll(includeOwnApp = false, reason = "locked from BioKey")
-        BioKeyMessages.show("All apps locked", Icons.Default.Lock)
+        val outcome = LockAllNow.run(context, includeOwnApp = false, reason = "locked from BioKey")
+        BioKeyMessages.show(LockAllNow.message(context, outcome), Icons.Default.Lock)
+    }
+
+    /** Ends one app's session: the others stay open. */
+    fun lockOne(app: AppItem) {
+        Haptics.confirm(view)
+        LockStateTracker.lockPackage(app.packageName, "locked from BioKey")
+        BioKeyMessages.show("${app.label} locked", Icons.Default.Lock)
     }
 
     /** The app's own switch; it stays in its profile either way. */
@@ -418,7 +428,8 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                 subtitle = buildString {
                     val locked = isLocked(app.packageName)
                     // A locked app says how it re-locks; "App" (no category known) says nothing, so it goes.
-                    val name = profile?.name ?: app.category.label.takeIf { !locked || app.category != AppCategory.GENERAL }
+                    // "App" (no category known) says nothing, so it isn't shown.
+                    val name = profile?.name ?: app.category.label.takeIf { app.category != AppCategory.GENERAL }
                     if (name != null) append(name)
                     if (profile != null && !profile.enabled) append(" · off")
                     // The default is said once, in the section header; a row says only a delay of its own.
@@ -463,7 +474,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         }
     }
 
-    BoxWithConstraints(
+    Box(
         Modifier
             .fillMaxSize()
             .rejectObscuredTouches()
@@ -472,8 +483,10 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     ) {
         // Phones use the full width; on tablets and in landscape the list keeps a readable width
         // in the middle, while the header's constellation still runs edge to edge.
-        val sidePad = ((maxWidth - MaxContentWidth) / 2).coerceAtLeast(0.dp)
-        val sidePadPx = with(LocalDensity.current) { sidePad.roundToPx() }
+        val density = LocalDensity.current
+        val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
+        val sidePad = ((windowWidth - MaxContentWidth) / 2).coerceAtLeast(0.dp)
+        val sidePadPx = with(density) { sidePad.roundToPx() }
         val listState = key(filter) { rememberLazyListState() }
         // The list runs under the status bar, and so would the search bar pinned at its top: by as
         // much as it would be under the status bar, it moves down, over a band of the page's colour.
@@ -535,21 +548,50 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                 }
             }
 
-            if (attempts.isNotEmpty()) {
-                item(key = "attempts") {
-                    val newest = attempts.first()
-                    Box(Modifier.animateItem().padding(horizontal = GroupInset).padding(bottom = 8.dp)) {
-                        GroupRow(
-                            index = 0,
-                            count = 1,
-                            title = if (attempts.size == 1) "Failed unlock attempt" else "${attempts.size} failed unlock attempts",
-                            subtitle = "${attemptLabel(newest.packageName)} · ${attemptTime(context, newest.at)} · " +
-                                UnlockAttempts.describe(newest),
-                            icon = Icons.Default.GppBad,
-                            iconTint = MaterialTheme.colorScheme.onErrorContainer,
-                            iconContainer = MaterialTheme.colorScheme.errorContainer,
-                            onClick = { showAttempts = true }
-                        )
+            // Asked once: failed unlock alerts keep a record, so they start only when the owner says so.
+            if (!attemptsChosen && vault.isSetupCompleted()) {
+                item(key = "attempts_intro") {
+                    ActionCard(
+                        icon = Icons.Default.GppMaybe,
+                        title = "Know when someone tries your apps",
+                        subtitle = "BioKey can note each face or fingerprint that fails on a locked app and tell you later. " +
+                            "Kept on this phone for 7 days.",
+                        modifier = Modifier.animateItem()
+                    ) {
+                        TextButton(onClick = { UnlockAttempts.setEnabled(context, false) }) { Text("Not now") }
+                        FilledTonalButton(onClick = {
+                            UnlockAttempts.setEnabled(context, true)
+                            if (!notifications.allowed) notifications.request()
+                        }) { Text("Turn on") }
+                    }
+                }
+            }
+
+            if (attempts.isNotEmpty() || gaps.isNotEmpty()) {
+                item(key = "activity") {
+                    // Shown: the notification has done its job.
+                    LaunchedEffect(attempts) { UnlockAttempts.markSeen(context) }
+                    val urgent = gaps.isNotEmpty() || attempts.any { it.unanswered }
+                    val newestAttempt = attempts.firstOrNull()
+                    val newestGap = gaps.firstOrNull()
+                    val gapIsNewest = newestGap != null && (newestAttempt == null || newestGap.to > newestAttempt.lastAt)
+                    ActionCard(
+                        icon = if (urgent) Icons.Default.GppBad else Icons.Default.GppMaybe,
+                        iconTint = if (urgent) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                        iconContainer = if (urgent) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
+                        title = when {
+                            gaps.isEmpty() -> LocalResources.current.getQuantityString(R.plurals.attempts_title, attempts.size, attempts.size)
+                            attempts.isEmpty() -> if (gaps.size == 1) "App locking was off" else "App locking was off ${gaps.size} times"
+                            else -> "Security activity"
+                        },
+                        subtitle = if (gapIsNewest) gapLine(context, newestGap!!) else newestAttempt?.let {
+                            "${attemptLabel(it)} · ${attemptTime(context, it.at)} · ${UnlockAttempts.describe(context, it)}"
+                        }.orEmpty(),
+                        onClick = { showActivity = true },
+                        onClickLabel = "Review",
+                        modifier = Modifier.animateItem()
+                    ) {
+                        TextButton(onClick = { showActivity = true }) { Text("Review") }
                     }
                 }
             }
@@ -557,22 +599,21 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
             if (unlockedNowApps.isNotEmpty()) {
                 item(key = "unlocked_now") {
                     val first = unlockedNowApps.first()
-                    Box(Modifier.animateItem().padding(horizontal = GroupInset).padding(bottom = 8.dp)) {
-                        GroupRow(
-                            index = 0,
-                            count = 1,
-                            title = if (unlockedNowApps.size == 1) "${first.label} is unlocked" else "${unlockedNowApps.size} locked apps are unlocked",
-                            subtitle = if (unlockedNowApps.size == 1) {
-                                sessionPhrase(vault.getTimeoutMode(first.packageName), LockStateTracker.awayRemainingMs(first.packageName, vault.getTimeoutMode(first.packageName)))
-                            } else {
-                                unlockedNowApps.joinToString(", ") { it.label } + " · each locks again on its own delay"
-                            },
-                            icon = Icons.Default.LockOpen,
-                            iconTint = MaterialTheme.colorScheme.onTertiaryContainer,
-                            iconContainer = MaterialTheme.colorScheme.tertiaryContainer
-                        ) {
-                            Spacer(Modifier.width(8.dp))
-                            FilledTonalButton(onClick = ::lockAllNow) { Text("Lock now") }
+                    val single = unlockedNowApps.size == 1
+                    ActionCard(
+                        icon = Icons.Default.LockOpen,
+                        title = if (single) "${first.label} is unlocked" else "${unlockedNowApps.size} apps unlocked",
+                        subtitle = if (single) rememberSessionPhrase(first.packageName, vault.getTimeoutMode(first.packageName))
+                        else unlockedNowApps.joinToString(", ") { it.label },
+                        onClick = if (single) null else ({ showUnlocked = true }),
+                        onClickLabel = "Choose which to lock",
+                        modifier = Modifier.animateItem()
+                    ) {
+                        if (single) {
+                            FilledTonalButton(onClick = { lockOne(first) }) { Text("Lock") }
+                        } else {
+                            TextButton(onClick = { showUnlocked = true }) { Text("Choose") }
+                            FilledTonalButton(onClick = ::lockAllNow) { Text("Lock all") }
                         }
                     }
                 }
@@ -590,9 +631,10 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                         .padding(top = 12.dp, bottom = 4.dp)
                 ) {
                     SearchPill(searchQuery, onChange = { searchQuery = it }, modifier = Modifier.padding(horizontal = GroupInset))
+                    // On wide screens the chips scroll edge to edge, like the header, not cut off at the column.
                     LazyRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = GroupInset, vertical = 8.dp),
+                        modifier = Modifier.fillMaxWidth().horizontalBleed(sidePadPx),
+                        contentPadding = PaddingValues(horizontal = GroupInset + sidePad, vertical = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         item(key = FILTER_ALL) {
@@ -670,7 +712,11 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                 else -> {
                     if (lockedShown.isNotEmpty()) {
                         item(key = "h_locked", contentType = CONTENT_HEADER) {
-                            SectionHeader("Locked · ${lockedShown.size} · " + defaultTimeout.relockPhrase.replaceFirstChar { it.lowercase() })
+                            // How they re-lock, said once, only while something actually locks them.
+                            val relock = if (ProtectionEngine.isProtecting(mode) && globalLockEnabled) {
+                                " · " + defaultTimeout.relockPhrase.replaceFirstChar { it.lowercase() }
+                            } else ""
+                            SectionHeader("Locked · ${lockedShown.size}$relock")
                         }
                         appGroup(lockedShown, showProfile = true)
                     }
@@ -754,15 +800,34 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         }
     }
 
-    if (showAttempts && attempts.isNotEmpty()) {
-        AttemptsDialog(
+    if (showActivity && (attempts.isNotEmpty() || gaps.isNotEmpty())) {
+        SecurityActivityDialog(
             attempts = attempts,
+            gaps = gaps,
             labelOf = ::attemptLabel,
             onClear = {
-                UnlockAttempts.clear(context)
-                showAttempts = false
+                val oldAttempts = UnlockAttempts.clear(context)
+                val oldGaps = ProtectionGaps.clear(context)
+                showActivity = false
+                BioKeyMessages.show("Cleared", Icons.Default.Delete, actionLabel = "Undo") {
+                    UnlockAttempts.restore(context, oldAttempts)
+                    ProtectionGaps.restore(context, oldGaps)
+                }
             },
-            onDismiss = { showAttempts = false }
+            onDismiss = { showActivity = false }
+        )
+    }
+
+    if (showUnlocked && unlockedNowApps.isNotEmpty()) {
+        UnlockedAppsDialog(
+            apps = unlockedNowApps,
+            timeoutOf = vault::getTimeoutMode,
+            onLock = ::lockOne,
+            onLockAll = {
+                showUnlocked = false
+                lockAllNow()
+            },
+            onDismiss = { showUnlocked = false }
         )
     }
 
@@ -912,14 +977,17 @@ private fun HeaderTile(
             Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(32.dp))
         }
         Spacer(Modifier.height(8.dp))
-        // Two lines, so large text still shows the whole of "Protected" or "Not running".
+        // One line that shrinks to fit: with large text, "Protected" or "Settings" would otherwise
+        // break in the middle of the word in a tile this narrow.
+        val labelStyle = MaterialTheme.typography.labelLarge
         Text(
             label,
-            style = MaterialTheme.typography.labelLarge,
+            style = labelStyle,
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
+            maxLines = 1,
+            softWrap = false,
+            autoSize = TextAutoSize.StepBased(minFontSize = 9.sp, maxFontSize = labelStyle.fontSize)
         )
     }
 }
@@ -1079,11 +1147,132 @@ private fun sessionPhrase(mode: LockTimeoutMode, remainingMs: Long?): String = w
     else -> "Locks again in ${(remainingMs + 59_999L) / 60_000L} min"
 }
 
-/** Every failed unlock kept, newest first, and the way to clear them. */
+/** "3:02 – 3:10 PM · switched off": when app locking was off. */
+private fun gapLine(context: android.content.Context, gap: ProtectionGaps.Gap): String {
+    val day = if (DateUtils.isToday(gap.to)) 0 else DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR
+    val range = DateUtils.formatDateRange(context, gap.from, gap.to, DateUtils.FORMAT_SHOW_TIME or day)
+    return range + if (gap.unannounced) " · BioKey was stopped" else " · switched off"
+}
+
+/**
+ * "Locks again in 4 min", kept current while BioKey is in front: it changes on the minute, so
+ * it's read again exactly then, and not at all while BioKey is out of sight.
+ */
 @Composable
-private fun AttemptsDialog(
+private fun rememberSessionPhrase(pkg: String, mode: LockTimeoutMode): String {
+    var phrase by remember(pkg, mode) { mutableStateOf(sessionPhrase(mode, null)) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(pkg, mode, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                val remaining = LockStateTracker.awayRemainingMs(pkg, mode)
+                phrase = sessionPhrase(mode, remaining)
+                val toNextMinute = remaining?.let { it % 60_000L }?.takeIf { it > 0L } ?: 60_000L
+                delay(toNextMinute + 50L)
+            }
+        }
+    }
+    return phrase
+}
+
+/**
+ * A card at the top of home: what needs the owner, with its actions under the text, so a long
+ * title or large text never squeezes them. [onClick] opens the details; [onClickLabel] says so
+ * to screen readers.
+ */
+@Composable
+private fun ActionCard(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    modifier: Modifier = Modifier,
+    iconTint: Color = MaterialTheme.colorScheme.onSecondaryContainer,
+    iconContainer: Color = MaterialTheme.colorScheme.secondaryContainer,
+    onClick: (() -> Unit)? = null,
+    onClickLabel: String? = null,
+    actions: @Composable RowScope.() -> Unit
+) {
+    val shape = RoundedCornerShape(28.dp)
+    Surface(
+        shape = shape,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = modifier
+            .padding(horizontal = GroupInset)
+            .padding(bottom = 8.dp)
+            .fillMaxWidth()
+            .clip(shape)
+            .then(if (onClick != null) Modifier.clickable(onClickLabel = onClickLabel, role = Role.Button, onClick = onClick) else Modifier)
+    ) {
+        Column(Modifier.padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 8.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Box(Modifier.size(40.dp).background(iconContainer, CircleShape), contentAlignment = Alignment.Center) {
+                    Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(22.dp))
+                }
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f).padding(end = 4.dp)) {
+                    Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+                    if (subtitle.isNotEmpty()) {
+                        Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
+                content = actions
+            )
+        }
+    }
+}
+
+/** The unlocked apps, each with its countdown and its own Lock, and Lock all. */
+@Composable
+private fun UnlockedAppsDialog(
+    apps: List<AppItem>,
+    timeoutOf: (String) -> LockTimeoutMode,
+    onLock: (AppItem) -> Unit,
+    onLockAll: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.LockOpen, contentDescription = null) },
+        title = { Text("Unlocked now") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                ProtectDialogWindow()
+                apps.forEach { app ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AppIcon(app)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(app.label, style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                rememberSessionPhrase(app.packageName, timeoutOf(app.packageName)),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(
+                            onClick = { onLock(app) },
+                            modifier = Modifier.semantics { contentDescription = "Lock ${app.label}" }
+                        ) { Text("Lock") }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onLockAll) { Text("Lock all") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+}
+
+/** Every failed unlock and gap in protection kept, newest first, and the way to clear them. */
+@Composable
+private fun SecurityActivityDialog(
     attempts: List<UnlockAttempts.Attempt>,
-    labelOf: (String) -> String,
+    gaps: List<ProtectionGaps.Gap>,
+    labelOf: (UnlockAttempts.Attempt) -> String,
     onClear: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1091,31 +1280,56 @@ private fun AttemptsDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Default.GppBad, contentDescription = null) },
-        title = { Text(if (attempts.size == 1) "Failed unlock attempt" else "${attempts.size} failed unlock attempts") },
+        title = { Text("While you were away") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 ProtectDialogWindow()
-                attempts.forEach { attempt ->
-                    Column(Modifier.padding(vertical = 6.dp).semantics(mergeDescendants = true) { }) {
-                        Text(labelOf(attempt.packageName), style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            attemptTime(context, attempt.at) + " · " + UnlockAttempts.describe(attempt),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                if (gaps.isNotEmpty()) {
+                    Text(
+                        "App locking was off",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.semantics { heading() }
+                    )
+                    gaps.forEach { gap ->
+                        Text(gapLine(context, gap), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 4.dp))
                     }
+                    Text(
+                        "Switched off in Android's settings, or BioKey stopped while the phone was in use. Locked apps " +
+                            "opened without a check meanwhile.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(16.dp))
                 }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "A face or fingerprint that didn't match, on a locked app that then wasn't opened. Your own retries " +
-                        "(the app unlocked within 2 minutes) aren't listed. Android doesn't tell apps about a wrong PIN.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (attempts.isNotEmpty()) {
+                    Text(
+                        "Failed unlocks",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.semantics { heading() }
+                    )
+                    attempts.forEach { attempt ->
+                        Column(Modifier.padding(vertical = 4.dp).semantics(mergeDescendants = true) { }) {
+                            Text(labelOf(attempt), style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                attemptTime(context, attempt.at) + " · " + UnlockAttempts.describe(context, attempt),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Text(
+                        "Faces or fingerprints that didn't match. When yours worked within 2 minutes, they were you and " +
+                            "aren't listed. Android doesn't tell apps about a wrong PIN.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         },
-        confirmButton = { TextButton(onClick = onClear) { Text("Clear") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        dismissButton = { TextButton(onClick = onClear) { Text("Clear") } }
     )
 }
 

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Builds with self-protection (debug, and -Pbiokey.selfProtection=true): view IDs too, which
+     self-protection uses to recognise the headers of BioKey's own Settings pages. The Play
+     build's config (src/main) doesn't ask for them. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/accessibility_service_description"
+    android:summary="@string/accessibility_service_summary"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagReportViewIds"
+    android:notificationTimeout="0"
+    android:canRetrieveWindowContent="true"
+    android:isAccessibilityTool="false" />

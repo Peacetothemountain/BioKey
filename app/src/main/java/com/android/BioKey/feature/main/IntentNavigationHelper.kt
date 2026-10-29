@@ -31,7 +31,8 @@ object IntentNavigationHelper {
     fun launchFallbackCascade(context: Context, intents: List<Intent>): Boolean {
         LockStateTracker.beginExternalNavigation(preAuthorizeSelfProtection = true)
         for (intent in intents) {
-            pinToSystemHandler(context, intent)
+            // A page that sets the screen lock never goes to whatever answers: only the system's.
+            if (!pinToSystemHandler(context, intent) && intent.action in SCREEN_LOCK_ACTIONS) continue
             if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             try {
                 context.startActivity(intent)
@@ -47,17 +48,22 @@ object IntentNavigationHelper {
         return false
     }
 
+    /** Pages where the screen lock is set: never opened anywhere but in the system's own app. */
+    private val SCREEN_LOCK_ACTIONS = setOf(DevicePolicyManager.ACTION_SET_NEW_PASSWORD, Settings.ACTION_SECURITY_SETTINGS)
+
     /**
      * Sends a settings intent straight to the system app that handles it, so another app that
      * claims the same action can't be offered in a chooser and pose as Settings (to fish for the
-     * screen lock, say) while BioKey's leave pass is open. Where no system handler is visible to
-     * BioKey, or only the chooser resolves, the intent stays implicit as before.
+     * screen lock, say) while BioKey's leave pass is open. Every page BioKey opens is declared in
+     * its manifest's queries, so the system's handler is always seen. Returns whether it was
+     * pinned; if not (no system handler, or only the chooser), the intent is left as it was.
      */
-    internal fun pinToSystemHandler(context: Context, intent: Intent) {
-        if (intent.component != null) return
-        val handler = context.packageManager.resolveActivity(intent, PackageManager.MATCH_SYSTEM_ONLY)?.activityInfo ?: return
-        if (handler.packageName == "android") return
+    internal fun pinToSystemHandler(context: Context, intent: Intent): Boolean {
+        if (intent.component != null) return true
+        val handler = context.packageManager.resolveActivity(intent, PackageManager.MATCH_SYSTEM_ONLY)?.activityInfo ?: return false
+        if (handler.packageName == "android") return false
         intent.setClassName(handler.packageName, handler.name)
+        return true
     }
 
     private fun appDetails(context: Context) =

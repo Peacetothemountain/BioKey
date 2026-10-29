@@ -88,6 +88,8 @@ enum class Disclosure(
         usedFor = listOfNotNull(
             "Covering apps you've locked until you authenticate, even before they open",
             "Pressing Home or Back for you, to leave a locked app you didn't unlock",
+            "Locking the phone's screen when you choose “Lock screen” after too many failed attempts",
+            "Opening a locked app's picture-in-picture window full screen, so it can be covered",
             "Ending a locked app's session when you close it from Recents",
             "Asking for authentication before BioKey can be switched off, if you turn that on"
                 .takeIf { SecurityVault.selfProtectionAvailable }
@@ -117,7 +119,8 @@ enum class Disclosure(
 
 private val NEVER = listOf(
     "Nothing BioKey sees leaves this phone: it has no internet access. It keeps a short on-phone log of its own " +
-        "lock decisions (which locked apps it locked or unlocked) for 3 days, which you can turn off in Settings.",
+        "lock decisions (which locked apps it locked or unlocked, failed unlocks, times app locking was off) for 3 days, " +
+        "which you can turn off in Settings. Failed unlock alerts, if you turn them on, keep 7 days of failed unlocks.",
     "BioKey never reads what you type, your messages, or the content of the apps you use."
 )
 

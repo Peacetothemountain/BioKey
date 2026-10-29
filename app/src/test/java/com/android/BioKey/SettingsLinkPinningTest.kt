@@ -62,13 +62,30 @@ class SettingsLinkPinningTest {
 
     @Test
     fun withNoSystemHandlerInSightThePageStaysImplicit() {
-        // Only a non-system app claims it: the intent is left as it was, as before pinning.
-        val action = Intent(Settings.ACTION_SECURITY_SETTINGS)
+        // Only a non-system app claims it (no screen lock is set there): left as it was, as before pinning.
+        val action = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
         shadowOf(context.packageManager)
             .addResolveInfoForIntent(action, handler("com.example.fake", "com.example.fake.FakeSettings", system = false))
 
-        assertTrue(IntentNavigationHelper.launchFallbackCascade(context, listOf(Intent(Settings.ACTION_SECURITY_SETTINGS))))
+        assertTrue(IntentNavigationHelper.launchFallbackCascade(context, listOf(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))))
         assertNull(nextStarted().component)
+    }
+
+    @Test
+    fun aScreenLockPageGoesNowhereButTheSystem() {
+        // Only an impostor answers "set a screen lock": BioKey goes on to the next page in the list.
+        val setPassword = Intent(android.app.admin.DevicePolicyManager.ACTION_SET_NEW_PASSWORD)
+        val pm = shadowOf(context.packageManager)
+        pm.addResolveInfoForIntent(setPassword, handler("com.example.fake", "com.example.fake.FakeLock", system = false))
+        pm.addResolveInfoForIntent(Intent(Settings.ACTION_SETTINGS), handler("com.android.settings", "com.android.settings.Settings", system = true))
+
+        assertTrue(
+            IntentNavigationHelper.launchFallbackCascade(
+                context,
+                listOf(Intent(android.app.admin.DevicePolicyManager.ACTION_SET_NEW_PASSWORD), Intent(Settings.ACTION_SETTINGS))
+            )
+        )
+        assertEquals("com.android.settings", nextStarted().component?.packageName)
     }
 
     @Test

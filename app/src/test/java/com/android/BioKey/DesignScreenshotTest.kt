@@ -11,6 +11,8 @@ import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.ProtectionEngine
+import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.feature.lock.BioKeyLockScreen
@@ -22,6 +24,7 @@ import com.android.BioKey.feature.main.SettingsScreenExpressive
 import com.android.BioKey.feature.setup.SetupScreenExpressive
 import com.android.BioKey.ui.theme.BioKeyTheme
 import com.github.takahirom.roborazzi.captureRoboImage
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -78,7 +81,23 @@ class DesignScreenshotTest {
         vault.moveAppToProfile("com.example.venmo", "profile_finance")
         vault.moveAppToProfile("com.example.signal", "profile_social")
         LockStateTracker.lockAll()
-        UnlockAttempts.clear(context)
+        // Asked and answered, so the one-time question isn't on every screen; mainIntro shows it.
+        context.getSharedPreferences("biokey_unlock_attempts", android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        UnlockAttempts.resetForTests()
+        UnlockAttempts.setEnabled(context, true)
+        context.getSharedPreferences("biokey_protection_gaps", android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        ProtectionGaps.resetForTests()
+        ProtectionEngine.overrideModeForTests = ProtectionEngine.Mode.ACCESSIBILITY
+        // The screens as the Play build shows them: no self-protection.
+        SecurityVault.selfProtectionRemovedForTests = true
+    }
+
+    @After
+    fun tearDown() {
+        ProtectionEngine.overrideModeForTests = null
+        SecurityVault.selfProtectionRemovedForTests = false
+        UnlockAttempts.clock = System::currentTimeMillis
+        ProtectionGaps.clock = System::currentTimeMillis
     }
 
     private fun icon(label: String, color: Int, size: Int): Bitmap {
@@ -139,19 +158,57 @@ class DesignScreenshotTest {
             }
         }
     }
+    private val context get() = ApplicationProvider.getApplicationContext<android.content.Context>()
+
+    private fun unlockAndLeave(pkg: String) {
+        LockStateTracker.onAppUnlocked(pkg)
+        LockStateTracker.onAppVisible(pkg)
+        LockStateTracker.onAppLeft(pkg, LockTimeoutMode.GRACE_5_MINUTES, hopTarget = null)
+    }
+
+    /** Someone's three tries on Venmo at 2:14 PM today, that didn't match. */
+    private fun venmoAttempt() {
+        val today = java.util.Calendar.getInstance().apply { set(java.util.Calendar.HOUR_OF_DAY, 14); set(java.util.Calendar.MINUTE, 14) }.timeInMillis
+        UnlockAttempts.clock = { today }
+        repeat(3) { UnlockAttempts.onBiometricFailed(context, "com.example.venmo", "Venmo") }
+    }
+
     /**
      * Home while things are happening: Chase unlocked a moment ago and left (re-locks after 5
      * minutes), and someone's three tries on Venmo that didn't match.
      */
     @Test fun mainActive() {
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val vault = SecurityVault.getInstance(context)
-        vault.setTimeoutMode(LockTimeoutMode.GRACE_5_MINUTES)
-        LockStateTracker.onAppUnlocked("com.example.chase")
-        LockStateTracker.onAppVisible("com.example.chase")
-        LockStateTracker.onAppLeft("com.example.chase", LockTimeoutMode.GRACE_5_MINUTES, hopTarget = null)
-        UnlockAttempts.record(context, "com.example.venmo", failures = 3, lockedOut = false)
-        shoot("main_active") { MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
+        SecurityVault.getInstance(context).setTimeoutMode(LockTimeoutMode.GRACE_5_MINUTES)
+        unlockAndLeave("com.example.chase")
+        venmoAttempt()
+        shoot("main_active") { MainScreenExpressive(mode = ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
+    }
+
+    /** Two apps unlocked, app locking switched off for a while, and large text (200%). */
+    @Test fun mainActiveLargeText() {
+        SecurityVault.getInstance(context).setTimeoutMode(LockTimeoutMode.GRACE_5_MINUTES)
+        unlockAndLeave("com.example.chase")
+        unlockAndLeave("com.example.signal")
+        val today = java.util.Calendar.getInstance().apply { set(java.util.Calendar.HOUR_OF_DAY, 15); set(java.util.Calendar.MINUTE, 2) }.timeInMillis
+        ProtectionGaps.clock = { today }
+        ProtectionGaps.bootCount = { 1 }
+        ProtectionGaps.installTime = { 1L }
+        SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        ProtectionGaps.onEngineUp(context)
+        ProtectionGaps.onEngineDown(context)
+        ProtectionGaps.clock = { today + 8 * 60_000L }
+        ProtectionGaps.onEngineUp(context)
+        RuntimeEnvironment.setFontScale(2f)
+        shoot("main_active_large_text") { MainScreenExpressive(mode = ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
+        RuntimeEnvironment.setFontScale(1f)
+    }
+
+    /** The one-time question about failed unlock alerts. */
+    @Test fun mainIntro() {
+        context.getSharedPreferences("biokey_unlock_attempts", android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        UnlockAttempts.resetForTests()
+        UnlockAttempts.load(context)
+        shoot("main_intro") { MainScreenExpressive(mode = ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
     }
 
     @Test fun ownLock() = shoot("lock") {

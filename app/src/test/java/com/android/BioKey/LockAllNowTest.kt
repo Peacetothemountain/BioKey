@@ -1,10 +1,12 @@
 package com.android.BioKey
 
 import android.content.Context
-import android.content.pm.ShortcutManager
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.LockTimeoutMode
+import com.android.BioKey.core.security.LockAllNow
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.ProtectionEngine
+import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.main.LockAllActivity
 import java.time.Duration
 import org.junit.Assert.assertEquals
@@ -18,6 +20,7 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowSystemClock
+import org.xmlpull.v1.XmlPullParser
 
 /** What's unlocked right now, and locking all of it at once. */
 @RunWith(RobolectricTestRunner::class)
@@ -28,9 +31,22 @@ class LockAllNowTest {
     private val bank = "com.example.bank"
     private val chat = "com.example.chat"
     private val fiveMinutes: (String) -> LockTimeoutMode = { LockTimeoutMode.GRACE_5_MINUTES }
+    private lateinit var vault: SecurityVault
 
     @Before
-    fun reset() = LockStateTracker.lockAll()
+    fun reset() {
+        SecurityVault.getInstance(context).awaitPendingWrites()
+        context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE).edit().clear().commit()
+        SecurityVault.resetForTests()
+        vault = SecurityVault.getInstance(context)
+        vault.setSetupCompletedSync(true)
+        LockStateTracker.lockAll()
+    }
+
+    /** Compatibility mode, its permissions granted: an engine that counts as running. */
+    private fun protecting() {
+        ProtectionEngine.overrideModeForTests = ProtectionEngine.Mode.ACCESSIBILITY
+    }
 
     private fun unlockAndLeave(pkg: String) {
         LockStateTracker.onAppUnlocked(pkg)
@@ -67,27 +83,65 @@ class LockAllNowTest {
     }
 
     @Test
-    fun theShortcutLocksEverythingBioKeyIncluded() {
-        unlockAndLeave(bank)
-        LockStateTracker.onOwnAppUnlocked()
-        val activity = Robolectric.buildActivity(LockAllActivity::class.java).create().get()
-        assertTrue(activity.isFinishing)
-        assertTrue(LockStateTracker.unlockedApps(fiveMinutes).isEmpty())
-        assertFalse(LockStateTracker.isOwnAppUnlocked())
+    fun lockingAllEndsEverySession() {
+        protecting()
+        try {
+            unlockAndLeave(bank)
+            assertEquals(LockAllNow.Outcome.LOCKED, LockAllNow.run(context, includeOwnApp = false, reason = "test"))
+            assertTrue(LockStateTracker.unlockedApps(fiveMinutes).isEmpty())
+        } finally {
+            ProtectionEngine.overrideModeForTests = null
+        }
     }
 
     @Test
-    fun theShortcutIsDeclared() {
-        val shortcuts = context.getSystemService(ShortcutManager::class.java).manifestShortcuts
-        // Robolectric doesn't read shortcuts.xml; the resource itself is checked instead.
+    fun pausedItResumesRatherThanClaimingAppsAreLocked() {
+        protecting()
+        try {
+            vault.pauseProtection(null)
+            assertEquals(LockAllNow.Outcome.RESUMED_AND_LOCKED, LockAllNow.run(context, includeOwnApp = true, reason = "test"))
+            assertTrue(vault.isProtectionActive())
+        } finally {
+            ProtectionEngine.overrideModeForTests = null
+        }
+    }
+
+    @Test
+    fun withNothingProtectingItSaysSo() {
+        ProtectionEngine.overrideModeForTests = ProtectionEngine.Mode.OFF
+        try {
+            assertEquals(LockAllNow.Outcome.NOT_PROTECTING, LockAllNow.run(context, includeOwnApp = true, reason = "test"))
+        } finally {
+            ProtectionEngine.overrideModeForTests = null
+        }
+    }
+
+    @Test
+    fun theShortcutLocksEverythingBioKeyIncluded() {
+        protecting()
+        try {
+            unlockAndLeave(bank)
+            LockStateTracker.onOwnAppUnlocked()
+            val activity = Robolectric.buildActivity(LockAllActivity::class.java).create().get()
+            assertTrue(activity.isFinishing)
+            assertTrue(LockStateTracker.unlockedApps(fiveMinutes).isEmpty())
+            assertFalse(LockStateTracker.isOwnAppUnlocked())
+        } finally {
+            ProtectionEngine.overrideModeForTests = null
+        }
+    }
+
+    @Test
+    fun theShortcutPointsAtThisBuildsLockAll() {
         val parser = context.resources.getXml(R.xml.shortcuts)
-        var target: String? = null
-        while (parser.next() != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
-            if (parser.eventType == org.xmlpull.v1.XmlPullParser.START_TAG && parser.name == "intent") {
-                target = parser.getAttributeValue("http://schemas.android.com/apk/res/android", "targetClass")
+        var target: Pair<String?, String?>? = null
+        while (parser.next() != XmlPullParser.END_DOCUMENT) {
+            if (parser.eventType == XmlPullParser.START_TAG && parser.name == "intent") {
+                val ns = "http://schemas.android.com/apk/res/android"
+                target = parser.getAttributeValue(ns, "targetPackage") to parser.getAttributeValue(ns, "targetClass")
             }
         }
-        assertEquals(LockAllActivity::class.java.name, target)
-        assertTrue(shortcuts.isEmpty() || shortcuts.any { it.id == "lock_all" })
+        // shortcuts.xml can't use the build's application ID: a suffix added later must change it too.
+        assertEquals(BuildConfig.APPLICATION_ID to LockAllActivity::class.java.name, target)
     }
 }

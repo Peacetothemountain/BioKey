@@ -43,6 +43,44 @@
         <intent>
             <action android:name="android.settings.ACCESSIBILITY_DETAILS_SETTINGS" />
         </intent>
+        <!-- The other system pages BioKey opens: seen, so each opens in the system app that
+             handles it, wherever a phone maker put it, never in an app posing as Settings. -->
+        <intent>
+            <action android:name="android.app.action.SET_NEW_PASSWORD" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.SECURITY_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.ACCESSIBILITY_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.USAGE_ACCESS_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.USAGE_ACCESS_SETTINGS" />
+            <data android:scheme="package" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.action.MANAGE_OVERLAY_PERMISSION" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.action.MANAGE_OVERLAY_PERMISSION" />
+            <data android:scheme="package" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.NOTIFICATION_LISTENER_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.NOTIFICATION_LISTENER_DETAIL_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.APP_NOTIFICATION_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.APPLICATION_DETAILS_SETTINGS" />
+            <data android:scheme="package" />
+        </intent>
         <!-- Photo pickers, galleries, file pickers and cameras: an app opening one mid-task (to
              attach a photo, say) and getting the result back keeps its session. -->
         <intent>
@@ -160,6 +198,23 @@
             android:exported="true"
             android:icon="@drawable/ic_biokey_mark"
             android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- The Lock button on "Lock <new app>?". Not exported: only BioKey's own notification sends it. -->
+        <receiver
+            android:name=".core.security.NewAppSuggestions$LockReceiver"
+            android:exported="false" />
+
+        <!-- Quick Settings "Lock all": only ever locks, so a tap needs no authentication. -->
+        <service
+            android:name=".feature.tile.LockAllTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_lock_all"
+            android:label="@string/lock_all_tile_label"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />

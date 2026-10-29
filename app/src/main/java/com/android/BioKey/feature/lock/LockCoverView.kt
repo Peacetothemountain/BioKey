@@ -18,6 +18,10 @@ import android.view.View
 import android.view.ViewOutlineProvider
 import android.view.WindowInsets
 import android.view.accessibility.AccessibilityNodeInfo
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.DynamicDrawableSpan
+import android.text.style.ImageSpan
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -245,6 +249,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         cancelButton.background = ripple(Color.TRANSPARENT, p.primary)
         primaryButton.setTextColor(p.onPrimary)
         primaryButton.background = ripple(p.primary, p.onPrimary)
+        // The glyph takes the text's colour, so it's drawn again with it.
+        if (!lockoutMode) primaryButton.text = unlockLabel()
         logo.setColor(p.primary)
         brandMark.setColor(p.primary)
     }
@@ -324,7 +330,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         lockoutMode = permanentLockout
         status.text = message
         status.isVisible = !message.isNullOrBlank()
-        primaryButton.text = if (permanentLockout) "Lock screen" else "Unlock"
+        primaryButton.text = if (permanentLockout) "Lock screen" else unlockLabel()
+        primaryButton.contentDescription = if (permanentLockout) null else "Unlock"
         // After a lockout the button locks the phone, which only the accessibility service can
         // do: in compatibility mode, Cancel is the way out (the message names the power button).
         primaryButton.isVisible = !permanentLockout || BioKeyAccessibilityService.isRunning
@@ -345,6 +352,20 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
         setPadding(bars.left, bars.top, bars.right, bars.bottom)
         return insets
+    }
+
+    /**
+     * "Unlock" after a fingerprint, centred together, as on BioKey's own lock screen
+     * ([BioKeyLockScreen]): one product, one button. Screen readers hear just "Unlock".
+     */
+    private fun unlockLabel(): CharSequence {
+        val glyph = context.getDrawable(R.drawable.ic_fingerprint)?.mutate() ?: return "Unlock"
+        val size = dp(22)
+        glyph.setBounds(0, 0, size, size)
+        glyph.setTint(primaryButton.currentTextColor)
+        return SpannableString("${Typography.nbsp}  Unlock").apply {
+            setSpan(ImageSpan(glyph, DynamicDrawableSpan.ALIGN_CENTER), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
     }
 
     /** Unlock and Cancel are text drawn as buttons: screen readers are told they are buttons. */

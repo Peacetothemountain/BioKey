@@ -91,6 +91,37 @@ content** in BioKey's settings. Don't revoke notification access instead: that c
 hidden for up to a day. If Notification history is on, Settings > Notifications > Notification
 history lists them in the meantime.
 
+## Quick actions and alerts
+
+### How do I lock everything at once?
+
+Before handing your phone to someone: long-press BioKey's icon and tap **Lock all now**, or add the
+**Lock all** tile to Quick Settings (swipe down twice, tap the pencil). Every locked app asks
+again the next time it opens. It needs no authentication, since it only locks. If protection was
+paused, it resumes it.
+
+### What are failed unlock alerts?
+
+When you turn them on (BioKey asks once on its home screen, or Settings > Failed unlock alerts),
+BioKey notes each face or fingerprint that didn't match on a locked app. If yours works on that app
+within 2 minutes, it was you and the note goes. Otherwise, 2 minutes later, a notification says
+someone tried, without naming the app, and BioKey's home screen lists which app and when. Opening
+the app with your PIN after a mismatch is listed too, marked as such, but not notified. Only faces
+and fingerprints count: Android doesn't tell apps about a wrong PIN, pattern or password. Notes are
+kept 7 days; clear them from **Review** on the home screen.
+
+### BioKey says "App locking was off"
+
+Someone (maybe you) switched BioKey off in Android's settings, revoked one of its permissions, or
+force-stopped it while the phone was in use, and locked apps opened without a check meanwhile. The
+card shows when. A restart of the phone, an update of BioKey, or Android stopping it while the
+screen was off doesn't count. Clear it from **Review**.
+
+### BioKey offered to lock an app I just installed
+
+Auto-sort locks the banking, social and work apps it recognises. Anything else you install gets a
+notification with a **Lock** button. Turn it off in Settings > Offer to lock new apps.
+
 ## Backup and restore
 
 ### How do I keep my setup when I reinstall BioKey or change phones?

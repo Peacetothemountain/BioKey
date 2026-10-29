@@ -12,7 +12,24 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
   and does (pressing Home or Back for you), and that notification access sees which app posted each
   notification, not only locked apps' ones, as the privacy policy already did.
 - Settings pages BioKey opens go straight to the Settings app, so another app can't offer to open
-  them instead and pose as Settings.
+  them instead and pose as Settings. Pages that set your screen lock never open anywhere else.
+- **Lock all now:** lock every app at once, without waiting for the screen to turn off, from the
+  home screen, the status sheet, a new "Lock all" Quick Settings tile, or by long-pressing BioKey's
+  icon. While protection is paused it resumes it; while nothing protects it says so.
+- **Unlocked now:** home shows which locked apps are unlocked right now and when each locks again
+  ("Locks again in 4 min"), with Lock and Lock all.
+- **Failed unlock alerts** (optional; BioKey asks once): a face or fingerprint that didn't match on
+  a locked app, and wasn't followed by yours within 2 minutes, is listed on home and notified two
+  minutes later, without naming the app. Kept 7 days.
+- **App locking was off:** if protection is switched off, or BioKey is stopped while the phone is in
+  use, home shows when, from and to.
+- **New apps:** an app you install that auto-sort doesn't lock gets a "Lock it?" notification.
+- Clearer app list: no more "App" under every app, and the default re-lock delay is stated once,
+  in the "Locked" header; a row shows a delay only when it differs. On tablets the header and the
+  profile chips run edge to edge. Header labels shrink to fit with large text instead of breaking
+  mid-word.
+- The Play version's Accessibility service no longer asks Android for screen elements' view IDs:
+  only self-protection used them.
 
 ## 1.0.2 (26 October 2026)
 

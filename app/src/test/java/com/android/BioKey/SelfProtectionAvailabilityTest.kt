@@ -31,12 +31,12 @@ class SelfProtectionAvailabilityTest {
         SecurityVault.getInstance(context).awaitPendingWrites()
         prefs.edit().clear().commit()
         SecurityVault.resetForTests()
-        SecurityVault.selfProtectionAvailable = false
+        SecurityVault.selfProtectionRemovedForTests = true
     }
 
     @After
     fun restore() {
-        SecurityVault.selfProtectionAvailable = BuildConfig.SELF_PROTECTION
+        SecurityVault.selfProtectionRemovedForTests = false
         SecurityVault.resetForTests()
     }
 

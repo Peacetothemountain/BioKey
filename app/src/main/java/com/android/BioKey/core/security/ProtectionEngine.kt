@@ -3,6 +3,7 @@ package com.android.BioKey.core.security
 import android.Manifest
 import android.app.AppOpsManager
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Process
@@ -79,7 +80,11 @@ object ProtectionEngine {
             !BioKeyAccessibilityService.isServiceEnabled(context) &&
             compatibilityPermissionsGranted(context)
 
-    fun mode(context: Context): Mode =
+    /** Tests of what depends on the mode, without a running engine. */
+    @VisibleForTesting
+    internal var overrideModeForTests: Mode? = null
+
+    fun mode(context: Context): Mode = overrideModeForTests ?:
         accessibilityMode(BioKeyAccessibilityService.isServiceEnabled(context), BioKeyAccessibilityService.isRunning) ?: when {
             compatibilityPermissionsGranted(context) && compatibilityUp(context) -> Mode.COMPATIBILITY
             AdvancedProtection.blocksBioKey(context) -> Mode.NEEDS_COMPATIBILITY_SETUP

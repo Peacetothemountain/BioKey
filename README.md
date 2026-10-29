@@ -43,6 +43,10 @@ An app lock for Android, modelled on Android 17's own App Lock: the apps you cho
 - BioKey locks itself. Builds from source can also guard its own settings and uninstall (not the Google Play version).
 - Works under Android's Advanced Protection, through compatibility mode.
 - Pause for 15 minutes, an hour, or until you turn it back on, from the app or a Quick Settings tile.
+- Lock every app at once (before handing your phone over), from the app, a Quick Settings tile, or by long-pressing BioKey's icon.
+- See which locked apps are unlocked right now, and when each locks again.
+- Optional failed unlock alerts, and a record of any time app locking was switched off, so you know if someone tried.
+- An offer to lock each app you install that auto-sort didn't.
 - Password-protected backup and restore of your setup.
 - No `INTERNET` permission. Nothing leaves the phone unless you save or share it yourself.
 
@@ -64,6 +68,11 @@ Requires Android 12 or later.
 | **Self-protection** | Not in the Google Play version (see [Self-protection builds](#self-protection-builds)). Optional (off by default), accessibility engine only. BioKey's App info page (force stop, uninstall, clear storage), its accessibility switch, notification access and the uninstall dialog require authentication. Pages you open from inside BioKey are pre-authorised. |
 | **Protection alert** | A notification fires if protection stops (the accessibility service is switched off, or compatibility mode loses a permission or can't start). |
 | **Pause** | Pause for 15 minutes, 1 hour, or until turned back on, from the app or the Quick Settings tile (behind authentication). |
+| **Lock all now** | Ends every locked app's session at once, without waiting for the screen to turn off: from the home screen and the status sheet, the "Lock all" Quick Settings tile, or the launcher shortcut (long-press BioKey's icon). It only ever locks, so it needs no authentication; while paused it resumes protection, and while nothing protects it says so instead. |
+| **Unlocked now** | Home shows the locked apps unlocked right now, each with when it locks again ("Locks again in 4 min"), to lock one or all of them. Rows state a re-lock delay only where it differs from the default, which the "Locked" header states once. |
+| **Failed unlock alerts** | Off until you turn them on (BioKey asks once). A face or fingerprint that didn't match on a locked app is noted; one of yours that works on that app within 2 minutes removes it (it was you), while opening it with the screen lock keeps it, marked so. Two minutes later a notification that never names the app says someone tried; home lists them until cleared. Kept 7 days. Android doesn't tell apps about a wrong PIN. |
+| **App locking was off** | If protection is switched off, or BioKey is stopped while the phone is in use (force stop), home shows when, from and to, until you clear it. A restart, an update of BioKey, a stop while the screen was off, or a moment's handover between engines isn't counted. The Play version can't prevent this (see [Self-protection builds](#self-protection-builds)); it makes sure you find out. |
+| **New apps** | When you install an app auto-sort doesn't lock, a notification offers to lock it, with a Lock button. Can be turned off in Settings. |
 | **Backup and restore** | Your locked apps, profiles and settings, saved to a file you choose, sealed with a password (AES-256-GCM, key from PBKDF2-SHA256). Restore after a reinstall or on a new phone. |
 | **Diagnostic log** | On by default, can be turned off. BioKey's own lock decisions about your locked apps, on the phone, for 3 days, to help track down a problem. You can share it from Settings. |
 | **Window hardening** | `FLAG_SECURE`, no Recents thumbnails of BioKey, other apps' overlays hidden, touches through obscuring windows rejected (tapjacking), and BioKey's screens marked accessibility-data-sensitive (Android 14 and later), so only genuine accessibility tools (e.g. TalkBack) can read or operate them there: accessibility malware can't see your locked apps or tap "Pause". |
@@ -93,7 +102,7 @@ Android 17 QPR2 (API 37.2) adds a native App Lock (`PackageManager.getEnableAppL
 | Accessibility service | Sees which app is on screen; reads the label of what you tap on the home screen, in its search or in Recents, and, while Recents is open and a locked app is unlocked, the app names on its cards; with self-protection on (not in the Play version), recognises BioKey's own settings pages. Doesn't read what you type. |
 | `USE_BIOMETRIC` | Face and fingerprint authentication, through the system prompt. |
 | `HIDE_OVERLAY_WINDOWS` | Hides other apps' overlays while BioKey's screens are showing. |
-| `POST_NOTIFICATIONS` | The protection alert and hidden-notification stand-ins. |
+| `POST_NOTIFICATIONS` | The protection alert, failed unlock alerts (never naming the app), offers to lock new apps, and hidden-notification stand-ins. |
 | `RECEIVE_BOOT_COMPLETED` | After a reboot, starts compatibility mode if it's in use, or warns if protection is off. |
 | `QUERY_ADVANCED_PROTECTION_MODE` | Detects Android's Advanced Protection, so BioKey switches to compatibility mode. |
 | Usage access (`PACKAGE_USAGE_STATS`), display over other apps (`SYSTEM_ALERT_WINDOW`), `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE` | Compatibility mode only: which app was opened and whether a locked app is still on screen, covering it, and running while the screen is on. |
@@ -112,7 +121,7 @@ Installs from Google Play are exempt from Android's restricted settings and from
 
 ## Privacy
 
-BioKey collects no data. It has no internet access, no analytics, no ads and no third-party services. What it keeps (your locked apps, profiles and settings, and a 3-day log of its own lock decisions) stays in its private storage on the phone, and is excluded from cloud backup and device transfer. Nothing leaves the phone unless you save a backup file or share the diagnostic log yourself.
+BioKey collects no data. It has no internet access, no analytics, no ads and no third-party services. What it keeps (your locked apps, profiles and settings, a 3-day log of its own lock decisions, and, if you turn them on, 7 days of failed unlocks and of times app locking was off) stays in its private storage on the phone, and is excluded from cloud backup and device transfer. Nothing leaves the phone unless you save a backup file or share the diagnostic log yourself.
 
 Full policy: [peacetothemountain.github.io/BioKey/privacy](https://peacetothemountain.github.io/BioKey/privacy/) (source: [PRIVACY.md](PRIVACY.md)).
 
@@ -137,7 +146,7 @@ An app lock running as a regular app can't defend against everything:
 - **Notifications** of a locked app can flash as a heads-up or on a watch before BioKey hides them. With Notification history on, Settings > Notifications > Notification history lists the snoozed (hidden) notifications.
 - **Bringing hidden notifications back**: switch the notification shield off in BioKey. Revoking notification access instead can leave them hidden for up to a day.
 - **Android 12 and 13** have no way to hide an app's screens from other accessibility services: one you have turned on can read and operate BioKey's screens.
-- **Accessibility shortcuts**: a shortcut (volume keys or the accessibility button) assigned to Bio Key App Lock Service switches it off without authentication. Remove it if you rely on self-protection; BioKey's settings warn you while one is assigned.
+- **Accessibility shortcuts**: a shortcut (volume keys or the accessibility button) assigned to Bio Key App Lock Service switches it off without authentication. Remove it if you rely on self-protection (builds from source only); BioKey's settings warn you while one is assigned. Either way, BioKey shows afterwards when app locking was off.
 - **Self-protection is heuristic.** There's no Android API for "this screen can disable app X", so BioKey recognises those screens by package and content. It's tested against Pixel layouts; other manufacturers' Settings may differ.
 
 ## Building from source

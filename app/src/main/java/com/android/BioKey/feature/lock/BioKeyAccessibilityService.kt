@@ -31,6 +31,7 @@ import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.diagnostics.LatencyMarks
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
+import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
@@ -413,6 +414,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun describe(t: Throwable) = "${t.javaClass.name} at ${t.stackTrace.firstOrNull()}"
 
     private fun revokeSelfProtectionAfterExit() {
+        if (!SecurityVault.selfProtectionAvailable) return
         if (shield.isShowing || LockScreenActivity.isLockScreenResumed || SecurityEngine.INSTANCE.isAuthenticating()) return
         if (LockStateTracker.hasVisitedGuardedSelfProtectionScreen()) {
             val host = activeSelfProtectionHost
@@ -426,7 +428,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun checkSelfProtectionAgain() {
         val host = activeSelfProtectionHost ?: return
         // Switched off (or not in this build): no reading Settings pages' text at all.
-        if (!::vault.isInitialized || !vault.isAccessibilitySelfProtectionEnabled()) return
+        if (!SecurityVault.selfProtectionAvailable || !::vault.isInitialized || !vault.isAccessibilitySelfProtectionEnabled()) return
         if (shield.isShowing || LockScreenActivity.isLockScreenResumed || SecurityEngine.INSTANCE.isAuthenticating() ||
             LockStateTracker.isRecentlyAbandoned(SELF_PROTECTION_PENDING_KEY)
         ) return
@@ -493,7 +495,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
             !(LockScreenActivity.isLockScreenResumed && LockScreenActivity.activeLockedTarget == pkg)
 
     private fun needsSelfProtectionMonitoring(): Boolean =
-        vault.isSetupCompleted() &&
+        SecurityVault.selfProtectionAvailable &&
+            vault.isSetupCompleted() &&
             vault.isProtectionActive() &&
             vault.isAccessibilitySelfProtectionEnabled() &&
             !LockStateTracker.hasVisitedGuardedSelfProtectionScreen()
@@ -501,6 +504,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || !::vault.isInitialized) return
         EngineTrace.event(event)
+        ProtectionGaps.touch(this)
         handlingEvent = true
         try {
             handleEvent(event)
@@ -586,7 +590,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     }
                     return
                 }
-                if (vault.isSetupCompleted() && vault.isProtectionActive() && vault.isAccessibilitySelfProtectionEnabled() &&
+                if (SecurityVault.selfProtectionAvailable && vault.isSetupCompleted() && vault.isProtectionActive() &&
+                    vault.isAccessibilitySelfProtectionEnabled() &&
                     !LockStateTracker.isRecentlyAbandoned(SELF_PROTECTION_PENDING_KEY)
                 ) {
                     val guarded = selfProtection.isGuardedScreen(eventPkg, event) { delayMs ->
@@ -1496,7 +1501,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
     // -------------------------------------------------------------------------------------------
 
     private fun shouldGuardSelf(): Boolean =
-        vault.isSetupCompleted() &&
+        // A constant false in the Play build: R8 drops every guard behind it.
+        SecurityVault.selfProtectionAvailable &&
+            vault.isSetupCompleted() &&
             vault.isProtectionActive() &&
             vault.isAccessibilitySelfProtectionEnabled() &&
             !LockStateTracker.isSelfProtectionGranted() &&
@@ -1504,6 +1511,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     /** A guarded page is on screen: fine if already authorised, else challenged. Returns whether a challenge started. */
     private fun onGuardedScreen(): Boolean {
+        if (!SecurityVault.selfProtectionAvailable) return false
         mainHandler.removeCallbacks(revokeSelfProtectionAfterExitRunnable)
         if (LockStateTracker.isSelfProtectionGranted()) {
             LockStateTracker.markSelfProtectionVisitedGuardedScreen()
@@ -1530,6 +1538,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     }
 
     private fun navigateBackFromGuardedSelfProtection() {
+        if (!SecurityVault.selfProtectionAvailable) return
         LockStateTracker.markLockAbandoned(SELF_PROTECTION_PENDING_KEY)
         LockStateTracker.clearSelfProtection()
         mainHandler.postDelayed({

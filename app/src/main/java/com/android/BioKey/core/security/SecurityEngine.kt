@@ -40,10 +40,7 @@ class SecurityEngine private constructor() {
         fun isUserCancel(code: Int) = code == ERROR_USER_CANCELED || code == ERROR_CANCELED
     }
 
-    private class Attempt(val packageName: String, val host: WeakReference<Activity>, val cancel: CancellationSignal) {
-        /** Faces or fingerprints that didn't match ([UnlockAttempts]). Only on the main thread. */
-        var failures = 0
-    }
+    private class Attempt(val packageName: String, val host: WeakReference<Activity>, val cancel: CancellationSignal)
 
     @Volatile private var active: Attempt? = null
         set(value) {
@@ -106,20 +103,24 @@ class SecurityEngine private constructor() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 if (active !== attempt) return
                 active = null
-                UnlockAttempts.onUnlocked(app, packageName)
+                // A face or fingerprint proves the owner; the screen lock doesn't (UnlockAttempts).
+                UnlockAttempts.onUnlocked(
+                    app, packageName,
+                    biometric = result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC
+                )
                 onSuccess()
             }
 
+            // Each miss is kept as it happens: a prompt can go without an error (its screen
+            // killed), and the misses before it are the ones that matter.
             override fun onAuthenticationFailed() {
-                attempt.failures++
+                UnlockAttempts.onBiometricFailed(app, packageName, name)
             }
 
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                // Counted even for a prompt already superseded: one that went because its screen
-                // went (the person gave up and pressed Home) is the case that matters.
-                val lockedOut = errorCode == BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT || errorCode == ERROR_LOCKOUT_PERMANENT
-                UnlockAttempts.record(app, packageName, attempt.failures, lockedOut)
-                attempt.failures = 0
+                if (errorCode == BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT || errorCode == ERROR_LOCKOUT_PERMANENT) {
+                    UnlockAttempts.onLockedOut(app, packageName, name)
+                }
                 if (active !== attempt) {
                     Log.d(TAG, "Ignoring error $errorCode from a superseded prompt")
                     return

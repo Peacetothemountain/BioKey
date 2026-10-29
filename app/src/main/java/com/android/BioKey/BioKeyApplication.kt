@@ -16,6 +16,9 @@ import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.core.security.NewAppSuggestions
+import com.android.BioKey.core.security.ProtectionGaps
+import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.ScreenReceiver
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -84,6 +87,10 @@ class BioKeyApplication : Application() {
             try {
                 // Pre-warm SecurityVault so UI threads find it ready in memory
                 SecurityVault.getInstance(app)
+                // Off the main thread, so a prompt's first miss or a screen-off doesn't wait for the disk.
+                UnlockAttempts.load(app)
+                NewAppSuggestions.load(app)
+                ProtectionGaps.load(app)
                 ProtectionEngine.refresh(app)
                 ProtectionAlerts.checkAccessibilityConnects(app)
             } catch (e: Exception) {
@@ -127,6 +134,12 @@ class BioKeyApplication : Application() {
                                         val info = runCatching { pm.getApplicationInfo(pkg, 0) }.getOrNull()
                                         val label = info?.let { runCatching { pm.getApplicationLabel(it).toString() }.getOrNull() } ?: pkg
                                         vault.autoSortAppsIntoProfiles(listOf(pkg to AppClassifier.categorize(pkg, label, info?.category ?: -1)))
+                                    }
+                                    // Whatever auto-sort didn't lock is offered: "Lock <app>?".
+                                    if (!replacing) {
+                                        val pm = packageManager
+                                        val label = runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }.getOrDefault(pkg)
+                                        NewAppSuggestions.onInstalled(this@BioKeyApplication, pkg, label)
                                     }
                                     if (pkg in vault.getLockedPackages()) {
                                         AppInfoCache.preWarm(this@BioKeyApplication, listOf(pkg))

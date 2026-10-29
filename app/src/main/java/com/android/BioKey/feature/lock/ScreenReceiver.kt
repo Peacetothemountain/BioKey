@@ -7,6 +7,7 @@ import android.content.IntentFilter
 import androidx.core.content.ContextCompat
 import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.ProtectionGaps
 
 /**
  * Ends every unlock session the moment the display turns off or a screensaver starts, so a
@@ -20,6 +21,7 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
             val receiver = ScreenReceiver()
             val filter = IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
                 addAction(Intent.ACTION_DREAMING_STARTED)
                 addAction(Intent.ACTION_SHUTDOWN)
             }
@@ -37,7 +39,10 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
                 // Always: ending sessions twice is harmless, missing a lock is not (a screensaver
                 // never turns the screen off, so the engines' own screen-off handling misses it).
                 LockStateTracker.onScreenTurnedOff()
+                // Nobody uses the phone from here on: an engine gone meanwhile wasn't stopped by a person.
+                ProtectionGaps.touch(context, screenOn = false)
             }
+            Intent.ACTION_SCREEN_ON -> ProtectionGaps.touch(context, screenOn = true)
         }
     }
 }

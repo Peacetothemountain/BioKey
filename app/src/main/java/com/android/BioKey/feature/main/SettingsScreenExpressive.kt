@@ -21,6 +21,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AddModerator
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BugReport
@@ -44,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -67,6 +69,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.security.NewAppSuggestions
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
@@ -82,6 +85,8 @@ import com.android.BioKey.ui.theme.MaxContentWidth
 import com.android.BioKey.ui.theme.SectionHeader
 import com.android.BioKey.ui.theme.springPress
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 
 /** One row of a settings group. */
@@ -125,7 +130,15 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     val selfProtectionEnabled by vault.accessibilitySelfProtectionFlow.collectAsStateWithLifecycle()
     val notificationShieldEnabled by vault.notificationShieldFlow.collectAsStateWithLifecycle()
     val autoSortProfiles by vault.autoSortProfilesFlow.collectAsStateWithLifecycle()
-    val attemptAlerts by remember { UnlockAttempts.load(context); UnlockAttempts.enabled }.collectAsStateWithLifecycle()
+    val attemptAlerts by UnlockAttempts.enabled.collectAsStateWithLifecycle()
+    val newAppOffers by NewAppSuggestions.enabled.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) {
+        // Usually loaded already, as BioKey started.
+        withContext(Dispatchers.IO) {
+            UnlockAttempts.load(context)
+            NewAppSuggestions.load(context)
+        }
+    }
 
     var notifListenerActive by remember { mutableStateOf(BioKeyNotificationShieldService.isNotificationAccessGranted(context)) }
     /** An accessibility shortcut switches BioKey's service off without passing any screen self-protection guards. */
@@ -250,10 +263,22 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         SettingItem(
             icon = Icons.Default.GppBad,
             title = "Failed unlock alerts",
-            subtitle = "Tells you when a face or fingerprint that didn't match was tried on a locked app, " +
-                "and it wasn't you retrying",
+            subtitle = "When a face or fingerprint that isn't yours fails on a locked app · kept 7 days on this phone",
             checked = attemptAlerts,
-            onChange = { on -> UnlockAttempts.setEnabled(context, on) }
+            onChange = { on ->
+                UnlockAttempts.setEnabled(context, on)
+                if (on && !notifications.allowed) notifications.request()
+            }
+        ),
+        SettingItem(
+            icon = Icons.Default.AddModerator,
+            title = "Offer to lock new apps",
+            subtitle = "After you install an app auto-sort doesn't lock, a notification asks whether to lock it",
+            checked = newAppOffers,
+            onChange = { on ->
+                NewAppSuggestions.setEnabled(context, on)
+                if (on && !notifications.allowed) notifications.request()
+            }
         ),
         // Not in the Play build (see SecurityVault.selfProtectionAvailable).
         if (SecurityVault.selfProtectionAvailable) SettingItem(
@@ -336,7 +361,8 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         SettingItem(
             icon = Icons.Default.BugReport,
             title = "Diagnostic log",
-            subtitle = "Keeps BioKey's lock decisions about your locked apps on this phone for 3 days, to help track down a problem",
+            subtitle = "Keeps BioKey's lock decisions about your locked apps (and failed unlocks) on this phone for 3 days, " +
+                "to help track down a problem",
             checked = logEnabled,
             onChange = { on ->
                 DiagnosticLog.setEnabled(context, on)

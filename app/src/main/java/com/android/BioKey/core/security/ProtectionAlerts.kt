@@ -98,6 +98,7 @@ object ProtectionAlerts {
     }
 
     private fun postServiceStopped(context: Context) {
+        ProtectionGaps.onEngineDown(context)
         if (ProtectionEngine.shouldRunCompatibility(context)) {
             // Compatibility mode is the engine to run and has what it needs, but didn't start
             // (Android limits starting it from the background); opening BioKey starts it. Checked
@@ -138,6 +139,7 @@ object ProtectionAlerts {
      * it can't see or cover locked apps without it.
      */
     fun compatibilityStopped(context: Context, missing: String) {
+        ProtectionGaps.onEngineDown(context)
         main.removeCallbacksAndMessages(STOP_TOKEN)
         post(
             context.applicationContext,
@@ -173,6 +175,7 @@ object ProtectionAlerts {
         runCatching { context.getSystemService(NotificationManager::class.java).activeNotifications.any { it.id == id } }.getOrDefault(false)
 
     fun serviceRestored(context: Context) {
+        ProtectionGaps.onEngineUp(context)
         main.removeCallbacksAndMessages(STOP_TOKEN)
         main.removeCallbacksAndMessages(CONNECT_TOKEN)
         NotificationManagerCompat.from(context).cancel(ID_SERVICE_STOPPED)

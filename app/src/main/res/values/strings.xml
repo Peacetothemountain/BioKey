@@ -4,11 +4,43 @@
     <string name="accessibility_service_summary">Locks the apps you choose behind your fingerprint, face, or screen lock</string>
     <!-- No word of self-protection: the Play build doesn't have it. Builds that do describe it in
          the in-app disclosure (Disclosure.ACCESSIBILITY) before the service is switched on. -->
-    <string name="accessibility_service_description">Bio Key uses this service to see which app is on screen, so it can cover apps you\'ve chosen to lock until you authenticate. When you tap something on the home screen, in its search or in Recents, it reads its label, so a locked app is covered before it opens. While Recents is open and a locked app is unlocked, it reads the app names on the Recents cards, so closing that app there locks it again.\n\nBio Key does not read what you type, does not record the screen, and has no internet access. Nothing it observes leaves your device.</string>
+    <string name="accessibility_service_description">Bio Key uses this service to see which app is on screen, so it can cover apps you\'ve chosen to lock until you authenticate. When you tap something on the home screen, in its search or in Recents, it reads its label, so a locked app is covered before it opens. While Recents is open and a locked app is unlocked, it reads the app names on the Recents cards, so closing that app there locks it again. It reads the title of each new window, to tell Google Password Manager\'s screens from sign-in sheets over other apps. It can press Home or Back for you to leave a locked app you didn\'t unlock, lock the screen when you ask after too many failed attempts, and open a locked app\'s picture-in-picture window full screen so it can be covered.\n\nBio Key does not read what you type, does not record the screen, and has no internet access. Nothing it observes leaves your device.</string>
     <!-- BioKey's name in its own screens. The system-facing names stay "Bio Key": self-protection recognises BioKey's Settings pages by them. -->
     <string name="brand_name">BioKey</string>
     <string name="tile_label">@string/brand_name</string>
     <string name="notification_shield_label">Bio Key notification shield</string>
     <string name="shortcut_lock_all_short">Lock all now</string>
     <string name="shortcut_lock_all_long">Lock all apps now</string>
+
+    <!-- Lock all now (home screen, status sheet, launcher shortcut, Quick Settings tile). -->
+    <string name="lock_all_done">All apps locked</string>
+    <string name="lock_all_resumed">Protection resumed · all apps locked</string>
+    <string name="lock_all_not_protecting">BioKey isn\'t protecting your apps right now</string>
+    <string name="lock_all_tile_label">Lock all</string>
+    <string name="lock_all_tile_paused">Paused · tap to resume and lock</string>
+    <string name="lock_all_tile_not_protecting">Not protecting</string>
+
+    <!-- Failed unlock alerts. Which app is never named in the notification. -->
+    <string name="attempts_channel_name">Failed unlock attempts</string>
+    <string name="attempts_channel_description">When a face or fingerprint that didn\'t match was tried on a locked app, and it wasn\'t opened</string>
+    <plurals name="attempts_title">
+        <item quantity="one">Failed unlock attempt</item>
+        <item quantity="other">%d failed unlock attempts</item>
+    </plurals>
+    <string name="attempts_notification_text">Someone tried to open a locked app. Open BioKey to see which.</string>
+    <plurals name="attempts_tries">
+        <item quantity="one">%d try</item>
+        <item quantity="other">%d tries</item>
+    </plurals>
+    <string name="attempts_missed">%1$s didn\'t match</string>
+    <string name="attempts_opened_with_screen_lock">opened with your screen lock after %1$s</string>
+    <string name="attempts_locked_out_after">locked out after %1$s</string>
+    <!-- "Lock <new app>?" after an install. -->
+    <string name="new_app_channel_name">New apps</string>
+    <string name="new_app_channel_description">Offers to lock an app you just installed</string>
+    <string name="new_app_title">Lock %1$s?</string>
+    <string name="new_app_text">Ask for your face, fingerprint or screen lock when it opens.</string>
+    <string name="new_app_public_title">New app installed</string>
+    <string name="new_app_lock">Lock</string>
+    <string name="attempts_locked_out">face and fingerprint locked out</string>
 </resources>
