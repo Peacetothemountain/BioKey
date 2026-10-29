@@ -57,6 +57,20 @@ class DiagnosticLogTest {
     }
 
     @Test
+    fun linesWithTheirClocksAreReadBackAndAgedToo() {
+        DiagnosticLog.clear()
+        DiagnosticLog.log("settled")
+        waitUntil("the app's own load") { file.exists() && file.readText().contains("settled") }
+        val now = com.android.BioKey.core.security.TrustedClock.now()
+        // From another boot, on the network's time: aged on that time.
+        file.writeText("${now - 4 * 24 * 60 * 60_000L}\t~0,-7,1\told, with clocks\n${now - 60 * 60_000L}\t~0,-7,1\tfresh, with clocks\n")
+
+        DiagnosticLog.init(context)
+        awaitEntry("fresh, with clocks")
+        assertTrue(DiagnosticLog.entries().none { it.text == "old, with clocks" })
+    }
+
+    @Test
     fun everyEntryIsWrittenOnceThroughARewrite() {
         // More than a rewrite's worth, logged faster than the log's own thread writes them: the
         // rewrite already holds the later ones, which mustn't then be appended again.

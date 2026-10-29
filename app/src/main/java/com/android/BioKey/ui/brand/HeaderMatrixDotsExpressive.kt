@@ -139,8 +139,8 @@ internal fun countFor(w: Float, h: Float): Int = (TUNED_COUNT * (w * h) / TUNED_
 fun HeaderMatrixDotsExpressive(
     modifier: Modifier = Modifier,
     animated: Boolean = true,
-    /** Where the field thins out: the logo, and the labelled controls, so no link cuts through them. */
-    quiet: List<Rect> = emptyList()
+    /** Where the field thins out: the logo, and the labelled controls, so no link cuts through them. Read while drawing. */
+    quiet: () -> List<Rect> = { emptyList() }
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val tertiary = MaterialTheme.colorScheme.tertiary
@@ -188,7 +188,7 @@ fun HeaderMatrixDotsExpressive(
         field.n = countFor(w / unit, h / unit)
         val edgeFade = EDGE_FADE * unit
         val quietFeather = QUIET_FEATHER * unit
-        val quietZones = quiet.map { it.inflate(QUIET_MARGIN * unit) }
+        val quietZones = quiet().map { it.inflate(QUIET_MARGIN * unit) }
         // How visible a point is: fading toward the bottom, before the edges, and round the logo.
         fun visibility(px: Float, py: Float): Float =
             depthFade(py, h) * edgeFade(px, py, w, edgeFade) * quietFade(px, py, quietZones, quietFeather)

@@ -52,13 +52,16 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
                 val app = context.applicationContext
                 Thread {
                     try {
-                        UnlockAttempts.onUserPresent(app)
-                        ProtectionAlerts.remindIfOff(app)
-                        BiometricEnrollment.checkSoon(app)
-                        ShieldAccessWatch.check(app)
-                    } catch (e: Exception) {
-                        // Each is looked at again at the next unlock; the process carries on.
-                        DiagnosticLog.log("Unlock checks failed: ${e.javaClass.simpleName}")
+                        // Each on its own: one failing mustn't skip the others (each is looked at
+                        // again at the next unlock).
+                        listOf(
+                            { UnlockAttempts.onUserPresent(app) },
+                            { ProtectionAlerts.remindIfOff(app) },
+                            { BiometricEnrollment.checkSoon(app) },
+                            { ShieldAccessWatch.check(app) }
+                        ).forEach { step ->
+                            runCatching(step).onFailure { DiagnosticLog.log("Unlock check failed: ${it.javaClass.simpleName}") }
+                        }
                     } finally {
                         pending?.finish()
                     }

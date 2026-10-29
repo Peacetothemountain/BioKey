@@ -235,6 +235,36 @@ class DesignScreenshotTest {
         RuntimeEnvironment.setFontScale(1f)
     }
 
+    /** Hide notification content on, its access taken away: the calm card, with Turn off and Allow access. */
+    @Test fun mainShieldNoAccess() {
+        SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        SecurityVault.getInstance(context).setNotificationShield(true)
+        com.android.BioKey.feature.notification.ShieldAccessWatch.hasAccess = { false }
+        try {
+            shoot("main_shield_no_access") { MainScreenExpressive(mode = ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
+        } finally {
+            com.android.BioKey.feature.notification.ShieldAccessWatch.hasAccess =
+                com.android.BioKey.feature.notification.BioKeyNotificationShieldService::isNotificationAccessGranted
+            SecurityVault.getInstance(context).setNotificationShield(false)
+        }
+    }
+
+    /** Review, opened with the PIN, with a fingerprint change held a day and a change from a PIN session. */
+    @Test fun review() {
+        val at = java.util.Calendar.getInstance().apply { set(java.util.Calendar.HOUR_OF_DAY, 15); set(java.util.Calendar.MINUTE, 2) }.timeInMillis
+        val gaps = listOf(
+            ProtectionGaps.Gap(at, at, ProtectionGaps.Kind.BIOMETRICS_CHANGED, 3L),
+            ProtectionGaps.Gap(at - 60_000L, at - 60_000L, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, 2L, ProtectionGaps.Change.LOCK_OFF.encode("Chase")),
+            ProtectionGaps.Gap(at - 20 * 60_000L, at - 12 * 60_000L, ProtectionGaps.Kind.SWITCHED_OFF, 1L)
+        )
+        shoot("review") {
+            com.android.BioKey.feature.main.SecurityActivityDialog(
+                attempts = emptyList(), gaps = gaps, labelOf = { it.label },
+                onClear = {}, onDismiss = {}, onMarkReviewed = {}, heldUntil = at + 24 * 60 * 60_000L
+            )
+        }
+    }
+
     /** Advanced Protection's card at 200%: its long button wraps instead of being clipped. */
     @Test fun mainOffLargeText() {
         SecurityVault.getInstance(context).setSetupCompletedSync(true)

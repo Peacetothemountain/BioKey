@@ -133,6 +133,8 @@ object ProtectionGaps {
     private const val KEY_STOPPED_BOOT = "stopped_boot"
     /** Trusted time minus the phone's clock, while an engine last ran: for reading Android's exit times. */
     private const val KEY_CLOCK_OFFSET = "clock_offset"
+    /** BioKey's last update time as an engine last saw it: an update since is what excuses a stop. */
+    private const val KEY_LAST_UPDATE = "last_update"
     /** The process exits already looked at, by their time: Android keeps the last few. */
     private const val KEY_EXITS_SEEN = "exits_seen"
 
@@ -268,11 +270,14 @@ object ProtectionGaps {
             val seenExits = p.getStringSet(KEY_EXITS_SEEN, null)
             val exits = exits(context)
             val update = updatedAt(context)
+            // Only a real update excuses a stop near it: the time it happened changed since an engine
+            // last ran. (A date set to the last update's, then a force stop, isn't one.)
+            val updatedSince = !p.contains(KEY_LAST_UPDATE) || p.getLong(KEY_LAST_UPDATE, 0L) != update
             val forceStopAt = if (seenExits == null) null else exits
                 .filter { (at, why) ->
                     at.toString() !in seenExits && why == ApplicationExitInfo.REASON_USER_REQUESTED &&
                         // Android 14+ gives an update its own reason; before, it looks like a force stop.
-                        (sdk() >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE || kotlin.math.abs(at - update) > UPDATE_WINDOW_MS)
+                        (sdk() >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE || !updatedSince || kotlin.math.abs(at - update) > UPDATE_WINDOW_MS)
                 }
                 .minOfOrNull { it.first }
             // Dated after "now": the clock was set back since. Still a stop, of a length that can't be
@@ -299,6 +304,7 @@ object ProtectionGaps {
             p.edit {
                 remove(KEY_STOPPED_AT).remove(KEY_STOPPED_ELAPSED).remove(KEY_STOPPED_BOOT)
                 putLong(KEY_CLOCK_OFFSET, now - wallNow())
+                putLong(KEY_LAST_UPDATE, update)
                 putStringSet(KEY_EXITS_SEEN, exits.mapTo(HashSet()) { it.first.toString() })
             }
         }

@@ -269,6 +269,39 @@ class UnlockAttemptsTest {
     }
 
     @Test
+    fun reviewMarksOnlyWhatItShowed() {
+        Prompt().miss()
+        val shown = kept.single().seq
+        Prompt("com.example.other").miss()
+        UnlockAttempts.markSeen(context, upTo = shown)
+        assertEquals(shown, UnlockAttempts.seenSeq(context))
+    }
+
+    @Test
+    fun aRestartDoesntReleaseTheHoldWhenItsAgeCantBeTold() {
+        // No network time: the record's age can't be told after a restart, so it's held until the
+        // phone has been on a day.
+        com.android.BioKey.core.security.SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        ProtectionGaps.clock = { now }
+        ProtectionGaps.elapsed = { sinceBoot }
+        ProtectionGaps.bootCount = { 3 }
+        try {
+            val seq = ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.BIOMETRICS_CHANGED)!!
+            UnlockAttempts.bootCount = { 4 }
+            ProtectionGaps.bootCount = { 4 }
+            sinceBoot = 60_000L
+            UnlockAttempts.markSeen(context)
+            assertTrue(UnlockAttempts.seenSeq(context) < seq)
+            sinceBoot = 25L * 60 * 60_000L
+            UnlockAttempts.markSeen(context)
+            assertTrue(UnlockAttempts.seenSeq(context) >= seq)
+        } finally {
+            ProtectionGaps.clock = TrustedClock::now
+            ProtectionGaps.elapsed = android.os.SystemClock::elapsedRealtime
+        }
+    }
+
+    @Test
     fun aMutedChannelTellsNothingAndCountsNothingAsTold() {
         UnlockAttempts.ensureChannel(context)
         val nm = context.getSystemService(NotificationManager::class.java)

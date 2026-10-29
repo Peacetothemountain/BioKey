@@ -50,7 +50,7 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
 - Settings: face or fingerprint only and new-app offers moved to the App lock group; Hide
   notification content says what it does until it's on.
 - Card buttons wrap at large text instead of squeezing. Settings rows that open a page show a
-  chevron, and the ones that open your browser an open-in-new mark. The snackbar spans the list,
+  chevron, and the ones that leave BioKey (your browser, Android's settings) an open-in-new mark. The snackbar spans the list,
   and the home header's constellation keeps clear of the tiles' labels.
 - Notification access switched off while Hide notification content is on is recorded and told,
   and home says notifications aren't hidden until it's back.
@@ -63,6 +63,9 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
   own settings; Lock Android Settings has a Lock button. The lock screen scrolls instead of running
   under the status bar in landscape. Setup's constellation keeps clear of its title.
 - Auto-sort never files an app you locked into a profile that's off.
+- Reviewed security activity is shown calmly; only something new makes the card urgent. Review
+  says until when a face or fingerprint change stays new. Moving or adding a locked app into a
+  profile that re-locks later, or taking it out of one, is recorded.
 - The permission explanations link to the privacy policy, and say what BioKey keeps.
 - When nothing is protecting your apps, home says so at the top, with the one thing to do.
 - Settings has the privacy policy and help (About).

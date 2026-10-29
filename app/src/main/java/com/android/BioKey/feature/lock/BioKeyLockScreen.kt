@@ -141,7 +141,7 @@ private fun LockedMessage(lockedTitle: String, statusMessage: String?, modifier:
         Text(
             lockedTitle,
             style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.clearAndSetSemantics { }
         )
         if (status != null) Spacer(Modifier.height(16.dp))

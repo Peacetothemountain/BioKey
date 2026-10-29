@@ -411,6 +411,7 @@ fun MainScreenExpressive(
     var alertsMuted by remember { mutableStateOf(false) }
     val attemptsEnabled by UnlockAttempts.enabled.collectAsStateWithLifecycle()
     val biometricOnlyOn by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
+    val seenUpTo by UnlockAttempts.seen.collectAsStateWithLifecycle()
     // Read off the main thread; null until then, so the card doesn't flash in and out.
     var lockSettingsDismissed by remember { mutableStateOf<Boolean?>(null) }
     // Read again on every visit: an engine coming back clears it.
@@ -598,7 +599,7 @@ fun MainScreenExpressive(
                             .matchParentSize()
                             .horizontalBleed(sidePadPx),
                         animated = headerActive,
-                        quiet = quietZones.values.map { it.translate(-shift) }
+                        quiet = { quietZones.values.map { it.translate(-shift) } }
                     )
                     Column(Modifier.statusBarsPadding()) {
                         MainHeader(
@@ -690,6 +691,13 @@ fun MainScreenExpressive(
                             vault.setNotificationShield(false)
                             shieldWithoutAccess = false
                             ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.SHIELD_OFF)
+                            BioKeyMessages.show(
+                                res.getString(R.string.home_shield_turned_off), Icons.Default.NotificationsOff,
+                                actionLabel = res.getString(R.string.common_undo)
+                            ) {
+                                vault.setNotificationShield(true)
+                                shieldWithoutAccess = true
+                            }
                         }) { Text(stringResource(R.string.home_shield_no_access_off)) }
                         FilledTonalButton(onClick = {
                             // The explanation first, as everywhere notification access is asked for.
@@ -707,11 +715,11 @@ fun MainScreenExpressive(
                         icon = Icons.Default.NotificationsOff,
                         title = stringResource(R.string.home_alerts_muted_title),
                         subtitle = stringResource(R.string.home_alerts_muted_text),
-                        urgent = look.action == null && !securityActivityUrgent(attempts, gaps),
+                        urgent = look.action == null && !securityActivityUrgent(attempts, gaps, seenUpTo),
                         modifier = Modifier.animateItem()
                     ) {
                         val open: () -> Unit = { IntentNavigationHelper.openChannelSettings(context, UnlockAttempts.mutedChannel(context)) }
-                        if (look.action == null && !securityActivityUrgent(attempts, gaps)) UrgentButton(stringResource(R.string.common_turn_on), onClick = open)
+                        if (look.action == null && !securityActivityUrgent(attempts, gaps, seenUpTo)) UrgentButton(stringResource(R.string.common_turn_on), onClick = open)
                         else FilledTonalButton(onClick = open) { Text(stringResource(R.string.common_turn_on)) }
                     }
                 }
@@ -736,7 +744,7 @@ fun MainScreenExpressive(
                     // One urgent card on the page: not protecting outranks this.
                     SecurityActivityCard(
                         attempts, gaps, ::attemptLabel, onReview = { showActivity = true }, modifier = Modifier.animateItem(),
-                        urgent = securityActivityUrgent(attempts, gaps) && !(look.action != null && vault.isSetupCompleted() && !(ProtectionEngine.isProtecting(mode) && !globalLockEnabled))
+                        urgent = securityActivityUrgent(attempts, gaps, seenUpTo) && !(look.action != null && vault.isSetupCompleted() && !(ProtectionEngine.isProtecting(mode) && !globalLockEnabled))
                     )
                 }
             }
@@ -966,8 +974,12 @@ fun MainScreenExpressive(
                 onRemoveFromProfile = {
                     val former = profileOf(pkg)
                     val wasLocked = lockedInVault(pkg)
+                    val delayBefore = vault.getTimeoutMode(pkg).openFor
                     vault.removeAppFromProfile(pkg)
-                    if (wasLocked && !lockedInVault(pkg)) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.TAKEN_OUT, app.label, former?.name.orEmpty())
+                    // Out of a strict profile, it follows the default delay: maybe a longer one.
+                    if (wasLocked && (!lockedInVault(pkg) || vault.getTimeoutMode(pkg).openFor > delayBefore)) {
+                        ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.TAKEN_OUT, app.label, former?.name.orEmpty())
+                    }
                     optionsForPackage = null
                     if (former != null) {
                         BioKeyMessages.show(
@@ -996,15 +1008,18 @@ fun MainScreenExpressive(
         var ownerProven by remember { mutableStateOf<Boolean?>(null) }
         // Only what the dialog shows counts as seen, not something that arrives while it's open.
         val shownUpTo = maxOf(attempts.maxOfOrNull { it.seq } ?: 0L, gaps.maxOfOrNull { it.seq } ?: 0L)
+        var heldUntil by remember { mutableStateOf<Long?>(null) }
         LaunchedEffect(shownUpTo) {
             val proven = withContext(Dispatchers.Default) { SecurityEngine.ownerProven(context) }
             ownerProven = proven
             if (proven) UnlockAttempts.markSeen(context, shownUpTo)
+            heldUntil = withContext(Dispatchers.Default) { UnlockAttempts.heldUntil(context) }
         }
         SecurityActivityDialog(
             attempts = attempts,
             gaps = gaps,
             labelOf = ::attemptLabel,
+            heldUntil = heldUntil,
             onMarkReviewed = if (ownerProven == false) {
                 {
                     confirmOwner(activity, res.getString(R.string.home_confirm_mark_reviewed)) {
@@ -1054,7 +1069,19 @@ fun MainScreenExpressive(
                 filter = created.id
                 val forPkg = newProfileForPackage
                 newProfileForPackage = null
-                if (forPkg != null) vault.moveAppToProfile(forPkg, created.id) else showAddApps = true
+                if (forPkg != null) {
+                    val wasLocked = lockedInVault(forPkg)
+                    val delayBefore = vault.getTimeoutMode(forPkg).openFor
+                    vault.moveAppToProfile(forPkg, created.id)
+                    // A new profile follows the default delay: maybe longer than the app had.
+                    if (wasLocked && vault.getTimeoutMode(forPkg).openFor > delayBefore) {
+                        ProtectionGaps.recordIfScreenLock(
+                            context, ProtectionGaps.Change.MOVED_LONGER_DELAY, labelByPackage[forPkg] ?: forPkg, created.name
+                        )
+                    }
+                } else {
+                    showAddApps = true
+                }
             },
             onDelete = null
         )
@@ -1110,7 +1137,15 @@ fun MainScreenExpressive(
             homeScreens = homeScreens,
             onAdd = { packages ->
                 val wereLocked = packages.filter(::lockedInVault)
+                val delaysBefore = wereLocked.associateWith { vault.getTimeoutMode(it).openFor }
                 vault.addAppsToProfile(currentProfile.id, packages)
+                // Into a profile that keeps them open longer.
+                val looser = wereLocked.filter { lockedInVault(it) && vault.getTimeoutMode(it).openFor > (delaysBefore[it] ?: 0L) }
+                looser.forEach { pkg ->
+                    ProtectionGaps.recordIfScreenLock(
+                        context, ProtectionGaps.Change.MOVED_LONGER_DELAY, labelByPackage[pkg] ?: pkg, currentProfile.name
+                    )
+                }
                 // Into a profile that's off: those that were locked aren't any more.
                 val unlocked = wereLocked.filterNot(::lockedInVault)
                 if (unlocked.isNotEmpty()) {

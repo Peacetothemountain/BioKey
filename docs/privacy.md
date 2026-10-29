@@ -164,17 +164,22 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   network time) isn't deleted for its age after a restart, only to stay within those limits.
   Opening Review counts as seeing them only when BioKey was opened with your face or fingerprint
   (or none is set up); otherwise Review offers "Mark reviewed", which asks for one. A face or
-  fingerprint added stays new for a day whatever Review says, so whoever added one can't use it to
-  quiet the alert.
+  fingerprint added or removed stays new for a day whatever Review says (if its age can't be told
+  after a restart, until the phone has been on for a day), so whoever made the change can't use it
+  to quiet the alert.
   Turning the alerts off deletes them; a restored backup that turns them off leaves them in place.
   Clearing them, or turning the alerts off, asks for your face or fingerprint where one is set up.
 - **Times app locking was off, and other changes:** when BioKey's protection was switched off or
   BioKey was force-stopped, and when it came back; when a face or fingerprint was added or removed
-  on the phone; when notification access was switched off while "Hide notification content" was
-  on (whether BioKey had that access is also remembered, for this); and, on a phone with a face or fingerprint, each way protection was weakened from
+  on the phone; when a face or fingerprint couldn't be used while "Face or fingerprint only" was on,
+  so the screen lock was allowed; when notification access was switched off while "Hide
+  notification content" was on, and when it came back or hiding was switched off (whether BioKey
+  had that access is also remembered, for this); and, on a phone with a face or fingerprint, each
+  way protection was weakened from
   BioKey opened with the screen lock and not confirmed with a face or fingerprint: protection
-  paused; an app's lock switched off; a locked app moved or added into a profile that's off, or
-  taken out of its profile; a profile switched off or deleted; a longer re-lock delay, for a
+  paused; an app's lock switched off; a locked app moved or added into a profile that's off or
+  that re-locks later, or taken out of its profile so it's locked less; a profile switched off or
+  deleted; a longer re-lock delay, for a
   profile or the default; and "Hide notification content" switched off. These name the app or
   profile. (Restoring a backup, stopping the reminders, and switching off face or fingerprint
   only, the alerts or the diagnostic log can't be done with the screen lock at all on such a

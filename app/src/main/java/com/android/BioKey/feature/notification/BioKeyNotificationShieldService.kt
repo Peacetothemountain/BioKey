@@ -88,6 +88,9 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
 
         @Volatile private var activeService: BioKeyNotificationShieldService? = null
 
+        /** Bound right now: Android only binds a listener that has access. No call into Android. */
+        val isBound: Boolean get() = activeService != null
+
         /** Hands [pkg]'s deep links to the lock screen, once. */
         fun takeDeepLinks(pkg: String): Map<String, CachedPendingIntent>? = cachedPendingIntents.remove(pkg)
 

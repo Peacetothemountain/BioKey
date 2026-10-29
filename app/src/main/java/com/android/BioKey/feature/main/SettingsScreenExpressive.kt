@@ -166,7 +166,8 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     val screenLockUnlocks by UnlockAttempts.screenLockUnlocks.collectAsStateWithLifecycle()
     val biometricOnly by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
     val lockedApps by vault.lockedAppsFlow.collectAsStateWithLifecycle()
-    var strongBiometric by remember { mutableStateOf(false) }
+    // Seeded with what's already known (no call into Android on the main thread), then read afresh.
+    var strongBiometric by remember { mutableStateOf(SecurityEngine.lastKnownStrongBiometric() ?: biometricOnlyAtOpen(vault)) }
     val newAppOffers by NewAppSuggestions.enabled.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
         // Usually loaded already, as BioKey started.
@@ -176,7 +177,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         }
     }
 
-    var notifListenerActive by remember { mutableStateOf(false) }
+    var notifListenerActive by remember { mutableStateOf(BioKeyNotificationShieldService.isBound || !vault.isNotificationShieldEnabled()) }
     /** An accessibility shortcut switches BioKey's service off without passing any screen self-protection guards. */
     var shortcutAssigned by remember { mutableStateOf(false) }
     var showRelockSheet by remember { mutableStateOf(false) }
@@ -641,7 +642,8 @@ private fun SettingsSection(title: String, items: List<SettingItem>, footer: Str
                 icon = item.icon,
                 iconTint = if (item.warning) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
                 iconContainer = if (item.warning) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
-                onClick = item.onClick,
+                // An action row's button is its one target: the row itself isn't a second.
+                onClick = if (item.action != null) null else item.onClick,
                 trailing = if (item.action != null && item.onClick != null) {
                     { FilledTonalButton(onClick = item.onClick) { Text(item.action) } }
                 } else if (item.onClick == null || item.goes == Goes.NOWHERE) null else {
@@ -706,3 +708,8 @@ private fun PredictiveBackPage(onNavigateBack: () -> Unit, content: @Composable 
     }
 }
 
+/**
+ * Before Android is asked: whether a strong face or fingerprint is likely there. "Face or
+ * fingerprint only" can only have been turned on with one.
+ */
+private fun biometricOnlyAtOpen(vault: SecurityVault): Boolean = vault.isBiometricOnly()

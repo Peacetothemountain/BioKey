@@ -109,7 +109,7 @@
     <string name="disclosure_notifications_used">Hiding their content until you unlock the app, then putting them back</string>
     <string name="disclosure_notifications_turning_off">You can turn this off at any time in Android settings. To bring hidden notifications back, switch off “Hide notification content” in BioKey\'s settings first: revoking notification access instead can leave them hidden for up to a day.</string>
     <string name="disclosure_keeps_log">A log of its own lock decisions about your locked apps, on this phone for 3 days, at most 500 entries (after a restart with no network time, the last 500 until it\'s back). You can turn it off in Settings</string>
-    <string name="disclosure_keeps_security_activity">Security activity: times app locking was off, faces or fingerprints added or removed, notification access switched off while Hide notification content was on (and whether BioKey had it), changes made from BioKey opened with your screen lock (naming the app or profile changed), and, if you turn them on, failed unlocks. Each until you\'ve seen it, then 7 days</string>
+    <string name="disclosure_keeps_security_activity">Security activity: times app locking was off, faces or fingerprints added or removed, notification access switched off while Hide notification content was on (and whether BioKey had it), changes made from BioKey opened with your screen lock (naming the app or profile changed), the times a face or fingerprint couldn\'t be used so the screen lock was allowed, and, if you turn them on, failed unlocks. Each until you\'ve seen it (a face or fingerprint change, at least a day), then 7 days; at most 50 failed unlocks and 20 other records once seen</string>
     <string name="disclosure_never_leaves_phone">Nothing BioKey sees leaves this phone unless you share its diagnostic log or save a backup: it has no internet access.</string>
     <string name="disclosure_never_reads">BioKey never reads what you type, your messages, or the content of the apps you use.</string>
     <string name="disclosure_section_reads">What BioKey reads</string>
@@ -154,7 +154,7 @@
     <string name="diagnostics_title">Diagnostic log</string>
     <string name="diagnostics_share">Share the log</string>
     <string name="diagnostics_delete">Delete the log</string>
-    <string name="diagnostics_explanation">BioKey\'s lock decisions about your locked apps over the last 3 days, kept on this phone. It never names apps you haven\'t locked. Share it with whoever is helping you with a problem; it lists your locked apps by package name.</string>
+    <string name="diagnostics_explanation">BioKey\'s recent lock decisions about your locked apps (3 days, at most 500 entries), kept on this phone. It never names apps you haven\'t locked. Share it with whoever is helping you with a problem; it lists your locked apps by package name.</string>
     <string name="diagnostics_empty">Nothing recorded yet</string>
     <string name="diagnostics_off">The diagnostic log is off</string>
     <string name="diagnostics_delete_title">Delete the diagnostic log?</string>
@@ -320,7 +320,8 @@
         <item quantity="other">App locking was off %d times</item>
     </plurals>
     <!-- App · when · what happened. -->
-    <string name="card_attempt_line">%1$s · %2$s · %3$s</string>
+    <!-- A no-break space after each dot: a line never ends on a separator. -->
+    <string name="card_attempt_line">%1$s · %2$s · %3$s</string>
     <string name="card_review">Review</string>
     <string name="card_review_description">Review security activity</string>
 
@@ -350,7 +351,7 @@
     <string name="change_profile_off">%1$s profile switched off</string>
     <string name="change_moved_unlocked">%1$s moved where it isn\'t locked</string>
     <string name="change_moved_longer_delay">%1$s moved to %2$s, which re-locks later</string>
-    <string name="change_taken_out">%1$s taken out of %2$s, unlocking it</string>
+    <string name="change_taken_out">%1$s taken out of %2$s, so it\'s locked less</string>
     <string name="change_added_to_off_profile">%1$s added to %2$s, which is off</string>
     <plurals name="change_added_many_to_off_profile">
         <item quantity="one">%1$d locked app added to %2$s, which is off</item>
@@ -388,6 +389,10 @@
     <string name="home_shield_no_access_text">Hide notification content is on, but BioKey\'s notification access is off, so locked apps\' notifications show in full.</string>
     <string name="home_shield_no_access_action">Allow access</string>
     <string name="home_shield_no_access_off">Turn off</string>
+    <string name="home_shield_turned_off">Hide notification content is off</string>
+    <string name="activity_held_until">A face or fingerprint added or removed stays new, and its alert keeps coming back, until %1$s: whoever made the change can\'t hide it from you.</string>
+    <string name="app_label_unknown">This app</string>
+    <string name="profile_default_name">New profile</string>
     <!-- Outside BioKey's screens: stand-ins, the compatibility notification, the cover. -->
     <string name="shield_public_title">Locked app</string>
     <string name="shield_public_text">Notification hidden by BioKey</string>
@@ -536,7 +541,7 @@
     <string name="settings_open_settings">Open settings</string>
     <string name="settings_hide_notifications_title">Hide notification content</string>
     <string name="settings_hide_notifications_off">When on, locked apps\' notifications show only that something arrived, until you unlock the app</string>
-    <string name="settings_hide_notifications_needs_access">On, but it can\'t work without notification access (below)</string>
+    <string name="settings_hide_notifications_needs_access">On, but it can\'t work until you allow notification access</string>
     <string name="settings_lock_action">Lock</string>
     <string name="settings_hide_notifications_no_stand_in">Locked apps\' notifications are hidden, with no stand-in until you allow BioKey\'s notifications</string>
     <string name="settings_hide_notifications_on">Locked apps\' notifications only say that something arrived</string>
@@ -570,7 +575,7 @@
     <string name="settings_restore_summary">After a new phone or a reinstall: replaces your locked apps, profiles and settings</string>
 
     <!-- Settings: Diagnostics. -->
-    <string name="settings_log_summary">BioKey\'s lock decisions about your locked apps, kept on this phone (3 days, at most 500 entries), to trace a problem</string>
+    <string name="settings_log_summary">BioKey\'s recent lock decisions about your locked apps, kept on this phone to trace a problem</string>
     <string name="settings_confirm_log_off">Turn off the diagnostic log</string>
     <string name="settings_view_log_title">View diagnostic log</string>
     <plurals name="settings_view_log_entries">

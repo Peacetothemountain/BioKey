@@ -16,6 +16,7 @@ import android.os.UserManager
 import android.util.Log
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.drawable.toDrawable
+import com.android.BioKey.R
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.ui.AppIcons
@@ -133,7 +134,7 @@ object AppInfoCache {
         return runCatching {
             val pm = context.packageManager
             pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
-        }.getOrNull()?.also { labels[pkg] = it } ?: "This app"
+        }.getOrNull()?.also { labels[pkg] = it } ?: context.getString(R.string.app_label_unknown)
     }
 
     /** Blocking: loads and caches [pkg]'s label and icon. */

@@ -60,6 +60,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -181,7 +182,7 @@ internal fun SecurityActivityCard(
     onReview: () -> Unit,
     modifier: Modifier = Modifier,
     /** Whether this is the page's one urgent card ([securityActivityUrgent], unless another one is). */
-    urgent: Boolean = securityActivityUrgent(attempts, gaps)
+    urgent: Boolean = securityActivityUrgent(attempts, gaps, UnlockAttempts.seen.value)
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -226,8 +227,8 @@ internal fun SecurityActivityCard(
 }
 
 /** Security activity worth the error colours: protection off or weakened, or misses nobody followed. */
-internal fun securityActivityUrgent(attempts: List<UnlockAttempts.Attempt>, gaps: List<ProtectionGaps.Gap>) =
-    gaps.isNotEmpty() || attempts.any { it.unanswered }
+internal fun securityActivityUrgent(attempts: List<UnlockAttempts.Attempt>, gaps: List<ProtectionGaps.Gap>, seen: Long = 0L) =
+    gaps.any { it.seq > seen } || attempts.any { it.unanswered && it.seq > seen }
 
 /** The locked apps unlocked right now: one with its countdown and Lock, several with Choose and Lock all. */
 @Composable
@@ -420,7 +421,9 @@ internal fun SecurityActivityDialog(
     onClear: () -> Unit,
     onDismiss: () -> Unit,
     /** BioKey was opened with the screen lock: reviewing takes a face or fingerprint, here. */
-    onMarkReviewed: (() -> Unit)? = null
+    onMarkReviewed: (() -> Unit)? = null,
+    /** A face or fingerprint change stays new until then ([UnlockAttempts.heldUntil]), whatever Review does. */
+    heldUntil: Long? = null
 ) {
     val context = LocalContext.current
     val note = MaterialTheme.colorScheme.onSurfaceVariant
@@ -431,6 +434,14 @@ internal fun SecurityActivityDialog(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 ProtectDialogWindow()
+                if (heldUntil != null) {
+                    Text(
+                        stringResource(R.string.activity_held_until, attemptTime(context, heldUntil)),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = note,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                }
                 if (onMarkReviewed != null) {
                     Text(
                         stringResource(R.string.card_activity_screen_lock_note),
@@ -529,7 +540,7 @@ internal fun UrgentButton(text: String, onClick: () -> Unit, modifier: Modifier 
         onClick = onClick,
         modifier = modifier,
         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError)
-    ) { Text(text) }
+    ) { Text(text, textAlign = TextAlign.Center) }
 }
 
 

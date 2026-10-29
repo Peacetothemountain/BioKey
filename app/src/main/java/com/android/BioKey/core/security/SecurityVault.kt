@@ -7,6 +7,7 @@ import android.provider.Settings
 import androidx.annotation.VisibleForTesting
 import androidx.core.content.edit
 import com.android.BioKey.BuildConfig
+import com.android.BioKey.R
 import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.data.AppClassifier
 import com.android.BioKey.core.data.LockTimeoutMode
@@ -302,7 +303,7 @@ class SecurityVault private constructor(private val context: Context) {
     fun createProfile(name: String, iconKey: String, timeoutMode: LockTimeoutMode? = null): SecurityProfile {
         val profile = SecurityProfile(
             id = "$PROFILE_ID_PREFIX${UUID.randomUUID()}",
-            name = name.trim().ifBlank { "New profile" },
+            name = name.trim().ifBlank { context.getString(R.string.profile_default_name) },
             iconKey = iconKey,
             timeoutMode = timeoutMode
         )

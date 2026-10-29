@@ -75,8 +75,8 @@ object DiagnosticLog {
      */
     fun init(context: Context) {
         val f = File(context.filesDir, FILE_NAME)
-        boot = Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, 0)
         io.execute {
+            boot = Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, 0)
             enabled = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, true)
             val saved = runCatching {
                 if (!f.exists()) emptyList() else f.readLines().mapNotNull(::parse)

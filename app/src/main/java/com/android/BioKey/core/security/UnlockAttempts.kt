@@ -133,6 +133,9 @@ object UnlockAttempts {
     /** Newest first. */
     val attempts: StateFlow<List<Attempt>> = _attempts.asStateFlow()
     private val _enabled = MutableStateFlow(false)
+    private val _seen = MutableStateFlow(0L)
+    /** The newest record (by number) the owner has seen: the activity card is urgent only for newer ones. */
+    val seen: StateFlow<Long> = _seen.asStateFlow()
     val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
     private val _screenLockUnlocks = MutableStateFlow(false)
     val screenLockUnlocks: StateFlow<Boolean> = _screenLockUnlocks.asStateFlow()
@@ -173,6 +176,7 @@ object UnlockAttempts {
             _enabled.value = p.getBoolean(KEY_ENABLED, false)
             _screenLockUnlocks.value = p.getBoolean(KEY_SCREEN_LOCK_UNLOCKS, false)
             _chosen.value = p.getBoolean(KEY_CHOSEN, false)
+            _seen.value = p.getLong(KEY_SEEN_SEQ, 0L)
             val kept = runCatching { parse(p.getString(KEY_ATTEMPTS, null)) }.getOrDefault(emptyList())
             prefs = p
             // What's seen and past its time goes from the disk too, not only from what's shown.
@@ -350,20 +354,61 @@ object UnlockAttempts {
             // Up to the newest record actually there (and shown), not a number handed out a moment
             // ago to one another thread hasn't stored yet.
             val newest = maxOf(_attempts.value.maxOfOrNull { it.seq } ?: 0L, ProtectionGaps.gaps.value.maxOfOrNull { it.seq } ?: 0L)
-            // A face or fingerprint added in the last day isn't counted as seen yet, nor anything
-            // after it: whoever added one could open BioKey with it and review the record away.
-            val age = Ageing(bootCount(context), elapsed(), BIOMETRIC_HOLD_MS)
-            val held = ProtectionGaps.gaps.value
-                .filter { it.kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED && it.seq > p.getLong(KEY_SEEN_SEQ, 0L) }
-                .filter { (it.boot == bootCount(context) || it.net) && !age.past(it.to, it.net, it.toElapsed, it.boot) }
-                .minOfOrNull { it.seq }
+            // A face or fingerprint added or removed in the last day isn't counted as seen yet, nor
+            // anything after it: whoever did it could open BioKey and review the record away.
+            val held = heldBiometricChange(context, p.getLong(KEY_SEEN_SEQ, 0L))
             val seen = minOf(newest, upTo, if (held != null) held - 1 else Long.MAX_VALUE)
             if (seen > p.getLong(KEY_SEEN_SEQ, 0L)) p.edit { putLong(KEY_SEEN_SEQ, seen) }
             if (seen > p.getLong(KEY_NOTIFIED_SEQ, 0L)) p.edit { putLong(KEY_NOTIFIED_SEQ, seen) }
         }
-        // Still something new (held back, or newer than what was shown): the alert stays.
-        if (seenSeq(context) >= maxOf(_attempts.value.maxOfOrNull { it.seq } ?: 0L, ProtectionGaps.gaps.value.maxOfOrNull { it.seq } ?: 0L)) {
-            NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+        _seen.value = seenSeq(context)
+        cancelIfAllSeen(context)
+    }
+
+    /** Still something new (held back, or newer than what was shown): the alert stays. */
+    private fun cancelIfAllSeen(context: Context) {
+        val newest = maxOf(_attempts.value.maxOfOrNull { it.seq } ?: 0L, ProtectionGaps.gaps.value.maxOfOrNull { it.seq } ?: 0L)
+        if (seenSeq(context) >= newest) NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+    }
+
+    /**
+     * The first unseen face-or-fingerprint record less than [BIOMETRIC_HOLD_MS] old, if any. Its age
+     * is told on the clock since boot within a boot, or the network's time; when neither can tell
+     * (taken on the phone's own clock, before a restart), it's held until this boot has itself run
+     * a day: a restart mustn't be a way to release it.
+     */
+    private fun heldBiometricChange(context: Context, seen: Long): Long? {
+        val boot = bootCount(context)
+        val since = elapsed()
+        val now = TrustedClock.now()
+        val onNet = TrustedClock.onNetworkTime()
+        return ProtectionGaps.gaps.value
+            .filter { it.isBiometricRecord && it.seq > seen }
+            .filter {
+                when {
+                    it.boot == boot -> since - it.toElapsed < BIOMETRIC_HOLD_MS
+                    it.net && onNet -> now - it.to < BIOMETRIC_HOLD_MS
+                    else -> since < BIOMETRIC_HOLD_MS
+                }
+            }
+            .minOfOrNull { it.seq }
+    }
+
+    private val ProtectionGaps.Gap.isBiometricRecord
+        get() = kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED || kind == ProtectionGaps.Kind.BIOMETRICS_REMOVED
+
+    /** When the oldest face-or-fingerprint record still held back stops being held, on [TrustedClock]; null if none. */
+    fun heldUntil(context: Context): Long? {
+        val seen = seenSeq(context)
+        val seq = heldBiometricChange(context, seen) ?: return null
+        val gap = ProtectionGaps.gaps.value.firstOrNull { it.seq == seq } ?: return null
+        val boot = bootCount(context)
+        val since = elapsed()
+        val now = TrustedClock.now()
+        return when {
+            gap.boot == boot -> now + (BIOMETRIC_HOLD_MS - (since - gap.toElapsed))
+            gap.net && TrustedClock.onNetworkTime() -> gap.to + BIOMETRIC_HOLD_MS
+            else -> now + (BIOMETRIC_HOLD_MS - since)
         }
     }
 
@@ -371,7 +416,7 @@ object UnlockAttempts {
     fun clear(context: Context): List<Attempt> {
         val p = load(context) ?: return emptyList()
         val old = synchronized(lock) { _attempts.value.also { save(p, emptyList()) } }
-        NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+        cancelIfAllSeen(context)
         return old
     }
 

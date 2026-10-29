@@ -56,7 +56,11 @@ object ShieldAccessWatch {
                 }
             }
             // Switched off in BioKey: the owner's choice, nothing to tell.
-            !shieldOn -> if (had || p.contains(KEY_OPEN_RECORD)) p.edit { putBoolean(KEY_HAD_ACCESS, false).remove(KEY_OPEN_RECORD) }
+            !shieldOn -> if (had || p.contains(KEY_OPEN_RECORD)) {
+                // An open record ends here: from when access went to when hiding was switched off.
+                p.getLong(KEY_OPEN_RECORD, 0L).takeIf { it > 0L }?.let { ProtectionGaps.endEvent(app, it) }
+                p.edit { putBoolean(KEY_HAD_ACCESS, false).remove(KEY_OPEN_RECORD) }
+            }
         }
     }
 }

@@ -223,7 +223,7 @@ fun SetupScreenExpressive(
                 .height(360.dp)
                 .align(Alignment.TopCenter)
                 .onGloballyPositioned { fieldOrigin = it.positionInRoot() },
-            quiet = quietZones.values.map { it.translate(-fieldOrigin) }
+            quiet = { quietZones.values.map { it.translate(-fieldOrigin) } }
         )
 
         Column(

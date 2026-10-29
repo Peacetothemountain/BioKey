@@ -44,7 +44,13 @@ class SecurityEngine private constructor() {
 
         private fun strongStatus(context: Context): Int? = runCatching {
             context.getSystemService(BiometricManager::class.java)?.canAuthenticate(BIOMETRIC_STRONG)
-        }.getOrNull()
+        }.getOrNull().also { lastStrongStatus = it }
+
+        /** The last answer Android gave ([strongStatus]): for a screen's first frame, before it asks again. */
+        @Volatile private var lastStrongStatus: Int? = null
+
+        /** [hasStrongBiometric] as last asked, without asking; null if never asked in this process. */
+        fun lastKnownStrongBiometric(): Boolean? = lastStrongStatus?.let { it == BiometricManager.BIOMETRIC_SUCCESS }
 
         /**
          * A strong (Class 3) face or fingerprint can be used right now: what prompts and "Face or
