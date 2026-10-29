@@ -35,7 +35,8 @@ import org.robolectric.annotation.Config
  * too); an unlocked app's, or a full-screen window (the shield's), isn't; paused, none; with the
  * phone locked they wait hidden; with a prompt up they step aside only on its display. And it
  * fails closed: a patch that can't go up covers the app the usual way, a picture-in-picture app
- * that won't come out is locked under its patch, and a check that throws locks the app.
+ * that won't come out is locked under its patch, and a check that throws locks the app. A tapped
+ * patch asks for its app: locked, brought out of picture-in-picture, or its lock screen forward.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -260,13 +261,13 @@ class MaskControllerTest {
     @Test
     fun aTappedPatchOverItsOwnLockScreenBringsThatForward() {
         controller.update(listOf(window(2, "com.example.bank", small, display = 2)), full = true)
-        LockScreenActivity.setStateForTests("com.example.bank")
+        LockScreenActivity.setStateForTests("com.example.bank", resumedAt = android.os.SystemClock.uptimeMillis())
         try {
             patches.onTapped(patches.up.getValue(2))
             assertEquals(listOf("com.example.bank"), broughtForward)
             assertTrue(locked.isEmpty())
         } finally {
-            LockScreenActivity.setStateForTests(null)
+            LockScreenActivity.setStateForTests(null, resumedAt = 0L)
         }
     }
 }

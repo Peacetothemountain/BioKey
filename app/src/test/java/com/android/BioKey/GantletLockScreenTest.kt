@@ -69,8 +69,7 @@ class GantletLockScreenTest {
             Intent(context, LockScreenActivity::class.java).putExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE, pkg)
         ).setup()
         open += controller
-        LockScreenActivity::class.java.getDeclaredField("firstFrameCommitted").apply { isAccessible = true }
-            .setBoolean(controller.get(), true)
+        controller.get().markFirstFrameForTests()
         shadowOf(Looper.getMainLooper()).idle()
         assertFalse("The lock screen closed at once", controller.get().isFinishing)
         homes()

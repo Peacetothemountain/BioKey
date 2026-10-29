@@ -103,11 +103,8 @@ class EngineReplayTest {
     // What BioKey's lock screen tells the engines, told as it does (and so recorded).
 
     private fun lockScreen(resumed: Boolean, target: String?) {
-        if (target != LockScreenActivity.activeLockedTarget) EngineTrace.record("l.target", target)
-        if (resumed != LockScreenActivity.isLockScreenResumed) EngineTrace.record("l.resumed", if (resumed) 1 else 0)
-        LockScreenActivity::class.java.getDeclaredField("isLockScreenResumed").apply { isAccessible = true }.setBoolean(null, resumed)
-        LockScreenActivity::class.java.getDeclaredField("activeLockedTarget").apply { isAccessible = true }.set(null, target)
-        if (resumed) LockScreenActivity::class.java.getDeclaredField("resumedAt").apply { isAccessible = true }.setLong(null, android.os.SystemClock.uptimeMillis())
+        // Recorded, as the real activity's are: the target first, then whether it's in front.
+        LockScreenActivity.setStateForTests(target, resumed, resumedAt = if (resumed) android.os.SystemClock.uptimeMillis() else null, traced = true)
     }
 
     private fun lockScreenDrawn(pkg: String) {

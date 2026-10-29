@@ -66,7 +66,7 @@ class GantletAccessibilityTest {
         LockStateTracker.lockAll()
         // Robolectric's clock starts again for each test; a lock screen "resumed" in an earlier one
         // in this JVM would otherwise look newer than anything started here.
-        LockScreenActivity::class.java.getDeclaredField("resumedAt").apply { isAccessible = true }.setLong(null, 0L)
+        LockScreenActivity.forgetResumeForTests()
         vault = SecurityVault.getInstance(context)
         vault.setSetupCompletedSync(true)
         vault.setAppLock(x, true)
@@ -126,8 +126,7 @@ class GantletAccessibilityTest {
     }
 
     private fun lockScreenUp(pkg: String?) {
-        LockScreenActivity::class.java.getDeclaredField("activeLockedTarget").apply { isAccessible = true }.set(null, pkg)
-        LockScreenActivity::class.java.getDeclaredField("isLockScreenResumed").apply { isAccessible = true }.setBoolean(null, pkg != null)
+        LockScreenActivity.setStateForTests(pkg)
     }
 
     private fun covered(pkg: String) = DiagnosticLog.entries().map { it.text }.filter { it.startsWith("Covered $pkg ") }
@@ -285,8 +284,7 @@ class GantletAccessibilityTest {
         lockScreensStarted()
         // Its lock screen came up, then the app opened over it within moments of being started.
         lockScreenUp(x)
-        LockScreenActivity::class.java.getDeclaredField("resumedAt").apply { isAccessible = true }
-            .setLong(null, android.os.SystemClock.uptimeMillis())
+        LockScreenActivity.setStateForTests(x, resumedAt = android.os.SystemClock.uptimeMillis())
         LockStateTracker.markLockDisplaced(x)
         lockScreenUp(null)
         engine.get().onAccessibilityEvent(AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply {

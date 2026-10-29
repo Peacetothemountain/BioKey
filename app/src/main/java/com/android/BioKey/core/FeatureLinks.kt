@@ -25,8 +25,8 @@ interface Engines {
 
 /**
  * What core/ and ui/ need of the features, without depending on them: the engines, BioKey's
- * main screen to open from an alert, and the services' names for Android's settings pages. Installed first thing as BioKey starts (BioKeyApplication), before
- * anything here can ask.
+ * main screen to open from an alert, and the services' names for Android's settings pages.
+ * Installed first thing as BioKey starts (BioKeyApplication), before anything here can ask.
  */
 object FeatureLinks {
     /** The main screen opened at an app's name: what to search for. */

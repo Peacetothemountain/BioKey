@@ -72,33 +72,54 @@ class LockScreenActivity : ComponentActivity() {
         internal fun coversDisplay(inMultiWindow: Boolean, window: Rect, display: Rect): Boolean =
             !inMultiWindow || window.contains(display)
 
-        // Both are what the engines are told about the lock screen: recorded for a replay (EngineTrace).
+        // Both are what the engines are told about the lock screen: recorded for a replay
+        // (EngineTrace), unless a test sets them as a replay does ([setStateForTests]).
         @Volatile
         var isLockScreenResumed: Boolean = false
             private set(value) {
-                if (value != field) EngineTrace.record("l.resumed", if (value) 1 else 0)
+                if (value != field && !untraced) EngineTrace.record("l.resumed", if (value) 1 else 0)
                 field = value
             }
 
         @Volatile
         var activeLockedTarget: String? = null
             private set(value) {
-                if (value != field) EngineTrace.record("l.target", value)
+                if (value != field && !untraced) EngineTrace.record("l.target", value)
                 field = value
             }
+
+        @Volatile private var untraced = false
 
         /** When a lock screen last resumed ([SystemClock.uptimeMillis]): a start before it has arrived. */
         @Volatile
         var resumedAt: Long = 0L
             private set
 
-        /** Tests: a lock screen up (resumed) for [target], or none with null. */
+        /**
+         * Tests: the lock screen's state as the engines see it: up for [target] (or none), in front
+         * if [resumed], resumed at [resumedAt] (null: unchanged). [traced] as the real activity is
+         * (a test of the trace), or not, as a replay sets it.
+         */
         @VisibleForTesting
-        internal fun setStateForTests(target: String?) {
-            isLockScreenResumed = target != null
-            activeLockedTarget = target
-            resumedAt = if (target != null) SystemClock.uptimeMillis() else 0L
+        internal fun setStateForTests(
+            target: String?,
+            resumed: Boolean = target != null,
+            resumedAt: Long? = null,
+            traced: Boolean = false
+        ) {
+            untraced = !traced
+            try {
+                activeLockedTarget = target
+                isLockScreenResumed = resumed
+                resumedAt?.let { this.resumedAt = it }
+            } finally {
+                untraced = false
+            }
         }
+
+        /** Tests: the last resume forgotten (Robolectric's clock starts again for each test). */
+        @VisibleForTesting
+        internal fun forgetResumeForTests() = setStateForTests(activeLockedTarget, isLockScreenResumed, resumedAt = 0L)
 
         /**
          * The newest lock screen. A new one can start while the last one is still finishing: only
@@ -137,6 +158,12 @@ class LockScreenActivity : ComponentActivity() {
     /** The prompt opens by itself once per showing; after a cancel the user taps Unlock. */
     private var promptAutoLaunched = false
     private var firstFrameCommitted = false
+
+    /** Tests: the first frame drawn (Robolectric draws none), so what waits on it can go ahead. */
+    @VisibleForTesting
+    internal fun markFirstFrameForTests() {
+        firstFrameCommitted = true
+    }
     private var isPermanentLockout = false
     /** Left without unlocking: a shield an engine raised since is newer than this lock (see [onStop]). */
     private var leftWithoutUnlock = false

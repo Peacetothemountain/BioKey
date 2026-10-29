@@ -154,7 +154,7 @@ internal class EngineReplay(private val context: Application) {
         LockStateTracker.lockAll()
         // Robolectric's clock starts again for each test; a lock screen "resumed" in an earlier one
         // in this JVM would otherwise look newer than anything started here.
-        LockScreenActivity::class.java.getDeclaredField("resumedAt").apply { isAccessible = true }.setLong(null, 0L)
+        LockScreenActivity.forgetResumeForTests()
         DiagnosticLog.clear()
         // A fresh phone: no usage history from before the trace (a recording made in the same test, say).
         ShadowUsageStatsManager.reset()
@@ -335,9 +335,7 @@ internal class EngineReplay(private val context: Application) {
     }
 
     private fun setLockScreen(resumed: Boolean, target: String?) {
-        LockScreenActivity::class.java.getDeclaredField("isLockScreenResumed").apply { isAccessible = true }.setBoolean(null, resumed)
-        LockScreenActivity::class.java.getDeclaredField("activeLockedTarget").apply { isAccessible = true }.set(null, target)
-        if (resumed) LockScreenActivity::class.java.getDeclaredField("resumedAt").apply { isAccessible = true }.setLong(null, SystemClock.uptimeMillis())
+        LockScreenActivity.setStateForTests(target, resumed, resumedAt = if (resumed) SystemClock.uptimeMillis() else null)
     }
 
     private fun setPrompt(pkg: String?) {

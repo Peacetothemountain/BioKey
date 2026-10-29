@@ -156,13 +156,12 @@ class CompatibilityEngineTest {
 
     /** The app BioKey's lock screen is up for, as the real activity reports it. */
     private fun lockScreenFor(pkg: String?) {
-        LockScreenActivity::class.java.getDeclaredField("activeLockedTarget").apply { isAccessible = true }.set(null, pkg)
+        LockScreenActivity.setStateForTests(pkg, resumed = LockScreenActivity.isLockScreenResumed)
     }
 
     /** The app BioKey's lock screen is up and in front for (null: none), as the real activity reports it. */
     private fun lockScreenUp(pkg: String?) {
-        lockScreenFor(pkg)
-        LockScreenActivity::class.java.getDeclaredField("isLockScreenResumed").apply { isAccessible = true }.setBoolean(null, pkg != null)
+        LockScreenActivity.setStateForTests(pkg)
     }
 
     /** BioKey's prompt is up for [pkg] (null: none is), as SecurityEngine reports it. */

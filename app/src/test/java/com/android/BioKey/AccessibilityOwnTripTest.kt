@@ -55,7 +55,7 @@ class AccessibilityOwnTripTest {
     fun start() {
         // Robolectric's clock starts again for each test; a lock screen "resumed" in an earlier one
         // in this JVM would otherwise look newer than anything started here.
-        LockScreenActivity::class.java.getDeclaredField("resumedAt").apply { isAccessible = true }.setLong(null, 0L)
+        LockScreenActivity.forgetResumeForTests()
         SecurityVault.getInstance(context).awaitPendingWrites()
         context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE).edit().clear().commit()
         SecurityVault.resetForTests()
@@ -108,8 +108,7 @@ class AccessibilityOwnTripTest {
 
     /** The app BioKey's lock screen is up and in front for (null: none), as the real activity reports it. */
     private fun lockScreenUp(pkg: String?) {
-        LockScreenActivity::class.java.getDeclaredField("activeLockedTarget").apply { isAccessible = true }.set(null, pkg)
-        LockScreenActivity::class.java.getDeclaredField("isLockScreenResumed").apply { isAccessible = true }.setBoolean(null, pkg != null)
+        LockScreenActivity.setStateForTests(pkg)
     }
 
     /** BioKey's screen stops, as MainActivity.onStop decides. */

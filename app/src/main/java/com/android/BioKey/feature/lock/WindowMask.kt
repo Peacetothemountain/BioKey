@@ -29,7 +29,7 @@ import com.android.BioKey.ui.security.WindowProtection
  * wants the app ([onTapped]). Kept apart from the shield on purpose: the lock screen dismissing
  * the shield never takes a patch with it.
  *
- * Which windows get a patch, and when they lose it, is the service's call. Main thread only.
+ * Which windows get a patch, and when they lose it, is [MaskController]'s call. Main thread only.
  */
 internal class WindowMask(
     private val service: AccessibilityService,
