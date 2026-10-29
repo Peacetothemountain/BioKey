@@ -90,6 +90,19 @@ class CompatibilityStatusTest {
     }
 
     @Test
+    fun stoppedRemindersDontCoverADifferentFailure() {
+        SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        ProtectionAlerts.stopReminders(context)
+        assertTrue(ProtectionAlerts.remindersStopped(context))
+        // Switched back on, but the service never runs: that's not the switch-off they were stopped for.
+        Settings.Secure.putString(
+            context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+            ComponentName(context, BioKeyAccessibilityService::class.java).flattenToString()
+        )
+        assertFalse(ProtectionAlerts.remindersStopped(context))
+    }
+
+    @Test
     fun aLostPermissionIsNamed() {
         ShadowSettings.setCanDrawOverlays(false)
         assertEquals("display over other apps", ProtectionEngine.missingCompatibilityPermissions(context))

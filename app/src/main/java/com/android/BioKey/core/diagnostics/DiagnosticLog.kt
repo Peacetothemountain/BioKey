@@ -159,9 +159,12 @@ object DiagnosticLog {
         }
     }
 
-    /** Entries logged before this are older than [MAX_AGE_MS]. */
-    /** Aged on [TrustedClock]: changing the phone's date doesn't empty the log. */
-    private fun cutoff(): Long = TrustedClock.now() - MAX_AGE_MS
+    /**
+     * Entries logged before this are older than [MAX_AGE_MS], on [TrustedClock]. Without the
+     * network's time nothing is aged (only [MAX_ENTRIES] applies): on the phone's own clock, a date
+     * set ahead would empty the log.
+     */
+    private fun cutoff(): Long = if (TrustedClock.onNetworkTime()) TrustedClock.now() - MAX_AGE_MS else Long.MIN_VALUE
 
     /**
      * Forgets entries older than [MAX_AGE_MS] and copies the rest, with the number ([logged]) of

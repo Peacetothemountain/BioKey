@@ -38,10 +38,18 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
 - If a face or fingerprint is set up but the sensor can't be used, clearing records, turning
   alerts off and restoring a backup wait for it, rather than taking the PIN. Reviewing records
   only counts as seen when BioKey was opened with a face or fingerprint.
-- **Stop reminding** (when app locking is switched off on purpose) stays stopped across restarts
-  and says so. **Lock Settings too** shows only with face or fingerprint only on, and can be put
-  away. The notification shield always shows its explanation before it's switched on, and a
-  restored backup doesn't switch it on by itself.
+- **Stop reminding** (when app locking is switched off on purpose) stays stopped across restarts,
+  the card says so, and **Remind me** undoes it; a different failure later is reminded about
+  again. **Lock Android Settings too** shows only with face or fingerprint only on, can be put
+  away, locks Settings even from a profile that's off, and has Undo. The notification shield
+  always shows its explanation before it's switched on, and a restored backup doesn't switch it on
+  by itself (BioKey says so).
+- Opened with the PIN, Review offers **Mark reviewed** (with a face or fingerprint) instead of
+  silently counting as seen. Records age on the clock since the phone started, so they age on
+  Android 12 too, and a date set ahead can't age them early.
+- Settings: face or fingerprint only and new-app offers moved to the App lock group; Hide
+  notification content says what it does until it's on.
+- Card buttons wrap at large text instead of squeezing.
 - The permission explanations link to the privacy policy, and say what BioKey keeps.
 - When nothing is protecting your apps, home says so at the top, with the one thing to do.
 - Settings has the privacy policy and help (About).

@@ -19,9 +19,10 @@ It applies to BioKey 1.0 and later, as published on Google Play
 - **No analytics, no ads, no third parties.** BioKey contains no analytics, advertising or
   tracking code, and no third-party services.
 - **Everything stays on your phone.** What BioKey keeps (your locked apps, profiles and
-  settings, a short log of its own lock decisions, the times app locking was off, and, if you turn
-  them on, failed unlock alerts) stays in its private storage, unless you choose to save a backup
-  file or share the log yourself.
+  settings, a short log of its own lock decisions, the times app locking was off, faces or
+  fingerprints added or removed, changes made from BioKey opened with the screen lock, and, if you
+  turn them on, failed unlock alerts) stays in its private storage, unless you choose to save a
+  backup file or share the log yourself.
 
 ## What BioKey can see, and why
 
@@ -144,18 +145,19 @@ backup and from device-to-device transfer, so it never leaves the phone that way
 - **Unlock sessions** (which apps are unlocked right now) live only in memory, and end whenever
   the phone locks.
 - **Failed unlock alerts** (off until you turn them on; BioKey asks once): for each failed
-  attempt on a locked app, which app (its package name and name), when, how many faces or
+  attempt on a locked app (or on BioKey's own prompts that confirm a change, listed as BioKey), which app (its package name and name), when, how many faces or
   fingerprints didn't match, whether biometrics locked out, and how the app was then opened, if
   it was. When your face or fingerprint matches on the same prompt, its misses were yours and
   aren't kept. If you also turn on "Also note screen lock unlocks", each locked app opened with
   your PIN, pattern or password is listed too (not notified). BioKey's home screen lists them until
   you clear them. Once you've seen them (Review), each is deleted 7 days after it happened, and at
   most 50 seen ones are kept; until then none is deleted for its age, and none to make room for
-  newer ones short of 500. Times are taken and ages measured on the network's time where the
-  phone has it (Android 13 and later), so changing the phone's date doesn't move them; on Android
-  12, or with no network time, times are taken on the phone's clock as it was when BioKey last
-  started, and nothing is deleted for its age until network time is back. Opening Review counts as
-  seeing them only when BioKey was opened with your face or fingerprint (or none is set up).
+  newer ones short of 500. Ages are measured on clocks that changing the phone's date doesn't
+  move: the time since the phone last started, and across a restart the network's time where the
+  phone has it (Android 13 and later). A record taken on the phone's own clock (Android 12, or no
+  network time) isn't deleted for its age after a restart, only to stay within those limits.
+  Opening Review counts as seeing them only when BioKey was opened with your face or fingerprint
+  (or none is set up); otherwise Review offers "Mark reviewed", which asks for one.
   Turning the alerts off deletes them; a restored backup that turns them off leaves them in place.
   Clearing them, or turning the alerts off, asks for your face or fingerprint where one is set up.
 - **Times app locking was off, and other changes:** when BioKey's protection was switched off or
@@ -164,10 +166,10 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   BioKey opened with the screen lock and not confirmed with a face or fingerprint: protection
   paused; an app's lock switched off; a locked app moved or added into a profile that's off, or
   taken out of its profile; a profile switched off or deleted; a longer re-lock delay, for a
-  profile or the default; "Hide notification content" switched off; the reminders that app
-  locking is off stopped; and a backup restored that unlocks apps, makes a delay longer, or
-  switches off the notification shield, face or fingerprint only, failed unlock alerts or their
-  screen lock option. These name the app or profile. Shown on BioKey's home screen until you clear them, kept like
+  profile or the default; and "Hide notification content" switched off. These name the app or
+  profile. (Restoring a backup, stopping the reminders, and switching off face or fingerprint
+  only, the alerts or the diagnostic log can't be done with the screen lock at all on such a
+  phone: they ask for a face or fingerprint.) Shown on BioKey's home screen until you clear them, kept like
   failed unlocks (seen ones 7 days, at most 20); a face or fingerprint added or removed can't be
   cleared, only aged out, so whoever added one can't erase the record of it. To measure them BioKey keeps, while
   protection is off, when it stopped (on the phone's clock and on its clock since the last
@@ -183,7 +185,8 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   apps you haven't locked: going from a locked app to one of them is logged only as going to "a
   helper app" or "another app". It also notes how long app locking was off and, when failed
   unlock alerts are on, failed unlocks of locked apps (which app, not whose face or finger). It keeps at most 500 entries from the
-  last 3 days, measured on the same clock as failed unlocks (above). You can view and
+  last 3 days, measured on the network's time; without it, entries aren't deleted for their age,
+  only to stay within 500. You can view and
   delete it in BioKey's settings; deleting it or turning it off asks for your face or fingerprint
   (your screen lock where none is set up).
 

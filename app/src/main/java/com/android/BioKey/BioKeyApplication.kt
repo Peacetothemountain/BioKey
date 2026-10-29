@@ -103,6 +103,20 @@ class BioKeyApplication : Application() {
         }
         registerPackageChangeReceiver()
         watchAdvancedProtection()
+        // The phone's clock changed: how force stops are read afterwards ([ProtectionGaps.onClockChanged]).
+        ContextCompat.registerReceiver(
+            this,
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    val pending = goAsync()
+                    initExecutor.execute {
+                        try { ProtectionGaps.onClockChanged(app) } finally { pending.finish() }
+                    }
+                }
+            },
+            IntentFilter(Intent.ACTION_TIME_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
     }
 
     /** Switch engines the moment Advanced Protection is turned on or off. */

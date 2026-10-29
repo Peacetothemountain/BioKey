@@ -72,6 +72,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -241,12 +242,53 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 }
             )
         )
+        addAll(listOfNotNull(
+            // Only where a strong face or fingerprint is set up: without one, nothing could unlock.
+            if (strongBiometric || biometricOnly) SettingItem(
+                icon = Icons.Default.Fingerprint,
+                title = "Face or fingerprint only",
+                subtitle = if (biometricOnly && !strongBiometric) "On, but no face or fingerprint is set up: your screen lock works meanwhile"
+                else "Locked apps and BioKey won't take your PIN, so someone who knows it can't open them",
+                checked = biometricOnly,
+                // Either way, a face or fingerprint first: proof it works before relying on it, and no
+                // switching it off for someone who only knows the PIN.
+                onChange = { on ->
+                    confirmOwner(activity, if (on) "Use only your face or fingerprint" else "Allow your screen lock again") {
+                        vault.setBiometricOnly(on)
+                        // Home asks about locking Android's Settings again, even if put away before.
+                        if (on) homePrefs(context).edit { remove(KEY_LOCK_SETTINGS_DISMISSED) }
+                    }
+                }
+            ) else null,
+            // A suggestion, the same as home's card: where face or fingerprint only is on.
+            if (biometricOnly && strongBiometric && SETTINGS_PACKAGE !in lockedApps) SettingItem(
+                icon = Icons.Default.Lock,
+                title = "Lock Android Settings too",
+                subtitle = "With your PIN, someone could add their own fingerprint there · tap to lock it",
+                onClick = {
+                    val undo = vault.lockSettingsApp()
+                    BioKeyMessages.show("Android Settings locked", Icons.Default.Lock, actionLabel = "Undo", onAction = undo)
+                }
+            ) else null
+        ))
         add(
             SettingItem(
                 icon = Icons.Default.LockClock,
                 title = "Default re-lock delay",
                 subtitle = "${defaultTimeout.shortLabel} · unless a profile has its own",
                 onClick = { showRelockSheet = true }
+            )
+        )
+        add(
+            SettingItem(
+                icon = Icons.Default.AddModerator,
+                title = "Offer to lock new apps",
+                subtitle = "After you install an app that auto-sort doesn't lock",
+                checked = newAppOffers,
+                onChange = { on ->
+                    NewAppSuggestions.setEnabled(context, on)
+                    if (on && !notifications.allowed) notifications.request()
+                }
             )
         )
         add(
@@ -261,43 +303,12 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     }
     val serviceLabel = stringResource(R.string.accessibility_service_label)
     val privacy = listOfNotNull(
-        // Only where a strong face or fingerprint is set up: without one, nothing could unlock.
-        if (strongBiometric || biometricOnly) SettingItem(
-            icon = Icons.Default.Fingerprint,
-            title = "Face or fingerprint only",
-            subtitle = if (biometricOnly && !strongBiometric) "On, but no face or fingerprint is set up: your screen lock works meanwhile"
-            else "Locked apps and BioKey won't take your PIN, so someone who knows it can't open them",
-            checked = biometricOnly,
-            // Either way, a face or fingerprint first: proof it works before relying on it, and no
-            // switching it off for someone who only knows the PIN.
-            onChange = { on ->
-                confirmOwner(activity, if (on) "Use only your face or fingerprint" else "Allow your screen lock again") {
-                    vault.setBiometricOnly(on)
-                    // Settings is where someone with the PIN would add their own fingerprint.
-                    if (on && SETTINGS_PACKAGE !in vault.getLockedPackages()) {
-                        BioKeyMessages.show("Lock Settings too? It's where a fingerprint can be added", Icons.Default.Lock, actionLabel = "Lock") {
-                            vault.setAppLock(SETTINGS_PACKAGE, true)
-                            BioKeyMessages.show("Settings locked", Icons.Default.Lock)
-                        }
-                    }
-                }
-            }
-        ) else null,
-        // A suggestion, the same as home's card: where face or fingerprint only is on.
-        if (biometricOnly && strongBiometric && SETTINGS_PACKAGE !in lockedApps) SettingItem(
-            icon = Icons.Default.Lock,
-            title = "Lock Settings too",
-            subtitle = "With your PIN, someone could add their own fingerprint there · tap to lock it",
-            onClick = {
-                vault.setAppLock(SETTINGS_PACKAGE, true)
-                BioKeyMessages.show("Settings locked", Icons.Default.Lock)
-            }
-        ) else null,
         SettingItem(
             icon = Icons.Default.NotificationsOff,
             title = "Hide notification content",
             subtitle = when {
-                !notifListenerActive -> "Needs notification access · tap to grant"
+                !notificationShieldEnabled -> "Locked apps' notifications show only that something arrived, until you unlock the app"
+                !notifListenerActive -> "On, but needs notification access · tap to grant"
                 notificationShieldEnabled && !notifications.allowed ->
                     "Locked apps' notifications are hidden, with no stand-in until you allow BioKey's notifications"
                 notificationShieldEnabled -> "Locked apps' notifications only say that something arrived"
@@ -356,16 +367,6 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 else confirmOwner(activity, "Stop noting screen lock unlocks") {
                     UnlockAttempts.setScreenLockUnlocks(context, false)
                 }
-            }
-        ),
-        SettingItem(
-            icon = Icons.Default.AddModerator,
-            title = "Offer to lock new apps",
-            subtitle = "After you install an app that auto-sort doesn't lock",
-            checked = newAppOffers,
-            onChange = { on ->
-                NewAppSuggestions.setEnabled(context, on)
-                if (on && !notifications.allowed) notifications.request()
             }
         ),
         // Not in the Play build (see SecurityVault.selfProtectionAvailable).
@@ -655,4 +656,3 @@ private fun PredictiveBackPage(onNavigateBack: () -> Unit, content: @Composable 
     }
 }
 
-private const val SETTINGS_PACKAGE = "com.android.settings"

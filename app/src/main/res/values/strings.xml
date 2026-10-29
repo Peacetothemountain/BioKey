@@ -17,7 +17,7 @@
     <string name="prompt_verify">Verify it\'s you</string>
     <string name="prompt_use_biometric">Use your face or fingerprint</string>
     <string name="prompt_cancel">Cancel</string>
-    <string name="prompt_biometric_unavailable">Your face or fingerprint can\'t be used right now. Try again later.</string>
+    <string name="prompt_biometric_unavailable">Your face or fingerprint can\'t be used right now. Try again later. If it\'s broken for good, or \"Use for apps\" is off, removing it (or switching that on) in Android\'s settings brings back your screen lock here.</string>
     <string name="prompt_unavailable">Authentication isn\'t available right now</string>
 
     <!-- Lock all now (home screen, status sheet, launcher shortcut, Quick Settings tile). -->

@@ -235,11 +235,15 @@ class UnlockAttemptsTest {
     }
 
     @Test
-    fun seenOnesAgeOut() {
+    fun seenOnesAgeOutOnNetworkTimeAcrossARestart() {
         TrustedClock.networkTime = { now }
+        TrustedClock.resetForTests()
         Prompt().miss()
         UnlockAttempts.markSeen(context)
-        pass(8L * 24 * 60 * 60_000L)
+        UnlockAttempts.bootCount = { 4 }
+        sinceBoot = 10_000L
+        now += 8L * 24 * 60 * 60_000L
+        TrustedClock.resetForTests()
         UnlockAttempts.prune(context)
         assertTrue(kept.isEmpty())
     }
@@ -254,11 +258,25 @@ class UnlockAttemptsTest {
     }
 
     @Test
-    fun withoutNetworkTimeSeenOnesDontAgeOut() {
-        // On the phone's own clock, a date set ahead mustn't be enough to age the record away.
+    fun withoutNetworkTimeTheyAgeOnTheClockSinceBoot() {
+        // Android 12, or no network time: the clock since boot can't be set, so they age on it.
         Prompt().miss()
         UnlockAttempts.markSeen(context)
         pass(8L * 24 * 60 * 60_000L)
+        UnlockAttempts.prune(context)
+        assertTrue(kept.isEmpty())
+    }
+
+    @Test
+    fun withoutNetworkTimeADateSetAheadAfterARestartDoesntAgeThem() {
+        // Taken on the phone's clock, then a restart: only a date set ahead could age them now, so
+        // they aren't aged at all.
+        Prompt().miss()
+        UnlockAttempts.markSeen(context)
+        UnlockAttempts.bootCount = { 4 }
+        sinceBoot = 10_000L
+        now += 8L * 24 * 60 * 60_000L
+        TrustedClock.resetForTests()
         UnlockAttempts.prune(context)
         assertEquals(1, kept.size)
     }

@@ -77,14 +77,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
-import com.android.BioKey.core.data.openFor
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.ProtectionEngine
-import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
-import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.VaultBackup
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.BioKeyMessageHost
@@ -266,14 +263,7 @@ internal fun rememberBackupActions(): BackupActions {
                     // Closed first, so a second tap can't restore twice.
                     step = null
                     // A restore replaces every lock and setting at once: the owner's to do, with a face or
-                    // fingerprint (the screen lock where none is set up), and recorded when it weakens.
-                    val lockedBefore = vault.getLockedPackages()
-                    val shieldBefore = vault.isNotificationShieldEnabled()
-                    val delayBefore = vault.timeoutModeFlow.value
-                    val delaysBefore = lockedBefore.associateWith { vault.getTimeoutMode(it).openFor }
-                    val biometricOnlyBefore = vault.biometricOnlyFlow.value
-                    val alertsBefore = UnlockAttempts.enabled.value
-                    val screenLockNotesBefore = UnlockAttempts.screenLockUnlocks.value
+                    // fingerprint (the screen lock where none is set up).
                     val restore = {
                     // Off the main thread (restoring sweeps notifications), and in the backup's
                     // scope, so leaving Settings meanwhile doesn't stop it halfway to its message.
@@ -287,18 +277,15 @@ internal fun rememberBackupActions(): BackupActions {
                             false
                         }
                         if (restored) {
-                            // What the restore actually did, compared with before.
-                            val weakened = (lockedBefore - vault.getLockedPackages()).isNotEmpty() ||
-                                shieldBefore && !vault.isNotificationShieldEnabled() ||
-                                vault.timeoutModeFlow.value.openFor > delayBefore.openFor ||
-                                delaysBefore.any { (pkg, openFor) -> vault.getTimeoutMode(pkg).openFor > openFor } ||
-                                biometricOnlyBefore && !vault.biometricOnlyFlow.value ||
-                                alertsBefore && !UnlockAttempts.enabled.value ||
-                                screenLockNotesBefore && !UnlockAttempts.screenLockUnlocks.value
-                            if (weakened) ProtectionGaps.recordIfScreenLock(activity, "A backup restored that weakens protection")
                             // Let auto-sort go through the restored profiles on the next unlock.
                             InstalledAppsCache.autoSortedVersion = -1
-                            BioKeyMessages.show("Backup restored", Icons.Default.CheckCircle)
+                            // The shield waits for its explanation on this phone: say so, or the owner
+                            // would think locked apps' notifications are hidden.
+                            if (current.state.optBoolean("notificationShield", false) && !vault.isNotificationShieldEnabled()) {
+                                BioKeyMessages.show("Backup restored. Turn on Hide notification content to hide notifications here too", Icons.Default.CheckCircle)
+                            } else {
+                                BioKeyMessages.show("Backup restored", Icons.Default.CheckCircle)
+                            }
                         } else {
                             BioKeyMessages.show("That backup couldn't be restored", Icons.Default.ErrorOutline)
                         }

@@ -38,6 +38,7 @@ class ProtectionGapsTest {
         ProtectionGaps.exits = { exits }
         ProtectionGaps.updatedAt = { 0L }
         ProtectionGaps.wallNow = { now }
+        com.android.BioKey.core.security.TrustedClock.resetForTests()
         context.getSharedPreferences("biokey_unlock_attempts", Context.MODE_PRIVATE).edit().clear().commit()
         com.android.BioKey.core.security.UnlockAttempts.resetForTests()
         SecurityVault.getInstance(context).setSetupCompletedSync(true)
@@ -188,6 +189,21 @@ class ProtectionGapsTest {
         wall += 10 * 60_000L
         ProtectionGaps.onEngineUp(context)
         assertEquals(10 * 60_000L, gaps.single().let { it.to - it.from })
+    }
+
+    @Test
+    fun settingTheClockAheadBeforeAForceStopAndBackAfterDoesntHideIt() {
+        // Ahead 30 minutes while the engine runs (BioKey hears of it), force-stopped, then the
+        // clock put right before BioKey came back 30 minutes later.
+        var wall = now
+        ProtectionGaps.wallNow = { wall }
+        wall += 30 * 60_000L
+        ProtectionGaps.onClockChanged(context)
+        exits = listOf(wall to ApplicationExitInfo.REASON_USER_REQUESTED)
+        pass(30 * 60_000L)
+        wall = now
+        ProtectionGaps.onEngineUp(context)
+        assertEquals(30 * 60_000L, gaps.single().let { it.to - it.from })
     }
 
     @Test

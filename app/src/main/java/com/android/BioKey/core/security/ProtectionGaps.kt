@@ -61,7 +61,17 @@ object ProtectionGaps {
         CHANGED_WITH_SCREEN_LOCK
     }
 
-    data class Gap(val from: Long, val to: Long, val kind: Kind, val seq: Long = 0L, val detail: String = "")
+    data class Gap(
+        val from: Long,
+        val to: Long,
+        val kind: Kind,
+        val seq: Long = 0L,
+        val detail: String = "",
+        /** [to] on the clock since boot, which boot, and whether [to] is on the network's time: for ageing. */
+        val toElapsed: Long = 0L,
+        val boot: Int = -1,
+        val net: Boolean = true
+    )
 
     /** Shorter than this, a stop is an engine restarting or handing over, not a person. */
     private const val MIN_GAP_MS = 10_000L
@@ -142,11 +152,9 @@ object ProtectionGaps {
      * one the owner hasn't seen.
      */
     private fun List<Gap>.fresh(context: Context): List<Gap> {
-        val now = TrustedClock.now()
         val seen = UnlockAttempts.seenSeq(context)
-        // Aged only on the network's time: on the phone's own clock, a date set ahead could age them.
-        val ageing = TrustedClock.onNetworkTime()
-        val kept = filterNot { ageing && it.seq <= seen && now - it.to > UnlockAttempts.MAX_AGE_MS }.sortedByDescending { it.seq }
+        val age = UnlockAttempts.Ageing(bootCount(context))
+        val kept = filterNot { it.seq <= seen && age.past(it.to, it.net, it.toElapsed, it.boot) }.sortedByDescending { it.seq }
         val unseen = kept.filter { it.seq > seen }
         return (unseen.take(UnlockAttempts.MAX_UNSEEN) + kept.filter { it.seq <= seen }.take((MAX_KEPT - unseen.size).coerceAtLeast(0)))
             .sortedByDescending { it.seq }
@@ -158,7 +166,7 @@ object ProtectionGaps {
         if (!SecurityVault.getInstance(context).isSetupCompleted()) return
         val now = clock()
         synchronized(lock) {
-            save(p, (listOf(Gap(now, now, kind, UnlockAttempts.nextSeq(context), detail)) + _gaps.value).fresh(context))
+            save(p, (listOf(Gap(now, now, kind, UnlockAttempts.nextSeq(context), detail).stamped(context)) + _gaps.value).fresh(context))
         }
         DiagnosticLog.log("Security activity: ${kind.name.lowercase().replace('_', ' ')}")
         UnlockAttempts.onActivity(context)
@@ -200,9 +208,9 @@ object ProtectionGaps {
             // told, so it's kept whatever its length looks like.
             val clockMoved = forceStopAt != null && forceStopAt > wallNow()
             // Android stamps exits on the phone's clock; "now" is BioKey's trusted one. Converted with
-            // the difference between the two as it is now and as it was while an engine last ran, and
-            // the earlier result kept: the phone's clock moved either side of the stop can only
-            // lengthen the gap, never shorten it.
+            // the smallest difference between the two seen while an engine last ran ([onClockChanged])
+            // or now, the earliest result kept: the phone's clock moved before the stop, after it, or
+            // both, can only lengthen the gap, never shorten it.
             val offsets = listOfNotNull(now - wallNow(), if (p.contains(KEY_CLOCK_OFFSET)) p.getLong(KEY_CLOCK_OFFSET, 0L) else null)
             val forceStop = forceStopAt?.let { at -> offsets.minOf { at + it } }?.coerceAtMost(now)
             when {
@@ -212,7 +220,7 @@ object ProtectionGaps {
             }
             if (setUp && found.isNotEmpty()) {
                 recorded = true
-                save(p, (found.map { it.copy(seq = UnlockAttempts.nextSeq(context)) } + _gaps.value).fresh(context))
+                save(p, (found.map { it.copy(seq = UnlockAttempts.nextSeq(context)).stamped(context) } + _gaps.value).fresh(context))
                 found.forEach { DiagnosticLog.log("App locking was off for ${(it.to - it.from) / 1000} s (${it.kind.name.lowercase().replace('_', ' ')})") }
             }
             p.edit {
@@ -231,7 +239,7 @@ object ProtectionGaps {
      * opening BioKey with a face or fingerprint, or on a phone without one, it's the owner's own.
      */
     fun recordIfScreenLock(context: Context, what: String) {
-        if (SecurityEngine.INSTANCE.actingWithBiometric() || !SecurityEngine.hasEnrolledStrongBiometric(context)) return
+        if (SecurityEngine.ownerProven(context)) return
         recordEvent(context, Kind.CHANGED_WITH_SCREEN_LOCK, what)
     }
 
@@ -241,6 +249,25 @@ object ProtectionGaps {
     fun recordOncePerProcess(context: Context, what: String) {
         if (recordedOnce.add(what)) recordEvent(context, Kind.CHANGED_WITH_SCREEN_LOCK, what)
     }
+
+    /**
+     * The phone's clock was changed. While an engine runs, the smallest difference between trusted
+     * time and the phone's clock is kept: a force stop's time, stamped by Android on the phone's
+     * clock, is read with it, so a clock moved ahead before the stop and back afterwards can't
+     * shorten the gap ([onEngineUp]).
+     */
+    fun onClockChanged(context: Context) {
+        val p = load(context) ?: return
+        synchronized(lock) {
+            if (p.getLong(KEY_STOPPED_AT, 0L) != 0L) return
+            val offset = clock() - wallNow()
+            if (!p.contains(KEY_CLOCK_OFFSET) || offset < p.getLong(KEY_CLOCK_OFFSET, 0L)) p.edit { putLong(KEY_CLOCK_OFFSET, offset) }
+        }
+    }
+
+    /** Its end, as of now, on the clocks it's aged by ([UnlockAttempts.Ageing]). */
+    private fun Gap.stamped(context: Context) =
+        copy(toElapsed = elapsed(), boot = bootCount(context), net = TrustedClock.onNetworkTime())
 
     /** No engine is running any more (switched off, a permission revoked). */
     fun onEngineDown(context: Context) {
@@ -275,7 +302,14 @@ object ProtectionGaps {
     private fun save(p: SharedPreferences, list: List<Gap>) {
         _gaps.value = list
         p.edit {
-            putString(KEY_GAPS, JSONArray().apply { list.forEach { put(JSONObject().put("f", it.from).put("t", it.to).put("k", it.kind.name).put("q", it.seq).put("d", it.detail)) } }.toString())
+            putString(KEY_GAPS, JSONArray().apply {
+                list.forEach {
+                    put(
+                        JSONObject().put("f", it.from).put("t", it.to).put("k", it.kind.name).put("q", it.seq).put("d", it.detail)
+                            .put("r", it.toElapsed).put("b", it.boot).put("w", it.net)
+                    )
+                }
+            }.toString())
         }
     }
 
@@ -284,7 +318,10 @@ object ProtectionGaps {
         val array = JSONArray(json)
         return (0 until array.length()).map { i ->
             array.getJSONObject(i).let {
-                Gap(it.getLong("f"), it.getLong("t"), runCatching { Kind.valueOf(it.getString("k")) }.getOrDefault(Kind.SWITCHED_OFF), it.optLong("q"), it.optString("d"))
+                Gap(
+                    it.getLong("f"), it.getLong("t"), runCatching { Kind.valueOf(it.getString("k")) }.getOrDefault(Kind.SWITCHED_OFF),
+                    it.optLong("q"), it.optString("d"), it.optLong("r"), it.optInt("b", -1), it.optBoolean("w", true)
+                )
             }
         }
     }

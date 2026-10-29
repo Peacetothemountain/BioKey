@@ -409,13 +409,18 @@ fun MainScreenExpressive(
     var alertsMuted by remember { mutableStateOf(false) }
     val attemptsEnabled by UnlockAttempts.enabled.collectAsStateWithLifecycle()
     val biometricOnlyOn by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
-    val homePrefs = remember { context.getSharedPreferences(HOME_PREFS, Context.MODE_PRIVATE) }
-    var lockSettingsDismissed by remember { mutableStateOf(homePrefs.getBoolean(KEY_LOCK_SETTINGS_DISMISSED, false)) }
+    // Read off the main thread; null until then, so the card doesn't flash in and out.
+    var lockSettingsDismissed by remember { mutableStateOf<Boolean?>(null) }
     // Read again on every visit: an engine coming back clears it.
     var remindersStopped by remember { mutableStateOf(false) }
-    LifecycleResumeEffect(Unit) {
-        remindersStopped = ProtectionAlerts.remindersStopped(context)
-        onPauseOrDispose { }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            withContext(Dispatchers.IO) {
+                lockSettingsDismissed = homePrefs(context).getBoolean(KEY_LOCK_SETTINGS_DISMISSED, false)
+                remindersStopped = ProtectionAlerts.remindersStopped(context)
+            }
+        }
     }
     LifecycleResumeEffect(Unit) {
         val job = scope.launch(Dispatchers.IO) {
@@ -619,10 +624,11 @@ fun MainScreenExpressive(
                 item(key = "not_protecting") {
                     // A pause the owner chose isn't an emergency; off, not running or set up is.
                     val paused = ProtectionEngine.isProtecting(mode) && !globalLockEnabled
+                    val quiet = mode == ProtectionEngine.Mode.OFF && remindersStopped
                     ActionCard(
                         icon = look.icon,
                         title = look.title,
-                        subtitle = look.body,
+                        subtitle = if (quiet) look.body + " Reminders are off until it's back on." else look.body,
                         urgent = !paused,
                         modifier = Modifier.animateItem()
                     ) {
@@ -631,7 +637,17 @@ fun MainScreenExpressive(
                         } else {
                             // Switched off in Accessibility (maybe on purpose): the owner can stop the
                             // reminders until it's back on. Not offered for a crash or a missing permission.
-                            if (mode == ProtectionEngine.Mode.OFF && !remindersStopped) {
+                            val cardText = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer)
+                            if (quiet) {
+                                // Only strengthens: no authentication.
+                                TextButton(
+                                    onClick = {
+                                        ProtectionAlerts.resumeReminders(context)
+                                        remindersStopped = false
+                                    },
+                                    colors = cardText
+                                ) { Text("Remind me") }
+                            } else if (mode == ProtectionEngine.Mode.OFF) {
                                 TextButton(
                                     onClick = {
                                         confirmOwner(activity, "Stop reminding me") {
@@ -640,7 +656,7 @@ fun MainScreenExpressive(
                                             BioKeyMessages.show("No more reminders until app locking is back on", Icons.Default.NotificationsOff)
                                         }
                                     },
-                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer)
+                                    colors = cardText
                                 ) { Text("Stop reminding") }
                             }
                             UrgentButton(look.action, ::onProtectionAction)
@@ -707,24 +723,22 @@ fun MainScreenExpressive(
 
             // Calm cards after the urgent ones. With your PIN, someone could add their own fingerprint
             // in Settings: lock it.
-            if (biometricOnlyOn && hasStrongBiometric && look.action == null && SETTINGS_PACKAGE !in lockedApps && !lockSettingsDismissed) {
+            if (biometricOnlyOn && hasStrongBiometric && look.action == null && SETTINGS_PACKAGE !in lockedApps && lockSettingsDismissed == false) {
                 item(key = "lock_settings") {
                     ActionCard(
-                        icon = Icons.Default.Fingerprint,
-                        title = "Lock Settings too",
-                        subtitle = "Anyone with your PIN could add their own fingerprint there",
+                        icon = Icons.Default.Lock,
+                        title = "Lock Android Settings too",
+                        subtitle = "Anyone with your PIN could add their own fingerprint there.",
                         modifier = Modifier.animateItem()
                     ) {
                         TextButton(onClick = {
                             lockSettingsDismissed = true
-                            homePrefs.edit { putBoolean(KEY_LOCK_SETTINGS_DISMISSED, true) }
+                            scope.launch(Dispatchers.IO) { homePrefs(context).edit { putBoolean(KEY_LOCK_SETTINGS_DISMISSED, true) } }
                         }) { Text("Not now") }
                         FilledTonalButton(onClick = {
-                            vault.setAppLock(SETTINGS_PACKAGE, true)
-                            BioKeyMessages.show("Settings locked", Icons.Default.Lock, actionLabel = "Undo") {
-                                vault.setAppLock(SETTINGS_PACKAGE, false)
-                            }
-                        }) { Text("Lock Settings") }
+                            val undo = vault.lockSettingsApp()
+                            BioKeyMessages.show("Android Settings locked", Icons.Default.Lock, actionLabel = "Undo", onAction = undo)
+                        }) { Text("Lock") }
                     }
                 }
             }
@@ -930,18 +944,29 @@ fun MainScreenExpressive(
         // Reviewed: the notification has done its job (merely opening BioKey doesn't count). Not when
         // BioKey was opened with the screen lock on a phone with a face or fingerprint: someone who
         // only knows the PIN mustn't be able to quiet it.
+        var ownerProven by remember { mutableStateOf<Boolean?>(null) }
         LaunchedEffect(Unit) {
-            if (SecurityEngine.INSTANCE.ownAppOpenedWithBiometric || !SecurityEngine.hasEnrolledStrongBiometric(context)) {
-                UnlockAttempts.markSeen(context)
-            }
+            val proven = withContext(Dispatchers.Default) { SecurityEngine.ownerProven(context) }
+            ownerProven = proven
+            if (proven) UnlockAttempts.markSeen(context)
         }
         SecurityActivityDialog(
             attempts = attempts,
             gaps = gaps,
             labelOf = ::attemptLabel,
+            onMarkReviewed = if (ownerProven == false) {
+                {
+                    confirmOwner(activity, "Mark as reviewed") {
+                        UnlockAttempts.markSeen(context)
+                        showActivity = false
+                    }
+                }
+            } else null,
             onClear = {
                 // The record of who tried: a face or fingerprint to clear it, not just the screen lock.
                 confirmOwner(activity, "Clear security activity") {
+                    // Proven just now: what stays (a face or fingerprint change) counts as reviewed.
+                    UnlockAttempts.markSeen(context)
                     val oldAttempts = UnlockAttempts.clear(context)
                     val oldGaps = ProtectionGaps.clear(context)
                     showActivity = false
@@ -1419,8 +1444,7 @@ private fun EmptyState(text: String, actionLabel: String?, onAction: () -> Unit)
     }
 }
 
-private const val SETTINGS_PACKAGE = "com.android.settings"
 
 /** The home screen's own small memory: cards the owner put away. */
-private const val HOME_PREFS = "biokey_home"
-private const val KEY_LOCK_SETTINGS_DISMISSED = "lock_settings_dismissed"
+internal fun homePrefs(context: Context) = context.getSharedPreferences("biokey_home", Context.MODE_PRIVATE)
+internal const val KEY_LOCK_SETTINGS_DISMISSED = "lock_settings_dismissed"

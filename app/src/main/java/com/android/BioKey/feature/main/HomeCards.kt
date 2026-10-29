@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -134,10 +135,11 @@ internal fun ActionCard(
             }
             if (!sideBySide) {
                 CompositionLocalProvider(LocalContentColor provides content) {
-                    Row(
+                    // Wrapping, so two buttons at large text go on two lines instead of squeezing.
+                    FlowRow(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                        verticalAlignment = Alignment.CenterVertically,
+                        itemVerticalAlignment = Alignment.CenterVertically,
                         content = actions
                     )
                 }
@@ -354,7 +356,9 @@ internal fun SecurityActivityDialog(
     gaps: List<ProtectionGaps.Gap>,
     labelOf: (UnlockAttempts.Attempt) -> String,
     onClear: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** BioKey was opened with the screen lock: reviewing takes a face or fingerprint, here. */
+    onMarkReviewed: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val note = MaterialTheme.colorScheme.onSurfaceVariant
@@ -365,6 +369,15 @@ internal fun SecurityActivityDialog(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 ProtectDialogWindow()
+                if (onMarkReviewed != null) {
+                    Text(
+                        "BioKey was opened with your screen lock, so these stay new, and the alert comes back, until " +
+                            "you mark them reviewed with your face or fingerprint.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = note,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                }
                 val changes = gaps.filterNot { it.isOff }
                 if (changes.isNotEmpty()) {
                     SectionLabel("Changes")
@@ -430,7 +443,12 @@ internal fun SecurityActivityDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        confirmButton = {
+            Row {
+                if (onMarkReviewed != null) TextButton(onClick = onMarkReviewed) { Text("Mark reviewed") }
+                TextButton(onClick = onDismiss) { Text("Close") }
+            }
+        },
         // Destructive: in the error colour, and behind a face or fingerprint (and Undo). Not offered
         // when only a face or fingerprint change is left: that can't be cleared.
         dismissButton = if (attempts.isNotEmpty() || gaps.any { !it.isBiometricChange }) {

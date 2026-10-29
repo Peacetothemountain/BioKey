@@ -99,8 +99,10 @@ Turn on **Face or fingerprint only** in BioKey's settings (it appears once a fac
 set up on your phone): locked apps and BioKey then don't offer the PIN at all. Lock **Settings**
 too (BioKey offers): with your PIN, someone could otherwise add their own fingerprint there.
 Android can't be stopped from allowing that, but BioKey notices and tells you ("a face or
-fingerprint was added or removed"). Home suggests locking Settings while the option is on; **Not
-now** puts the suggestion away, and Settings keeps it under the option. After too many failed tries, Android pauses face and
+fingerprint was added or removed"). Home suggests **Lock Android Settings too** while the option
+is on; **Not now** puts the suggestion away until you next turn the option on, and BioKey's
+Settings keeps it under the option. If Settings is in a profile that's switched off, locking it
+takes it out of that profile (Undo puts it back). After too many failed tries, Android pauses face and
 fingerprint for a while; if it locks them out for good, lock your phone and unlock it with your PIN
 to bring them back. With the option off, **Failed unlock alerts** and **Also note screen lock
 unlocks** at least show you when it happened.
@@ -121,7 +123,7 @@ unlock stay on the list, marked with how the app was opened, since someone may h
 handed the phone back. Misses no face or fingerprint followed (unanswered, or followed by the PIN)
 are also notified, the next time you unlock your phone and at least 2 minutes later, without
 naming the app; the notification stays until you open **Review** in BioKey opened with your face
-or fingerprint (opened with the PIN, it stays). Only faces and fingerprints count: Android doesn't tell apps about a wrong PIN, pattern
+or fingerprint (opened with the PIN, tap **Mark reviewed** there and use your face or fingerprint). Only faces and fingerprints count: Android doesn't tell apps about a wrong PIN, pattern
 or password. If you never use your PIN yourself, turn on **Also note screen lock unlocks** to see
 (listed on the home screen, not notified) whenever someone opens a locked app with it. Notes are kept until you've seen them, then 7 days;
 clear them from **Review** on the home screen (it asks for your face or fingerprint).
@@ -135,7 +137,9 @@ Some phone makers' battery savers force-stop apps the way a person would, and th
 see "Locking stopped" below to keep BioKey running. Clear it from **Review**.
 
 If you switched it off on purpose, **Stop reminding** on the "App lock is off" card (it asks for
-your face or fingerprint) ends the reminders until app locking is back on. It stays recorded.
+your face or fingerprint) ends the reminders until app locking is back on; the card then says
+so, and **Remind me** brings them back. It stays recorded. If app locking fails some other way
+afterwards (switched on, but not running), the reminders come back on their own.
 
 ### BioKey offered to lock an app I just installed
 
@@ -156,8 +160,9 @@ backup file first:
 
 After installing BioKey again (or on the new phone) and finishing setup, tap **Restore from a
 backup** in its settings, pick the file and enter the password, and confirm with your face or
-fingerprint. It replaces your locked apps, profiles and settings with the backup's. The
-notification shield comes back on only after you agree to its explanation on this phone.
+fingerprint (your screen lock if none is set up). It replaces your locked apps, profiles and settings with the backup's. The
+notification shield stays off on a new phone, and BioKey says so: turn on **Hide notification
+content** in its settings (and agree to the explanation) to hide notifications there too.
 
 The file holds your locked apps, profiles and BioKey settings, sealed with your password. Without
 the password it reveals nothing, not even which apps are locked.
@@ -219,6 +224,9 @@ the PIN isn't offered: wait, and if Android locks face and fingerprint out for g
 phone and unlock it with your PIN to bring them back. If the sensor itself stops working (a fault,
 an update pending), BioKey allows your screen lock again for locked apps and records that it did;
 clearing records, turning alerts off and restoring a backup wait until the sensor works again.
+If it's broken for good, remove your faces and fingerprints in Android's settings: BioKey then
+asks for your screen lock instead (and records the removal). On Android 15 and later, the same
+applies if **Use for apps** is switched off for face or fingerprint in Android's settings.
 
 ### How do I uninstall BioKey?
 

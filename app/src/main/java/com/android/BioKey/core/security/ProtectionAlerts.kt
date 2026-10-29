@@ -47,8 +47,21 @@ object ProtectionAlerts {
     private const val PREFS = "biokey_protection_alerts"
     private const val KEY_REMINDERS_STOPPED = "reminders_stopped"
 
+    /**
+     * The owner stopped the reminders, and app locking is still switched off. A different failure
+     * since (switched back on, but not running) is reminded about again: the stop was for a switch-off.
+     */
     fun remindersStopped(context: Context) =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_REMINDERS_STOPPED, false)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_REMINDERS_STOPPED, false) &&
+            ProtectionEngine.mode(context) == ProtectionEngine.Mode.OFF
+
+    /** "Remind me": the reminders come back now, as if never stopped. */
+    fun resumeReminders(context: Context) {
+        val app = context.applicationContext
+        app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { remove(KEY_REMINDERS_STOPPED) }
+        DiagnosticLog.log("Reminders that app locking is off resumed by the owner")
+        if (!ProtectionEngine.isProtecting(app)) ProtectionCheckJob.schedule(app)
+    }
 
     /**
      * The owner switched app locking off on purpose: no more reminders until it's on again (it
@@ -59,7 +72,6 @@ object ProtectionAlerts {
         app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putBoolean(KEY_REMINDERS_STOPPED, true) }
         ProtectionCheckJob.cancel(app)
         NotificationManagerCompat.from(app).cancel(ID_SERVICE_STOPPED)
-        ProtectionGaps.recordIfScreenLock(app, "Reminders that app locking is off were stopped")
         DiagnosticLog.log("Reminders that app locking is off stopped by the owner")
     }
 

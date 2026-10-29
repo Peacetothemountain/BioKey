@@ -47,7 +47,7 @@ import org.json.JSONObject
  * - **Clocks.** Every record carries a sequence number, and the time since the phone started:
  *   what's been seen, what happened before the last unlock and how long ago a miss was are judged
  *   on those, so changing the phone's date can neither hide a record nor delete it early. A record
- *   isn't deleted for its age until the owner has seen it.
+ *   isn't deleted for its age until the owner has seen it, and then only by [Ageing].
  * - **What it keeps.** Which app (package name and label), when, how many misses, and how it
  *   ended; in BioKey's private storage, at most [MAX_KEPT], seen ones for [MAX_AGE_MS], never backed
  *   up. Turning the alerts off in Settings deletes them (with Undo).
@@ -74,7 +74,9 @@ object UnlockAttempts {
         val seq: Long = 0L,
         /** [lastAt] on the clock since boot, and which boot. */
         val lastElapsed: Long = 0L,
-        val boot: Int = -1
+        val boot: Int = -1,
+        /** [lastAt] was taken on the network's time ([TrustedClock.onNetworkTime]), not the phone's clock. */
+        val net: Boolean = true
     ) {
         /** Not followed by any unlock: shown as a warning. */
         val unanswered get() = ending == Ending.NONE
@@ -88,6 +90,21 @@ object UnlockAttempts {
     /** Misses on one app this close together, from no known prompt, are one attempt. */
     private const val SAME_ATTEMPT_MS = 60_000L
     const val MAX_AGE_MS = 7 * 24 * 60 * 60_000L
+
+    /**
+     * Whether a seen record is older than [MAX_AGE_MS], on a clock nobody can set: the clock since
+     * boot when it's from this boot, else the network's time when both it and now were taken on it.
+     * Otherwise (taken on the phone's clock, and the phone has restarted since) it isn't aged at
+     * all, only pushed out by the limits: a date set ahead mustn't be enough to delete it.
+     */
+    internal class Ageing(private val boot: Int) {
+        private val now = TrustedClock.now()
+        private val onNet = TrustedClock.onNetworkTime()
+        private val since = elapsed()
+
+        fun past(at: Long, net: Boolean, atElapsed: Long, atBoot: Int): Boolean =
+            (atBoot == boot && since - atElapsed > MAX_AGE_MS) || (net && onNet && now - at > MAX_AGE_MS)
+    }
     const val MAX_KEPT = 50
     /** Unseen records are never pushed out by seen ones; this only bounds the storage. */
     const val MAX_UNSEEN = 500
@@ -158,7 +175,7 @@ object UnlockAttempts {
             val kept = runCatching { parse(p.getString(KEY_ATTEMPTS, null)) }.getOrDefault(emptyList())
             prefs = p
             // What's seen and past its time goes from the disk too, not only from what's shown.
-            val fresh = kept.fresh(p)
+            val fresh = kept.fresh(p, bootCount(context))
             if (fresh != kept) save(p, fresh) else _attempts.value = kept
         }
         // An alert that was waiting when the process last stopped.
@@ -185,29 +202,19 @@ object UnlockAttempts {
     internal fun seenSeq(context: Context): Long = load(context)?.getLong(KEY_SEEN_SEQ, 0L) ?: 0L
 
     /**
-     * Seen ones past their time go, aged on [TrustedClock] (a changed date doesn't age them);
-     * unseen ones stay. Over the limit, seen ones go first: piling up new records can't push out
-     * one the owner hasn't seen.
+     * Seen ones past their time go; unseen ones stay. Over the limit, seen ones go first: piling up
+     * new records can't push out one the owner hasn't seen.
      */
-    private fun List<Attempt>.fresh(p: SharedPreferences): List<Attempt> {
-        val now = TrustedClock.now()
+    private fun List<Attempt>.fresh(p: SharedPreferences, boot: Int): List<Attempt> {
         val seen = p.getLong(KEY_SEEN_SEQ, 0L)
-        // Aged only on the network's time: on the phone's own clock, a date set ahead could age them.
-        val ageing = TrustedClock.onNetworkTime()
-        val kept = filterNot { ageing && it.seq <= seen && now - it.lastAt > MAX_AGE_MS }.sortedByDescending { it.seq }
+        val age = Ageing(boot)
+        val kept = filterNot { it.seq <= seen && age.past(it.lastAt, it.net, it.lastElapsed, it.boot) }.sortedByDescending { it.seq }
         val unseen = kept.filter { it.seq > seen }
         return (unseen.take(MAX_UNSEEN) + kept.filter { it.seq <= seen }.take((MAX_KEPT - unseen.size).coerceAtLeast(0)))
             .sortedByDescending { it.seq }
     }
 
-    /**
-     * The owner won't hear of security activity: BioKey's notifications, or its security-activity
-     * channel, are switched off. BioKey's home screen says so.
-     */
-    /**
-     * BioKey's notifications are allowed, but its security-activity or protection-alert channel is
-     * switched off in Android's settings. (All of them off is home's "Alerts are off" row.)
-     */
+    /** BioKey's security-activity channel is switched off in Android's settings: nothing counts as told. */
     private fun ownChannelMuted(context: Context): Boolean =
         context.getSystemService(NotificationManager::class.java).getNotificationChannel(CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE
 
@@ -217,6 +224,10 @@ object UnlockAttempts {
         return listOf(CHANNEL_ID, ProtectionAlerts.CHANNEL_ID).firstOrNull { nm.getNotificationChannel(it)?.importance == NotificationManager.IMPORTANCE_NONE }
     }
 
+    /**
+     * BioKey's notifications are allowed, but its security-activity or protection-alert channel is
+     * switched off in Android's settings: home says so. (All of them off is home's "Alerts are off" row.)
+     */
     fun channelMuted(context: Context): Boolean {
         val nm = context.getSystemService(NotificationManager::class.java)
         return listOf(CHANNEL_ID, ProtectionAlerts.CHANNEL_ID).any { nm.getNotificationChannel(it)?.importance == NotificationManager.IMPORTANCE_NONE }
@@ -225,7 +236,7 @@ object UnlockAttempts {
     /** Drops what's seen and past its time; BioKey's home screen calls this as it shows them. */
     fun prune(context: Context) {
         val p = load(context) ?: return
-        synchronized(lock) { _attempts.value.fresh(p).let { if (it != _attempts.value) save(p, it) } }
+        synchronized(lock) { _attempts.value.fresh(p, bootCount(context)).let { if (it != _attempts.value) save(p, it) } }
     }
 
     /**
@@ -237,6 +248,7 @@ object UnlockAttempts {
         if (!_enabled.value) return null
         val now = clock()
         val since = elapsed()
+        val net = TrustedClock.onNetworkTime()
         val boot = bootCount(context)
         val id: Long
         synchronized(lock) {
@@ -248,12 +260,12 @@ object UnlockAttempts {
                         it.boot == boot && since - it.lastElapsed in 0..SAME_ATTEMPT_MS
                 }
             val updated = if (same != null) {
-                list.map { if (it === same) it.copy(lastAt = now, failures = it.failures + 1, lastElapsed = since) else it }
+                list.map { if (it === same) it.copy(lastAt = now, failures = it.failures + 1, lastElapsed = since, boot = boot, net = net) else it }
             } else {
-                listOf(Attempt(packageName, label, now, now, failures = 1, seq = nextSeqLocked(p), lastElapsed = since, boot = boot)) + list
+                listOf(Attempt(packageName, label, now, now, failures = 1, seq = nextSeqLocked(p), lastElapsed = since, boot = boot, net = net)) + list
             }
             id = (same ?: updated.first()).seq
-            save(p, updated.fresh(p))
+            save(p, updated.fresh(p, bootCount(context)))
         }
         DiagnosticLog.log("A face or fingerprint didn't match on $packageName")
         scheduleNotification(context.applicationContext, OWNER_RETRY_MS)
@@ -268,13 +280,14 @@ object UnlockAttempts {
         if (!_enabled.value) return
         val now = clock()
         val since = elapsed()
+        val net = TrustedClock.onNetworkTime()
         val boot = bootCount(context)
         synchronized(lock) {
             val list = _attempts.value
             val same = list.firstOrNull { it.seq == promptRecord && it.unanswered }
-            val updated = if (same != null) list.map { if (it === same) it.copy(lastAt = now, lockedOut = true, lastElapsed = since) else it }
-            else listOf(Attempt(packageName, label, now, now, failures = 0, lockedOut = true, seq = nextSeqLocked(p), lastElapsed = since, boot = boot)) + list
-            save(p, updated.fresh(p))
+            val updated = if (same != null) list.map { if (it === same) it.copy(lastAt = now, lockedOut = true, lastElapsed = since, boot = boot, net = net) else it }
+            else listOf(Attempt(packageName, label, now, now, failures = 0, lockedOut = true, seq = nextSeqLocked(p), lastElapsed = since, boot = boot, net = net)) + list
+            save(p, updated.fresh(p, bootCount(context)))
         }
         DiagnosticLog.log("Face and fingerprint locked out on $packageName")
         scheduleNotification(context.applicationContext, OWNER_RETRY_MS)
@@ -290,6 +303,7 @@ object UnlockAttempts {
         val names = PasswordManager.aliasesOf(packageName)
         val now = clock()
         val since = elapsed()
+        val net = TrustedClock.onNetworkTime()
         val boot = bootCount(context)
         synchronized(lock) {
             val list = _attempts.value
@@ -303,14 +317,14 @@ object UnlockAttempts {
                     !recent(a) && own == 0 -> a
                     left.failures == 0 && !left.lockedOut -> null
                     // What's left was someone, maybe: kept, marked with how the app was then opened.
-                    else -> left.copy(ending = ending, lastAt = now, lastElapsed = since)
+                    else -> left.copy(ending = ending, lastAt = now, lastElapsed = since, boot = boot, net = net)
                 }
             }.toMutableList()
             if (!biometric && list.none(::recent) && _screenLockUnlocks.value && hasStrongBiometric(context)) {
-                updated.add(0, Attempt(packageName, label, now, now, failures = 0, ending = Ending.SCREEN_LOCK, seq = nextSeqLocked(p), lastElapsed = since, boot = boot))
+                updated.add(0, Attempt(packageName, label, now, now, failures = 0, ending = Ending.SCREEN_LOCK, seq = nextSeqLocked(p), lastElapsed = since, boot = boot, net = net))
                 DiagnosticLog.log("$packageName opened with the screen lock")
             }
-            if (updated != list) save(p, updated.fresh(p))
+            if (updated != list) save(p, updated.fresh(p, bootCount(context)))
         }
         scheduleNotification(context.applicationContext, 0L)
     }
@@ -353,7 +367,7 @@ object UnlockAttempts {
     /** Puts back what [clear] removed (Undo), with anything recorded since. */
     fun restore(context: Context, attempts: List<Attempt>) {
         val p = load(context) ?: return
-        synchronized(lock) { save(p, (_attempts.value + attempts).distinctBy { it.seq }.fresh(p)) }
+        synchronized(lock) { save(p, (_attempts.value + attempts).distinctBy { it.seq }.fresh(p, bootCount(context))) }
     }
 
     /**
@@ -385,7 +399,7 @@ object UnlockAttempts {
             put(
                 JSONObject().put("p", it.packageName).put("n", it.label).put("t", it.at).put("u", it.lastAt)
                     .put("f", it.failures).put("l", it.lockedOut).put("e", it.ending.name)
-                    .put("q", it.seq).put("r", it.lastElapsed).put("b", it.boot)
+                    .put("q", it.seq).put("r", it.lastElapsed).put("b", it.boot).put("w", it.net)
             )
         }
     }.toString()
@@ -400,7 +414,7 @@ object UnlockAttempts {
                     it.getString("p"), it.optString("n").ifEmpty { it.getString("p") }, at, it.optLong("u", at),
                     it.optInt("f"), it.optBoolean("l"),
                     runCatching { Ending.valueOf(it.getString("e")) }.getOrDefault(Ending.NONE),
-                    it.optLong("q"), it.optLong("r"), it.optInt("b", -1)
+                    it.optLong("q"), it.optLong("r"), it.optInt("b", -1), it.optBoolean("w", true)
                 )
             }
         }

@@ -1,5 +1,6 @@
 package com.android.BioKey.core.security
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG
@@ -60,10 +61,22 @@ class SecurityEngine private constructor() {
          * sensor briefly unavailable still has its faces and fingerprints, and mustn't read as
          * their removal.
          */
+        @SuppressLint("InlinedApi")
         fun hasEnrolledStrongBiometric(context: Context): Boolean = strongStatus(context).let {
             it == BiometricManager.BIOMETRIC_SUCCESS || it == BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE ||
-                it == BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED
+                it == BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED ||
+                // Android 15+: "Use for apps" switched off in Android's settings. Still set up: that
+                // switch mustn't be a way round BioKey's records and gates.
+                it == BiometricManager.BIOMETRIC_ERROR_NOT_ENABLED_FOR_APPS
         }
+
+        /**
+         * What's done in BioKey now is the owner's own doing, as far as BioKey can tell: it was
+         * opened with a face or fingerprint, or the phone has none set up (then the screen lock is
+         * all there is). Otherwise it may be someone who only knows the PIN.
+         */
+        fun ownerProven(context: Context): Boolean =
+            INSTANCE.ownAppOpenedWithBiometric || !hasEnrolledStrongBiometric(context)
 
         /**
          * "Face or fingerprint only" is on and can be honoured: then prompts don't offer the screen
@@ -143,9 +156,6 @@ class SecurityEngine private constructor() {
                     biometric = result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC,
                     ownMisses = ownMisses
                 )
-                if (result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC) {
-                    confirmedWithBiometricAt = android.os.SystemClock.elapsedRealtime()
-                }
                 onConfirmed()
             }
 
@@ -192,16 +202,6 @@ class SecurityEngine private constructor() {
      */
     @Volatile var ownAppOpenedWithBiometric = false
         private set
-
-    /** When a face or fingerprint last confirmed an action ([confirmWithBiometric]), on the clock since boot. */
-    @Volatile private var confirmedWithBiometricAt = 0L
-
-    /**
-     * The owner's own doing, as far as BioKey can tell: BioKey opened with a face or fingerprint,
-     * or this very action confirmed with one a moment ago.
-     */
-    fun actingWithBiometric(): Boolean = ownAppOpenedWithBiometric ||
-        android.os.SystemClock.elapsedRealtime() - confirmedWithBiometricAt in 0..10_000L
 
     /**
      * Shows the system prompt hosted by [activity], which must be resumed and on top: the system
