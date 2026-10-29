@@ -31,21 +31,6 @@ import com.android.BioKey.ui.security.WindowProtection
  *
  * Which windows get a patch, and when they lose it, is the service's call. Main thread only.
  */
-/** The patches [MaskController] puts up and takes down: [WindowMask] on the phone, a fake in tests. */
-internal interface Patches {
-    val isEmpty: Boolean
-    fun isMasking(windowId: Int): Boolean
-    /** Puts up [targets] (keeping others only on [keepOn]); returns those that couldn't go up. */
-    fun show(targets: Collection<WindowMask.Target>, keepOn: Set<Int> = emptySet()): List<WindowMask.Target>
-    /** Adds [targets] to what's up, without taking any down; returns those that couldn't go up. */
-    fun add(targets: Collection<WindowMask.Target>): List<WindowMask.Target>
-    fun setHidden(hidden: Boolean)
-    fun setHiddenOn(displays: Set<Int>)
-    fun forget(pkg: String)
-    fun clear()
-    fun refreshPalette()
-}
-
 internal class WindowMask(
     private val service: AccessibilityService,
     private val onTapped: (Target) -> Unit

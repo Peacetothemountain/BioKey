@@ -17,6 +17,7 @@ import android.util.Log
 import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.annotation.VisibleForTesting
 import androidx.core.view.WindowCompat
 import com.android.BioKey.R
 import com.android.BioKey.core.data.PasswordManager
@@ -90,6 +91,14 @@ class LockScreenActivity : ComponentActivity() {
         @Volatile
         var resumedAt: Long = 0L
             private set
+
+        /** Tests: a lock screen up (resumed) for [target], or none with null. */
+        @VisibleForTesting
+        internal fun setStateForTests(target: String?) {
+            isLockScreenResumed = target != null
+            activeLockedTarget = target
+            resumedAt = if (target != null) SystemClock.uptimeMillis() else 0L
+        }
 
         /**
          * The newest lock screen. A new one can start while the last one is still finishing: only

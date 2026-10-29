@@ -9,6 +9,7 @@ import android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDEN
 import android.hardware.biometrics.BiometricPrompt
 import android.os.CancellationSignal
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.diagnostics.LatencyMarks
@@ -109,6 +110,12 @@ class SecurityEngine private constructor() {
         var record: Long? = null
         /** How many of each record's misses this prompt saw: its own, if a face or fingerprint then matches. */
         val ownMisses = mutableMapOf<Long, Int>()
+    }
+
+    /** Tests: a prompt up for [packageName] (no window of its own: the phone's display), or none with null. */
+    @VisibleForTesting
+    internal fun setPromptForTests(packageName: String?) {
+        active = packageName?.let { Attempt(it, WeakReference(null), CancellationSignal()) }
     }
 
     @Volatile private var active: Attempt? = null

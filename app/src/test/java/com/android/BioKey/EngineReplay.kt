@@ -1,6 +1,5 @@
 package com.android.BioKey
 
-import android.app.Activity
 import android.app.Application
 import android.app.KeyguardManager
 import android.app.usage.UsageStatsManager
@@ -9,7 +8,6 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.graphics.Rect
-import android.os.CancellationSignal
 import android.os.HandlerThread
 import android.os.Looper
 import android.os.PowerManager
@@ -32,7 +30,6 @@ import com.android.BioKey.feature.lock.LockCoverView
 import com.android.BioKey.feature.lock.LockScreenActivity
 import com.android.BioKey.feature.lock.UsageReader
 import com.android.BioKey.feature.lock.UsageWatchService
-import java.lang.ref.WeakReference
 import java.time.Duration
 import org.robolectric.Robolectric
 import org.robolectric.Shadows.shadowOf
@@ -344,10 +341,7 @@ internal class EngineReplay(private val context: Application) {
     }
 
     private fun setPrompt(pkg: String?) {
-        val active = SecurityEngine::class.java.getDeclaredField("active").apply { isAccessible = true }
-        if (pkg == null) return active.set(SecurityEngine.INSTANCE, null)
-        val attempt = Class.forName("${SecurityEngine::class.java.name}\$Attempt").declaredConstructors.single().apply { isAccessible = true }
-        active.set(SecurityEngine.INSTANCE, attempt.newInstance(pkg, WeakReference<Activity>(null), CancellationSignal()))
+        SecurityEngine.INSTANCE.setPromptForTests(pkg)
     }
 
     /** The cover of the engine's shield, whose buttons the owner pressed. */

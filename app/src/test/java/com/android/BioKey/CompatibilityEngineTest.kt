@@ -1,6 +1,5 @@
 package com.android.BioKey
 
-import android.app.Activity
 import android.app.Application
 import android.app.NotificationManager
 import android.app.usage.UsageEvents
@@ -15,7 +14,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
-import android.os.CancellationSignal
 import android.os.HandlerThread
 import android.os.Looper
 import android.provider.Settings
@@ -36,7 +34,6 @@ import com.android.BioKey.feature.lock.InstantShieldOverlay
 import com.android.BioKey.feature.lock.LockScreenActivity
 import com.android.BioKey.feature.lock.UsageWatchService
 import com.android.BioKey.feature.main.MainActivity
-import java.lang.ref.WeakReference
 import java.time.Duration
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -170,10 +167,7 @@ class CompatibilityEngineTest {
 
     /** BioKey's prompt is up for [pkg] (null: none is), as SecurityEngine reports it. */
     private fun promptUpFor(pkg: String?) {
-        val active = SecurityEngine::class.java.getDeclaredField("active").apply { isAccessible = true }
-        if (pkg == null) return active.set(SecurityEngine.INSTANCE, null)
-        val attempt = Class.forName("${SecurityEngine::class.java.name}\$Attempt").declaredConstructors.single().apply { isAccessible = true }
-        active.set(SecurityEngine.INSTANCE, attempt.newInstance(pkg, WeakReference<Activity>(null), CancellationSignal()))
+        SecurityEngine.INSTANCE.setPromptForTests(pkg)
     }
 
     private val lockScreen = LockScreenActivity::class.java.name

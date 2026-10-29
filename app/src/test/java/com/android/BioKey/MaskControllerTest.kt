@@ -1,10 +1,8 @@
 package com.android.BioKey
 
 import android.accessibilityservice.AccessibilityService
-import android.app.Activity
 import android.content.Context
 import android.graphics.Rect
-import android.os.CancellationSignal
 import android.os.Handler
 import android.os.Looper
 import android.view.Display
@@ -14,10 +12,10 @@ import android.view.accessibility.AccessibilityWindowInfo
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.InstantShieldOverlay
+import com.android.BioKey.feature.lock.LockScreenActivity
 import com.android.BioKey.feature.lock.MaskController
 import com.android.BioKey.feature.lock.Patches
 import com.android.BioKey.feature.lock.WindowMask
-import java.lang.ref.WeakReference
 import java.time.Duration
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -66,7 +64,8 @@ class MaskControllerTest {
             return emptyList()
         }
         override fun setHidden(hidden: Boolean) { hiddenEverywhere = hidden; hiddenDisplays = emptySet() }
-        override fun setHiddenOn(displays: Set<Int>) { hiddenDisplays = displays }
+        // As WindowMask does: hiding on some displays shows the rest.
+        override fun setHiddenOn(displays: Set<Int>) { hiddenEverywhere = false; hiddenDisplays = displays }
         override fun forget(pkg: String) { up.values.removeAll { it.pkg == pkg } }
         override fun clear() = up.clear()
         override fun refreshPalette() = Unit
@@ -143,12 +142,7 @@ class MaskControllerTest {
     private val small = Rect(0, 0, 300, 200)
 
     /** A fingerprint prompt up (with no window of its own to say which display: the phone's). */
-    private fun setPrompt(up: Boolean) {
-        val active = SecurityEngine::class.java.getDeclaredField("active").apply { isAccessible = true }
-        if (!up) return active.set(SecurityEngine.INSTANCE, null)
-        val attempt = Class.forName("${SecurityEngine::class.java.name}\$Attempt").declaredConstructors.single().apply { isAccessible = true }
-        active.set(SecurityEngine.INSTANCE, attempt.newInstance("com.example.bank", WeakReference<Activity>(null), CancellationSignal()))
-    }
+    private fun setPrompt(up: Boolean) = SecurityEngine.INSTANCE.setPromptForTests(if (up) "com.example.bank" else null)
 
     @Test
     fun aLockedAppInPictureInPictureIsPatched() {
@@ -251,5 +245,28 @@ class MaskControllerTest {
         assertTrue(patches.hiddenEverywhere)
         assertEquals(listOf("com.example.bank"), patches.up.values.map { it.pkg })
         assertTrue(patches.up.values.single().inPip)
+    }
+
+    @Test
+    fun aTappedPictureInPicturePatchBringsTheAppOutToCoverIt() {
+        val pip = window(1, "com.example.bank", small, pip = true)
+        windows = listOf(pip)
+        controller.update(listOf(pip), full = false)
+        patches.onTapped(patches.up.getValue(1))
+        assertTrue(shield.isShowing)
+        assertTrue(locked.isEmpty())
+    }
+
+    @Test
+    fun aTappedPatchOverItsOwnLockScreenBringsThatForward() {
+        controller.update(listOf(window(2, "com.example.bank", small, display = 2)), full = true)
+        LockScreenActivity.setStateForTests("com.example.bank")
+        try {
+            patches.onTapped(patches.up.getValue(2))
+            assertEquals(listOf("com.example.bank"), broughtForward)
+            assertTrue(locked.isEmpty())
+        } finally {
+            LockScreenActivity.setStateForTests(null)
+        }
     }
 }

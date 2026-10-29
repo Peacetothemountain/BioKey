@@ -1,9 +1,11 @@
 package com.android.BioKey.core
 
+import android.accessibilityservice.AccessibilityService
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.service.notification.NotificationListenerService
 
 /**
  * The two engines that lock apps, as core/ needs them: whether each runs, and compatibility mode
@@ -22,8 +24,8 @@ interface Engines {
 }
 
 /**
- * What core/ and ui/ need of the features, without depending on them: the engines, BioKey's main
- * screen to open from an alert, and the services' names for Android's settings pages. Installed first thing as BioKey starts (BioKeyApplication), before
+ * What core/ and ui/ need of the features, without depending on them: the engines, BioKey's
+ * main screen to open from an alert, and the services' names for Android's settings pages. Installed first thing as BioKey starts (BioKeyApplication), before
  * anything here can ask.
  */
 object FeatureLinks {
@@ -32,10 +34,15 @@ object FeatureLinks {
 
     @Volatile private var installedEngines: Engines? = null
     @Volatile private var mainScreen: Class<out Activity>? = null
-    @Volatile private var accessibilityService: Class<*>? = null
-    @Volatile private var notificationListener: Class<*>? = null
+    @Volatile private var accessibilityService: Class<out AccessibilityService>? = null
+    @Volatile private var notificationListener: Class<out NotificationListenerService>? = null
 
-    fun install(engines: Engines, mainScreen: Class<out Activity>, accessibilityService: Class<*>, notificationListener: Class<*>) {
+    fun install(
+        engines: Engines,
+        mainScreen: Class<out Activity>,
+        accessibilityService: Class<out AccessibilityService>,
+        notificationListener: Class<out NotificationListenerService>
+    ) {
         installedEngines = engines
         this.mainScreen = mainScreen
         this.accessibilityService = accessibilityService
