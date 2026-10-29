@@ -9,6 +9,7 @@ import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.feature.main.AppIconCache
 import com.android.BioKey.feature.main.AppItem
 import com.android.BioKey.feature.main.PendingBackup
+import java.time.Duration
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -17,7 +18,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.time.Duration
 
 /**
  * The home screen's own state: icons that stay within a few megabytes of the always-running

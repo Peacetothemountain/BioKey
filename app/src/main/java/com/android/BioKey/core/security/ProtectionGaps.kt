@@ -238,16 +238,20 @@ object ProtectionGaps {
     internal fun hasFileOlderThan(
         dir: File,
         time: Long,
-        isLink: (File) -> Boolean = { Files.isSymbolicLink(it.toPath()) }
+        isLink: (File) -> Boolean = { Files.isSymbolicLink(it.toPath()) },
+        /** What a folder holds; null if it can't be read. */
+        list: (File) -> Array<File>? = File::listFiles
     ): Boolean = runCatching {
-        if (!dir.isDirectory || dir.listFiles() == null) return@runCatching true
+        if (!dir.isDirectory || list(dir) == null) return@runCatching true
         var unreadable = false
         val older = dir.walkTopDown()
-            .onEnter { it == dir || !isLink(it) }
+            // Links aren't entered; a subfolder that can't be read is counted, not skipped.
+            .onEnter { (it == dir || !isLink(it)) && (list(it) != null || run { unreadable = true; false }) }
             .onFail { _, _ -> unreadable = true }
             .any { it.isFile && !isLink(it) && it.lastModified() < time }
         older || unreadable
     }.getOrDefault(true)
+
     /** Files a little older than this process (written as it started) are still its own. */
     private const val STORAGE_AGE_SLACK_MS = 10_000L
 

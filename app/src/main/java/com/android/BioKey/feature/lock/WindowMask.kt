@@ -16,7 +16,7 @@ import android.widget.ImageView
 import androidx.annotation.VisibleForTesting
 import androidx.core.view.isVisible
 import com.android.BioKey.R
-import com.android.BioKey.core.security.WindowProtection
+import com.android.BioKey.ui.security.WindowProtection
 
 /**
  * Opaque, screenshot-proof patches over single windows of locked apps, for where the full-screen

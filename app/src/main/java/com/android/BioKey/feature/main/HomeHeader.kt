@@ -302,11 +302,11 @@ internal fun protectionLook(
         notificationsShowing -> ProtectionLook(
             colors.errorContainer, colors.onErrorContainer, Icons.Default.GppMaybe, stringResource(R.string.home_apps_locked_short),
             stringResource(R.string.home_notifications_showing_title),
-            // Most serious first: what shows now, apps not covered, then how it's running.
+            // What shows now first; then, as when protected, how it's running and what that can't see.
             apps + SEPARATOR + stringResource(defaultTimeout.relockPhraseRes).lowercase() + "\n" +
                 stringResource(R.string.home_notifications_showing_body) +
-                (if (unwatchedCount == 0) "" else "\n" + pluralStringResource(R.plurals.home_unwatched, unwatchedCount, unwatchedCount)) +
-                (if (mode == ProtectionEngine.Mode.COMPATIBILITY) "\n" + stringResource(R.string.home_protected_compat) else ""),
+                (if (mode == ProtectionEngine.Mode.COMPATIBILITY) "\n" + stringResource(R.string.home_protected_compat) else "") +
+                (if (unwatchedCount == 0) "" else "\n" + pluralStringResource(R.plurals.home_unwatched, unwatchedCount, unwatchedCount)),
             null,
             fix = stringResource(R.string.home_shield_no_access_action),
             fixIcon = Icons.Default.NotificationsOff

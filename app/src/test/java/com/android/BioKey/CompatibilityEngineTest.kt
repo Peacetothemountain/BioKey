@@ -3,9 +3,9 @@ package com.android.BioKey
 import android.app.Activity
 import android.app.Application
 import android.app.NotificationManager
+import android.app.usage.UsageEvents
 import android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED
 import android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED
-import android.app.usage.UsageEvents
 import android.app.usage.UsageEvents.Event.ACTIVITY_STOPPED
 import android.app.usage.UsageEventsQuery
 import android.app.usage.UsageStatsManager

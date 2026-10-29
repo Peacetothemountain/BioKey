@@ -91,8 +91,8 @@ import com.android.BioKey.R
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.SecurityProfile
 import com.android.BioKey.core.security.LockStateTracker
-import com.android.BioKey.core.security.ProtectDialogWindow
-import com.android.BioKey.core.security.rejectObscuredTouches
+import com.android.BioKey.ui.security.ProtectDialogWindow
+import com.android.BioKey.ui.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.BioKeyMessageHost
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupGap

@@ -1,4 +1,4 @@
-package com.android.BioKey.core.security
+package com.android.BioKey.ui.security
 
 import android.app.Activity
 import android.content.Context
@@ -21,6 +21,7 @@ import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.DialogWindowProvider
 import com.android.BioKey.BuildConfig
+import com.android.BioKey.core.security.LockStateTracker
 import java.io.File
 
 /**

@@ -1,6 +1,8 @@
 package com.android.BioKey
 
 import android.app.ApplicationExitInfo
+import android.app.NotificationManager
+import android.app.job.JobScheduler
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.security.ProtectionAlerts
@@ -19,6 +21,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 
 /**
@@ -454,9 +457,9 @@ class ProtectionGapsTest {
             File(lib, "old.so").apply { writeText("x"); setLastModified(started - 60_000L) }
             File(dir, "old.xml").apply { writeText("x"); setLastModified(started - 60_000L) }
             val links = setOf(lib.name, "old.xml")
-            assertFalse(ProtectionGaps.hasFileOlderThan(dir, started) { it.name in links })
+            assertFalse(ProtectionGaps.hasFileOlderThan(dir, started, isLink = { it.name in links }))
             // Not links: they're BioKey's, and old.
-            assertTrue(ProtectionGaps.hasFileOlderThan(dir, started) { false })
+            assertTrue(ProtectionGaps.hasFileOlderThan(dir, started, isLink = { false }))
         } finally {
             dir.deleteRecursively()
         }
@@ -464,19 +467,31 @@ class ProtectionGapsTest {
 
     @Test
     fun storageThatCantBeReadCountsAsFromBefore() {
-        // A failure can miss a clearing, never claim one.
-        val missing = File(Files.createTempDirectory("storage").toFile(), "gone")
-        assertTrue(ProtectionGaps.hasFileOlderThan(missing, System.currentTimeMillis()))
+        // A failure can miss a clearing, never claim one: a missing folder, one that can't be
+        // listed, and a subfolder that can't be read on the way down.
+        val dir = Files.createTempDirectory("storage").toFile()
+        try {
+            val now = System.currentTimeMillis()
+            assertTrue(ProtectionGaps.hasFileOlderThan(File(dir, "gone"), now))
+            assertTrue(ProtectionGaps.hasFileOlderThan(dir, now, list = { null }))
+            val locked = File(dir, "databases").apply { mkdirs() }
+            File(dir, "new.xml").apply { writeText("x"); setLastModified(now + 1_000L) }
+            assertTrue(ProtectionGaps.hasFileOlderThan(dir, now, list = { if (it == locked) null else it.listFiles() }))
+            // All readable and new: not from before.
+            assertFalse(ProtectionGaps.hasFileOlderThan(dir, now))
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     @Test
     fun remindersResumeOnceNotificationsAreAllowedAgain() {
-        val scheduler = context.getSystemService(android.app.job.JobScheduler::class.java)
+        val scheduler = context.getSystemService(JobScheduler::class.java)
         scheduler.cancelAll()
         clearedStorage()
         exits = listOf(now - 60_000L to ApplicationExitInfo.REASON_USER_REQUESTED)
         ProtectionGaps.checkStorageCleared(context)
-        val shadow = org.robolectric.Shadows.shadowOf(context.getSystemService(android.app.NotificationManager::class.java))
+        val shadow = Shadows.shadowOf(context.getSystemService(NotificationManager::class.java))
         // Taken back with the clearing: nothing scheduled.
         shadow.setNotificationsEnabled(false)
         scheduler.cancelAll()

@@ -18,7 +18,6 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.android.BioKey.R
-import com.android.BioKey.core.navigation.IntentNavigationHelper
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
@@ -26,6 +25,7 @@ import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.ui.disclosure.Disclosure
 import com.android.BioKey.ui.disclosure.DisclosureGate
 import com.android.BioKey.ui.disclosure.NotificationPermission
+import com.android.BioKey.ui.navigation.IntentNavigationHelper
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow

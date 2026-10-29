@@ -10,7 +10,11 @@ import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.text.SpannableString
+import android.text.Spanned
 import android.text.TextUtils
+import android.text.style.DynamicDrawableSpan
+import android.text.style.ImageSpan
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -18,10 +22,6 @@ import android.view.View
 import android.view.ViewOutlineProvider
 import android.view.WindowInsets
 import android.view.accessibility.AccessibilityNodeInfo
-import android.text.SpannableString
-import android.text.Spanned
-import android.text.style.DynamicDrawableSpan
-import android.text.style.ImageSpan
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -32,8 +32,8 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.view.isVisible
 import com.android.BioKey.R
-import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.ui.brand.WordmarkView
+import com.android.BioKey.ui.security.WindowProtection
 
 /**
  * The lock cover, shared by [InstantShieldOverlay] (drawn the instant a locked app shows up) and

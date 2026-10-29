@@ -25,8 +25,8 @@ import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
-import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
+import com.android.BioKey.ui.security.WindowProtection
 import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
 

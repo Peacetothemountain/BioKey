@@ -5,10 +5,10 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.data.LockTimeoutMode
@@ -26,6 +26,7 @@ import com.android.BioKey.feature.main.SettingsScreenExpressive
 import com.android.BioKey.feature.setup.SetupScreenExpressive
 import com.android.BioKey.ui.theme.BioKeyTheme
 import com.github.takahirom.roborazzi.captureRoboImage
+import kotlin.math.roundToInt
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -34,7 +35,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
-import kotlin.math.roundToInt
 
 /**
  * Renders BioKey's screens to PNGs (app/build/screenshots) for design review, without a device.

@@ -59,11 +59,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.android.BioKey.R
-import com.android.BioKey.core.navigation.IntentNavigationHelper
 import com.android.BioKey.core.security.LockStateTracker
-import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.SecurityVault
-import com.android.BioKey.core.security.rejectObscuredTouches
+import com.android.BioKey.ui.navigation.IntentNavigationHelper
+import com.android.BioKey.ui.security.ProtectDialogWindow
+import com.android.BioKey.ui.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.IconBadge
 
 /**

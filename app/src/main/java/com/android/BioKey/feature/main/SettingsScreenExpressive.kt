@@ -92,7 +92,6 @@ import com.android.BioKey.BuildConfig
 import com.android.BioKey.R
 import com.android.BioKey.core.data.openFor
 import com.android.BioKey.core.diagnostics.DiagnosticLog
-import com.android.BioKey.core.navigation.IntentNavigationHelper
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.NewAppSuggestions
 import com.android.BioKey.core.security.ProtectionAlerts
@@ -101,13 +100,14 @@ import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
-import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.SelfProtectionDetector
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 import com.android.BioKey.feature.notification.ShieldAccessWatch
 import com.android.BioKey.ui.disclosure.Disclosure
 import com.android.BioKey.ui.disclosure.rememberDisclosureGate
 import com.android.BioKey.ui.disclosure.rememberNotificationPermission
+import com.android.BioKey.ui.navigation.IntentNavigationHelper
+import com.android.BioKey.ui.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupInset

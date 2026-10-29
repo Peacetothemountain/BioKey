@@ -307,24 +307,29 @@ app/src/main/java/com/android/BioKey/
 core/data          LockTimeoutMode, SecurityProfile, AppClassifier, PasswordManager
 core/security      SecurityVault (settings, locked apps, profiles), LockStateTracker (sessions),
                    SecurityEngine (BiometricPrompt), ProtectionEngine (which engine runs),
-                   AdvancedProtection, WindowProtection, ProtectionAlerts, VaultBackup
+                   AdvancedProtection, ProtectionGaps and UnlockAttempts (security activity),
+                   ProtectionAlerts, VaultBackup
 core/diagnostics   DiagnosticLog (on-phone log of lock decisions), EngineTrace (debug builds:
                    what the engines saw and did), LatencyMarks (debug builds: the gantlet's
                    latency marks)
 core/receiver      Boot receiver
-feature/lock       BioKeyAccessibilityService, UsageWatchService (compatibility mode),
-                   ForegroundRules, SessionRules, LockLauncher, InstantShieldOverlay, WindowMask,
+feature/lock       BioKeyAccessibilityService, WindowReader (every look at the screen),
+                   UsageWatchService (compatibility mode), ForegroundRules, SessionRules, LockLauncher, InstantShieldOverlay, WindowMask,
                    LockScreenActivity, LockCoverView, SelfProtectionDetector, RecentsWatcher,
                    AppInfoCache, AppLabels, ScreenReceiver
 feature/main       MainActivity (BioKey's own lock), main screen, profile sheets, settings,
-                   backup and diagnostic log, disclosures
+                   backup and diagnostic log
 feature/setup      First-run setup
 feature/notification  Notification shield
 feature/tile       Quick Settings tile
 ui                 AppIcons
 ui/brand           KeyMark (the launcher icon's key, in vector), BioKeyLogo and WordmarkView (it, still),
                    BioKeyMarkSideways (the home header's, swirling), header constellation
-ui/theme           BioKeyTheme, components, messages, system haptics, press animation
+ui/theme           BioKeyTheme, components, callout, messages, system haptics, press animation
+ui/disclosure      What BioKey reads and keeps, shown before each permission; notification permission
+ui/navigation      IntentNavigationHelper (Settings pages, pinned to the Settings app)
+ui/security        WindowProtection (secure windows, obscured-touch rejection)
+ui/format          Record times
 
 app/src/test/      Unit tests, the gantlet (Gantlet*.kt and the list in app/build.gradle.kts),
                    engine replays (resources/traces/)

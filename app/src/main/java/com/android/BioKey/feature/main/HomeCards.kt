@@ -73,12 +73,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.android.BioKey.R
 import com.android.BioKey.core.data.LockTimeoutMode
-import com.android.BioKey.core.navigation.IntentNavigationHelper
 import com.android.BioKey.core.security.LockStateTracker
-import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.ui.format.attemptTime
+import com.android.BioKey.ui.navigation.IntentNavigationHelper
+import com.android.BioKey.ui.security.ProtectDialogWindow
 import com.android.BioKey.ui.theme.Callout
 import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.scaledWithText

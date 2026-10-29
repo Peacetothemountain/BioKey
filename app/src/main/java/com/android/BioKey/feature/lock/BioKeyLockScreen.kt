@@ -41,8 +41,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.android.BioKey.R
-import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.ui.brand.BioKeyLogo
+import com.android.BioKey.ui.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.springPress
 
 /** The logo's size, as on [LockCoverView]. */

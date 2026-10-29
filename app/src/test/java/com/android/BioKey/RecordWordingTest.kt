@@ -3,10 +3,10 @@ package com.android.BioKey
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.security.ProtectionGaps
-import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.ProtectionGaps.Change
 import com.android.BioKey.core.security.ProtectionGaps.Gap
 import com.android.BioKey.core.security.ProtectionGaps.Kind
+import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.feature.main.gapLine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

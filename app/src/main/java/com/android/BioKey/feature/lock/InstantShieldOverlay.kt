@@ -19,7 +19,7 @@ import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.diagnostics.LatencyMarks
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
-import com.android.BioKey.core.security.WindowProtection
+import com.android.BioKey.ui.security.WindowProtection
 
 /**
  * Full-screen cover drawn the instant a locked app reaches the screen, before
