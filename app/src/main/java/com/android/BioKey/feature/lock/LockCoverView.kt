@@ -73,6 +73,19 @@ class LockCoverView(context: Context) : FrameLayout(context) {
 
     private companion object {
         const val ICON_DP = AppInfoCache.ICON_DP
+        /** Room kept under the icon and name, for the small mark (or the buttons, on a tall screen). */
+        const val IDENTITY_BOTTOM_DP = 96
+        /** Unlock (56), the gap (8), Cancel (48) and the margin under them (24). */
+        const val ACTIONS_DP = 136
+        /** Kept between the name or status and Unlock in a short window. */
+        const val ACTIONS_GAP_DP = 12
+        /** The smallest the icon or logo gets in a short window, as a share of its size. */
+        const val MIN_ART_SCALE = 0.5f
+        /** Round BioKey's key, shown in place of an app icon that couldn't be loaded. */
+        const val PLACEHOLDER_PADDING_DP = 26
+        /** BioKey's own logo, when BioKey itself is locked. */
+        const val LOGO_WIDTH_DP = 120
+        const val LOGO_HEIGHT_DP = 136
     }
 
     var onUnlock: (() -> Unit)? = null
@@ -155,7 +168,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     private val identity = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
-        addView(logo, LinearLayout.LayoutParams(dp(120), dp(136)))
+        addView(logo, LinearLayout.LayoutParams(dp(LOGO_WIDTH_DP), dp(LOGO_HEIGHT_DP)))
         addView(icon, LinearLayout.LayoutParams(dp(ICON_DP), dp(ICON_DP)))
         addView(name, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(22)
@@ -165,7 +178,19 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         })
     }
 
+    /**
+     * The icon, name and status, scrollable as a last resort: in a short window (a phone in
+     * landscape) at large text they must never run under Unlock, the cover's way out.
+     */
+    private val identityScroll = android.widget.ScrollView(context).apply {
+        isVerticalFadingEdgeEnabled = false
+        overScrollMode = OVER_SCROLL_NEVER
+        addView(identity, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+    }
+
     private var lockoutMode = false
+    /** The icon is BioKey's key, padded inside the circle, as no app icon was loaded. */
+    private var placeholderIcon = false
     private var palette = Palette(context)
 
     init {
@@ -177,10 +202,10 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         WindowProtection.hideFromNonToolAccessibilityServices(this)
 
         addView(backdrop, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        addView(identity, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply {
+        addView(identityScroll, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply {
             leftMargin = dp(32)
             rightMargin = dp(32)
-            bottomMargin = dp(96)
+            bottomMargin = dp(IDENTITY_BOTTOM_DP)
         })
         addView(brandMark, LayoutParams(dp(40), dp(44), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
             bottomMargin = dp(40)
@@ -206,7 +231,56 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         val available = MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight - dp(64)
         val width = minOf(available, dp(360)).coerceAtLeast(0)
         if (MeasureSpec.getMode(widthMeasureSpec) != MeasureSpec.UNSPECIFIED) actions.layoutParams.width = width
+        fitIdentity(widthMeasureSpec, heightMeasureSpec)
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+    }
+
+    /**
+     * Keeps the icon, name and status clear of Unlock and Cancel. As laid out for a phone held
+     * upright they're centred well above them; in a short window (landscape, large text, a
+     * lockout message) they move into the space above the buttons, the icon shrinking (to half
+     * at most) as far as they need, and scroll if even that isn't enough.
+     */
+    private fun fitIdentity(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val params = identityScroll.layoutParams as LayoutParams
+        fun setArtScale(scale: Float) {
+            logo.layoutParams.width = (dp(LOGO_WIDTH_DP) * scale).toInt()
+            logo.layoutParams.height = (dp(LOGO_HEIGHT_DP) * scale).toInt()
+            icon.layoutParams.width = (dp(ICON_DP) * scale).toInt()
+            icon.layoutParams.height = icon.layoutParams.width
+            // BioKey's key in place of a missing icon keeps its proportions.
+            if (placeholderIcon) (dp(PLACEHOLDER_PADDING_DP) * scale).toInt().let { if (it != icon.paddingTop) icon.setPadding(it, it, it, it) }
+        }
+        val artHeight = if (logo.isVisible) dp(LOGO_HEIGHT_DP) else dp(ICON_DP)
+        setArtScale(1f)
+        params.gravity = Gravity.CENTER
+        params.topMargin = 0
+        params.bottomMargin = dp(IDENTITY_BOTTOM_DP)
+        // The same whether the buttons show or not (they hide while the system prompt is up), so
+        // nothing moves as the prompt comes and goes.
+        if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED) return
+
+        val height = MeasureSpec.getSize(heightMeasureSpec) - paddingTop - paddingBottom
+        val innerWidth = (MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight - params.leftMargin - params.rightMargin)
+            .coerceAtLeast(0)
+        identity.measure(
+            MeasureSpec.makeMeasureSpec(innerWidth, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+        )
+        val natural = identity.measuredHeight
+        val above = height - dp(ACTIONS_DP + ACTIONS_GAP_DP)
+        // As usual: centred, then raised by the margin (FrameLayout's centring takes it off whole).
+        val top = (height - natural) / 2 - dp(IDENTITY_BOTTOM_DP)
+        if (top >= 0 && top + natural <= above) return
+
+        // A short window: centred in the space above the buttons, the icon as much smaller as it
+        // takes (to half at most), and scrolling past that.
+        val scale = ((artHeight - (natural - above)).toFloat() / artHeight).coerceIn(MIN_ART_SCALE, 1f)
+        setArtScale(scale)
+        val fitted = natural - (artHeight - (artHeight * scale).toInt())
+        params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        params.topMargin = ((above - fitted) / 2).coerceAtLeast(0)
+        params.bottomMargin = height - above
     }
 
     private val iconLocation = IntArray(2)
@@ -312,10 +386,12 @@ class LockCoverView(context: Context) : FrameLayout(context) {
             // Cached icons are shared with the other cover; each view needs its own instance.
             icon.setImageDrawable(appIcon.constantState?.newDrawable(resources)?.mutate() ?: appIcon)
             icon.setPadding(0, 0, 0, 0)
+            placeholderIcon = false
             backdrop.setAccent(accent)
         } else {
             icon.setImageDrawable(context.getDrawable(R.drawable.ic_lock_key)?.mutate()?.apply { setTint(palette.primary) })
-            icon.setPadding(dp(26), dp(26), dp(26), dp(26))
+            icon.setPadding(dp(PLACEHOLDER_PADDING_DP), dp(PLACEHOLDER_PADDING_DP), dp(PLACEHOLDER_PADDING_DP), dp(PLACEHOLDER_PADDING_DP))
+            placeholderIcon = true
             backdrop.setAccent(null)
         }
     }

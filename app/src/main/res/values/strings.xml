@@ -24,10 +24,10 @@
 
     <!-- Lock all now (home screen, status sheet, launcher shortcut, Quick Settings tile). -->
     <string name="lock_all_done">All apps locked</string>
-    <string name="lock_all_resumed">Protection resumed · all apps locked</string>
+    <string name="lock_all_resumed">Protection resumed · all apps locked</string>
     <string name="lock_all_not_protecting">BioKey isn\'t protecting your apps right now</string>
     <string name="lock_all_tile_label">Lock all</string>
-    <string name="lock_all_tile_paused">Paused · tap to resume and lock</string>
+    <string name="lock_all_tile_paused">Paused · tap to resume and lock</string>
     <string name="lock_all_tile_not_protecting">Not protecting</string>
 
     <!-- Protection alerts: app locking stopped. -->
@@ -184,7 +184,10 @@
     <string name="setup_confirm_text">One check with your face, fingerprint or screen lock to finish.</string>
     <!-- Each step's state, said aloud by screen readers. -->
     <string name="setup_step_done">Done</string>
-    <string name="setup_step_not_done">Not done</string>
+    <!-- The first step not done yet: the one to do now. -->
+    <string name="setup_step_current">Next step</string>
+    <!-- A step that can be done, after the next one. -->
+    <string name="setup_step_later">Later</string>
     <string name="setup_step_confirming">Confirming</string>
     <string name="setup_step_waiting">Available after the steps above</string>
     <string name="setup_button_confirming">Confirming…</string>
@@ -224,7 +227,7 @@
 
     <!-- Home: cards above the list. -->
     <string name="home_alerts_off_title">Alerts are off</string>
-    <string name="home_alerts_off_text">BioKey can\'t tell you if app locking stops, or stand in for hidden notifications · tap to allow</string>
+    <string name="home_alerts_off_text">BioKey can\'t tell you if app locking stops, or stand in for hidden notifications · tap to allow</string>
     <!-- %1$s: the card's usual text. -->
     <string name="home_reminders_off_body">%1$s Reminders are off until it\'s back on.</string>
     <string name="home_remind_me">Remind me</string>
@@ -242,7 +245,7 @@
 
     <!-- Home: search chips and the profile card. -->
     <string name="home_filter_all">All apps</string>
-    <!-- Lower case: follows " · " after a name. -->
+    <!-- Lower case: follows " · " after a name. -->
     <string name="home_off">off</string>
     <!-- A profile chip, read out: "<profile> profile, off". -->
     <string name="home_profile_chip_off_description">%1$s profile, off</string>
@@ -261,13 +264,13 @@
     <string name="home_add_apps">Add apps</string>
     <string name="home_relock">Re-lock</string>
     <string name="home_relock_title">Re-lock %1$s</string>
-    <string name="home_profile_switched_off">%1$s off · its apps aren\'t locked</string>
-    <string name="home_profile_deleted">Deleted %1$s · its apps aren\'t locked</string>
+    <string name="home_profile_switched_off">%1$s off · its apps aren\'t locked</string>
+    <string name="home_profile_deleted">Deleted %1$s · its apps aren\'t locked</string>
 
     <!-- Home: the app list. -->
     <string name="home_screen_note">Home screens can\'t be locked</string>
     <string name="home_unlocked_now">Unlocked now</string>
-    <!-- Lower case: follows " · " in an app's row. -->
+    <!-- Lower case: follows " · " in an app's row. -->
     <string name="home_unlocked_now_lower">unlocked now</string>
     <string name="home_row_work">Work</string>
     <string name="home_row_not_protected_compat">Not protected in compatibility mode</string>
@@ -283,7 +286,7 @@
     <string name="home_no_apps">No apps found</string>
     <string name="home_apps_in_profile">Apps in %1$s</string>
     <string name="home_section_locked">Locked</string>
-    <!-- Lower case: follow " · " in the Locked header. -->
+    <!-- Lower case: follow " · " in the Locked header. -->
     <string name="home_not_protected_now">not protected now</string>
     <string name="home_paused_lower">paused</string>
     <string name="home_choose_apps">Choose apps to lock</string>
@@ -319,7 +322,7 @@
         <item quantity="one">App locking was off</item>
         <item quantity="other">App locking was off %d times</item>
     </plurals>
-    <!-- App · when · what happened. -->
+    <!-- App · when · what happened. -->
     <!-- A no-break space before each dot: a line never starts with a separator. -->
     <string name="card_attempt_line">%1$s · %2$s · %3$s</string>
     <string name="card_review">Review</string>
@@ -337,7 +340,7 @@
     <string name="card_time_yesterday">Yesterday, %1$s</string>
     <string name="card_time_date">%1$s, %2$s</string>
 
-    <!-- One time app locking was off, or one change: when · what. -->
+    <!-- One time app locking was off, or one change: when · what. -->
     <string name="card_gap_biometrics_changed">%1$s · a face or fingerprint was added or removed</string>
     <string name="card_gap_biometrics_removed">%1$s · no face or fingerprint is set up any more</string>
     <string name="card_gap_protection_changed">Protection changed</string>
@@ -402,8 +405,8 @@
     <string name="shield_public_title">Locked app</string>
     <string name="shield_public_text">Notification hidden by BioKey</string>
     <plurals name="shield_stand_in_text">
-        <item quantity="one">%1$d hidden notification · tap to unlock</item>
-        <item quantity="other">%1$d hidden notifications · tap to unlock</item>
+        <item quantity="one">%1$d hidden notification · tap to unlock</item>
+        <item quantity="other">%1$d hidden notifications · tap to unlock</item>
     </plurals>
     <string name="shield_channel_name">Hidden notifications</string>
     <string name="shield_channel_description">Stand-ins for notifications from locked apps</string>
@@ -424,14 +427,14 @@
     <string name="permission_usage_access">usage access</string>
     <string name="permission_overlay">display over other apps</string>
     <string name="permission_both">%1$s and %2$s</string>
-    <string name="settings_shield_allow_access">Locked apps\' notifications show in full · tap to allow notification access</string>
+    <string name="settings_shield_allow_access">Locked apps\' notifications show in full · tap to allow notification access</string>
     <string name="card_change_screen_lock_hint">If it wasn\'t you, someone knows your screen lock</string>
     <string name="card_change_during_hold_hint">If it wasn\'t you, whoever added or removed the face or fingerprint may have done it</string>
     <string name="card_change_biometrics_note">Anyone who knows your screen lock can do this in Android\'s settings. It can\'t be cleared here; it goes 7 days after you\'ve seen it.</string>
     <string name="card_gap_hint">Locked apps could be opened without a check</string>
     <string name="card_gaps_note">Switched off in Android\'s settings, or BioKey force-stopped. Android stopping BioKey on its own isn\'t listed, but some phone makers\' battery savers force-stop apps just as a person would.</string>
     <string name="card_failed_unlocks">Failed unlocks</string>
-    <!-- When · what happened. -->
+    <!-- When · what happened. -->
     <string name="card_attempt_detail">%1$s · %2$s</string>
     <string name="card_attempts_note">Faces or fingerprints that didn\'t match. Misses your own face or fingerprint then fixed, on the same prompt, were you and aren\'t listed. Android doesn\'t tell apps about a wrong PIN, pattern or password.</string>
     <string name="card_mark_reviewed">Mark reviewed</string>
@@ -477,7 +480,7 @@
     <!-- Profiles: the re-lock delay sheet. -->
     <string name="profile_relock_sheet_text">Apps stay unlocked while you use them. This sets when they lock again after you leave.</string>
     <string name="profile_same_as_settings">Same as Settings</string>
-    <string name="profile_follows_default">Follows the default re-lock delay · now %1$s</string>
+    <string name="profile_follows_default">Follows the default re-lock delay · now %1$s</string>
 
     <!-- Profiles: an app's options sheet. -->
     <string name="profile_not_locked_while_off">Not locked while %1$s is off</string>
@@ -492,7 +495,7 @@
     <string name="profile_remove_stays_unlocked">Stays unlocked</string>
     <string name="profile_no_profile">No profile</string>
     <string name="profile_default_suffix">%1$s (default)</string>
-    <string name="profile_off">Off · its apps aren\'t locked</string>
+    <string name="profile_off">Off · its apps aren\'t locked</string>
     <string name="profile_choose_note">Choosing a profile turns the app\'s lock on and uses that profile\'s re-lock delay. Turning the lock off keeps it in its profile.</string>
 
     <!-- Profiles: adding apps to a profile. -->
@@ -520,10 +523,10 @@
 
     <!-- Settings: App lock. -->
     <string name="settings_lock_apps_title">Lock apps</string>
-    <string name="settings_lock_apps_needs_compat_setup">Advanced Protection is on · tap to set up compatibility mode</string>
-    <string name="settings_lock_apps_not_running">Not running · BioKey\'s accessibility service is on but stopped: turn it off and on again</string>
-    <string name="settings_lock_apps_off">Off · turn on BioKey in Accessibility settings</string>
-    <string name="settings_lock_apps_compat">On · compatibility mode (works with Advanced Protection)</string>
+    <string name="settings_lock_apps_needs_compat_setup">Advanced Protection is on · tap to set up compatibility mode</string>
+    <string name="settings_lock_apps_not_running">Not running · BioKey\'s accessibility service is on but stopped: turn it off and on again</string>
+    <string name="settings_lock_apps_off">Off · turn on BioKey in Accessibility settings</string>
+    <string name="settings_lock_apps_compat">On · compatibility mode (works with Advanced Protection)</string>
     <string name="settings_lock_apps_biometric_only">Locked apps need your face or fingerprint</string>
     <string name="settings_lock_apps_any">Locked apps need your face, fingerprint or screen lock</string>
     <string name="settings_biometric_only_title">Face or fingerprint only</string>
@@ -536,11 +539,11 @@
     <string name="settings_lock_settings_done">Android Settings locked</string>
     <string name="settings_relock_title">Default re-lock delay</string>
     <!-- %1$s: the delay's short label. -->
-    <string name="settings_relock_summary">%1$s · profiles can set their own</string>
+    <string name="settings_relock_summary">%1$s · profiles can set their own</string>
     <string name="settings_new_apps_title">Offer to lock new apps</string>
     <string name="settings_new_apps_summary">After you install an app that auto-sort doesn\'t lock</string>
     <string name="settings_alerts_on">Tells you if app locking stops, and afterwards when it was off</string>
-    <string name="settings_alerts_off">Off: BioKey can\'t tell you if app locking stops · tap to allow notifications</string>
+    <string name="settings_alerts_off">Off: BioKey can\'t tell you if app locking stops · tap to allow notifications</string>
 
     <!-- Settings: Privacy & protection. -->
     <string name="settings_notification_access_still_off">Notification access is still off</string>
@@ -562,15 +565,15 @@
     <string name="settings_confirm_screen_lock_unlocks_off">Stop noting screen lock unlocks</string>
     <string name="settings_self_protection_title">Protect BioKey\'s settings</string>
     <string name="settings_self_protection_optional">Optional. Ask for your authentication before BioKey can be switched off, force-stopped or uninstalled</string>
-    <string name="settings_self_protection_on_not_running">On · works once the Accessibility service runs again</string>
+    <string name="settings_self_protection_on_not_running">On · works once the Accessibility service runs again</string>
     <string name="settings_self_protection_needs_running">Optional. Needs the Accessibility service, which isn\'t running</string>
-    <string name="settings_self_protection_on_service_off">On · works once the Accessibility service is on</string>
+    <string name="settings_self_protection_on_service_off">On · works once the Accessibility service is on</string>
     <string name="settings_self_protection_needs_service">Optional. Needs the Accessibility service, which is off</string>
-    <string name="settings_self_protection_inactive_compat">On, but inactive in compatibility mode · tap to turn off</string>
+    <string name="settings_self_protection_inactive_compat">On, but inactive in compatibility mode · tap to turn off</string>
     <string name="settings_self_protection_unavailable_compat">Not available in compatibility mode</string>
     <string name="settings_shortcut_warning_title">An accessibility shortcut can switch BioKey off</string>
     <!-- %1$s: the accessibility service's name, as Android's Accessibility settings list it. -->
-    <string name="settings_shortcut_warning_summary">Without authentication. Remove it in Accessibility > %1$s > shortcut · tap to open</string>
+    <string name="settings_shortcut_warning_summary">Without authentication. Remove it in Accessibility > %1$s > shortcut · tap to open</string>
 
     <!-- Settings: Profiles. -->
     <string name="settings_auto_sort_title">Auto-sort into profiles</string>
@@ -585,8 +588,8 @@
     <string name="settings_confirm_log_off">Turn off the diagnostic log</string>
     <string name="settings_view_log_title">View diagnostic log</string>
     <plurals name="settings_view_log_entries">
-        <item quantity="one">%1$d entry · share it when reporting a problem</item>
-        <item quantity="other">%1$d entries · share it when reporting a problem</item>
+        <item quantity="one">%1$d entry · share it when reporting a problem</item>
+        <item quantity="other">%1$d entries · share it when reporting a problem</item>
     </plurals>
 
     <!-- Settings: About. -->
@@ -594,7 +597,7 @@
     <string name="settings_privacy_policy_summary">What BioKey sees, keeps, and never does</string>
     <string name="settings_help_title">Help and support</string>
     <!-- %1$s: BioKey's version name. -->
-    <string name="settings_help_summary">Answers to common questions, and how to reach NB Designs · version %1$s</string>
+    <string name="settings_help_summary">Answers to common questions, and how to reach NB Designs · version %1$s</string>
 
     <!-- BioKey's own lock screen. -->
     <string name="lock_screen_locked">BioKey is locked</string>

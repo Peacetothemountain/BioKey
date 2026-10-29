@@ -1,6 +1,8 @@
 package com.android.BioKey.feature.setup
 
 import android.os.Build
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -40,6 +42,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -68,6 +71,7 @@ import com.android.BioKey.ui.brand.BioKeyLogo
 import com.android.BioKey.ui.brand.HeaderMatrixDotsExpressive
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupRow
+import com.android.BioKey.ui.theme.scaledWithText
 import com.android.BioKey.ui.theme.springPress
 
 /**
@@ -253,24 +257,34 @@ fun SetupScreenExpressive(
                 modifier = Modifier.padding(horizontal = 32.dp).onGloballyPositioned { quietZones[2] = it.boundsInRoot() }
             )
             Spacer(Modifier.height(28.dp))
+            // The step to do now: the first one not done.
+            val current = steps.indexOfFirst { !it.done }
             Group(count = steps.size) { i ->
                 val step = steps[i]
+                val state = when {
+                    step.done -> StepState.DONE
+                    i == current -> StepState.CURRENT
+                    // Only the last step is ever without an action: until the ones above are
+                    // done, or while it runs (then it's the current one).
+                    step.onClick == null -> StepState.BLOCKED
+                    else -> StepState.LATER
+                }
                 GroupRow(
                     index = i,
                     count = steps.size,
                     title = step.title,
                     subtitle = step.subtitle,
-                    icon = if (step.done) Icons.Default.CheckCircle else step.icon,
-                    iconTint = if (step.done) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer,
-                    iconContainer = if (step.done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
+                    leading = { StepBadge(if (step.done) Icons.Default.CheckCircle else step.icon, state) },
                     onClick = step.onClick.takeIf { !step.done },
-                    // Said aloud, as the tick and the colour only show it. Only the last step is
-                    // ever without an action: until the ones above are done, or while it runs.
+                    // One that can't be done yet looks it, but stays readable: it says what's coming.
+                    modifier = if (state == StepState.BLOCKED) Modifier.alpha(0.7f) else Modifier,
+                    // Said aloud, as the tick, the ring and the colour only show it.
                     stateDescription = stringResource(
                         when {
-                            step.done -> R.string.setup_step_done
-                            step.onClick != null -> R.string.setup_step_not_done
-                            isAuthenticating -> R.string.setup_step_confirming
+                            state == StepState.DONE -> R.string.setup_step_done
+                            isAuthenticating && step.onClick == null -> R.string.setup_step_confirming
+                            state == StepState.CURRENT -> R.string.setup_step_current
+                            state == StepState.LATER -> R.string.setup_step_later
                             else -> R.string.setup_step_waiting
                         }
                     )
@@ -336,5 +350,32 @@ fun SetupScreenExpressive(
                 style = MaterialTheme.typography.titleMedium
             )
         }
+    }
+}
+
+/** Where a setup step stands: done, the one to do now, one after it, or one that can't be done yet. */
+private enum class StepState { DONE, CURRENT, LATER, BLOCKED }
+
+/**
+ * A step's icon in its circle: a tick on the primary colour when done; the step to do now in
+ * the primary container with a ring round it; the rest in a quiet neutral circle.
+ */
+@Composable
+private fun StepBadge(icon: ImageVector, state: StepState) {
+    val colors = MaterialTheme.colorScheme
+    val (container, tint) = when (state) {
+        StepState.DONE -> colors.primary to colors.onPrimary
+        StepState.CURRENT -> colors.primaryContainer to colors.onPrimaryContainer
+        else -> colors.surfaceContainerHighest to colors.onSurfaceVariant
+    }
+    val size = 40.dp.scaledWithText()
+    Box(
+        modifier = Modifier
+            .size(size)
+            .background(container, CircleShape)
+            .then(if (state == StepState.CURRENT) Modifier.border(2.dp, colors.primary, CircleShape) else Modifier),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(size * 0.55f))
     }
 }

@@ -99,6 +99,7 @@ import com.android.BioKey.ui.theme.GroupGap
 import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.SectionHeader
+import com.android.BioKey.ui.theme.scaledWithText
 import kotlinx.coroutines.withContext
 
 /** A profile's icon: [key] is what's saved, [label] what TalkBack reads in the icon picker. */
@@ -659,7 +660,7 @@ internal fun SearchPill(query: String, onChange: (String) -> Unit, modifier: Mod
             onChange(it)
         },
         placeholder = { Text(searchApps) },
-        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(24.dp.scaledWithText())) },
         trailingIcon = if (query.isNotEmpty()) {
             { TextButton(onClick = { onChange("") }) { Text(stringResource(R.string.card_clear)) } }
         } else null,

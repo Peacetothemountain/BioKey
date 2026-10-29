@@ -26,7 +26,9 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -46,6 +48,16 @@ private val OuterCorner = 24.dp
 private val InnerCorner = 6.dp
 /** Gap between rows inside a group. */
 val GroupGap = 2.dp
+
+/**
+ * A size that grows with the user's font size, up to 1.5×, so an icon keeps up with the text
+ * beside it at large text; exactly itself at 100%.
+ */
+@Composable
+fun Dp.scaledWithText(): Dp = this * LocalDensity.current.fontScale.coerceIn(1f, 1.5f)
+
+/** Between the parts of a line ("Finance · unlocked now"): the dot stays with the word before it. */
+const val SEPARATOR = " · "
 
 /** Shape of row [index] of [count] in a group: round outer corners, tight inner ones. */
 fun groupShape(index: Int, count: Int): Shape = RoundedCornerShape(
@@ -111,6 +123,33 @@ fun GroupRow(
     subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     stateDescription: String? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null
+) = GroupRow(
+    index = index, count = count, title = title, modifier = modifier,
+    subtitle = subtitle?.let(::AnnotatedString),
+    icon = icon, iconTint = iconTint, iconContainer = iconContainer, leading = leading, onClick = onClick,
+    interaction = interaction, subtitleColor = subtitleColor, stateDescription = stateDescription, trailing = trailing
+)
+
+/**
+ * [GroupRow] with a styled [subtitle]: a part of it in a colour of its own ("unlocked now") over
+ * [subtitleColor] for the rest.
+ */
+@Composable
+fun GroupRow(
+    index: Int,
+    count: Int,
+    title: String,
+    subtitle: AnnotatedString?,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    iconTint: Color = MaterialTheme.colorScheme.onSecondaryContainer,
+    iconContainer: Color = MaterialTheme.colorScheme.secondaryContainer,
+    leading: (@Composable () -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
+    interaction: Modifier = Modifier,
+    subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    stateDescription: String? = null,
+    trailing: (@Composable RowScope.() -> Unit)? = null
 ) {
     val shape = groupShape(index, count)
     val described = if (stateDescription != null) {
@@ -130,7 +169,7 @@ fun GroupRow(
                     Spacer(Modifier.width(16.dp))
                 }
                 icon != null -> {
-                    IconBadge(icon, iconTint, iconContainer)
+                    IconBadge(icon, iconTint, iconContainer, size = 40.dp.scaledWithText())
                     Spacer(Modifier.width(16.dp))
                 }
             }

@@ -129,6 +129,25 @@ class DesignScreenshotTest {
         shoot("main_tablet") { MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
     }
 
+    /** A wide tablet with Settings open: a pane on the right, home beside it on the left. */
+    @Test fun tabletSettingsPane() {
+        RuntimeEnvironment.setQualifiers("w1280dp-h800dp")
+        shoot("main_tablet_settings") {
+            MainScreenExpressive(mode = ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}, settingsOpenAtStart = true)
+        }
+    }
+
+    /** The cover in landscape at 200% text, with a message: the icon, name and message stay clear of Unlock. */
+    @Test fun coverLandLargeText() {
+        RuntimeEnvironment.setQualifiers("w915dp-h412dp-land")
+        RuntimeEnvironment.setFontScale(2f)
+        try {
+            shoot("cover_land_large_text", cover(actions = true, status = context.getString(R.string.cover_prompt_failed)))
+        } finally {
+            RuntimeEnvironment.setFontScale(1f)
+        }
+    }
+
     @Test fun landscape() {
         RuntimeEnvironment.setQualifiers("w915dp-h412dp-land")
         shoot("cover_land", cover(actions = true))
@@ -306,7 +325,7 @@ class DesignScreenshotTest {
     }
     @Test fun setup() = shoot("setup") { SetupScreenExpressive(onSetupComplete = {}) }
 
-    private fun cover(actions: Boolean) = @Composable {
+    private fun cover(actions: Boolean, status: String? = null) = @Composable {
         val resources = androidx.compose.ui.platform.LocalResources.current
         androidx.compose.ui.viewinterop.AndroidView(
             factory = {
@@ -314,6 +333,7 @@ class DesignScreenshotTest {
                     val size = (88 * resources.displayMetrics.density).toInt()
                     bind("Chase", android.graphics.drawable.BitmapDrawable(resources, icon("Chase", 0xFF1A73E8.toInt(), size)), isBioKey = false)
                     setActionsVisible(actions)
+                    if (status != null) setStatus(status, permanentLockout = false)
                 }
             },
             modifier = androidx.compose.ui.Modifier.fillMaxSize()

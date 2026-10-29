@@ -5,6 +5,7 @@ import android.os.Looper
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -13,7 +14,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,6 +42,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -67,6 +71,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
@@ -92,7 +99,9 @@ import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.Haptics
 import com.android.BioKey.ui.theme.MaxContentWidth
+import com.android.BioKey.ui.theme.SEPARATOR
 import com.android.BioKey.ui.theme.SectionHeader
+import com.android.BioKey.ui.theme.scaledWithText
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -100,6 +109,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 internal const val FILTER_ALL = "filter:all"
+
+/** From here (Material's expanded width), Settings opens beside home rather than over it. */
+private val TwoPaneMinWidth = 840.dp
+
+/** Home's share of the window with Settings open beside it. */
+private const val HomePaneFraction = 0.48f
 
 /** The list's kinds of row, so a row scrolled away is reused for another of its kind. */
 private const val CONTENT_APP = "app"
@@ -122,7 +137,9 @@ fun MainScreenExpressive(
     searchRequest: String? = null,
     onSearchRequestTaken: () -> Unit = {},
     /** Home's state from outside the vault, and Review's. */
-    homeViewModel: HomeViewModel = viewModel()
+    homeViewModel: HomeViewModel = viewModel(),
+    /** Settings open as home opens (screenshots of the tablet's two panes). */
+    settingsOpenAtStart: Boolean = false
 ) {
     val context = LocalContext.current
     val res = LocalResources.current
@@ -214,10 +231,15 @@ fun MainScreenExpressive(
         onPauseOrDispose { job.cancel() }
     }
 
-    var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showSettings by rememberSaveable { mutableStateOf(settingsOpenAtStart) }
     // Settings' slide in and out, followed so the header holds still only once Settings covers it.
     val settingsVisibility = remember { MutableTransitionState(showSettings) }
     settingsVisibility.targetState = showSettings
+    // On a wide window (expanded width) Settings opens as a pane beside home instead of over it.
+    val density = LocalDensity.current
+    val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
+    val twoPane = windowWidth >= TwoPaneMinWidth
+    val homeFraction by animateFloatAsState(if (twoPane && showSettings) HomePaneFraction else 1f, label = "home_pane")
     var filter by rememberSaveable { mutableStateOf(FILTER_ALL) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(searchRequest) {
@@ -247,10 +269,10 @@ fun MainScreenExpressive(
     LaunchedEffect(windowFocused) { if (windowFocused) hadFocus = true }
     /**
      * Home's decorations animate only while nothing covers them: the app picker, Settings once
-     * it has slid in (stopping as it starts would show them jump to a still frame), or a window
-     * over BioKey's.
+     * it has slid in over home (stopping as it starts would show them jump to a still frame; as
+     * a pane beside home it covers nothing), or a window over BioKey's.
      */
-    val headerActive = !(settingsVisibility.currentState && settingsVisibility.isIdle) && !(overlays.showAddApps && currentProfile != null) &&
+    val headerActive = !(settingsVisibility.currentState && settingsVisibility.isIdle && !twoPane) && !(overlays.showAddApps && currentProfile != null) &&
         (windowFocused || !hadFocus)
 
     val profileByPackage = remember(profiles) {
@@ -401,29 +423,37 @@ fun MainScreenExpressive(
             // soon as the accessibility engine is back.
             val unwatched = isUnwatched(app)
             val homeScreen = isHomeScreen(app.packageName)
+            // A state, not a category: "unlocked now" takes its own colour, the rest of the line
+            // keeps the row's. Not where the whole line is a warning.
+            val unlockedColor = MaterialTheme.colorScheme.tertiary.takeIf { !homeScreen && !unwatched }
             GroupRow(
                 index = i,
                 count = apps.size,
                 title = app.label,
-                subtitle = buildString {
+                subtitle = buildAnnotatedString {
                     val locked = isLocked(app.packageName)
                     // Its profile, or else its kind; "App" (no category known) says nothing, so it isn't shown.
                     val name = profile?.name ?: if (app.category != AppCategory.GENERAL) stringResource(app.category.label) else null
                     if (name != null) append(name)
-                    if (profile != null && !profile.enabled) append(" · " + stringResource(R.string.home_off))
+                    if (profile != null && !profile.enabled) append(SEPARATOR + stringResource(R.string.home_off))
                     // The default is said once, in the section header; a row says only a delay of its own.
                     val delay = vault.getTimeoutMode(app.packageName)
                     if (locked && !homeScreen && delay != defaultTimeout) {
                         val relock = stringResource(delay.relockPhraseRes)
-                        append(if (name != null) " · " + relock.replaceFirstChar { it.lowercase() } else relock)
+                        append(if (name != null) SEPARATOR + relock.replaceFirstChar { it.lowercase() } else relock)
                     }
-                    if (isUnlockedNow(app.packageName) && locked) append(if (isEmpty()) stringResource(R.string.home_unlocked_now) else " · " + stringResource(R.string.home_unlocked_now_lower))
-                    if (app.isWorkProfile) append(" · " + stringResource(R.string.home_row_work))
+                    if (isUnlockedNow(app.packageName) && locked) {
+                        val first = length == 0
+                        if (!first) append(SEPARATOR)
+                        val unlocked = stringResource(if (first) R.string.home_unlocked_now else R.string.home_unlocked_now_lower)
+                        if (unlockedColor != null) withStyle(SpanStyle(color = unlockedColor)) { append(unlocked) } else append(unlocked)
+                    }
+                    if (app.isWorkProfile) append(SEPARATOR + stringResource(R.string.home_row_work))
                     if (homeScreen) {
-                        append(" · " + stringResource(R.string.home_screen_note))
+                        append(SEPARATOR + stringResource(R.string.home_screen_note))
                     } else if (unwatched) {
                         append(
-                            " · " + stringResource(
+                            SEPARATOR + stringResource(
                                 if (app.isWorkProfile) R.string.home_row_not_protected_compat else R.string.home_row_work_copy_not_protected_compat
                             )
                         )
@@ -433,8 +463,6 @@ fun MainScreenExpressive(
                     homeScreen && isOn(app.packageName) -> MaterialTheme.colorScheme.error
                     homeScreen -> MaterialTheme.colorScheme.onSurfaceVariant
                     unwatched -> MaterialTheme.colorScheme.error
-                    // A state, not a category: its own colour.
-                    isUnlockedNow(app.packageName) && isLocked(app.packageName) -> MaterialTheme.colorScheme.tertiary
                     profile != null && profile.enabled -> MaterialTheme.colorScheme.primary
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
@@ -460,212 +488,222 @@ fun MainScreenExpressive(
         }
     }
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .rejectObscuredTouches()
-            // Out of screen readers' reach while Settings is over it, as it is out of the eye's.
-            .then(if (showSettings) Modifier.clearAndSetSemantics { } else Modifier)
-    ) {
-        // Phones use the full width; on tablets and in landscape the list keeps a readable width
-        // in the middle, while the header's constellation still runs edge to edge.
-        val density = LocalDensity.current
-        val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
-        val sidePad = ((windowWidth - MaxContentWidth) / 2).coerceAtLeast(0.dp)
-        val sidePadPx = with(density) { sidePad.roundToPx() }
-        val listState = key(filter) { rememberLazyListState() }
-        // The list runs under the status bar, and so would the search bar pinned at its top: by as
-        // much as it would be under the status bar, it moves down, over a band of the page's colour.
-        val statusBarTop = WindowInsets.statusBars.getTop(LocalDensity.current)
-        val controlsInset by remember(listState, statusBarTop) {
-            derivedStateOf {
-                val items = listState.layoutInfo.visibleItemsInfo
-                val controls = items.firstOrNull { it.key == "controls" } ?: return@derivedStateOf 0
-                // Where it would be if it didn't stick: just after the item before it.
-                val before = items.lastOrNull { it.index == controls.index - 1 }
-                val natural = before?.let { it.offset + it.size } ?: Int.MIN_VALUE
-                (statusBarTop.toLong() - natural).coerceIn(0L, statusBarTop.toLong()).toInt()
-            }
-        }
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = sidePad, end = sidePad, bottom = 96.dp)
+    Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(homeFraction)
+                .rejectObscuredTouches()
+                // Out of screen readers' reach while Settings is over it, as it is out of the eye's.
+                .then(if (showSettings && !twoPane) Modifier.clearAndSetSemantics { } else Modifier)
         ) {
-            item(key = "header") {
-                HomeHeader(
+            // Phones use the full width; on tablets and in landscape the list keeps a readable width
+            // in the middle (of its pane, with Settings open beside it), while the header's
+            // constellation still runs edge to edge.
+            val homeWidth = windowWidth * homeFraction
+            val sidePad = ((homeWidth - MaxContentWidth) / 2).coerceAtLeast(0.dp)
+            val sidePadPx = with(density) { sidePad.roundToPx() }
+            val listState = key(filter) { rememberLazyListState() }
+            // The list runs under the status bar, and so would the search bar pinned at its top: by as
+            // much as it would be under the status bar, it moves down, over a band of the page's colour.
+            val statusBarTop = WindowInsets.statusBars.getTop(LocalDensity.current)
+            val controlsInset by remember(listState, statusBarTop) {
+                derivedStateOf {
+                    val items = listState.layoutInfo.visibleItemsInfo
+                    val controls = items.firstOrNull { it.key == "controls" } ?: return@derivedStateOf 0
+                    // Where it would be if it didn't stick: just after the item before it.
+                    val before = items.lastOrNull { it.index == controls.index - 1 }
+                    val natural = before?.let { it.offset + it.size } ?: Int.MIN_VALUE
+                    (statusBarTop.toLong() - natural).coerceIn(0L, statusBarTop.toLong()).toInt()
+                }
+            }
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = sidePad, end = sidePad, bottom = 96.dp)
+            ) {
+                item(key = "header") {
+                    HomeHeader(
+                        look = look,
+                        animated = headerActive,
+                        sidePadPx = sidePadPx,
+                        onOpenStatus = { overlays.showProtectionSheet = true },
+                        onOpenSettings = { showSettings = true }
+                    )
+                }
+
+                homeCards(
+                    mode = mode,
                     look = look,
-                    animated = headerActive,
-                    sidePadPx = sidePadPx,
-                    onOpenStatus = { overlays.showProtectionSheet = true },
-                    onOpenSettings = { showSettings = true }
+                    vault = vault,
+                    globalLockEnabled = globalLockEnabled,
+                    notifications = notifications,
+                    disclosures = disclosures,
+                    homeViewModel = homeViewModel,
+                    home = home,
+                    attempts = attempts,
+                    gaps = gaps,
+                    seenUpTo = seenUpTo,
+                    attemptsChosen = attemptsChosen,
+                    biometricOnlyOn = biometricOnlyOn,
+                    lockedApps = lockedApps,
+                    unlockedNowApps = unlockedNowApps,
+                    attemptLabel = ::attemptLabel,
+                    onProtectionAction = ::onProtectionAction,
+                    onReview = ::openReview,
+                    onLockOne = ::lockOne,
+                    onChooseUnlocked = { overlays.showUnlocked = true },
+                    onLockAll = { lockAllNow(includeOwnApp = false) }
                 )
-            }
 
-            homeCards(
-                mode = mode,
-                look = look,
-                vault = vault,
-                globalLockEnabled = globalLockEnabled,
-                notifications = notifications,
-                disclosures = disclosures,
-                homeViewModel = homeViewModel,
-                home = home,
-                attempts = attempts,
-                gaps = gaps,
-                seenUpTo = seenUpTo,
-                attemptsChosen = attemptsChosen,
-                biometricOnlyOn = biometricOnlyOn,
-                lockedApps = lockedApps,
-                unlockedNowApps = unlockedNowApps,
-                attemptLabel = ::attemptLabel,
-                onProtectionAction = ::onProtectionAction,
-                onReview = ::openReview,
-                onLockOne = ::lockOne,
-                onChooseUnlocked = { overlays.showUnlocked = true },
-                onLockAll = { lockAllNow(includeOwnApp = false) }
-            )
-
-            stickyHeader(key = "controls") {
-                val surface = MaterialTheme.colorScheme.surface
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .graphicsLayer { translationY = controlsInset.toFloat() }
-                        .drawBehind {
-                            drawRect(surface, topLeft = Offset(0f, -controlsInset.toFloat()), size = Size(size.width, size.height + controlsInset))
-                        }
-                        .padding(top = 12.dp, bottom = 4.dp)
-                ) {
-                    SearchPill(searchQuery, onChange = { searchQuery = it }, modifier = Modifier.padding(horizontal = GroupInset))
-                    // On wide screens the chips scroll edge to edge, like the header, not cut off at the column.
-                    LazyRow(
-                        modifier = Modifier.fillMaxWidth().horizontalBleed(sidePadPx),
-                        contentPadding = PaddingValues(horizontal = GroupInset + sidePad, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                stickyHeader(key = "controls") {
+                    val surface = MaterialTheme.colorScheme.surface
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer { translationY = controlsInset.toFloat() }
+                            .drawBehind {
+                                drawRect(surface, topLeft = Offset(0f, -controlsInset.toFloat()), size = Size(size.width, size.height + controlsInset))
+                            }
+                            .padding(top = 12.dp, bottom = 4.dp)
                     ) {
-                        item(key = FILTER_ALL) {
-                            FilterChoice(stringResource(R.string.home_filter_all), Icons.Default.Apps, filter == FILTER_ALL) { filter = FILTER_ALL }
+                        SearchPill(searchQuery, onChange = { searchQuery = it }, modifier = Modifier.padding(horizontal = GroupInset))
+                        // On wide screens the chips scroll edge to edge, like the header, not cut off at the column.
+                        LazyRow(
+                            modifier = Modifier.fillMaxWidth().horizontalBleed(sidePadPx),
+                            contentPadding = PaddingValues(horizontal = GroupInset + sidePad, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            item(key = FILTER_ALL) {
+                                FilterChoice(stringResource(R.string.home_filter_all), Icons.Default.Apps, filter == FILTER_ALL) { filter = FILTER_ALL }
+                            }
+                            items(profiles, key = { it.id }) { profile ->
+                                val apps = appCountByProfile[profile.id] ?: 0
+                                FilterChoice(
+                                    // An empty profile says just its name: "· 0" is noise.
+                                    label = profile.name + when {
+                                        !profile.enabled -> SEPARATOR + stringResource(R.string.home_off)
+                                        apps == 0 -> ""
+                                        else -> "$SEPARATOR$apps"
+                                    },
+                                    description = if (!profile.enabled) {
+                                        stringResource(R.string.home_profile_chip_off_description, profile.name)
+                                    } else {
+                                        pluralStringResource(R.plurals.home_profile_chip_description, apps, profile.name, apps)
+                                    },
+                                    icon = profileIcon(profile.iconKey),
+                                    selected = filter == profile.id
+                                ) { filter = profile.id }
+                            }
+                            item(key = "new_profile") {
+                                FilterChip(
+                                    selected = false,
+                                    onClick = { overlays.newProfileForPackage = null; overlays.showNewProfile = true },
+                                    label = { Text(stringResource(R.string.profile_new)) },
+                                    leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp.scaledWithText())) },
+                                    shape = CircleShape
+                                )
+                            }
                         }
-                        items(profiles, key = { it.id }) { profile ->
-                            val apps = appCountByProfile[profile.id] ?: 0
-                            FilterChoice(
-                                // An empty profile says just its name: "· 0" is noise.
-                                label = profile.name + when {
-                                    !profile.enabled -> " · " + stringResource(R.string.home_off)
-                                    apps == 0 -> ""
-                                    else -> " · $apps"
-                                },
-                                description = if (!profile.enabled) {
-                                    stringResource(R.string.home_profile_chip_off_description, profile.name)
-                                } else {
-                                    pluralStringResource(R.plurals.home_profile_chip_description, apps, profile.name, apps)
-                                },
-                                icon = profileIcon(profile.iconKey),
-                                selected = filter == profile.id
-                            ) { filter = profile.id }
+                    }
+                }
+
+                if (currentProfile != null) {
+                    item(key = "profile_${currentProfile.id}") {
+                        ProfileCard(
+                            profile = currentProfile,
+                            appCount = appCountByProfile[currentProfile.id] ?: 0,
+                            defaultTimeout = defaultTimeout,
+                            onEnabledChange = { on ->
+                                Haptics.toggle(view, on)
+                                vault.setProfileEnabled(currentProfile.id, on)
+                                if (!on) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.PROFILE_OFF, currentProfile.name)
+                                if (!on) {
+                                    val id = currentProfile.id
+                                    BioKeyMessages.show(
+                                        res.getString(R.string.home_profile_switched_off, currentProfile.name),
+                                        Icons.Default.LockOpen,
+                                        actionLabel = res.getString(R.string.common_undo)
+                                    ) {
+                                        vault.setProfileEnabled(id, true)
+                                    }
+                                }
+                            },
+                            onEdit = { overlays.showEditProfile = true },
+                            onRelock = { overlays.showRelock = true },
+                            onAddApps = { overlays.showAddApps = true }
+                        )
+                    }
+                }
+
+                when {
+                    isLoadingApps -> item(key = "loading") {
+                        Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                    }
+                    matching.isEmpty() -> item(key = "empty") {
+                        EmptyState(
+                            text = when {
+                                appsFailed -> stringResource(R.string.home_apps_failed)
+                                searchQuery.isNotBlank() -> stringResource(R.string.home_no_match, searchQuery.trim())
+                                currentProfile != null -> stringResource(R.string.home_profile_empty, currentProfile.name)
+                                else -> stringResource(R.string.home_no_apps)
+                            },
+                            actionLabel = if (currentProfile != null && searchQuery.isBlank()) stringResource(R.string.home_add_apps) else null,
+                            onAction = { overlays.showAddApps = true }
+                        )
+                    }
+                    currentProfile != null -> {
+                        item(key = "h_profile", contentType = CONTENT_HEADER) { SectionHeader(stringResource(R.string.home_apps_in_profile, currentProfile.name)) }
+                        appGroup(matching, showProfile = false)
+                    }
+                    else -> {
+                        if (lockedShown.isNotEmpty()) {
+                            item(key = "h_locked", contentType = CONTENT_HEADER) {
+                                // How they re-lock, said once, only while something actually locks them.
+                                val relock = when {
+                                    !ProtectionEngine.isProtecting(mode) -> SEPARATOR + stringResource(R.string.home_not_protected_now)
+                                    !globalLockEnabled -> SEPARATOR + stringResource(R.string.home_paused_lower)
+                                    else -> SEPARATOR + stringResource(defaultTimeout.relockPhraseRes).replaceFirstChar { it.lowercase() }
+                                }
+                                SectionHeader(
+                                    stringResource(R.string.home_section_locked) + "$SEPARATOR${lockedShown.size}$relock",
+                                    color = when {
+                                        !ProtectionEngine.isProtecting(mode) -> MaterialTheme.colorScheme.error
+                                        // A pause the owner chose: calm, like its card.
+                                        !globalLockEnabled -> MaterialTheme.colorScheme.tertiary
+                                        else -> MaterialTheme.colorScheme.primary
+                                    }
+                                )
+                            }
+                            appGroup(lockedShown, showProfile = true)
                         }
-                        item(key = "new_profile") {
-                            FilterChip(
-                                selected = false,
-                                onClick = { overlays.newProfileForPackage = null; overlays.showNewProfile = true },
-                                label = { Text(stringResource(R.string.profile_new)) },
-                                leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                                shape = CircleShape
-                            )
+                        if (unlockedShown.isNotEmpty()) {
+                            item(key = "h_unlocked", contentType = CONTENT_HEADER) { SectionHeader(stringResource(if (lockedShown.isEmpty()) R.string.home_choose_apps else R.string.common_not_locked)) }
+                            // With their profile: one that's off is why they aren't locked.
+                            appGroup(unlockedShown, showProfile = true)
                         }
                     }
                 }
             }
 
-            if (currentProfile != null) {
-                item(key = "profile_${currentProfile.id}") {
-                    ProfileCard(
-                        profile = currentProfile,
-                        appCount = appCountByProfile[currentProfile.id] ?: 0,
-                        defaultTimeout = defaultTimeout,
-                        onEnabledChange = { on ->
-                            Haptics.toggle(view, on)
-                            vault.setProfileEnabled(currentProfile.id, on)
-                            if (!on) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.PROFILE_OFF, currentProfile.name)
-                            if (!on) {
-                                val id = currentProfile.id
-                                BioKeyMessages.show(
-                                    res.getString(R.string.home_profile_switched_off, currentProfile.name),
-                                    Icons.Default.LockOpen,
-                                    actionLabel = res.getString(R.string.common_undo)
-                                ) {
-                                    vault.setProfileEnabled(id, true)
-                                }
-                            }
-                        },
-                        onEdit = { overlays.showEditProfile = true },
-                        onRelock = { overlays.showRelock = true },
-                        onAddApps = { overlays.showAddApps = true }
-                    )
-                }
-            }
+        }
 
-            when {
-                isLoadingApps -> item(key = "loading") {
-                    Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                }
-                matching.isEmpty() -> item(key = "empty") {
-                    EmptyState(
-                        text = when {
-                            appsFailed -> stringResource(R.string.home_apps_failed)
-                            searchQuery.isNotBlank() -> stringResource(R.string.home_no_match, searchQuery.trim())
-                            currentProfile != null -> stringResource(R.string.home_profile_empty, currentProfile.name)
-                            else -> stringResource(R.string.home_no_apps)
-                        },
-                        actionLabel = if (currentProfile != null && searchQuery.isBlank()) stringResource(R.string.home_add_apps) else null,
-                        onAction = { overlays.showAddApps = true }
-                    )
-                }
-                currentProfile != null -> {
-                    item(key = "h_profile", contentType = CONTENT_HEADER) { SectionHeader(stringResource(R.string.home_apps_in_profile, currentProfile.name)) }
-                    appGroup(matching, showProfile = false)
-                }
-                else -> {
-                    if (lockedShown.isNotEmpty()) {
-                        item(key = "h_locked", contentType = CONTENT_HEADER) {
-                            // How they re-lock, said once, only while something actually locks them.
-                            val relock = when {
-                                !ProtectionEngine.isProtecting(mode) -> " · " + stringResource(R.string.home_not_protected_now)
-                                !globalLockEnabled -> " · " + stringResource(R.string.home_paused_lower)
-                                else -> " · " + stringResource(defaultTimeout.relockPhraseRes).replaceFirstChar { it.lowercase() }
-                            }
-                            SectionHeader(
-                                stringResource(R.string.home_section_locked) + " · ${lockedShown.size}$relock",
-                                color = when {
-                                    !ProtectionEngine.isProtecting(mode) -> MaterialTheme.colorScheme.error
-                                    // A pause the owner chose: calm, like its card.
-                                    !globalLockEnabled -> MaterialTheme.colorScheme.tertiary
-                                    else -> MaterialTheme.colorScheme.primary
-                                }
-                            )
-                        }
-                        appGroup(lockedShown, showProfile = true)
-                    }
-                    if (unlockedShown.isNotEmpty()) {
-                        item(key = "h_unlocked", contentType = CONTENT_HEADER) { SectionHeader(stringResource(if (lockedShown.isEmpty()) R.string.home_choose_apps else R.string.common_not_locked)) }
-                        // With their profile: one that's off is why they aren't locked.
-                        appGroup(unlockedShown, showProfile = true)
-                    }
+        // Settings slides in over the home screen, which stays composed underneath so the
+        // predictive back gesture can reveal it. On a wide window it's a pane on the right instead,
+        // home still in use beside it; its back arrow (and Back) closes the pane.
+        AnimatedVisibility(
+            visibleState = settingsVisibility,
+            modifier = if (twoPane) Modifier.align(Alignment.TopEnd).fillMaxHeight().fillMaxWidth(1f - HomePaneFraction) else Modifier.fillMaxSize(),
+            enter = slideInHorizontally { it / 3 } + fadeIn(),
+            exit = slideOutHorizontally { it / 3 } + fadeOut()
+        ) {
+            Row(Modifier.fillMaxSize()) {
+                if (twoPane) VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Box(Modifier.weight(1f)) {
+                    SettingsScreenExpressive(mode = mode, onNavigateBack = { showSettings = false }, onPauseRequested = onPauseRequested)
                 }
             }
         }
-
-    }
-
-    // Settings slides in over the home screen, which stays composed underneath so the
-    // predictive back gesture can reveal it.
-    AnimatedVisibility(
-        visibleState = settingsVisibility,
-        enter = slideInHorizontally { it / 3 } + fadeIn(),
-        exit = slideOutHorizontally { it / 3 } + fadeOut()
-    ) {
-        SettingsScreenExpressive(mode = mode, onNavigateBack = { showSettings = false }, onPauseRequested = onPauseRequested)
     }
 
     // ---- Sheets & dialogs ------------------------------------------------------------------

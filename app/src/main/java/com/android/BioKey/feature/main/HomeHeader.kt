@@ -60,6 +60,8 @@ import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.ui.brand.BioKeyMarkSideways
 import com.android.BioKey.ui.brand.HeaderMatrixDotsExpressive
 import com.android.BioKey.ui.brand.KeyMark
+import com.android.BioKey.ui.theme.SEPARATOR
+import com.android.BioKey.ui.theme.scaledWithText
 import com.android.BioKey.ui.theme.springPress
 
 /**
@@ -206,11 +208,11 @@ private fun HeaderTile(
     ) {
         Box(
             modifier = Modifier
-                .size(64.dp)
+                .size(64.dp.scaledWithText())
                 .background(container, CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(32.dp))
+            Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(32.dp.scaledWithText()))
         }
         Spacer(Modifier.height(8.dp))
         Text(
@@ -279,7 +281,7 @@ internal fun protectionLook(
         else -> ProtectionLook(
             colors.primaryContainer, colors.onPrimaryContainer, Icons.Default.VerifiedUser, stringResource(R.string.home_protected),
             stringResource(R.string.home_protected),
-            apps + " · " + stringResource(defaultTimeout.relockPhraseRes).lowercase() +
+            apps + SEPARATOR + stringResource(defaultTimeout.relockPhraseRes).lowercase() +
                 (if (mode == ProtectionEngine.Mode.COMPATIBILITY) "\n" + stringResource(R.string.home_protected_compat) else "") +
                 (if (unwatchedCount == 0) "" else "\n" + pluralStringResource(R.plurals.home_unwatched, unwatchedCount, unwatchedCount)),
             null

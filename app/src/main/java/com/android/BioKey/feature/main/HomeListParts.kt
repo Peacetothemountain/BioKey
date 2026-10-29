@@ -43,6 +43,8 @@ import com.android.BioKey.R
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.SecurityProfile
 import com.android.BioKey.ui.theme.GroupInset
+import com.android.BioKey.ui.theme.SEPARATOR
+import com.android.BioKey.ui.theme.scaledWithText
 
 /** [description]: what screen readers say in place of a short [label] ("Finance profile, 2 apps" for "Finance · 2"). */
 @Composable
@@ -51,7 +53,7 @@ internal fun FilterChoice(label: String, icon: ImageVector, selected: Boolean, d
         selected = selected,
         onClick = onClick,
         label = { Text(label) },
-        leadingIcon = { Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
+        leadingIcon = { Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp.scaledWithText())) },
         shape = CircleShape,
         colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer),
         modifier = if (description != null) Modifier.semantics { contentDescription = description } else Modifier
@@ -84,7 +86,7 @@ internal fun ProfileCard(
                 Column(Modifier.weight(1f)) {
                     Text(profile.name, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
-                        text = pluralStringResource(R.plurals.home_app_count, appCount, appCount) + " · " +
+                        text = pluralStringResource(R.plurals.home_app_count, appCount, appCount) + SEPARATOR +
                             if (profile.enabled) stringResource((profile.timeoutMode ?: defaultTimeout).relockPhraseRes).lowercase() else stringResource(R.string.home_off),
                         style = MaterialTheme.typography.bodyMedium
                     )
