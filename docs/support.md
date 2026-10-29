@@ -12,7 +12,8 @@ service or compatibility mode (BioKey's main screen says "Compatibility mode" wh
 that).
 
 If BioKey locked something it shouldn't have, or didn't lock something it should, the diagnostic
-log helps: in BioKey's settings, open **View diagnostic log** and tap **Share**. It lists the apps
+log helps: in BioKey's settings, open **View diagnostic log**, tap **Share** and confirm with your
+face or fingerprint (your screen lock if it can't be used). It lists the apps
 you've locked by package name, and nothing about apps you haven't. Read it before you send it.
 
 Bugs and feature requests can also go to

@@ -88,6 +88,7 @@ object ProtectionGaps {
         SHIELD_OFF(R.string.change_shield_off),
         BIOMETRIC_ONLY_OFF(R.string.change_biometric_only_off),
         REMINDERS_STOPPED(R.string.change_reminders_stopped),
+        LOG_SHARED(R.string.change_log_shared),
         /** Not a change from a session: the sensor couldn't be used, so the screen lock was allowed. */
         BIOMETRIC_UNAVAILABLE(R.string.change_biometric_unavailable, fromScreenLock = false);
 

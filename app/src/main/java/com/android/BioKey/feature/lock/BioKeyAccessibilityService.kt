@@ -516,7 +516,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun handleEvent(event: AccessibilityEvent) {
         // Switched on in Android's settings before BioKey's setup (and the explanation it shows
         // first): nothing it sees is looked at until then.
-        if (!SecurityVault.getInstance(this).isSetupCompleted()) return
+        if (!vault.isSetupCompleted()) return
         try {
             val type = event.eventType
             val eventPkg = event.packageName?.toString()
@@ -1450,6 +1450,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun reevaluateForeground() {
         // Also posted with a delay: the service may have stopped meanwhile.
         if (!isRunning || !::vault.isInitialized) return
+        // Before setup (and the explanation it shows first), nothing on screen is looked at.
+        if (!vault.isSetupCompleted()) return
         try {
             // The window in front, from the window list: its app is known from its events, and only
             // a window never seen is asked (an IPC into the app, which waits for its UI thread),

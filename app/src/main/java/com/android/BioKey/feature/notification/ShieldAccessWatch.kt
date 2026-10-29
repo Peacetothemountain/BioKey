@@ -51,7 +51,10 @@ object ShieldAccessWatch {
             val ended = runCatching { check(app) }
                 .onFailure { DiagnosticLog.log("Notification access check failed: ${it.javaClass.simpleName}") }
                 .getOrNull()
-            ended ?: endedBySwitchOff.also { endedBySwitchOff = null }
+            // Taken either way: left behind, a later switch-off's Undo could reopen it.
+            val stashed = endedBySwitchOff
+            endedBySwitchOff = null
+            ended ?: stashed
         }
     }
 
@@ -97,10 +100,10 @@ object ShieldAccessWatch {
         }
     }
 
-    /** Looks at the shield and its access, records what changed; returns the record it ended by hiding being off, if any. */
-    /** The record the last switch-off ended, until its Undo (or a switch-on) takes it. On [worker] only. */
+    /** The record the last switch-off ended, until its Undo (or a switch-on) takes it. Under [check]'s lock. */
     private var endedBySwitchOff: Long? = null
 
+    /** Looks at the shield and its access, records what changed; returns the record it ended by hiding being off, if any. */
     @Synchronized
     fun check(context: Context): Long? {
         val app = context.applicationContext

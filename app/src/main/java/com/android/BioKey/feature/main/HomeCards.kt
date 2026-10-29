@@ -463,7 +463,7 @@ internal fun SecurityActivityDialog(
                 // At most one note before the records: why they stay new.
                 val heading = when {
                     // The hold explains everything at once: why they stay new, why nothing clears.
-                    heldUntil != null -> stringResource(R.string.activity_held_until, attemptTime(context, heldUntil))
+                    heldUntil != null -> stringResource(R.string.activity_held_until)
                     openedWithScreenLock -> stringResource(R.string.card_activity_screen_lock_note)
                     else -> null
                 }

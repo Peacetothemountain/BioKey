@@ -17,7 +17,14 @@ import kotlinx.coroutines.withContext
  * where none is set up): for what removes protection or its record. If it doesn't go through,
  * BioKey says why (unless the owner just cancelled).
  */
-internal fun confirmOwner(activity: Activity?, title: String, silencesRecords: Boolean = false, action: () -> Unit) {
+internal fun confirmOwner(
+    activity: Activity?,
+    title: String,
+    silencesRecords: Boolean = false,
+    /** Nothing it does can't be undone or hides anything: the screen lock does when the sensor can't be used. */
+    screenLockIfSensorUnusable: Boolean = false,
+    action: () -> Unit
+) {
     if (activity == null) return
     // Within a day of a face or fingerprint added or removed, the new one may be whoever made the
     // change: nothing that erases or silences BioKey's records, whoever asks.
@@ -31,21 +38,21 @@ internal fun confirmOwner(activity: Activity?, title: String, silencesRecords: B
     SecurityEngine.INSTANCE.confirmWithBiometric(
         activity,
         title,
+        screenLockIfSensorUnusable = screenLockIfSensorUnusable,
         onRefused = { reason -> BioKeyMessages.show(reason, Icons.Default.ErrorOutline) },
         onConfirmed = {
-            if (!silencesRecords) {
-                action()
-            } else {
-                // A face or fingerprint change made while the prompt was up refuses it too: looked
-                // for now (not left to the background look), off the main thread, then decided.
-                val app = activity.applicationContext
-                appScope.launch {
-                    val until = withContext(Dispatchers.Default) {
-                        BiometricEnrollment.checkNow(app)
-                        UnlockAttempts.heldUntil(app)
-                    }
-                    if (until != null) BioKeyMessages.show(app.getString(R.string.held_refused, attemptTime(app, until)), Icons.Default.ErrorOutline)
-                    else if (!activity.isDestroyed) action()
+            // A face or fingerprint change made while the prompt was up is looked for now (not left
+            // to the background look), off the main thread, so the action sees it.
+            val app = activity.applicationContext
+            appScope.launch {
+                val until = withContext(Dispatchers.Default) {
+                    BiometricEnrollment.checkNow(app)
+                    if (silencesRecords) UnlockAttempts.heldUntil(app) else null
+                }
+                when {
+                    until != null -> BioKeyMessages.show(app.getString(R.string.held_refused, attemptTime(app, until)), Icons.Default.ErrorOutline)
+                    activity.isDestroyed -> BioKeyMessages.show(app.getString(R.string.confirm_try_again), Icons.Default.ErrorOutline)
+                    else -> action()
                 }
             }
         }

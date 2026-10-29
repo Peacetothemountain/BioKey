@@ -122,17 +122,17 @@ class ShieldAccessWatchTest {
             now += 60_000L
             vault.setNotificationShield(false)
             ShieldAccessWatch.switchOffSoon(context).get()
-            // On again without access (no record: it never had it this time), off again, Undo.
+            // On again without access (no record: it never had it this time), with no look before
+            // it's off again (as from Settings), then Undo: the earlier record stays ended.
             vault.setNotificationShield(true)
-            ShieldAccessWatch.check(context)
             now += 60_000L
             vault.setNotificationShield(false)
             val ended = ShieldAccessWatch.switchOffSoon(context)
-            vault.setNotificationShield(true)
             ShieldAccessWatch.undoSwitchOffSoon(context, ended)
             ShieldAccessWatch.awaitForTests()
             val record = ProtectionGaps.gaps.value.single { it.kind == ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED }
             assertTrue(record.to > record.from)
+            assertTrue(vault.isNotificationShieldEnabled())
         } finally {
             ProtectionGaps.clock = com.android.BioKey.core.security.TrustedClock::now
         }

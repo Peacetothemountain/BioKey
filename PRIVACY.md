@@ -212,7 +212,9 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   delete it in BioKey's settings; deleting it or turning it off asks for your face or fingerprint
   (your screen lock where none is set up).
 
-  The log leaves your phone only if you tap **Share** in BioKey's settings, which opens Android's
+  The log leaves your phone only if you tap **Share** in BioKey's settings and confirm with your
+  face or fingerprint (your screen lock if they can't be used; shared from a session opened with
+  the screen lock, it's recorded), which opens Android's
   share sheet so you choose where it goes (an email to support, for example). A shared log also
   includes BioKey's version, your Android version, your phone's maker and model, and which way
   BioKey is working (accessibility or compatibility mode).
@@ -233,7 +235,7 @@ settings, Restore from a backup). This happens only when you ask for it.
   settings (default re-lock delay, notification shield, face or fingerprint only, auto-sort and
   the apps you've told it to leave alone, failed unlock alerts and their screen lock option,
   new-app offers, and
-  self-protection in builds that have it). Nothing else: no diagnostic log, no failed unlocks or
+  the self-protection setting, which is always off in the Play version). Nothing else: no diagnostic log, no failed unlocks or
   times protection was off, no notifications, no authentication data. Restoring a backup never
   deletes the failed unlocks kept on the phone, and always asks for your face or fingerprint first
   (your screen lock where none is set up). Within a day of a face or fingerprint added or removed, it can't be done

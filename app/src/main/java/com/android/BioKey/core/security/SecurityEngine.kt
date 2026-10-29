@@ -152,12 +152,19 @@ class SecurityEngine private constructor() {
      * never nothing. Misses here count as failed unlocks of BioKey; [onRefused] says why it didn't
      * go through, unless the owner just cancelled.
      */
-    fun confirmWithBiometric(activity: Activity, title: String, onRefused: (String) -> Unit = {}, onConfirmed: () -> Unit) {
+    fun confirmWithBiometric(
+        activity: Activity,
+        title: String,
+        onRefused: (String) -> Unit = {},
+        /** For what erases or hides nothing (sharing the log): the screen lock when the sensor can't be used. */
+        screenLockIfSensorUnusable: Boolean = false,
+        onConfirmed: () -> Unit
+    ) {
         val app = activity.applicationContext
         val strong = hasStrongBiometric(activity)
         // Set up but unusable right now (a fault, an update pending): not the screen lock instead.
         // Nothing here needs doing this minute, and the PIN mustn't be enough to erase records.
-        if (!strong && hasEnrolledStrongBiometric(activity)) {
+        if (!strong && hasEnrolledStrongBiometric(activity) && !screenLockIfSensorUnusable) {
             onRefused(activity.getString(R.string.prompt_biometric_unavailable))
             return
         }

@@ -86,6 +86,7 @@ import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.ProtectionEngine
+import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.VaultBackup
@@ -485,7 +486,10 @@ internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
                         actions = {
                             IconButton(onClick = {
                                 // It names locked apps and their unlocks: the owner's to send, not only the screen lock's.
-                                confirmOwner(logActivity, res.getString(R.string.diagnostics_share_prompt)) { share(context) }
+                                confirmOwner(logActivity, res.getString(R.string.diagnostics_share_prompt), screenLockIfSensorUnusable = true) {
+                                    ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.LOG_SHARED)
+                                    share(context)
+                                }
                             }, enabled = entries.isNotEmpty()) {
                                 Icon(Icons.Default.Share, contentDescription = stringResource(R.string.diagnostics_share))
                             }

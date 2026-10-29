@@ -190,6 +190,8 @@ class MainActivity : ComponentActivity() {
         if (setupNeedsScreenLock && getSystemService(android.app.KeyguardManager::class.java)?.isDeviceSecure == true) {
             setupNeedsScreenLock = false
             setupAuthError = null
+            // It failed at the last step for want of one: that step now, without another tap.
+            completeSetup()
         }
 
         if (!vault.isSetupCompleted()) return

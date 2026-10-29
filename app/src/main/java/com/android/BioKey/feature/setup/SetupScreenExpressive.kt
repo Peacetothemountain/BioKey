@@ -39,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -114,8 +115,8 @@ fun SetupScreenExpressive(
     val ready = a11yActive || (compatibilityMode && usageAccess && overlay)
 
     // Advance by itself once BioKey can see apps; don't loop if the user cancels the prompt.
-    // Back from setting a screen lock: the automatic confirm may run again.
-    LaunchedEffect(needsScreenLock) { if (!needsScreenLock) hasAutoPrompted = false }
+    // Read when the screen resumes, not as it was when this effect was first composed.
+    val currentAuthError by rememberUpdatedState(authError)
     LifecycleResumeEffect(Unit) {
         a11yActive = BioKeyAccessibilityService.isServiceEnabled(context)
         compatibilityMode = !a11yActive && AdvancedProtection.blocksBioKey(context)
@@ -123,7 +124,7 @@ fun SetupScreenExpressive(
         overlay = ProtectionEngine.canDrawOverlays(context)
         restrictedSettingsBlocked = !a11yActive && !compatibilityMode && RestrictedSettingsHelper.isRestrictedSettingsEnforced(context)
         val nowReady = a11yActive || (compatibilityMode && usageAccess && overlay)
-        if (nowReady && !hasAutoPrompted && authError == null) {
+        if (nowReady && !hasAutoPrompted && currentAuthError == null) {
             hasAutoPrompted = true
             finish()
         } else if (!nowReady) {
