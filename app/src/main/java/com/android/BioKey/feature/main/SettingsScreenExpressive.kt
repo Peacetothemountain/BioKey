@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.GppBad
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
@@ -68,6 +69,7 @@ import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.SelfProtectionDetector
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
@@ -123,6 +125,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     val selfProtectionEnabled by vault.accessibilitySelfProtectionFlow.collectAsStateWithLifecycle()
     val notificationShieldEnabled by vault.notificationShieldFlow.collectAsStateWithLifecycle()
     val autoSortProfiles by vault.autoSortProfilesFlow.collectAsStateWithLifecycle()
+    val attemptAlerts by remember { UnlockAttempts.load(context); UnlockAttempts.enabled }.collectAsStateWithLifecycle()
 
     var notifListenerActive by remember { mutableStateOf(BioKeyNotificationShieldService.isNotificationAccessGranted(context)) }
     /** An accessibility shortcut switches BioKey's service off without passing any screen self-protection guards. */
@@ -243,6 +246,14 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                     notifications.request()
                 }
             }
+        ),
+        SettingItem(
+            icon = Icons.Default.GppBad,
+            title = "Failed unlock alerts",
+            subtitle = "Tells you when a face or fingerprint that didn't match was tried on a locked app, " +
+                "and it wasn't you retrying",
+            checked = attemptAlerts,
+            onChange = { on -> UnlockAttempts.setEnabled(context, on) }
         ),
         // Not in the Play build (see SecurityVault.selfProtectionAvailable).
         if (SecurityVault.selfProtectionAvailable) SettingItem(

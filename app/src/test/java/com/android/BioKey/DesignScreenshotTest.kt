@@ -9,7 +9,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.AppCategory
+import com.android.BioKey.core.data.LockTimeoutMode
+import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.feature.lock.BioKeyLockScreen
 import com.android.BioKey.feature.main.AppIconCache
 import com.android.BioKey.feature.main.AppItem
@@ -74,6 +77,8 @@ class DesignScreenshotTest {
         vault.moveAppToProfile("com.example.chase", "profile_finance")
         vault.moveAppToProfile("com.example.venmo", "profile_finance")
         vault.moveAppToProfile("com.example.signal", "profile_social")
+        LockStateTracker.lockAll()
+        UnlockAttempts.clear(context)
     }
 
     private fun icon(label: String, color: Int, size: Int): Bitmap {
@@ -134,6 +139,21 @@ class DesignScreenshotTest {
             }
         }
     }
+    /**
+     * Home while things are happening: Chase unlocked a moment ago and left (re-locks after 5
+     * minutes), and someone's three tries on Venmo that didn't match.
+     */
+    @Test fun mainActive() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val vault = SecurityVault.getInstance(context)
+        vault.setTimeoutMode(LockTimeoutMode.GRACE_5_MINUTES)
+        LockStateTracker.onAppUnlocked("com.example.chase")
+        LockStateTracker.onAppVisible("com.example.chase")
+        LockStateTracker.onAppLeft("com.example.chase", LockTimeoutMode.GRACE_5_MINUTES, hopTarget = null)
+        UnlockAttempts.record(context, "com.example.venmo", failures = 3, lockedOut = false)
+        shoot("main_active") { MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
+    }
+
     @Test fun ownLock() = shoot("lock") {
         BioKeyLockScreen(onUnlockClicked = {}, onCancelClicked = {})
     }

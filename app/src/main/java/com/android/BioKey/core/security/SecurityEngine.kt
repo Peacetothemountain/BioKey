@@ -40,7 +40,10 @@ class SecurityEngine private constructor() {
         fun isUserCancel(code: Int) = code == ERROR_USER_CANCELED || code == ERROR_CANCELED
     }
 
-    private class Attempt(val packageName: String, val host: WeakReference<Activity>, val cancel: CancellationSignal)
+    private class Attempt(val packageName: String, val host: WeakReference<Activity>, val cancel: CancellationSignal) {
+        /** Faces or fingerprints that didn't match ([UnlockAttempts]). Only on the main thread. */
+        var failures = 0
+    }
 
     @Volatile private var active: Attempt? = null
         set(value) {
@@ -96,16 +99,27 @@ class SecurityEngine private constructor() {
 
         val attempt = Attempt(packageName, WeakReference(activity), CancellationSignal())
         active = attempt
+        val app = activity.applicationContext
         val name = appName.ifBlank { activity.getString(R.string.brand_name) }
 
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 if (active !== attempt) return
                 active = null
+                UnlockAttempts.onUnlocked(app, packageName)
                 onSuccess()
             }
 
+            override fun onAuthenticationFailed() {
+                attempt.failures++
+            }
+
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                // Counted even for a prompt already superseded: one that went because its screen
+                // went (the person gave up and pressed Home) is the case that matters.
+                val lockedOut = errorCode == BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT || errorCode == ERROR_LOCKOUT_PERMANENT
+                UnlockAttempts.record(app, packageName, attempt.failures, lockedOut)
+                attempt.failures = 0
                 if (active !== attempt) {
                     Log.d(TAG, "Ignoring error $errorCode from a superseded prompt")
                     return

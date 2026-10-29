@@ -99,7 +99,20 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
+
+        <!-- The launcher shortcut "Lock all now": ends every session and goes, showing nothing.
+             Not exported: the launcher starts a shortcut as BioKey itself, and no other app can. -->
+        <activity
+            android:name=".feature.main.LockAllActivity"
+            android:exported="false"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay" />
 
         <!-- The Quick Settings tile's way to the pause sheet. Not exported: no other app can open it. -->
         <activity-alias

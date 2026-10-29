@@ -9,4 +9,6 @@
     <string name="brand_name">BioKey</string>
     <string name="tile_label">@string/brand_name</string>
     <string name="notification_shield_label">Bio Key notification shield</string>
+    <string name="shortcut_lock_all_short">Lock all now</string>
+    <string name="shortcut_lock_all_long">Lock all apps now</string>
 </resources>

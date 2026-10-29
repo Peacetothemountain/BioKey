@@ -337,6 +337,23 @@ object LockStateTracker {
     }
 
     /**
+     * The locked apps open right now: a session that [isAppUnlocked] still honours (looking ends
+     * any that ran out). Both of Google Password Manager's names count as one app's.
+     */
+    fun unlockedApps(timeoutModeOf: (String) -> LockTimeoutMode): Set<String> =
+        sessions.keys.filterTo(HashSet()) { isAppUnlocked(it, timeoutModeOf(it)) }
+
+    /**
+     * How long [packageName], unlocked and off screen, has left before it locks again; null while
+     * it's on screen, when it waits for the screen to turn off, or when it isn't unlocked.
+     */
+    fun awayRemainingMs(packageName: String, timeoutMode: LockTimeoutMode): Long? {
+        if (!isAppUnlocked(packageName, timeoutMode) || timeoutMode == LockTimeoutMode.ON_SCREEN_OFF) return null
+        val away = sessionOf(packageName)?.away?.get() ?: return null
+        return (awayAllowanceMs(timeoutMode, away.hopTarget != null) - (now() - away.since)).coerceAtLeast(0L)
+    }
+
+    /**
      * Ends [session], found over: [packageName]'s session as it was when looked at. One started
      * since, by an unlock on another thread (while an expiry timer was checking the last one,
      * say), is left alone. Returns whether [session] ended here.
