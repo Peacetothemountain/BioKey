@@ -29,7 +29,7 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
   when, from and to, and you're told at your next unlock. Android stopping BioKey on its own
   doesn't count. While it's off, the alert comes back at every unlock.
 - Clearing security activity, switching failed unlock alerts or the diagnostic log off, deleting
-  the log, or restoring a backup that would, needs your face or fingerprint: someone who only knows
+  the log, or restoring any backup, needs your face or fingerprint: someone who only knows
   your PIN can't erase the record. Changing the phone's date can't hide or delete it either.
 - Security activity also records a face or fingerprint added or removed on the phone (not
   clearable), and anything that weakens protection done from BioKey opened with the screen lock

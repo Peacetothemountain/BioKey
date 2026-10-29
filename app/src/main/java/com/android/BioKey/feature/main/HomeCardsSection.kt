@@ -116,8 +116,11 @@ internal fun LazyListScope.homeCards(
         }
     }
 
-    // The shield is on but its access was taken away: notifications show in full. Calm: the
-    // owner may have meant it, and the record (if any) is the activity card's.
+    // The shield is on but its access was taken away: notifications show in full right now, so
+    // it's the page's urgent card unless protection or security activity already is. Switching
+    // the shield off stays offered beside it: the owner may have meant it.
+    val shieldUrgent = home.shieldWithoutAccess && vault.isSetupCompleted() &&
+        look.action == null && !securityActivityUrgent(attempts, gaps, seenUpTo)
     if (home.shieldWithoutAccess && vault.isSetupCompleted()) {
         item(key = "shield_no_access") {
             val context = LocalContext.current
@@ -125,6 +128,7 @@ internal fun LazyListScope.homeCards(
                 icon = Icons.Default.NotificationsOff,
                 title = stringResource(R.string.home_shield_no_access_title),
                 subtitle = stringResource(R.string.home_shield_no_access_text),
+                urgent = shieldUrgent,
                 modifier = Modifier.animateItem()
             ) {
                 // Revoked on purpose: switching the shield off ends it (and is recorded like any switch-off).
@@ -132,16 +136,19 @@ internal fun LazyListScope.homeCards(
                     // As the switch in Settings does: recorded from a screen-lock session, with Undo.
                     homeViewModel.switchShieldOff(vault)
                 }) { Text(stringResource(R.string.home_shield_no_access_off)) }
-                FilledTonalButton(onClick = {
-                    // The explanation first, as everywhere notification access is asked for.
+                // The explanation first, as everywhere notification access is asked for.
+                val allow: () -> Unit = {
                     disclosures.request(Disclosure.NOTIFICATIONS) { IntentNavigationHelper.openNotificationListenerSettings(context) }
-                }) { Text(stringResource(R.string.home_shield_no_access_action)) }
+                }
+                if (shieldUrgent) UrgentButton(stringResource(R.string.home_shield_no_access_action), onClick = allow)
+                else FilledTonalButton(onClick = allow) { Text(stringResource(R.string.home_shield_no_access_action)) }
             }
         }
     }
 
     // One of BioKey's alert channels silenced in Android's settings (all of its notifications
     // off is the row above): say so. Only one card on the page is urgent at a time.
+    val alertsUrgent = look.action == null && !securityActivityUrgent(attempts, gaps, seenUpTo) && !shieldUrgent
     if (home.alertsMuted && notifications.allowed) {
         item(key = "alerts_muted") {
             val context = LocalContext.current
@@ -149,11 +156,11 @@ internal fun LazyListScope.homeCards(
                 icon = Icons.Default.NotificationsOff,
                 title = stringResource(R.string.home_alerts_muted_title),
                 subtitle = stringResource(R.string.home_alerts_muted_text),
-                urgent = look.action == null && !securityActivityUrgent(attempts, gaps, seenUpTo),
+                urgent = alertsUrgent,
                 modifier = Modifier.animateItem()
             ) {
                 val open: () -> Unit = { IntentNavigationHelper.openChannelSettings(context, UnlockAttempts.mutedChannel(context)) }
-                if (look.action == null && !securityActivityUrgent(attempts, gaps, seenUpTo)) UrgentButton(stringResource(R.string.common_turn_on), onClick = open)
+                if (alertsUrgent) UrgentButton(stringResource(R.string.common_turn_on), onClick = open)
                 else FilledTonalButton(onClick = open) { Text(stringResource(R.string.common_turn_on)) }
             }
         }

@@ -93,10 +93,21 @@ class MainActivity : ComponentActivity() {
     /** Setup's final check failed for want of a screen lock: setup offers to open its settings. */
     private var setupNeedsScreenLock by mutableStateOf(false)
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(STATE_SETUP_NEEDS_SCREEN_LOCK, setupNeedsScreenLock)
+        setupAuthError?.let { outState.putString(STATE_SETUP_AUTH_ERROR, it) }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         WindowProtection.applyWindowProtections(this)
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        // Setup waiting for a screen lock, through a recreation (a font or language change, say).
+        savedInstanceState?.let {
+            setupNeedsScreenLock = it.getBoolean(STATE_SETUP_NEEDS_SCREEN_LOCK, false)
+            setupAuthError = it.getString(STATE_SETUP_AUTH_ERROR)
+        }
         if (savedInstanceState == null) {
             pauseRequested = isPauseRequest(intent)
             searchRequest = intent?.getStringExtra(EXTRA_SEARCH)?.take(80)
@@ -188,12 +199,15 @@ class MainActivity : ComponentActivity() {
 
         // Back from setting a screen lock during setup: that step's done, and setup can finish.
         if (setupNeedsScreenLock && getSystemService(android.app.KeyguardManager::class.java)?.isDeviceSecure == true) {
-            setupNeedsScreenLock = false
-            setupAuthError = null
-            // It failed at the last step for want of one: that step now, without another tap,
-            // once resumed (as the other prompts are shown).
+            // It failed at the last step for want of one: that step now, without another tap, once
+            // resumed (as the other prompts are shown). The state is cleared only then, so a post
+            // that finds BioKey gone from the front leaves it for the next resume.
             window.decorView.post {
-                if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) && !vault.isSetupCompleted()) completeSetup()
+                if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) && !vault.isSetupCompleted()) {
+                    setupNeedsScreenLock = false
+                    setupAuthError = null
+                    completeSetup()
+                }
             }
         }
 
@@ -393,3 +407,6 @@ internal fun PauseProtectionDialog(onPause: (Long?) -> Unit, onDismiss: () -> Un
         }
     }
 }
+
+private const val STATE_SETUP_NEEDS_SCREEN_LOCK = "setup_needs_screen_lock"
+private const val STATE_SETUP_AUTH_ERROR = "setup_auth_error"

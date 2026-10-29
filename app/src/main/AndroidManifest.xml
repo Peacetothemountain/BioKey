@@ -132,7 +132,7 @@
 
         <activity
             android:name=".feature.main.MainActivity"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|uiMode|density|keyboard|keyboardHidden|navigation"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|uiMode|density|keyboard|keyboardHidden|navigation|touchscreen|colorMode|mcc|mnc"
             android:exported="true"
             android:launchMode="singleTask"
             android:theme="@style/Theme.BioKey"

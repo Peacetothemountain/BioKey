@@ -28,7 +28,8 @@ It applies to BioKey 1.0 and later, as published on Google Play
   fingerprints added or removed, notification access switched off while Hide notification content
   was on, a face or fingerprint that couldn't be used under "Face or fingerprint only", changes
   made from BioKey opened with the screen lock or within a day of a face or fingerprint change,
-  reminders stopped meanwhile, and, if you turn them on, failed unlock alerts) stays in its private storage, unless you choose to save a
+  reminders stopped meanwhile, the diagnostic log opened for sharing from such a session, and, if
+  you turn them on, failed unlock alerts) stays in its private storage, unless you choose to save a
   backup file or share the log yourself.
 
 ## What BioKey can see, and why
@@ -186,9 +187,9 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   paused; an app's lock switched off; a locked app moved or added into a profile that's off or
   that re-locks later, or taken out of its profile so it's locked less; a profile switched off or
   deleted; a longer re-lock delay, for a
-  profile or the default; "Hide notification content" switched off; the diagnostic log opened
-  for sharing; and, within a day of a face
-  or fingerprint change, "Face or fingerprint only" switched off. These name the app or profile.
+  profile or the default; "Hide notification content" switched off; and, within a day of a face
+  or fingerprint change, "Face or fingerprint only" switched off. Those that concern an app or profile name it. Opening the diagnostic log
+  for sharing from such a session is recorded too, though it changes nothing.
   (Restoring a backup, stopping the reminders, and switching off face or fingerprint only, the
   alerts or the diagnostic log can't be done with the screen lock at all on such a phone: they ask
   for a face or fingerprint; and within that day, clearing records, switching off the alerts,

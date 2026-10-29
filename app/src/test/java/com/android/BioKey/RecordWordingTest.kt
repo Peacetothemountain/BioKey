@@ -3,10 +3,12 @@ package com.android.BioKey
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.security.ProtectionGaps
+import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.ProtectionGaps.Change
 import com.android.BioKey.core.security.ProtectionGaps.Gap
 import com.android.BioKey.core.security.ProtectionGaps.Kind
 import com.android.BioKey.feature.main.gapLine
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -29,6 +31,18 @@ class RecordWordingTest {
         val text = line(Kind.CHANGED_WITH_SCREEN_LOCK, Change.LOCK_OFF.encode("WhatsApp"))
         assertTrue(text, "WhatsApp's lock switched off" in text)
         assertTrue(text, "screen lock" in text)
+    }
+
+    @Test
+    fun theAlertSaysWhatTheRecordsAreWhenNoneChangesProtection() {
+        fun gap(change: Change) = Gap(at, at, Kind.CHANGED_WITH_SCREEN_LOCK, 1L, change.encode())
+        fun text(vararg gaps: Gap) = UnlockAttempts.notificationText(emptyList(), gaps.toList(), emptyList())
+        assertEquals(R.string.log_shared_notification_text, text(gap(Change.LOG_SHARED)))
+        assertEquals(R.string.biometric_unavailable_notification_text, text(gap(Change.BIOMETRIC_UNAVAILABLE)))
+        // Both together: neither alert's wording fits the other, and neither is a weakening.
+        assertEquals(R.string.activity_recorded_notification_text, text(gap(Change.LOG_SHARED), gap(Change.BIOMETRIC_UNAVAILABLE)))
+        // Anything that weakened protection among them: said as a change.
+        assertEquals(R.string.changes_notification_text, text(gap(Change.LOG_SHARED), gap(Change.PAUSED)))
     }
 
     @Test

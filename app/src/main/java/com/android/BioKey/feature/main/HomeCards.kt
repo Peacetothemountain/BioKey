@@ -470,7 +470,7 @@ internal fun SecurityActivityDialog(
                 if (heading != null) {
                     ActivityCallout(
                         heading,
-                        headline = heldUntil?.let { stringResource(R.string.activity_held_headline, attemptTime(context, it)) },
+                        headline = heldUntil?.let { stringResource(R.string.activity_held_headline_cause, attemptTime(context, it)) },
                         held = heldUntil != null,
                         modifier = Modifier.padding(bottom = 16.dp)
                     )

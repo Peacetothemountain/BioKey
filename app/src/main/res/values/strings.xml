@@ -41,12 +41,13 @@
 
     <!-- Failed unlock alerts and times app locking was off. Which app is never named in the notification. -->
     <string name="activity_channel_name">Security activity</string>
-    <string name="activity_channel_description">Failed unlocks of locked apps, times app locking was off, faces or fingerprints added or removed, notification access switched off under Hide notification content, times a face or fingerprint couldn\'t be used so the screen lock was allowed, and changes made from BioKey opened with the screen lock or within a day of a face or fingerprint change, reminders stopped within that day, the diagnostic log shared. Told the next time you unlock your phone.</string>
+    <string name="activity_channel_description">Failed unlocks, times app locking was off, face or fingerprint changes, and changes made without your face or fingerprint. Told the next time you unlock your phone.</string>
     <string name="activity_title">Security activity</string>
     <string name="gaps_title">App locking was off</string>
     <string name="biometrics_changed_notification_text">A face or fingerprint was added or removed on this phone. If it wasn\'t you, check them in Android\'s settings.</string>
     <string name="changes_notification_text">BioKey\'s protection was changed from BioKey opened with your screen lock. Open BioKey to see what.</string>
     <string name="log_shared_notification_text">BioKey\'s diagnostic log was shared from BioKey opened with your screen lock. Open BioKey to see when.</string>
+    <string name="activity_recorded_notification_text">Something was recorded in BioKey\'s security activity. Open BioKey to see what.</string>
     <string name="biometric_unavailable_notification_text">Your face or fingerprint couldn\'t be used, so your screen lock was allowed. Open BioKey to see when.</string>
     <string name="gaps_notification_text">Locked apps could be opened without a check for a while. Open BioKey to see when.</string>
     <plurals name="attempts_title">
@@ -396,9 +397,9 @@
     <string name="home_shield_no_access_action">Allow access</string>
     <string name="home_shield_no_access_off">Turn off</string>
     <string name="home_shield_turned_off">Hide notification content is off</string>
-    <string name="activity_held_until">Until then nothing proves it\'s you here: records can\'t be marked seen or cleared; failed-unlock alerts, screen lock unlock notes and the log can\'t be switched off; the log can\'t be deleted; and backups can\'t be restored. Other changes are recorded.</string>
-    <string name="activity_held_headline">Held until %1$s</string>
-    <string name="held_refused">Not until %1$s: a face or fingerprint was added or removed, and until then BioKey\'s records, alerts, log and backups stay as they are.</string>
+    <string name="activity_held_until">Until then nothing proves it\'s you here, so:\n• records can\'t be marked seen or cleared\n• failed-unlock alerts, “Also note screen lock unlocks” and the log can\'t be switched off, nor the log deleted\n• backups can\'t be restored\nOther changes are recorded.</string>
+    <string name="activity_held_headline_cause">Face or fingerprint changed · held until %1$s</string>
+    <string name="held_refused">Not until %1$s: a face or fingerprint was added or removed, so this can\'t be done yet.</string>
     <string name="change_biometric_only_off">Face or fingerprint only switched off</string>
     <string name="change_reminders_stopped">Reminders that app locking is off stopped</string>
     <string name="change_log_shared">Diagnostic log opened for sharing</string>

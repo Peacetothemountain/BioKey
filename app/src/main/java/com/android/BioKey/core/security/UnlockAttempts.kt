@@ -559,20 +559,7 @@ object UnlockAttempts {
             attempts.isEmpty() && offs.size == gaps.size -> res.getString(R.string.gaps_title)
             else -> res.getString(R.string.activity_title)
         }
-        val text = res.getString(
-            when {
-                attempts.any { it.unanswered } -> R.string.attempts_notification_text
-                attempts.isNotEmpty() -> R.string.attempts_screen_lock_notification_text
-                offs.isNotEmpty() -> R.string.gaps_notification_text
-                gaps.any { it.kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED || it.kind == ProtectionGaps.Kind.BIOMETRICS_REMOVED } ->
-                    R.string.biometrics_changed_notification_text
-                gaps.any { it.kind == ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED } -> R.string.shield_access_notification_text
-                // Only records that aren't a change of protection: said as what they are.
-                gaps.all { ProtectionGaps.Change.decode(it.detail)?.first == ProtectionGaps.Change.LOG_SHARED } -> R.string.log_shared_notification_text
-                gaps.all { ProtectionGaps.Change.decode(it.detail)?.first?.fromScreenLock == false } -> R.string.biometric_unavailable_notification_text
-                else -> R.string.changes_notification_text
-            }
-        )
+        val text = res.getString(notificationText(attempts, gaps, offs))
         val open = PendingIntent.getActivity(
             app,
             NOTIFICATION_ID,
@@ -602,6 +589,25 @@ object UnlockAttempts {
             // POST_NOTIFICATIONS revoked between the check and notify.
         }
     }
+
+    /** What the alert says: the most serious unreviewed record, or what they all are. */
+    @VisibleForTesting
+    internal fun notificationText(attempts: List<Attempt>, gaps: List<ProtectionGaps.Gap>, offs: List<ProtectionGaps.Gap>): Int =
+        when {
+            attempts.any { it.unanswered } -> R.string.attempts_notification_text
+            attempts.isNotEmpty() -> R.string.attempts_screen_lock_notification_text
+            offs.isNotEmpty() -> R.string.gaps_notification_text
+            gaps.any { it.kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED || it.kind == ProtectionGaps.Kind.BIOMETRICS_REMOVED } ->
+                R.string.biometrics_changed_notification_text
+            gaps.any { it.kind == ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED } -> R.string.shield_access_notification_text
+            // Only records that aren't a change of protection: said as what they are.
+            gaps.all { ProtectionGaps.Change.decode(it.detail)?.first == ProtectionGaps.Change.LOG_SHARED } -> R.string.log_shared_notification_text
+            gaps.all { ProtectionGaps.Change.decode(it.detail)?.first?.fromScreenLock == false } -> R.string.biometric_unavailable_notification_text
+            // A mix of those two: neither a change of protection.
+            gaps.all { ProtectionGaps.Change.decode(it.detail)?.first.let { c -> c == ProtectionGaps.Change.LOG_SHARED || c?.fromScreenLock == false } } ->
+                R.string.activity_recorded_notification_text
+            else -> R.string.changes_notification_text
+        }
 
     /** "3 tries didn't match", "locked out after 5 tries", "3 tries, then opened with your screen lock". */
     fun describe(context: Context, attempt: Attempt): String {

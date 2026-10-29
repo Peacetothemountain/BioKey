@@ -897,6 +897,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
      * four times, and nothing changes on screen in between, as the next event says.
      */
     private fun windowList(): List<AccessibilityWindowInfo>? {
+        // Before setup (and the explanation it shows first), no window is looked at, whatever asks.
+        if (!::vault.isInitialized || !vault.isSetupCompleted()) return null
         if (handlingEvent) eventWindows?.let { return it }
         val list: List<AccessibilityWindowInfo>? = try {
             val byDisplay = windowsOnAllDisplays
