@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import kotlin.math.abs
 
 /**
@@ -23,6 +24,8 @@ import kotlin.math.abs
  */
 internal class RecentsWatcher(
     private val service: AccessibilityService,
+    /** The active window's root, under the service's before-setup rule (never read directly). */
+    private val activeRoot: () -> AccessibilityNodeInfo?,
     private val onClosed: (appName: String) -> Unit,
     private val onClearAll: () -> Unit
 ) {
@@ -173,7 +176,7 @@ internal class RecentsWatcher(
     private fun scan() {
         val pkg = launcher ?: return
         scannedAt = SystemClock.elapsedRealtime()
-        val root = service.rootInActiveWindow
+        val root = activeRoot()
         if (root == null) {
             cardIds = null
             return

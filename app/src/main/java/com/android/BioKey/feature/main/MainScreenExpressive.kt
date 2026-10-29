@@ -739,6 +739,9 @@ fun MainScreenExpressive(
         onLockOne = ::lockOne,
         onLockAll = ::lockAllNow,
         onProtectionAction = ::onProtectionAction,
+        onAllowNotifications = {
+            disclosures.request(Disclosure.NOTIFICATIONS) { IntentNavigationHelper.openNotificationListenerSettings(context) }
+        },
         onPauseRequested = onPauseRequested,
         onFilterChange = { filter = it }
     )

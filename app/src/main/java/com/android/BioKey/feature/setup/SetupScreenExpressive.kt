@@ -5,7 +5,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,7 +18,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
@@ -27,7 +25,6 @@ import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.AppSettingsAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Fingerprint
-import androidx.compose.material.icons.filled.GppMaybe
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Password
@@ -35,7 +32,6 @@ import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -67,9 +63,9 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.android.BioKey.R
 import com.android.BioKey.core.security.AdvancedProtection
 import com.android.BioKey.core.security.ProtectionEngine
-import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
+import com.android.BioKey.feature.main.ActivityCallout
 import com.android.BioKey.feature.main.Disclosure
 import com.android.BioKey.feature.main.IntentNavigationHelper
 import com.android.BioKey.feature.main.attemptTime
@@ -78,6 +74,7 @@ import com.android.BioKey.feature.main.rememberNotificationPermission
 import com.android.BioKey.ui.brand.BioKeyLogo
 import com.android.BioKey.ui.brand.HeaderMatrixDotsExpressive
 import com.android.BioKey.ui.theme.Group
+import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.scaledWithText
 import com.android.BioKey.ui.theme.springPress
@@ -276,7 +273,13 @@ fun SetupScreenExpressive(
             )
             if (clearedAt != null) {
                 Spacer(Modifier.height(20.dp))
-                StorageClearedNote(clearedAt)
+                // Why BioKey is being set up again: Review's callout, lined up with the steps below.
+                ActivityCallout(
+                    stringResource(R.string.setup_storage_cleared, attemptTime(context, clearedAt)),
+                    headline = stringResource(R.string.storage_cleared_notification_title),
+                    held = true,
+                    modifier = Modifier.padding(horizontal = GroupInset)
+                )
             }
             Spacer(Modifier.height(28.dp))
             // The step to do now: the first one not done that the main button below does (the
@@ -403,26 +406,5 @@ private fun StepBadge(icon: ImageVector, state: StepState) {
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(size * 0.55f))
-    }
-}
-
-/** Why BioKey is being set up again: its storage was cleared, and with it every lock and record. */
-@Composable
-private fun StorageClearedNote(at: Long) {
-    val colors = MaterialTheme.colorScheme
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = colors.errorContainer,
-        contentColor = colors.onErrorContainer,
-        modifier = Modifier.padding(horizontal = 24.dp).fillMaxWidth().semantics(mergeDescendants = true) { }
-    ) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Icon(Icons.Default.GppMaybe, contentDescription = null, modifier = Modifier.padding(top = 1.dp).size(20.dp.scaledWithText()))
-            Spacer(Modifier.width(12.dp))
-            Text(
-                stringResource(R.string.setup_storage_cleared, attemptTime(LocalContext.current, at)),
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
     }
 }

@@ -24,7 +24,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -96,8 +95,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putBoolean(STATE_SETUP_NEEDS_SCREEN_LOCK, setupNeedsScreenLock)
-        setupAuthError?.let { outState.putString(STATE_SETUP_AUTH_ERROR, it) }
+        SetupWait(setupNeedsScreenLock, setupAuthError).saveTo(outState)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -105,9 +103,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         // Setup waiting for a screen lock, through a recreation (a font or language change, say).
-        savedInstanceState?.let {
-            setupNeedsScreenLock = it.getBoolean(STATE_SETUP_NEEDS_SCREEN_LOCK, false)
-            setupAuthError = it.getString(STATE_SETUP_AUTH_ERROR)
+        SetupWait.from(savedInstanceState).let {
+            setupNeedsScreenLock = it.needsScreenLock
+            setupAuthError = it.authError
         }
         if (savedInstanceState == null) {
             pauseRequested = isPauseRequest(intent)
@@ -143,7 +141,8 @@ class MainActivity : ComponentActivity() {
                         isAuthenticating = isSetupAuthenticating,
                         authError = setupAuthError,
                         needsScreenLock = setupNeedsScreenLock,
-                        clearedAt = remember { ProtectionGaps.clearedAt(this@MainActivity) },
+                        // Followed: the check runs as BioKey starts, maybe after setup first shows.
+                        clearedAt = ProtectionGaps.cleared.collectAsStateWithLifecycle().value,
                         onSetupComplete = ::completeSetup
                     )
                     !isAuthenticated -> BioKeyLockScreen(
@@ -412,5 +411,21 @@ internal fun PauseProtectionDialog(onPause: (Long?) -> Unit, onDismiss: () -> Un
     }
 }
 
-private const val STATE_SETUP_NEEDS_SCREEN_LOCK = "setup_needs_screen_lock"
-private const val STATE_SETUP_AUTH_ERROR = "setup_auth_error"
+/**
+ * What setup was waiting on, kept through a recreation (a font or language change, which
+ * configChanges doesn't cover): a screen lock to be set, and the last prompt's error.
+ */
+internal data class SetupWait(val needsScreenLock: Boolean = false, val authError: String? = null) {
+    fun saveTo(out: Bundle) {
+        out.putBoolean(KEY_NEEDS_SCREEN_LOCK, needsScreenLock)
+        authError?.let { out.putString(KEY_AUTH_ERROR, it) }
+    }
+
+    companion object {
+        private const val KEY_NEEDS_SCREEN_LOCK = "setup_needs_screen_lock"
+        private const val KEY_AUTH_ERROR = "setup_auth_error"
+
+        /** Nothing saved (a fresh start): waiting on nothing. */
+        fun from(saved: Bundle?) = SetupWait(saved?.getBoolean(KEY_NEEDS_SCREEN_LOCK, false) ?: false, saved?.getString(KEY_AUTH_ERROR))
+    }
+}

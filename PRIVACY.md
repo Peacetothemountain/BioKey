@@ -22,7 +22,7 @@ It applies to BioKey 1.0 and later, as published on Google Play
   settings, a short log of its own lock decisions, the times app locking was off, faces or
   fingerprints added or removed, notification access switched off while Hide notification content
   was on, a face or fingerprint that couldn't be used under "Face or fingerprint only", changes
-  made from BioKey opened with the screen lock or within a day of a face or fingerprint change,
+  made from BioKey opened with the screen lock or within a day of a face or fingerprint change or a reset,
   reminders stopped meanwhile, the diagnostic log opened for sharing from such a session, and, if
   you turn them on, failed unlock alerts) stays in its private storage, unless you choose to save a
   backup file or share the log yourself.
@@ -164,7 +164,7 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   fingerprint added or removed stays new for a day whatever Review says (if its age can't be told
   after a restart, until the phone has been on for a day), so whoever made the change can't use it
   to quiet the alert. Meanwhile nothing proves it's you in BioKey: changes are recorded (marked as
-  made within a day of a face or fingerprint change), nothing is counted as seen, and nothing that
+  made within a day of a face or fingerprint change, or of BioKey being reset), nothing is counted as seen, and nothing that
   clears or silences BioKey's records can be done: clearing them, turning the alerts, their screen
   lock option or the diagnostic log off, deleting the log, or restoring a backup. After the day,
   review them again (if Review is still open on BioKey's screen then, with a face or fingerprint
@@ -173,8 +173,8 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   Clearing them, or turning the alerts off, asks for your face or fingerprint where one is set up.
 - **Times app locking was off, and other changes:** when BioKey's protection was switched off or
   BioKey was force-stopped, and when it came back; when BioKey's storage was cleared (worked out
-  from Android's record of BioKey's past process exits, read on the phone), until it was set up
-  again; when a face or fingerprint was added or removed
+  from Android's record of BioKey's past process exits, read on the phone: after BioKey last ran),
+  until it was set up again, which, like a face or fingerprint change, holds records for a day; when a face or fingerprint was added or removed
   on the phone; when a face or fingerprint couldn't be used while "Face or fingerprint only" was on,
   so the screen lock was allowed; when notification access was switched off while "Hide
   notification content" was on, and when it came back or hiding was switched off (whether BioKey

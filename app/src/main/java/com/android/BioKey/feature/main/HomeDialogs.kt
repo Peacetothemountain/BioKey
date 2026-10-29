@@ -4,6 +4,7 @@ import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,7 +19,9 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -133,6 +136,8 @@ internal fun HomeDialogs(
     onLockOne: (AppItem) -> Unit,
     onLockAll: (includeOwnApp: Boolean) -> Unit,
     onProtectionAction: () -> Unit,
+    /** Notification access, explained first: for "Hide notification content" without it. */
+    onAllowNotifications: () -> Unit,
     onPauseRequested: () -> Unit,
     onFilterChange: (String) -> Unit
 ) {
@@ -147,6 +152,10 @@ internal fun HomeDialogs(
             onAction = {
                 overlays.showProtectionSheet = false
                 onProtectionAction()
+            },
+            onFix = {
+                overlays.showProtectionSheet = false
+                onAllowNotifications()
             },
             onPause = {
                 overlays.showProtectionSheet = false
@@ -236,6 +245,7 @@ internal fun HomeDialogs(
             gaps = gaps,
             labelOf = attemptLabel,
             heldUntil = review.heldUntil,
+            heldByReset = review.heldByReset,
             openedWithScreenLock = !review.ownerProven && review.heldUntil == null,
             onMarkReviewed = if (!review.ownerProven && review.heldUntil == null) {
                 {
@@ -379,6 +389,7 @@ internal fun HomeDialogs(
 private fun ProtectionSheet(
     look: ProtectionLook,
     onAction: () -> Unit,
+    onFix: () -> Unit,
     onPause: () -> Unit,
     onLockAll: () -> Unit,
     onDismiss: () -> Unit
@@ -419,13 +430,24 @@ private fun ProtectionSheet(
             if (look.action != null) {
                 Button(onClick = onAction, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text(look.action) }
             } else {
+                // Something to put right first (notifications showing in full): its button leads.
+                if (look.fix != null) {
+                    Button(
+                        onClick = onFix,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError)
+                    ) { Text(look.fix) }
+                    Spacer(Modifier.height(8.dp))
+                }
                 // Before handing the phone over, say: every locked app asks again, without waiting
                 // for the screen to turn off.
-                Button(onClick = onLockAll, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+                val lockAllContent: @Composable RowScope.() -> Unit = {
                     Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text(stringResource(R.string.shortcut_lock_all_long))
                 }
+                if (look.fix != null) FilledTonalButton(onClick = onLockAll, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), content = lockAllContent)
+                else Button(onClick = onLockAll, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), content = lockAllContent)
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = onPause, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                     Icon(Icons.Default.PauseCircle, contentDescription = null, modifier = Modifier.size(18.dp))

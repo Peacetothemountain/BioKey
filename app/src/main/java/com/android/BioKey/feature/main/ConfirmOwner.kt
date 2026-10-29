@@ -1,10 +1,12 @@
 package com.android.BioKey.feature.main
 
 import android.app.Activity
+import android.content.Context
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ErrorOutline
 import com.android.BioKey.R
 import com.android.BioKey.core.security.BiometricEnrollment
+import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.ui.theme.BioKeyMessages
@@ -31,7 +33,7 @@ internal fun confirmOwner(
     if (silencesRecords) {
         val until = UnlockAttempts.heldUntil(activity)
         if (until != null) {
-            BioKeyMessages.show(activity.getString(R.string.held_refused, attemptTime(activity, until)), Icons.Default.ErrorOutline)
+            BioKeyMessages.show(heldRefused(activity, until), Icons.Default.ErrorOutline)
             return
         }
     }
@@ -50,7 +52,7 @@ internal fun confirmOwner(
                     if (silencesRecords) UnlockAttempts.heldUntil(app) else null
                 }
                 when {
-                    until != null -> BioKeyMessages.show(app.getString(R.string.held_refused, attemptTime(app, until)), Icons.Default.ErrorOutline)
+                    until != null -> BioKeyMessages.show(heldRefused(app, until), Icons.Default.ErrorOutline)
                     activity.isDestroyed -> BioKeyMessages.show(app.getString(R.string.confirm_try_again), Icons.Default.ErrorOutline)
                     else -> action()
                 }
@@ -58,3 +60,9 @@ internal fun confirmOwner(
         }
     )
 }
+
+/** Why something waits until [until]: a face or fingerprint change, or BioKey reset ([UnlockAttempts.heldBy]). */
+internal fun heldRefused(context: Context, until: Long): String = context.getString(
+    if (UnlockAttempts.heldBy(context) == ProtectionGaps.Kind.DATA_CLEARED) R.string.held_refused_reset else R.string.held_refused,
+    attemptTime(context, until)
+)

@@ -279,7 +279,7 @@ internal fun rememberBackupActions(): BackupActions {
                     pending.viewModelScope.launch {
                         // Checked again as it runs: a face or fingerprint change recorded meanwhile refuses it.
                         if (withContext(Dispatchers.Default) { UnlockAttempts.holding(app) }) {
-                            BioKeyMessages.show(res.getString(R.string.held_refused, attemptTime(app, UnlockAttempts.heldUntil(app) ?: 0L)), Icons.Default.ErrorOutline)
+                            BioKeyMessages.show(heldRefused(app, UnlockAttempts.heldUntil(app) ?: 0L), Icons.Default.ErrorOutline)
                             return@launch
                         }
                         val restored = try {

@@ -2,24 +2,18 @@ package com.android.BioKey.core.security
 
 import android.app.ActivityManager
 import android.app.ApplicationExitInfo
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Build
 import android.os.SystemClock
 import android.os.UserManager
 import android.provider.Settings
-import android.text.format.DateUtils
 import androidx.annotation.PluralsRes
 import androidx.annotation.StringRes
 import androidx.annotation.VisibleForTesting
-import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.edit
 import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
-import com.android.BioKey.feature.main.MainActivity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -75,7 +69,14 @@ object ProtectionGaps {
          * BioKey's storage was cleared in Android's settings ([checkStorageCleared]): every lock and
          * record went with it. A span, from then until BioKey was set up again.
          */
-        DATA_CLEARED
+        DATA_CLEARED;
+
+        /**
+         * Starts a day's hold ([UnlockAttempts.heldUntil]) and can't be cleared, only aged out: after
+         * it nothing proves it's the owner (a face or fingerprint added, or BioKey forgetting which
+         * were there).
+         */
+        val holds: Boolean get() = this == BIOMETRICS_CHANGED || this == BIOMETRICS_REMOVED || this == DATA_CLEARED
     }
 
     /**
@@ -164,7 +165,10 @@ object ProtectionGaps {
     private const val KEY_STORAGE_SEEN = "storage_seen"
     /** When BioKey's storage was cleared, on BioKey's clock, until it's set up again and recorded. */
     private const val KEY_CLEARED_AT = "cleared_at"
-    private const val CLEARED_NOTIFICATION_ID = 1103
+
+    private val _cleared = MutableStateFlow<Long?>(null)
+    /** When BioKey's storage was cleared ([checkStorageCleared]), until that's recorded; else null. */
+    val cleared: StateFlow<Long?> = _cleared.asStateFlow()
 
     private val _gaps = MutableStateFlow<List<Gap>>(emptyList())
     /** Newest first. */
@@ -213,6 +217,7 @@ object ProtectionGaps {
             val p = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val kept = runCatching { parse(p.getString(KEY_GAPS, null)) }.getOrDefault(emptyList())
             prefs = p
+            _cleared.value = if (p.contains(KEY_CLEARED_AT)) p.getLong(KEY_CLEARED_AT, 0L) else null
             // What's seen and past its time goes from the disk too, not only from what's shown.
             val fresh = kept.fresh(context)
             if (fresh != kept) save(p, fresh) else _gaps.value = kept
@@ -225,6 +230,7 @@ object ProtectionGaps {
         synchronized(lock) {
             prefs = null
             _gaps.value = emptyList()
+            _cleared.value = null
         }
         recordedOnce.clear()
     }
@@ -242,7 +248,7 @@ object ProtectionGaps {
         val unseen = kept.filter { it.seq > seen }
         // An unseen face or fingerprint change is never pushed out: a flood of other records mustn't
         // be a way to end its hold.
-        val (biometric, others) = unseen.partition { it.kind == Kind.BIOMETRICS_CHANGED || it.kind == Kind.BIOMETRICS_REMOVED }
+        val (biometric, others) = unseen.partition { it.kind.holds }
         val unseenKept = biometric + others.take((UnlockAttempts.MAX_UNSEEN - biometric.size).coerceAtLeast(0))
         return (unseenKept + kept.filter { it.seq <= seen }.take((MAX_KEPT - unseenKept.size).coerceAtLeast(0)))
             .sortedByDescending { it.seq }
@@ -342,17 +348,25 @@ object ProtectionGaps {
                 putStringSet(KEY_EXITS_SEEN, exits.mapTo(HashSet()) { it.first.toString() })
                 if (setUp) remove(KEY_CLEARED_AT)
             }
+            if (setUp) _cleared.value = null
         }
         // Told the next time the phone is unlocked, with any failed unlocks.
         if (recorded) UnlockAttempts.onActivity(context)
     }
 
     /**
-     * Once per storage, as BioKey's process starts. Android remembering BioKey running before, on
-     * storage with nothing of BioKey's in it, means the storage was cleared (Settings > Apps >
-     * BioKey > Clear storage): every lock and record went with it. An update keeps the storage, and
-     * an uninstall takes Android's record too, so neither looks like this. Said at every unlock
-     * until BioKey is set up again ([remindIfCleared]), then recorded ([Kind.DATA_CLEARED]).
+     * Once per storage, as BioKey's process starts. Android remembering BioKey running since its
+     * last install or update, on storage that's never been looked at, means the storage was cleared
+     * (Settings > Apps > BioKey > Clear storage): every lock and record went with it. A fresh
+     * install has no such record (an uninstall takes Android's with it); an update keeps the
+     * storage, and exits from before it, or the update's own, don't count. When it was cleared
+     * can't be told, only that it was after BioKey last ran: that's the time kept. Said on the setup
+     * screen, and as an alert where Android still allows one ([ProtectionAlerts.remindIfStorageCleared]:
+     * a clearing also switches the accessibility service off and, from Android 13, takes back the
+     * notification permission, as seen on Android 17, while keeping its exit record, "stop … due to
+     * clear data"), until BioKey is set up again; then
+     * recorded ([Kind.DATA_CLEARED]), which starts a day's hold like a face or fingerprint change:
+     * a clearing also forgets which faces and fingerprints were there.
      */
     fun checkStorageCleared(context: Context) {
         val app = context.applicationContext
@@ -360,66 +374,41 @@ object ProtectionGaps {
         val cleared = synchronized(lock) {
             if (p.contains(KEY_STORAGE_SEEN)) return@synchronized false
             // Set up already (a version from before this check): not cleared.
-            val last = if (SecurityVault.getInstance(app).isSetupCompleted()) null else exits(app).maxOfOrNull { it.first }
+            val since = updatedAt(app) + UPDATE_WINDOW_MS
+            val last = if (SecurityVault.getInstance(app).isSetupCompleted()) null
+                else exits(app).map { it.first }.filter { it > since }.maxOrNull()
             p.edit {
                 putBoolean(KEY_STORAGE_SEEN, true)
                 // Android's exit times are on the phone's clock: converted to BioKey's.
                 if (last != null) putLong(KEY_CLEARED_AT, (last + clock() - wallNow()).coerceAtMost(clock()))
             }
+            if (p.contains(KEY_CLEARED_AT)) _cleared.value = p.getLong(KEY_CLEARED_AT, 0L)
             last != null
         }
         if (cleared) {
             DiagnosticLog.log("BioKey's storage was cleared since it last ran")
-            remindIfCleared(app)
+            ProtectionAlerts.remindIfStorageCleared(app)
+            // Also without the accessibility service, said again every so often until set up.
+            ProtectionCheckJob.schedule(app)
         }
     }
 
-    /** When BioKey's storage was cleared, until it's set up again and that's recorded; else null. */
-    fun clearedAt(context: Context): Long? =
-        load(context)?.let { p -> if (p.contains(KEY_CLEARED_AT)) p.getLong(KEY_CLEARED_AT, 0L) else null }
-
-    /** BioKey's storage was cleared and it isn't set up again: said again (at an unlock) until it is. */
-    fun remindIfCleared(context: Context) {
-        val app = context.applicationContext
-        if (SecurityVault.getInstance(app).isSetupCompleted()) return
-        val at = clearedAt(app) ?: return
-        val manager = NotificationManagerCompat.from(app)
-        if (!manager.areNotificationsEnabled()) return
-        UnlockAttempts.ensureChannel(app)
-        val text = app.getString(
-            R.string.storage_cleared_notification_text,
-            DateUtils.formatDateTime(app, at, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_ABBREV_MONTH)
-        )
-        val open = PendingIntent.getActivity(
-            app,
-            CLEARED_NOTIFICATION_ID,
-            Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        // Nothing on the phone's lock screen, as with every security activity alert.
-        val notification = NotificationCompat.Builder(app, UnlockAttempts.CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_biokey_mark)
-            .setContentTitle(app.getString(R.string.storage_cleared_notification_title))
-            .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setCategory(NotificationCompat.CATEGORY_STATUS)
-            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
-            .setContentIntent(open)
-            .setOnlyAlertOnce(true)
-            .build()
-        try {
-            manager.notify(CLEARED_NOTIFICATION_ID, notification)
-        } catch (e: SecurityException) {
-            DiagnosticLog.log("Storage cleared alert not allowed: ${e.message}")
-        }
+    /** [cleared], its storage read first. */
+    fun clearedAt(context: Context): Long? {
+        load(context)
+        return _cleared.value
     }
 
-    /** Set up again: a clearing before is recorded now (if an engine is running), and its alert goes. */
+    /**
+     * Set up again: a clearing before is recorded now, ending now, and its alert goes. With no
+     * engine running yet (compatibility mode still to start), it's recorded when one starts, ending
+     * then: locked apps weren't locked until it did.
+     */
     fun onSetUp(context: Context) {
         val app = context.applicationContext
         recorder.execute {
             if (ProtectionEngine.isProtecting(app)) onEngineUp(app)
-            NotificationManagerCompat.from(app).cancel(CLEARED_NOTIFICATION_ID)
+            ProtectionAlerts.cancelStorageCleared(app)
         }
     }
 
@@ -503,7 +492,7 @@ object ProtectionGaps {
         val limit = UnlockAttempts.clearableUpTo(context, upTo)
         return synchronized(lock) {
             val (stays, goes) = _gaps.value.partition {
-                it.kind == Kind.BIOMETRICS_CHANGED || it.kind == Kind.BIOMETRICS_REMOVED || it.seq > limit
+                it.kind.holds || it.seq > limit
             }
             save(p, stays)
             goes

@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.text.format.DateUtils
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.edit
@@ -26,6 +27,7 @@ object ProtectionAlerts {
 
     const val CHANNEL_ID = "biokey_protection_alerts"
     private const val ID_SERVICE_STOPPED = 1001
+    private const val ID_STORAGE_CLEARED = 1103
 
     /**
      * How long a stopped engine waits before alerting. When one engine hands over to the other
@@ -238,6 +240,51 @@ object ProtectionAlerts {
         if (remindersStopped(app)) return
         if (isShowing(app, ID_SERVICE_STOPPED)) return
         postServiceStopped(app, silent = true)
+    }
+
+    /**
+     * BioKey's storage was cleared and it isn't set up again ([ProtectionGaps.checkStorageCleared]):
+     * said, and again every so often ([ProtectionCheckJob]) and at each unlock once the accessibility
+     * service is back on, until it is. Hidden on the phone's lock screen. (A clearing switches the
+     * service off and, from Android 13, takes back the notification permission: there it's said
+     * only once setup has asked for it again; setup's own screen says so first.)
+     */
+    fun remindIfStorageCleared(context: Context) {
+        val app = context.applicationContext
+        if (SecurityVault.getInstance(app).isSetupCompleted()) return
+        val after = ProtectionGaps.clearedAt(app) ?: return
+        val manager = NotificationManagerCompat.from(app)
+        if (!manager.areNotificationsEnabled()) return
+        UnlockAttempts.ensureChannel(app)
+        val text = app.getString(
+            R.string.storage_cleared_notification_text,
+            DateUtils.formatDateTime(app, after, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_ABBREV_MONTH)
+        )
+        val open = PendingIntent.getActivity(
+            app,
+            ID_STORAGE_CLEARED,
+            Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notification = NotificationCompat.Builder(app, UnlockAttempts.CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_biokey_mark)
+            .setContentTitle(app.getString(R.string.storage_cleared_notification_title))
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+            .setContentIntent(open)
+            .setOnlyAlertOnce(true)
+            .build()
+        try {
+            manager.notify(ID_STORAGE_CLEARED, notification)
+        } catch (e: SecurityException) {
+            DiagnosticLog.log("Storage cleared alert not allowed: ${e.message}")
+        }
+    }
+
+    fun cancelStorageCleared(context: Context) {
+        NotificationManagerCompat.from(context).cancel(ID_STORAGE_CLEARED)
     }
 
     fun serviceRestored(context: Context) {

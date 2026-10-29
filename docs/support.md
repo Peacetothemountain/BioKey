@@ -149,9 +149,13 @@ Some phone makers' battery savers force-stop apps the way a person would, and th
 see "Locking stopped" below to keep BioKey running. Clear it from **Review**.
 
 If BioKey's storage was cleared in Android's settings (Apps > BioKey > Storage), every lock and
-record went with it. BioKey says so at each unlock until it's set up again, and on its setup
-screen, then records when. (Android must still remember BioKey running before; an uninstall
-removes that, but then BioKey's icon is gone too.)
+record went with it. Android also switches BioKey's accessibility service off and, from Android
+13, takes back its notification permission, so nothing is locked and BioKey can't tell you until
+you open it: its setup screen then says when (on Android 12, an alert also comes after the phone's
+next restart). Once set up again, it's recorded. For a day after, as after a face or fingerprint change, records can't be cleared and
+the alerts can't be switched off: whoever cleared it may have added their own fingerprint first.
+(Android must still remember BioKey running since its last update; an uninstall removes that, but
+then BioKey's icon is gone too.)
 
 If you switched it off on purpose, **Stop reminding** on the "App lock is off" card (it asks for
 your face or fingerprint) ends the reminders until app locking is back on; the card then says

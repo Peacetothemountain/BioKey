@@ -451,6 +451,8 @@ internal fun SecurityActivityDialog(
     onMarkReviewed: (() -> Unit)? = null,
     /** A face or fingerprint change stays new until then ([UnlockAttempts.heldUntil]), whatever Review does. */
     heldUntil: Long? = null,
+    /** The hold is BioKey's reset, not a face or fingerprint change. */
+    heldByReset: Boolean = false,
     /** Opened with the screen lock (no hold): reviewing takes a face or fingerprint. */
     openedWithScreenLock: Boolean = onMarkReviewed != null && heldUntil == null
 ) {
@@ -474,7 +476,10 @@ internal fun SecurityActivityDialog(
                     // The hold explains everything at once: why they stay new, why nothing clears.
                     ActivityCallout(
                         stringResource(R.string.activity_held_intro),
-                        headline = stringResource(R.string.activity_held_headline_cause, attemptTime(context, heldUntil)),
+                        headline = stringResource(
+                            if (heldByReset) R.string.activity_held_headline_reset else R.string.activity_held_headline_cause,
+                            attemptTime(context, heldUntil)
+                        ),
                         items = stringArrayResource(R.array.activity_held_refused).toList(),
                         footer = stringResource(R.string.activity_held_footer),
                         held = true,
@@ -573,7 +578,7 @@ internal fun SecurityActivityDialog(
         // Destructive: in the error colour, and behind a face or fingerprint (and Undo). Not offered
         // when only a face or fingerprint change is left (that can't be cleared), nor while one is
         // held: whoever made it could otherwise clear what happened around it.
-        dismissButton = if (heldUntil == null && (attempts.isNotEmpty() || gaps.any { !it.isBiometricChange })) {
+        dismissButton = if (heldUntil == null && (attempts.isNotEmpty() || gaps.any { !it.kind.holds })) {
             {
                 TextButton(onClick = onClear, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
                     Text(stringResource(R.string.card_clear))
@@ -599,7 +604,7 @@ internal fun UrgentButton(text: String, onClick: () -> Unit, modifier: Modifier 
  * face or fingerprint change is [held] (as an urgent card is), else the calm secondary ones.
  */
 @Composable
-private fun ActivityCallout(
+internal fun ActivityCallout(
     text: String,
     held: Boolean,
     modifier: Modifier = Modifier,

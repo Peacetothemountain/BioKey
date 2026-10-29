@@ -330,4 +330,46 @@ class ProtectionGapsTest {
             ProtectionGaps.exits = before
         }
     }
+
+    @Test
+    fun exitsFromBeforeAnUpdateArentAClearing() {
+        val p = context.getSharedPreferences("biokey_protection_gaps", Context.MODE_PRIVATE)
+        val vault = SecurityVault.getInstance(context)
+        val before = ProtectionGaps.exits
+        val update = ProtectionGaps.updatedAt
+        try {
+            // An earlier version, opened but never set up, then updated: its exits, and the update's own.
+            p.edit().clear().commit()
+            vault.setSetupCompletedSync(false)
+            ProtectionGaps.updatedAt = { now - 30_000L }
+            ProtectionGaps.exits = { listOf(now - 3_600_000L to ApplicationExitInfo.REASON_OTHER, now - 29_000L to ApplicationExitInfo.REASON_USER_REQUESTED) }
+            ProtectionGaps.checkStorageCleared(context)
+            assertEquals(null, ProtectionGaps.clearedAt(context))
+        } finally {
+            ProtectionGaps.exits = before
+            ProtectionGaps.updatedAt = update
+        }
+    }
+
+    @Test
+    fun aResetHoldsForADayAndCantBeCleared() {
+        val p = context.getSharedPreferences("biokey_protection_gaps", Context.MODE_PRIVATE)
+        val vault = SecurityVault.getInstance(context)
+        val before = ProtectionGaps.exits
+        try {
+            p.edit().clear().commit()
+            vault.setSetupCompletedSync(false)
+            ProtectionGaps.exits = { listOf(now - 600_000L to ApplicationExitInfo.REASON_USER_REQUESTED) }
+            ProtectionGaps.checkStorageCleared(context)
+            vault.setSetupCompletedSync(true)
+            ProtectionGaps.onEngineUp(context)
+            // Whoever reset it may have added a face or fingerprint first: nothing proves the owner for a day.
+            assertTrue(com.android.BioKey.core.security.UnlockAttempts.heldUntil(context) != null)
+            assertEquals(ProtectionGaps.Kind.DATA_CLEARED, com.android.BioKey.core.security.UnlockAttempts.heldBy(context))
+            ProtectionGaps.clear(context, Long.MAX_VALUE)
+            assertEquals(1, ProtectionGaps.gaps.value.count { it.kind == ProtectionGaps.Kind.DATA_CLEARED })
+        } finally {
+            ProtectionGaps.exits = before
+        }
+    }
 }

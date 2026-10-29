@@ -220,7 +220,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     // no window event arrives (e.g. a locked app was left open when the screen went off).
                     Intent.ACTION_USER_PRESENT -> {
                         // Cleared and not set up again: said at every unlock until it is.
-                        ProtectionGaps.remindIfCleared(this@BioKeyAccessibilityService)
+                        ProtectionAlerts.remindIfStorageCleared(this@BioKeyAccessibilityService)
                         windowList()?.let { updateMasks(it, full = false) }
                         reevaluateForeground()
                         mainHandler.postDelayed(::reevaluateForeground, 250)
@@ -455,7 +455,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private var appliedEventTypes = BASE_EVENT_TYPES
     private var eventSettings: AccessibilityServiceInfo? = null
 
-    private val recents by lazy { RecentsWatcher(this, ::onClosedFromRecents, ::onClearAllRecents) }
+    private val recents by lazy { RecentsWatcher(this, ::activeRoot, ::onClosedFromRecents, ::onClearAllRecents) }
 
     private fun updateContentMonitoring(enable: Boolean) {
         contentForSelfProtection = enable
@@ -900,14 +900,15 @@ class BioKeyAccessibilityService : AccessibilityService() {
      */
     /**
      * Before setup (and the explanation it shows first), no window is looked at, whatever asks:
-     * every look goes through [windowList] or [activeRoot], which both check this.
+     * every look goes through [windowList] or [activeRoot], which both check this (the Recents
+     * watcher and the self-protection detector are handed them too).
      */
     private fun setUp() = ::vault.isInitialized && vault.isSetupCompleted()
 
     /** The active window's root node, under the same rule as [windowList]. */
-    private fun activeRoot(): AccessibilityNodeInfo? = if (setUp()) rootInActiveWindow else null
+    internal fun activeRoot(): AccessibilityNodeInfo? = if (setUp()) rootInActiveWindow else null
 
-    private fun windowList(): List<AccessibilityWindowInfo>? {
+    internal fun windowList(): List<AccessibilityWindowInfo>? {
         if (!setUp()) return null
         if (handlingEvent) eventWindows?.let { return it }
         val list: List<AccessibilityWindowInfo>? = try {

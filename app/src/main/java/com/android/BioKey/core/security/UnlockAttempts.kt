@@ -410,8 +410,13 @@ object UnlockAttempts {
             .minOfOrNull { it.seq }
     }
 
-    private val ProtectionGaps.Gap.isBiometricRecord
-        get() = kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED || kind == ProtectionGaps.Kind.BIOMETRICS_REMOVED
+    private val ProtectionGaps.Gap.isBiometricRecord get() = kind.holds
+
+    /** What started the hold ([heldUntil]): a face or fingerprint change, or BioKey reset; null if none. */
+    fun heldBy(context: Context): ProtectionGaps.Kind? {
+        val first = heldBiometricChange(context, seenSeq(context)) ?: return null
+        return ProtectionGaps.gaps.value.firstOrNull { it.seq == first }?.kind
+    }
 
     /** When the oldest face-or-fingerprint record still held back stops being held, on [TrustedClock]; null if none. */
     fun heldUntil(context: Context): Long? {

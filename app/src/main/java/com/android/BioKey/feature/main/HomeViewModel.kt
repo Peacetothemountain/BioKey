@@ -44,7 +44,12 @@ internal data class HomeState(
 )
 
 /** What Review opens with: whether the owner is proven, and until when a face or fingerprint change is held. */
-internal data class ReviewState(val ownerProven: Boolean, val heldUntil: Long?)
+internal data class ReviewState(
+    val ownerProven: Boolean,
+    val heldUntil: Long?,
+    /** The hold is BioKey's reset ([ProtectionGaps.Kind.DATA_CLEARED]), not a face or fingerprint change. */
+    val heldByReset: Boolean = false
+)
 
 /**
  * Home's state from outside the vault ([HomeState]) and Review's ([ReviewState]), with the actions
@@ -139,7 +144,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private var opening: Job? = null
 
     private suspend fun lookAtReview() = withContext(Dispatchers.Default) {
-        ReviewState(ownerProven = SecurityEngine.ownerProven(app), heldUntil = UnlockAttempts.heldUntil(app))
+        ReviewState(
+            ownerProven = SecurityEngine.ownerProven(app),
+            heldUntil = UnlockAttempts.heldUntil(app),
+            heldByReset = UnlockAttempts.heldBy(app) == ProtectionGaps.Kind.DATA_CLEARED
+        )
     }
 
     /** Works out Review's state, then [onOpen] (home shows it). */

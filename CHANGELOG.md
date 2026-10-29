@@ -28,9 +28,11 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
 - **App locking was off:** if protection is switched off, or BioKey is force-stopped, home shows
   when, from and to, and you're told at your next unlock. Android stopping BioKey on its own
   doesn't count. While it's off, the alert comes back at every unlock. BioKey's storage cleared in
-  Android's settings (every lock and record with it) is told at every unlock until BioKey is set up
-  again, said on its setup screen, and then recorded, when Android still remembers BioKey running
-  before.
+  Android's settings (every lock and record with it; Android also switches its accessibility
+  service off and, from Android 13, takes back its notification permission) is said on BioKey's
+  setup screen when it's next opened, then recorded once it's set up. On Android 12 it's also told
+  after the phone's next restart, and every so often until set up. Like a face or fingerprint change,
+  the reset then holds records, alerts, the log and backups for a day.
 - Home's header says "Apps locked", not "Protected", while locked apps' notifications show in full
   (notification access off under "Hide notification content"), and only one card is ever urgent.
 - Clearing security activity, switching failed unlock alerts or the diagnostic log off, deleting

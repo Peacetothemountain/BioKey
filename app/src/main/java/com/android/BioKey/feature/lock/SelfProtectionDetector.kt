@@ -355,13 +355,14 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
      */
     private fun hostRoot(pkg: String, event: AccessibilityEvent?): AccessibilityNodeInfo? {
         val windowId = event?.windowId ?: -1
-        val active = runCatching { service.rootInActiveWindow }.getOrNull()
+        // Through the service's own accessors: nothing is read before setup.
+        val active = runCatching { service.activeRoot() }.getOrNull()
         if (active != null) {
             if (active.packageName?.toString() == pkg && (windowId < 0 || active.windowId == windowId)) return active
             active.release()
         }
         // Split screen, or a window that isn't the active one yet: look it up in the window list.
-        val windows = runCatching { service.windows }.getOrNull().orEmpty()
+        val windows = runCatching { service.windowList() }.getOrNull().orEmpty()
         val candidates = if (windowId >= 0) {
             windows.filter { it.id == windowId }
         } else {

@@ -248,7 +248,9 @@ internal data class ProtectionLook(
     val title: String,
     val body: String,
     /** Primary action, or null when protecting normally (then the sheet offers Pause). */
-    val action: String?
+    val action: String?,
+    /** While protecting: something to put right first in the sheet, above Lock all and Pause. */
+    val fix: String? = null
 )
 
 @Composable
@@ -298,8 +300,11 @@ internal fun protectionLook(
             colors.errorContainer, colors.onErrorContainer, Icons.Default.GppMaybe, stringResource(R.string.home_apps_locked_short),
             stringResource(R.string.home_notifications_showing_title),
             apps + SEPARATOR + stringResource(defaultTimeout.relockPhraseRes).lowercase() + "\n" +
-                stringResource(R.string.home_notifications_showing_body),
-            null
+                stringResource(R.string.home_notifications_showing_body) +
+                (if (mode == ProtectionEngine.Mode.COMPATIBILITY) "\n" + stringResource(R.string.home_protected_compat) else "") +
+                (if (unwatchedCount == 0) "" else "\n" + pluralStringResource(R.plurals.home_unwatched, unwatchedCount, unwatchedCount)),
+            null,
+            fix = stringResource(R.string.home_shield_no_access_action)
         )
         else -> ProtectionLook(
             colors.primaryContainer, colors.onPrimaryContainer, Icons.Default.VerifiedUser, stringResource(R.string.home_protected),

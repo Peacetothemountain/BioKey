@@ -42,7 +42,13 @@ class ProtectionCheckJob : JobService() {
         // Off the main thread: at a cold start this reads BioKey's storage.
         Thread {
             try {
-                if (ProtectionEngine.isProtecting(this)) cancel(this) else ProtectionAlerts.remindIfOff(this)
+                when {
+                    // Storage cleared and not set up again: said until it is, engine or not.
+                    ProtectionGaps.clearedAt(this) != null && !SecurityVault.getInstance(this).isSetupCompleted() ->
+                        ProtectionAlerts.remindIfStorageCleared(this)
+                    ProtectionEngine.isProtecting(this) -> cancel(this)
+                    else -> ProtectionAlerts.remindIfOff(this)
+                }
             } finally {
                 jobFinished(params, false)
             }
