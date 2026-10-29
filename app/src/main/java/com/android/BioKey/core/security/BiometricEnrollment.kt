@@ -41,7 +41,7 @@ object BiometricEnrollment {
 
     /** Whether a strong face or fingerprint is set up; tests set their own. */
     @VisibleForTesting
-    internal var hasBiometric: (Context) -> Boolean = SecurityEngine::hasStrongBiometric
+    internal var hasBiometric: (Context) -> Boolean = SecurityEngine::hasEnrolledStrongBiometric
 
     /** Looks at the key; tests set their own. */
     @VisibleForTesting
@@ -51,7 +51,7 @@ object BiometricEnrollment {
 
     @VisibleForTesting
     internal fun resetForTests() {
-        hasBiometric = SecurityEngine::hasStrongBiometric
+        hasBiometric = SecurityEngine::hasEnrolledStrongBiometric
         keyState = ::checkKey
     }
 

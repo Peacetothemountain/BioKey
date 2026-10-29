@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.GppBad
 import androidx.compose.material.icons.filled.GppMaybe
 import androidx.compose.material.icons.filled.Lock
@@ -135,6 +136,7 @@ import com.android.BioKey.core.data.SecurityProfile
 import com.android.BioKey.core.security.LockAllNow
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
+import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityEngine
@@ -401,6 +403,7 @@ fun MainScreenExpressive(
     var hasStrongBiometric by remember { mutableStateOf(false) }
     var alertsMuted by remember { mutableStateOf(false) }
     val attemptsEnabled by UnlockAttempts.enabled.collectAsStateWithLifecycle()
+    val biometricOnlyOn by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
     LifecycleResumeEffect(Unit) {
         val job = scope.launch(Dispatchers.IO) {
             hasStrongBiometric = UnlockAttempts.hasStrongBiometric(context)
@@ -450,7 +453,8 @@ fun MainScreenExpressive(
         vault.setAppLock(app.packageName, locked)
         if (!locked) ProtectionGaps.recordIfScreenLock(context, "${app.label}'s lock switched off")
         if (!locked) {
-            BioKeyMessages.show("${app.label} unlocked", Icons.Default.LockOpen, actionLabel = "Undo") {
+            // "Unlocked" is kept for an app open right now: this is its lock taken off.
+            BioKeyMessages.show("Lock removed from ${app.label}", Icons.Default.LockOpen, actionLabel = "Undo") {
                 vault.setAppLock(app.packageName, true)
             }
         }
@@ -609,8 +613,15 @@ fun MainScreenExpressive(
                         urgent = !paused,
                         modifier = Modifier.animateItem()
                     ) {
-                        if (paused) FilledTonalButton(onClick = ::onProtectionAction) { Text(look.action) }
-                        else UrgentButton(look.action, ::onProtectionAction)
+                        if (paused) {
+                            FilledTonalButton(onClick = ::onProtectionAction) { Text(look.action) }
+                        } else {
+                            // Switched off on purpose: the owner can stop the reminders (until it's back on).
+                            TextButton(onClick = {
+                                confirmOwner(activity, "Stop reminding me") { ProtectionAlerts.stopReminders(context) }
+                            }) { Text("Stop reminding") }
+                            UrgentButton(look.action, ::onProtectionAction)
+                        }
                     }
                 }
             }
@@ -624,10 +635,12 @@ fun MainScreenExpressive(
                         title = "Security alerts are silenced",
                         subtitle = "Some of BioKey's alerts are off in Android's settings, so you may not hear of failed unlocks, " +
                             "changes, or app locking going off",
-                        urgent = look.action == null,
+                        urgent = look.action == null && !securityActivityUrgent(attempts, gaps),
                         modifier = Modifier.animateItem()
                     ) {
-                        UrgentButton("Turn on", onClick = { IntentNavigationHelper.openSecurityActivityChannelSettings(context) })
+                        val open: () -> Unit = { IntentNavigationHelper.openChannelSettings(context, UnlockAttempts.mutedChannel(context)) }
+                        if (look.action == null && !securityActivityUrgent(attempts, gaps)) UrgentButton("Turn on", onClick = open)
+                        else FilledTonalButton(onClick = open) { Text("Turn on") }
                     }
                 }
             }
@@ -648,7 +661,11 @@ fun MainScreenExpressive(
 
             if (attempts.isNotEmpty() || gaps.isNotEmpty()) {
                 item(key = "activity") {
-                    SecurityActivityCard(attempts, gaps, ::attemptLabel, onReview = { showActivity = true }, modifier = Modifier.animateItem())
+                    // One urgent card on the page: not protecting outranks this.
+                    SecurityActivityCard(
+                        attempts, gaps, ::attemptLabel, onReview = { showActivity = true }, modifier = Modifier.animateItem(),
+                        urgent = securityActivityUrgent(attempts, gaps) && !(look.action != null && vault.isSetupCompleted() && !(ProtectionEngine.isProtecting(mode) && !globalLockEnabled))
+                    )
                 }
             }
 
@@ -662,6 +679,21 @@ fun MainScreenExpressive(
                         onLockAll = { lockAllNow(includeOwnApp = false) },
                         modifier = Modifier.animateItem()
                     )
+                }
+            }
+
+            // Calm cards after the urgent ones. With your PIN, someone could add their own fingerprint
+            // in Settings: lock it.
+            if ((biometricOnlyOn || attemptsEnabled) && hasStrongBiometric && SETTINGS_PACKAGE !in selectedApps) {
+                item(key = "lock_settings") {
+                    ActionCard(
+                        icon = Icons.Default.Fingerprint,
+                        title = "Lock Settings too",
+                        subtitle = "Anyone with your PIN could add their own fingerprint there",
+                        modifier = Modifier.animateItem()
+                    ) {
+                        FilledTonalButton(onClick = { vault.setAppLock(SETTINGS_PACKAGE, true) }) { Text("Lock Settings") }
+                    }
                 }
             }
 
@@ -834,10 +866,17 @@ fun MainScreenExpressive(
                 profiles = profiles,
                 defaultTimeout = defaultTimeout,
                 onLockedChange = { toggleLock(app, it) },
-                onMoveToProfile = { profileId -> vault.moveAppToProfile(pkg, profileId) },
+                onMoveToProfile = { profileId ->
+                    val wasLocked = isLocked(pkg)
+                    vault.moveAppToProfile(pkg, profileId)
+                    // Into a profile that's off: no longer locked.
+                    if (wasLocked && !vault.isAppLocked(pkg)) ProtectionGaps.recordIfScreenLock(context, "${app.label} moved where it isn't locked")
+                },
                 onRemoveFromProfile = {
                     val former = profileOf(pkg)
+                    val wasLocked = isLocked(pkg)
                     vault.removeAppFromProfile(pkg)
+                    if (wasLocked && !vault.isAppLocked(pkg)) ProtectionGaps.recordIfScreenLock(context, "${app.label} taken out of ${former?.name ?: "its profile"}, unlocking it")
                     optionsForPackage = null
                     if (former != null) {
                         BioKeyMessages.show("Removed ${app.label} from ${former.name}", Icons.Default.RemoveCircleOutline, actionLabel = "Undo") {
@@ -918,7 +957,7 @@ fun MainScreenExpressive(
             onDelete = {
                 val name = currentProfile.name
                 val deleted = vault.deleteProfile(currentProfile.id)
-                ProtectionGaps.recordIfScreenLock(context, "$name profile deleted")
+                if (deleted != null) ProtectionGaps.recordIfScreenLock(context, "$name profile deleted")
                 showEditProfile = false
                 filter = FILTER_ALL
                 if (deleted != null) {
@@ -935,6 +974,10 @@ fun MainScreenExpressive(
             title = "Re-lock ${currentProfile.name}",
             current = currentProfile.timeoutMode,
             onSelect = { mode ->
+                val before = currentProfile.timeoutMode ?: defaultTimeout
+                if ((mode ?: defaultTimeout).openFor > before.openFor) {
+                    ProtectionGaps.recordIfScreenLock(context, "${currentProfile.name} re-lock delay made longer")
+                }
                 vault.setProfileTimeout(currentProfile.id, mode)
                 showRelock = false
             },
@@ -1327,3 +1370,5 @@ private fun EmptyState(text: String, actionLabel: String?, onAction: () -> Unit)
         }
     }
 }
+
+private const val SETTINGS_PACKAGE = "com.android.settings"

@@ -140,7 +140,7 @@ object UnlockAttempts {
     }
     /** Whether a strong face or fingerprint is set up; tests set their own. */
     @VisibleForTesting
-    internal var hasStrongBiometric: (Context) -> Boolean = SecurityEngine::hasStrongBiometric
+    internal var hasStrongBiometric: (Context) -> Boolean = SecurityEngine::hasEnrolledStrongBiometric
 
     /**
      * Reads what's kept, once per process; null before the first unlock after a restart, when
@@ -211,6 +211,15 @@ object UnlockAttempts {
      * BioKey's notifications are allowed, but its security-activity or protection-alert channel is
      * switched off in Android's settings. (All of them off is home's "Alerts are off" row.)
      */
+    private fun ownChannelMuted(context: Context): Boolean =
+        context.getSystemService(NotificationManager::class.java).getNotificationChannel(CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE
+
+    /** Which of BioKey's alert channels is muted, if one is: its settings page is what to open. */
+    fun mutedChannel(context: Context): String? {
+        val nm = context.getSystemService(NotificationManager::class.java)
+        return listOf(CHANNEL_ID, ProtectionAlerts.CHANNEL_ID).firstOrNull { nm.getNotificationChannel(it)?.importance == NotificationManager.IMPORTANCE_NONE }
+    }
+
     fun channelMuted(context: Context): Boolean {
         val nm = context.getSystemService(NotificationManager::class.java)
         return listOf(CHANNEL_ID, ProtectionAlerts.CHANNEL_ID).any { nm.getNotificationChannel(it)?.importance == NotificationManager.IMPORTANCE_NONE }
@@ -446,7 +455,7 @@ object UnlockAttempts {
         // Something new; or, at an unlock, the unreviewed one again if it was swiped away.
         if (!fresh && !(repost && !showing && (attempts.isNotEmpty() || gaps.isNotEmpty()))) return
         if (attempts.isEmpty() && gaps.isEmpty()) return
-        if (alertsMuted(app)) return
+        if (!manager.areNotificationsEnabled() || ownChannelMuted(app)) return
         ensureChannel(app)
         val res = app.resources
         // Everything not yet reviewed, not just what's new: a later miss doesn't hide an earlier gap.

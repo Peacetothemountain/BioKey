@@ -37,6 +37,7 @@ class ProtectionGapsTest {
         ProtectionGaps.bootCount = { boot }
         ProtectionGaps.exits = { exits }
         ProtectionGaps.updatedAt = { 0L }
+        ProtectionGaps.wallNow = { now }
         context.getSharedPreferences("biokey_unlock_attempts", Context.MODE_PRIVATE).edit().clear().commit()
         com.android.BioKey.core.security.UnlockAttempts.resetForTests()
         SecurityVault.getInstance(context).setSetupCompletedSync(true)

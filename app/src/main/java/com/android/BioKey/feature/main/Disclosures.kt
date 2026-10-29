@@ -109,7 +109,10 @@ enum class Disclosure(
         Icons.Default.Notifications,
         "BioKey uses notification access",
         // Android hands every new notification to the listener; say so, not just the locked apps' ones.
-        reads = listOf("Which app posted each new notification, and what kind it is (calls, alarms, media and navigation are never hidden)"),
+        reads = listOf(
+            "Android hands BioKey every new notification, content included. BioKey looks only at which app posted it " +
+                "and what kind it is (calls, alarms, media and navigation are never hidden), and never keeps or reads out its content"
+        ),
         usedFor = listOf("Hiding their content until you unlock the app, then putting them back"),
         // Hidden notifications are snoozed for up to a day, and only BioKey's access can bring them back early.
         turningOff = "You can turn this off at any time in Android settings. To bring hidden notifications back, " +
@@ -121,7 +124,8 @@ enum class Disclosure(
 private val KEEPS = listOf(
     "A log of its own lock decisions about your locked apps, on this phone for 3 days (you can turn it off in Settings)",
     "Security activity: times app locking was off, faces or fingerprints added or removed, changes made from BioKey opened " +
-        "with your screen lock, and, if you turn them on, failed unlocks. Each until you've seen it, then 7 days"
+        "with your screen lock (naming the app or profile changed), and, if you turn them on, failed unlocks. Each until " +
+        "you've seen it, then 7 days"
 )
 
 private val NEVER = listOf(

@@ -89,6 +89,10 @@ object ProtectionGaps {
     internal var bootCount: (Context) -> Int = { context ->
         cachedBoot ?: Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, 0).also { cachedBoot = it }
     }
+    /** The phone's own (user-set) clock, which Android's exit records use. */
+    @VisibleForTesting
+    internal var wallNow: () -> Long = System::currentTimeMillis
+
     /** When BioKey was last installed or updated. */
     @VisibleForTesting
     internal var updatedAt: (Context) -> Long = {
@@ -185,8 +189,9 @@ object ProtectionGaps {
                 .minOfOrNull { it.first }
             // Dated after "now": the clock was set back since. Still a stop, of a length that can't be
             // told, so it's kept whatever its length looks like.
-            val clockMoved = forceStopAt != null && forceStopAt > now
-            val forceStop = forceStopAt?.coerceAtMost(now)
+            val clockMoved = forceStopAt != null && forceStopAt > wallNow()
+            // Android stamps exits on the phone's clock; "now" is BioKey's trusted one.
+            val forceStop = forceStopAt?.let { it + (now - wallNow()) }?.coerceAtMost(now)
             when {
                 forceStop != null && (switchedOffFrom == null || forceStop < switchedOffFrom) && (clockMoved || now - forceStop >= MIN_GAP_MS) ->
                     found += Gap(forceStop, now, Kind.FORCE_STOPPED)
@@ -212,8 +217,15 @@ object ProtectionGaps {
      * opening BioKey with a face or fingerprint, or on a phone without one, it's the owner's own.
      */
     fun recordIfScreenLock(context: Context, what: String) {
-        if (SecurityEngine.INSTANCE.ownAppOpenedWithBiometric || !SecurityEngine.hasStrongBiometric(context)) return
+        if (SecurityEngine.INSTANCE.ownAppOpenedWithBiometric || !SecurityEngine.hasEnrolledStrongBiometric(context)) return
         recordEvent(context, Kind.CHANGED_WITH_SCREEN_LOCK, what)
+    }
+
+    private val recordedOnce = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+
+    /** [what], recorded at most once per run of BioKey's process (a state, not each prompt it affects). */
+    fun recordOncePerProcess(context: Context, what: String) {
+        if (recordedOnce.add(what)) recordEvent(context, Kind.CHANGED_WITH_SCREEN_LOCK, what)
     }
 
     /** No engine is running any more (switched off, a permission revoked). */

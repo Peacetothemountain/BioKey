@@ -128,8 +128,9 @@ clear them from **Review** on the home screen (it asks for your face or fingerpr
 
 Someone (maybe you) switched BioKey off in Android's settings, revoked one of its permissions, or
 force-stopped it, and locked apps could open without a check meanwhile. The card shows when.
-Android stopping BioKey on its own (low memory, a battery saver) or a restart of the phone
-doesn't count. Clear it from **Review**.
+Android stopping BioKey on its own (low memory, a crash) or a restart of the phone doesn't count.
+Some phone makers' battery savers force-stop apps the way a person would, and those do show:
+see "Locking stopped" below to keep BioKey running. Clear it from **Review**.
 
 ### BioKey offered to lock an app I just installed
 
@@ -178,6 +179,15 @@ Open BioKey; its main screen says what's wrong, and BioKey sends an alert when p
 - **The app isn't locked:** check that its own switch is on, and that its profile is on.
 - **Safe mode:** Android turns off every downloaded app in safe mode, BioKey included. Restart the
   phone normally.
+- **Your phone maker's battery saver stopped it.** Some phones stop apps in the background on
+  their own. Let BioKey run freely:
+  - **Samsung:** Settings > Battery > Background usage limits: take BioKey out of "Sleeping apps"
+    and "Deep sleeping apps"; in BioKey's App info > Battery, choose **Unrestricted**.
+  - **Xiaomi, Redmi, POCO (HyperOS, MIUI):** in BioKey's App info, turn on **Autostart**, and set
+    Battery saver to **No restrictions**.
+  - **OPPO, OnePlus, realme, vivo:** in BioKey's App info > Battery, allow **background activity**
+    (and "Auto launch" where offered).
+  - **Any phone:** in BioKey's App info > App battery usage, choose **Unrestricted**.
 
 If none of these fits, please email us with the diagnostic log (see the top of this page).
 
@@ -198,7 +208,10 @@ Home screens can't be locked, so you can always get back Home.
 BioKey uses Android's own prompt, and accepts only strong (Class 3) face unlock, fingerprint, or
 your PIN, pattern or password. If your phone's face unlock is the weaker kind, BioKey asks for
 your fingerprint or screen lock instead. After too many failed attempts, Android locks
-biometrics for a while; use your PIN, pattern or password.
+biometrics for a while; use your PIN, pattern or password. With **Face or fingerprint only** on,
+the PIN isn't offered: wait, and if Android locks face and fingerprint out for good, lock your
+phone and unlock it with your PIN to bring them back. If the sensor itself stops working (a fault,
+an update pending), BioKey allows your screen lock again and records that it did.
 
 ### How do I uninstall BioKey?
 

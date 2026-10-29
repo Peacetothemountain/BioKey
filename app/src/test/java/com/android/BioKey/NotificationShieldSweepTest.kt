@@ -52,6 +52,8 @@ class NotificationShieldSweepTest {
         LockStateTracker.lockAll()
         vault = SecurityVault.getInstance(context)
         vault.setSetupCompletedSync(true)
+        // On, as the owner turns it on (it's off until they agree to notification access).
+        vault.setNotificationShield(true)
         // Sessions last until the screen goes off: one can still be going when another app's ends.
         vault.setTimeoutMode(LockTimeoutMode.ON_SCREEN_OFF)
         vault.setAppLock(chat, true)

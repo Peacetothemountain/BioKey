@@ -25,14 +25,28 @@ object TrustedClock {
     }
 
     @Volatile private var anchor: Pair<Long, Long>? = null
+    /** The anchor came from the phone's clock: network time is tried again until it's there. */
+    @Volatile private var anchoredOnWall = false
 
     fun now(): Long {
-        val (wallAt, elapsedAt) = anchor ?: ((networkTime() ?: wall()) to elapsed()).also { anchor = it }
+        val current = anchor
+        if (current == null || anchoredOnWall) {
+            val network = networkTime()
+            if (network != null) {
+                anchor = network to elapsed()
+                anchoredOnWall = false
+            } else if (current == null) {
+                anchor = wall() to elapsed()
+                anchoredOnWall = true
+            }
+        }
+        val (wallAt, elapsedAt) = anchor!!
         return wallAt + (elapsed() - elapsedAt)
     }
 
     @VisibleForTesting
     internal fun resetForTests() {
         anchor = null
+        anchoredOnWall = false
     }
 }

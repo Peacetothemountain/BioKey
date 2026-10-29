@@ -44,19 +44,26 @@ class SecurityEngine private constructor() {
         fun isUserCancel(code: Int) = code == ERROR_USER_CANCELED || code == ERROR_CANCELED ||
             code == ERROR_NEGATIVE_BUTTON
 
+        private fun strongStatus(context: Context): Int? = runCatching {
+            context.getSystemService(BiometricManager::class.java)?.canAuthenticate(BIOMETRIC_STRONG)
+        }.getOrNull()
+
         /**
-         * Whether a strong (Class 3) face or fingerprint is set up on the phone. Only "none set up"
-         * (or no such hardware) is no: a sensor briefly unavailable, or waiting for an update, still
-         * has its faces and fingerprints, and mustn't read as their removal.
+         * A strong (Class 3) face or fingerprint can be used right now: what prompts and "Face or
+         * fingerprint only" go by. A sensor unavailable or awaiting an update can't be, so the
+         * screen lock is allowed then, or the owner would be locked out of everything.
          */
-        fun hasStrongBiometric(context: Context): Boolean = runCatching {
-            when (context.getSystemService(BiometricManager::class.java)?.canAuthenticate(BIOMETRIC_STRONG)) {
-                BiometricManager.BIOMETRIC_SUCCESS,
-                BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE,
-                BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED -> true
-                else -> false
-            }
-        }.getOrDefault(false)
+        fun hasStrongBiometric(context: Context): Boolean = strongStatus(context) == BiometricManager.BIOMETRIC_SUCCESS
+
+        /**
+         * A strong face or fingerprint is set up, usable or not: what records of changes go by. A
+         * sensor briefly unavailable still has its faces and fingerprints, and mustn't read as
+         * their removal.
+         */
+        fun hasEnrolledStrongBiometric(context: Context): Boolean = strongStatus(context).let {
+            it == BiometricManager.BIOMETRIC_SUCCESS || it == BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE ||
+                it == BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED
+        }
 
         /**
          * "Face or fingerprint only" is on and can be honoured: then prompts don't offer the screen
@@ -202,6 +209,12 @@ class SecurityEngine private constructor() {
         val name = appName.ifBlank { activity.getString(R.string.brand_name) }
         val faceOrFingerOnly = biometricOnly(activity)
         BiometricEnrollment.checkSoon(activity)
+        // "Face or fingerprint only" is on, but the face or fingerprint can't be used right now (a
+        // sensor fault, an update pending): the screen lock is allowed so the owner isn't locked out,
+        // and that's recorded.
+        if (!faceOrFingerOnly && SecurityVault.getInstance(activity).isBiometricOnly() && hasEnrolledStrongBiometric(activity)) {
+            ProtectionGaps.recordOncePerProcess(activity, "Face or fingerprint unavailable, so the screen lock was allowed")
+        }
 
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {

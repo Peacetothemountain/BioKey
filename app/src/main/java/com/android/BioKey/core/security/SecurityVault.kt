@@ -633,7 +633,8 @@ class SecurityVault private constructor(private val context: Context) {
         rebuildProfileTimeouts()
 
         _timeoutModeFlow.value = LockTimeoutMode.fromName(prefs.getString(KEY_TIMEOUT, null))
-        _notificationShieldFlow.value = prefs.getBoolean(KEY_NOTIFICATION_SHIELD, true)
+        // Off until the owner agrees to it in BioKey: granting notification access elsewhere doesn't switch it on.
+        _notificationShieldFlow.value = prefs.getBoolean(KEY_NOTIFICATION_SHIELD, false)
         _biometricOnlyFlow.value = prefs.getBoolean(KEY_BIOMETRIC_ONLY, false)
         _setupCompletedFlow.value = prefs.getBoolean(KEY_SETUP_COMPLETED, false)
         // Opt-in (Play policy: no blocking of uninstall/disable unless the user chose it).

@@ -281,7 +281,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 }
             }
         ) else null,
-        if (biometricOnly && strongBiometric && SETTINGS_PACKAGE !in lockedApps) SettingItem(
+        if ((biometricOnly || attemptAlerts) && strongBiometric && SETTINGS_PACKAGE !in lockedApps) SettingItem(
             icon = Icons.Default.Warning,
             title = "Settings isn't locked",
             subtitle = "With your PIN, someone could add their own fingerprint there · tap to lock Settings",
@@ -319,7 +319,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         SettingItem(
             icon = Icons.Default.GppBad,
             title = "Failed unlock alerts",
-            subtitle = "When a face or fingerprint fails on a locked app. Kept 7 days; off deletes them",
+            subtitle = "When a face or fingerprint fails on a locked app. Kept until you've seen them, then 7 days; off deletes them",
             checked = attemptAlerts,
             onChange = { on ->
                 fun apply() {
@@ -550,7 +550,12 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             title = "Default re-lock delay",
             current = defaultTimeout,
             onSelect = { mode ->
-                if (mode != null) vault.setTimeoutMode(mode)
+                if (mode != null) {
+                    if (mode.openFor > defaultTimeout.openFor) {
+                        ProtectionGaps.recordIfScreenLock(context, "Default re-lock delay made longer: ${mode.shortLabel.lowercase()}")
+                    }
+                    vault.setTimeoutMode(mode)
+                }
                 showRelockSheet = false
             },
             onDismiss = { showRelockSheet = false }

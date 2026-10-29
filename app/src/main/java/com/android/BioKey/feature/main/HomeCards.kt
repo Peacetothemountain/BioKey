@@ -172,14 +172,16 @@ internal fun SecurityActivityCard(
     gaps: List<ProtectionGaps.Gap>,
     labelOf: (UnlockAttempts.Attempt) -> String,
     onReview: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Whether this is the page's one urgent card ([securityActivityUrgent], unless another one is). */
+    urgent: Boolean = securityActivityUrgent(attempts, gaps)
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
-    val urgent = gaps.isNotEmpty() || attempts.any { it.unanswered }
     val newestAttempt = attempts.firstOrNull()
     val newestGap = gaps.firstOrNull()
-    val gapIsNewest = newestGap != null && (newestAttempt == null || newestGap.to > newestAttempt.lastAt)
+    // Newest by the order things happened in, not by clock times.
+    val gapIsNewest = newestGap != null && (newestAttempt == null || newestGap.seq > newestAttempt.seq)
     ActionCard(
         // What the newest thing was, at a glance: protection off, a fingerprint changed, a change
         // from BioKey opened with the PIN, or failed unlocks.
@@ -212,6 +214,10 @@ internal fun SecurityActivityCard(
         }
     }
 }
+
+/** Security activity worth the error colours: protection off or weakened, or misses nobody followed. */
+internal fun securityActivityUrgent(attempts: List<UnlockAttempts.Attempt>, gaps: List<ProtectionGaps.Gap>) =
+    gaps.isNotEmpty() || attempts.any { it.unanswered }
 
 /** The locked apps unlocked right now: one with its countdown and Lock, several with Choose and Lock all. */
 @Composable
@@ -256,6 +262,8 @@ internal fun attemptTime(context: Context, at: Long): String {
 
 /** Times app locking was off, as against changes that happened at one moment. */
 internal val ProtectionGaps.Gap.isOff get() = kind == ProtectionGaps.Kind.SWITCHED_OFF || kind == ProtectionGaps.Kind.FORCE_STOPPED
+
+internal val ProtectionGaps.Gap.isBiometricChange get() = kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED || kind == ProtectionGaps.Kind.BIOMETRICS_REMOVED
 
 /** "3:02 – 3:10 PM · switched off", or "3:04 PM · a face or fingerprint was added or removed". */
 internal fun gapLine(context: Context, gap: ProtectionGaps.Gap): String {
@@ -423,16 +431,18 @@ internal fun SecurityActivityDialog(
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-        // Destructive: in the error colour, and behind a face or fingerprint (and Undo).
-        dismissButton = {
-            TextButton(onClick = onClear, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
-                Text("Clear")
+        // Destructive: in the error colour, and behind a face or fingerprint (and Undo). Not offered
+        // when only a face or fingerprint change is left: that can't be cleared.
+        dismissButton = if (attempts.isNotEmpty() || gaps.any { !it.isBiometricChange }) {
+            {
+                TextButton(onClick = onClear, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                    Text("Clear")
+                }
             }
-        }
+        } else null
     )
 }
 
-/** On an urgent (error-coloured) card, a text button takes the card's own content colour. */
 /** The one thing to do on an urgent card: a filled button in the error colours. */
 @Composable
 internal fun UrgentButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -443,9 +453,6 @@ internal fun UrgentButton(text: String, onClick: () -> Unit, modifier: Modifier 
     ) { Text(text) }
 }
 
-@Composable
-private fun cardTextButtonColors(urgent: Boolean) =
-    if (urgent) ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer) else ButtonDefaults.textButtonColors()
 
 @Composable
 private fun SectionLabel(text: String) {

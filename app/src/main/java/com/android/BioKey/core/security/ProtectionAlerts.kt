@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.edit
 import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
@@ -43,6 +44,25 @@ object ProtectionAlerts {
     private val CONNECT_TOKEN = Any()
     private val main = Handler(Looper.getMainLooper())
 
+    private const val PREFS = "biokey_protection_alerts"
+    private const val KEY_REMINDERS_STOPPED = "reminders_stopped"
+
+    private fun remindersStopped(context: Context) =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_REMINDERS_STOPPED, false)
+
+    /**
+     * The owner switched app locking off on purpose: no more reminders until it's on again (it
+     * stays recorded, and home still says it's off). Asked for with the owner's face or fingerprint.
+     */
+    fun stopReminders(context: Context) {
+        val app = context.applicationContext
+        app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putBoolean(KEY_REMINDERS_STOPPED, true) }
+        ProtectionCheckJob.cancel(app)
+        NotificationManagerCompat.from(app).cancel(ID_SERVICE_STOPPED)
+        ProtectionGaps.recordIfScreenLock(app, "Reminders that app locking is off were stopped")
+        DiagnosticLog.log("Reminders that app locking is off stopped by the owner")
+    }
+
     fun ensureChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL_ID) != null) return
@@ -53,10 +73,8 @@ object ProtectionAlerts {
         )
     }
 
-    /** Set while a reminder posts ([remindIfOff]): the alert comes back, but without a sound. */
-    @Volatile private var reminding = false
-
-    private fun post(context: Context, id: Int, title: String, text: String, ongoing: Boolean = false) {
+    /** [silent]: a reminder ([remindIfOff]) brings the alert back without a sound. */
+    private fun post(context: Context, id: Int, title: String, text: String, ongoing: Boolean = false, silent: Boolean = false) {
         val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return
         ensureChannels(context)
@@ -76,7 +94,7 @@ object ProtectionAlerts {
             .setContentIntent(open)
             .setOngoing(ongoing)
             .setAutoCancel(!ongoing)
-            .setSilent(reminding)
+            .setSilent(silent)
             // On the phone's lock screen, only that BioKey has something to say: whoever holds
             // the locked phone isn't told protection is off.
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
@@ -115,7 +133,7 @@ object ProtectionAlerts {
         }, STOP_TOKEN, HANDOVER_GRACE_MS)
     }
 
-    private fun postServiceStopped(context: Context) {
+    private fun postServiceStopped(context: Context, silent: Boolean = false) {
         if (ProtectionEngine.shouldRunCompatibility(context)) {
             // Compatibility mode is the engine to run and has what it needs, but didn't start
             // (Android limits starting it from the background); opening BioKey starts it. Checked
@@ -127,7 +145,8 @@ object ProtectionAlerts {
                 ID_SERVICE_STOPPED,
                 context.getString(R.string.alert_off_title),
                 context.getString(R.string.alert_compat_not_running),
-                ongoing = true
+                ongoing = true,
+                silent = silent
             )
             return
         }
@@ -138,7 +157,8 @@ object ProtectionAlerts {
                 ID_SERVICE_STOPPED,
                 context.getString(R.string.alert_switch_to_compat_title),
                 context.getString(R.string.alert_switch_to_compat),
-                ongoing = true
+                ongoing = true,
+                silent = silent
             )
             return
         }
@@ -147,7 +167,8 @@ object ProtectionAlerts {
             ID_SERVICE_STOPPED,
             context.getString(R.string.alert_off_title),
             context.getString(R.string.alert_service_stopped),
-            ongoing = true
+            ongoing = true,
+            silent = silent
         )
     }
 
@@ -199,18 +220,16 @@ object ProtectionAlerts {
     fun remindIfOff(context: Context) {
         val app = context.applicationContext
         if (!SecurityVault.getInstance(app).isSetupCompleted() || ProtectionEngine.isProtecting(app)) return
+        if (remindersStopped(app)) return
         if (isShowing(app, ID_SERVICE_STOPPED)) return
-        reminding = true
-        try {
-            postServiceStopped(app)
-        } finally {
-            reminding = false
-        }
+        postServiceStopped(app, silent = true)
     }
 
     fun serviceRestored(context: Context) {
         ProtectionGaps.onEngineUp(context)
         ProtectionCheckJob.cancel(context)
+        // Back on: the next time it stops, it's reminded about again.
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { remove(KEY_REMINDERS_STOPPED) }
         main.removeCallbacksAndMessages(STOP_TOKEN)
         main.removeCallbacksAndMessages(CONNECT_TOKEN)
         NotificationManagerCompat.from(context).cancel(ID_SERVICE_STOPPED)
