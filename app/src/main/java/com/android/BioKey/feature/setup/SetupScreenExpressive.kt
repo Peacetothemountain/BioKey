@@ -139,6 +139,8 @@ fun SetupScreenExpressive(
         val subtitle: String,
         val done: Boolean,
         val opensExternally: Boolean = true,
+        /** Done after another step has been tried (restricted settings, after the accessibility switch): never the one to do now. */
+        val afterAnother: Boolean = false,
         val onClick: (() -> Unit)?
     )
     val steps = buildList {
@@ -148,7 +150,8 @@ fun SetupScreenExpressive(
                     Icons.Default.Policy, stringResource(R.string.setup_restricted_title),
                     // Android offers the ⋮ item only once its "restricted setting" dialog has been seen.
                     stringResource(R.string.setup_restricted_text),
-                    done = false
+                    done = false,
+                    afterAnother = true
                 ) { IntentNavigationHelper.openAppDetailsSettings(context) }
             )
         }
@@ -257,8 +260,9 @@ fun SetupScreenExpressive(
                 modifier = Modifier.padding(horizontal = 32.dp).onGloballyPositioned { quietZones[2] = it.boundsInRoot() }
             )
             Spacer(Modifier.height(28.dp))
-            // The step to do now: the first one not done.
-            val current = steps.indexOfFirst { !it.done }
+            // The step to do now: the first one not done that the main button below does (the
+            // restricted-settings step comes after the accessibility switch has been tried).
+            val current = steps.indexOfFirst { !it.done && !it.afterAnother }
             Group(count = steps.size) { i ->
                 val step = steps[i]
                 val state = when {

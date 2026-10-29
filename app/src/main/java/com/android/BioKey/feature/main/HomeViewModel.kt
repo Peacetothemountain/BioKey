@@ -58,8 +58,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(
         HomeState(
             hasStrongBiometric = SecurityEngine.lastKnownEnrolledStrongBiometric() ?: false,
-            alertsMuted = false,
-            remindersStopped = false,
+            alertsMuted = lastAlertsMuted ?: false,
+            remindersStopped = lastRemindersStopped ?: false,
             shieldWithoutAccess = ShieldAccessWatch.lastWithoutAccess ?: false,
             lockSettingsDismissed = lastLockSettingsDismissed
         )
@@ -74,7 +74,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         launch(Dispatchers.IO) {
             val dismissed = homePrefs(app).getBoolean(KEY_LOCK_SETTINGS_DISMISSED, false).also { lastLockSettingsDismissed = it }
             _state.update { it.copy(lockSettingsDismissed = dismissed) }
-            val stopped = ProtectionAlerts.remindersStopped(app)
+            val stopped = ProtectionAlerts.remindersStopped(app).also { lastRemindersStopped = it }
             _state.update { it.copy(remindersStopped = stopped) }
             ShieldAccessWatch.check(app)
             val withoutAccess = ShieldAccessWatch.lastWithoutAccess ?: false
@@ -83,7 +83,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         launch(Dispatchers.IO) {
             val strong = UnlockAttempts.hasStrongBiometric(app)
             _state.update { it.copy(hasStrongBiometric = strong) }
-            val muted = UnlockAttempts.channelMuted(app)
+            val muted = UnlockAttempts.channelMuted(app).also { lastAlertsMuted = it }
             _state.update { it.copy(alertsMuted = muted) }
             // Past their 7 days, gone from the disk too.
             UnlockAttempts.prune(app)
@@ -106,7 +106,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Hiding switched off from its card, as the switch in Settings does: recorded from a screen-lock session, with Undo. */
     fun switchShieldOff(vault: SecurityVault) {
-        switchShieldOff(app, vault, onUndo = { withoutAccess -> _state.update { it.copy(shieldWithoutAccess = withoutAccess) } })
+        // The Undo outlives this view model (BioKey's messages last the process): it holds the state, weakly.
+        val state = java.lang.ref.WeakReference(_state)
+        switchShieldOff(app, vault, onUndo = { withoutAccess -> state.get()?.update { it.copy(shieldWithoutAccess = withoutAccess) } })
         _state.update { it.copy(shieldWithoutAccess = false) }
     }
 
@@ -114,7 +116,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun dismissLockSettings() {
         _state.update { it.copy(lockSettingsDismissed = true) }
         lastLockSettingsDismissed = true
-        viewModelScope.launch(Dispatchers.IO) { homePrefs(app).edit { putBoolean(KEY_LOCK_SETTINGS_DISMISSED, true) } }
+        // Written in the background by SharedPreferences itself: nothing to cancel if home goes.
+        homePrefs(app).edit { putBoolean(KEY_LOCK_SETTINGS_DISMISSED, true) }
     }
 
     // ---- Review ------------------------------------------------------------------------------
@@ -138,7 +141,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 _review.value = lookAtReview()
                 onOpen()
             } finally {
-                opening = null
+                // Only this opening's own guard: a cancelled one mustn't clear a newer one's.
+                if (opening === coroutineContext[Job]) opening = null
             }
         }
     }
@@ -176,10 +180,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** The hold ([heldUntil]) ends while Review is open: worked out again then. */
-    suspend fun recheckWhenHoldEnds(heldUntil: Long?) {
+    suspend fun recheckWhenHoldEnds(heldUntil: Long?, shownUpTo: Long) {
         val until = heldUntil ?: return
         delay((until - TrustedClock.now()).coerceAtLeast(0L) + 1_000L)
-        _review.value = lookAtReview()
+        val now = lookAtReview()
+        _review.value = now
+        // The owner proven now, with Review still open: what it shows counts as seen, as on opening.
+        if (now.ownerProven) withContext(Dispatchers.Default) { UnlockAttempts.markSeen(app, shownUpTo) }
     }
 
     /** Mark reviewed: on the application's scope, so it isn't stopped halfway by the screen going. */
@@ -212,3 +219,6 @@ internal fun homePrefs(context: Context) = context.getSharedPreferences("biokey_
 internal const val KEY_LOCK_SETTINGS_DISMISSED = "lock_settings_dismissed"
 /** [KEY_LOCK_SETTINGS_DISMISSED] as last read in this process: home's first frame, before it reads again. */
 @Volatile internal var lastLockSettingsDismissed: Boolean? = null
+/** Whether BioKey's alert channels were muted, and its reminders stopped, as last read: home's first frame. */
+@Volatile internal var lastAlertsMuted: Boolean? = null
+@Volatile internal var lastRemindersStopped: Boolean? = null

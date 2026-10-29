@@ -528,7 +528,7 @@ fun MainScreenExpressive(
                         animated = headerActive,
                         sidePadPx = sidePadPx,
                         onOpenStatus = { overlays.showProtectionSheet = true },
-                        onOpenSettings = { showSettings = true }
+                        onOpenSettings = { showSettings = if (twoPane) !showSettings else true }
                     )
                 }
 

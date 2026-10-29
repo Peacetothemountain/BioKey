@@ -221,7 +221,7 @@ internal fun HomeDialogs(
         // whose face or fingerprint was only just added, mustn't be able to quiet it.
         val openedAt = remember { shownUpTo }
         LaunchedEffect(shownUpTo) { homeViewModel.reviewShowing(shownUpTo, openedAt) }
-        LaunchedEffect(review.heldUntil) { homeViewModel.recheckWhenHoldEnds(review.heldUntil) }
+        LaunchedEffect(review.heldUntil) { homeViewModel.recheckWhenHoldEnds(review.heldUntil, shownUpTo) }
         SecurityActivityDialog(
             attempts = attempts,
             gaps = gaps,
