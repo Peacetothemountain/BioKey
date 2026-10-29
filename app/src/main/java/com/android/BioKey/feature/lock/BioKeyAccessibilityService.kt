@@ -191,6 +191,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
             guarded("Screen change") {
                 when (intent.action) {
                     Intent.ACTION_SCREEN_OFF -> {
+                        // A locked app left on screen: its lock screen goes up now, behind the
+                        // keyguard, once every session has ended with the screen (ScreenReceiver,
+                        // on this thread too), so unlocking the phone uncovers the cover, not the app.
+                        foregroundPackage?.let { left -> mainHandler.post { coverLeftOnScreen(left) } }
                         watchLauncher(false)
                         foregroundPackage = null
                         expectedLaunch = null
@@ -664,6 +668,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
         for (raw in spoken) {
             // A lock screen left a moment ago doesn't count: tapping the app again is on purpose.
             val target = lockedPackagesNamed(raw).firstOrNull { needsCover(it, ignoreAbandoned = true) } ?: continue
+            // Its name above its Recents card opens the launcher's menu, not the app.
+            if (isRecentsCardMenu(event)) return
             LockStateTracker.clearAbandoned(target)
             expectedLaunch = target to SystemClock.elapsedRealtime()
             DiagnosticLog.log("Tap on $target: covering it before it opens")
@@ -677,6 +683,33 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 onExpired = { onPredictionExpired(it) }
             )
             return
+        }
+    }
+
+    /**
+     * The app's name above its Recents card (in Android's own launcher, and those built on it)
+     * opens the launcher's menu for it: split screen, app info, pin. A cover would hide that menu,
+     * and the app isn't opening. Told apart from the card by the card's picture (its "snapshot"
+     * view, found by its ID, which needs no flag): beside the tapped view, inside the same card,
+     * rather than inside it. Read only for a tap that names a locked app: three small IPCs.
+     */
+    private fun isRecentsCardMenu(event: AccessibilityEvent): Boolean {
+        val launcher = event.packageName?.toString() ?: return false
+        val snapshot = "$launcher:id/snapshot"
+        fun AccessibilityNodeInfo.holdsSnapshot(): Boolean =
+            findAccessibilityNodeInfosByViewId(snapshot).orEmpty().also { found -> found.forEach { it.release() } }.isNotEmpty()
+        val source = runCatching { event.source }.getOrNull() ?: return false
+        var card: AccessibilityNodeInfo? = null
+        return try {
+            // The card itself, or its picture: that opens the app.
+            if (source.holdsSnapshot()) return false
+            card = source.parent ?: return false
+            card.holdsSnapshot()
+        } catch (_: RuntimeException) {
+            false
+        } finally {
+            card?.release()
+            source.release()
         }
     }
 
@@ -1218,6 +1251,18 @@ class BioKeyAccessibilityService : AccessibilityService() {
             lower.contains("recents") ||
             lower.contains("taskstack") ||
             (lower.contains("quickstep") && !lower.contains("launcher"))
+    }
+
+    /**
+     * [pkg] was in front as the screen went off and is locked now: its lock screen starts behind
+     * the keyguard (no shield: that would show over it). Without this, the keyguard's exit
+     * animation shows the app for a moment before the phone-unlocked broadcast covers it.
+     */
+    private fun coverLeftOnScreen(pkg: String) {
+        if (!isRunning || !vault.isProtectionActive() || !needsCover(pkg)) return
+        DiagnosticLog.log("Covered $pkg (on screen as the phone locked)")
+        LockStateTracker.setRegularLockPending(pkg)
+        launchLockScreen(pkg, isSelfProtection = false)
     }
 
     /** Covers [target] and starts its lock screen, on [displayId] when known (the display its window is on). */

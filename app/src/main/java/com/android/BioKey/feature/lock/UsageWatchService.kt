@@ -15,6 +15,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.content.res.Configuration
+import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
@@ -22,7 +23,10 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
+import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -111,10 +115,58 @@ class UsageWatchService : Service() {
             try {
                 ContextCompat.startForegroundService(context, Intent(context, UsageWatchService::class.java))
             } catch (e: Exception) {
+                // Refused in the background (the accessibility engine handing over as it stops,
+                // say): Android 15 and later let an app holding "display over other apps" start
+                // one only while an overlay of its own shows. Once more, with one up.
+                if (Build.VERSION.SDK_INT >= 35 && Settings.canDrawOverlays(context)) {
+                    startUnderOverlay(context.applicationContext)
+                    return
+                }
                 startPending = false
                 throw e
             }
         }
+
+        /**
+         * Puts up a 1-pixel, see-through overlay that takes no touches and, once it's on screen,
+         * starts the service; takes it down a moment later. Failing that, nothing protects apps:
+         * said as a failed start is ([ProtectionEngine.refresh]).
+         */
+        private fun startUnderOverlay(app: Context) {
+            val main = Handler(Looper.getMainLooper())
+            main.post {
+                val windows = app.getSystemService(WindowManager::class.java)
+                val view = View(app)
+                val params = WindowManager.LayoutParams(
+                    1, 1,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                    PixelFormat.TRANSLUCENT
+                ).apply { gravity = Gravity.TOP or Gravity.START }
+                val shown = windows != null && runCatching { windows.addView(view, params) }.isSuccess
+                fun failed(why: String) {
+                    startPending = false
+                    Log.w(TAG, "Compatibility mode couldn't start in the background: $why")
+                    DiagnosticLog.log("Compatibility mode couldn't start in the background")
+                    ProtectionAlerts.serviceStopped(app)
+                }
+                if (!shown) return@post failed("no overlay")
+                // Drawn, so Android counts it as showing.
+                main.postDelayed({
+                    try {
+                        ContextCompat.startForegroundService(app, Intent(app, UsageWatchService::class.java))
+                        DiagnosticLog.log("Compatibility mode started under an overlay")
+                    } catch (e: Exception) {
+                        failed(e.javaClass.simpleName)
+                    }
+                    main.postDelayed({ runCatching { windows?.removeViewImmediate(view) } }, OVERLAY_START_HOLD_MS)
+                }, OVERLAY_DRAWN_MS)
+            }
+        }
+
+        /** How long the start overlay is given to be drawn, and kept up after the start. */
+        private const val OVERLAY_DRAWN_MS = 100L
+        private const val OVERLAY_START_HOLD_MS = 1_000L
 
         fun stop(context: Context) {
             // One still starting checks for itself whether it should run: stopping it before it

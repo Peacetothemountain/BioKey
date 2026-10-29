@@ -96,6 +96,47 @@ class SessionRulesTest {
         assertTrue(unlocked(chat))
     }
 
+    /** Unlocked through its lock screen: noted as the engine notes it, then its window event. */
+    private fun unlockThroughLockScreen(pkg: String) {
+        LockStateTracker.onAppUnlocked(pkg)
+        rules.noteUnlocked(pkg, SystemClock.elapsedRealtime())
+        rules.noteOnScreen(pkg)
+    }
+
+    @Test
+    fun aSplitScreenFormingAgainAfterAnUnlockIsNotLeaving() {
+        // The lock screen hid the split; it takes about a second to show both apps again.
+        unlockThroughLockScreen(bank)
+        screen(game)
+        advance(900)
+        screen(game)
+        assertTrue(unlocked(bank))
+        screen(bank, game)
+        advance(1_000)
+        screen(bank, game)
+        assertTrue(unlocked(bank))
+    }
+
+    @Test
+    fun goingHomeRightAfterAnUnlockIsStillLeaving() {
+        unlockThroughLockScreen(bank)
+        screen(launcher)
+        advance(LEAVE_CONFIRM_MS + 50)
+        screen(launcher)
+        assertFalse(unlocked(bank))
+    }
+
+    @Test
+    fun anAppThatNeverArrivesAfterAnUnlockIsLeftOnceTheWaitIsOver() {
+        unlockThroughLockScreen(bank)
+        screen(game)
+        advance(SessionRules.UNLOCK_ARRIVAL_MS + 50)
+        screen(game)
+        advance(LEAVE_CONFIRM_MS + 50)
+        screen(game)
+        assertFalse(unlocked(bank))
+    }
+
     @Test
     fun goingHomeIsLeaving() {
         unlockAndUse(chat)

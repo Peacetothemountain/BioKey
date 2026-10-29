@@ -131,6 +131,8 @@ are also notified, the next time you unlock your phone and at least 2 minutes la
 naming the app; the notification stays until you open **Review** in BioKey opened with your face
 or fingerprint (opened with your screen lock, tap **Mark reviewed** there and use your face or
 fingerprint).
+(Android tells apps when a face or fingerprint is added, or when the last one is removed; not when
+one of several is removed, which lets nobody in.)
 A face or fingerprint added or removed stays new for a day either way, and its alert comes back
 at each unlock until then: whoever made the change can't hide it from you. Review says until when;
 meanwhile nothing proves it's you in BioKey: changes are recorded, nothing is marked seen, and

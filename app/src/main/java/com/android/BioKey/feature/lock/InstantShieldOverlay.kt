@@ -170,6 +170,9 @@ class InstantShieldOverlay(
         PixelFormat.TRANSLUCENT
     ).apply {
         layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        // Over the system bars too: an app overlay (compatibility mode) is otherwise fitted inside
+        // them, which on a large screen leaves the app showing under the taskbar.
+        fitInsetsTypes = 0
         windowAnimations = 0
         // Focused (see takeFocus), the cover has no text field: the covered app's keyboard goes.
         softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
