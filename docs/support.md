@@ -154,8 +154,8 @@ record went with it. Android also switches BioKey's accessibility service off an
 you open it: its setup screen then says when (on Android 12, an alert also comes after the phone's
 next restart). Once set up again, it's recorded. For a day after, as after a face or fingerprint change, records can't be cleared and
 the alerts can't be switched off: whoever cleared it may have added their own fingerprint first.
-(Android must still remember BioKey running since its last update; an uninstall removes that, but
-then BioKey's icon is gone too.)
+(BioKey tells from Android's record of its last run, which a clearing keeps; an uninstall removes it,
+but then BioKey's icon is gone too.)
 
 If you switched it off on purpose, **Stop reminding** on the "App lock is off" card (it asks for
 your face or fingerprint) ends the reminders until app locking is back on; the card then says

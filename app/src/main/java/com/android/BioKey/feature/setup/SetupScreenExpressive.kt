@@ -63,6 +63,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.android.BioKey.R
 import com.android.BioKey.core.security.AdvancedProtection
 import com.android.BioKey.core.security.ProtectionEngine
+import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.main.ActivityCallout
@@ -94,8 +95,8 @@ fun SetupScreenExpressive(
     isAuthenticating: Boolean = false,
     authError: String? = null,
     needsScreenLock: Boolean = false,
-    /** When BioKey's storage was cleared, if that's why it's being set up ([ProtectionGaps.checkStorageCleared]). */
-    clearedAt: Long? = null,
+    /** BioKey's storage was cleared, if that's why it's being set up ([ProtectionGaps.checkStorageCleared]). */
+    cleared: ProtectionGaps.Cleared? = null,
     onSetupComplete: () -> Unit
 ) {
     val context = LocalContext.current
@@ -204,7 +205,8 @@ fun SetupScreenExpressive(
             add(
                 Step(
                     Icons.Default.Notifications, stringResource(R.string.setup_notifications_title),
-                    stringResource(R.string.setup_notifications_text),
+                    // A clearing took the permission back with everything else: say why it matters now.
+                    stringResource(if (cleared != null) R.string.setup_notifications_text_reset else R.string.setup_notifications_text),
                     done = notifications.allowed,
                     optional = true,
                     // Android's own question from 13 on; before that, only its settings page.
@@ -271,11 +273,12 @@ fun SetupScreenExpressive(
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 32.dp).onGloballyPositioned { quietZones[2] = it.boundsInRoot() }
             )
-            if (clearedAt != null) {
+            if (cleared != null) {
                 Spacer(Modifier.height(20.dp))
                 // Why BioKey is being set up again: Review's callout, lined up with the steps below.
                 ActivityCallout(
-                    stringResource(R.string.setup_storage_cleared, attemptTime(context, clearedAt)),
+                    if (cleared.known) stringResource(R.string.setup_storage_cleared, attemptTime(context, cleared.after))
+                    else stringResource(R.string.setup_storage_cleared_unknown),
                     headline = stringResource(R.string.storage_cleared_notification_title),
                     held = true,
                     modifier = Modifier.padding(horizontal = GroupInset)

@@ -39,6 +39,8 @@ class ProtectionGapsTest {
         ProtectionGaps.exits = { exits }
         ProtectionGaps.updatedAt = { 0L }
         ProtectionGaps.wallNow = { now }
+        // A test's storage counts as new unless a test says otherwise.
+        ProtectionGaps.storageFromBefore = { false }
         com.android.BioKey.core.security.TrustedClock.resetForTests()
         context.getSharedPreferences("biokey_unlock_attempts", Context.MODE_PRIVATE).edit().clear().commit()
         com.android.BioKey.core.security.UnlockAttempts.resetForTests()
@@ -48,6 +50,7 @@ class ProtectionGapsTest {
 
     @After
     fun restore() {
+        ProtectionGaps.storageFromBefore = { true }
         ProtectionGaps.sdk = { android.os.Build.VERSION.SDK_INT }
         ProtectionGaps.clock = System::currentTimeMillis
         ProtectionGaps.resetForTests()
@@ -332,23 +335,48 @@ class ProtectionGapsTest {
     }
 
     @Test
-    fun exitsFromBeforeAnUpdateArentAClearing() {
+    fun storageFromBeforeIsntAClearing() {
         val p = context.getSharedPreferences("biokey_protection_gaps", Context.MODE_PRIVATE)
         val vault = SecurityVault.getInstance(context)
-        val before = ProtectionGaps.exits
-        val update = ProtectionGaps.updatedAt
         try {
-            // An earlier version, opened but never set up, then updated: its exits, and the update's own.
+            // An earlier version, opened but never set up, then updated: its files are older than this process.
             p.edit().clear().commit()
             vault.setSetupCompletedSync(false)
-            ProtectionGaps.updatedAt = { now - 30_000L }
-            ProtectionGaps.exits = { listOf(now - 3_600_000L to ApplicationExitInfo.REASON_OTHER, now - 29_000L to ApplicationExitInfo.REASON_USER_REQUESTED) }
+            ProtectionGaps.storageFromBefore = { true }
+            exits = listOf(now - 3_600_000L to ApplicationExitInfo.REASON_OTHER)
             ProtectionGaps.checkStorageCleared(context)
             assertEquals(null, ProtectionGaps.clearedAt(context))
         } finally {
-            ProtectionGaps.exits = before
-            ProtectionGaps.updatedAt = update
+            ProtectionGaps.storageFromBefore = { false }
         }
+    }
+
+    @Test
+    fun aClearingDatedBeforeTheLastUpdateStillCounts() {
+        // The clock set back before clearing, or Play updating BioKey afterwards: the exit predates
+        // the update, but the storage is new, so it's a clearing.
+        val p = context.getSharedPreferences("biokey_protection_gaps", Context.MODE_PRIVATE)
+        p.edit().clear().commit()
+        SecurityVault.getInstance(context).setSetupCompletedSync(false)
+        ProtectionGaps.updatedAt = { now }
+        exits = listOf(now - 86_400_000L to ApplicationExitInfo.REASON_USER_REQUESTED)
+        ProtectionGaps.checkStorageCleared(context)
+        assertEquals(now - 86_400_000L, ProtectionGaps.clearedAt(context))
+    }
+
+    @Test
+    fun aClearingDatedInTheFutureIsAtATimeThatCantBeTold() {
+        // The date set ahead to clear, then back: the exit is "after now".
+        val p = context.getSharedPreferences("biokey_protection_gaps", Context.MODE_PRIVATE)
+        p.edit().clear().commit()
+        val vault = SecurityVault.getInstance(context)
+        vault.setSetupCompletedSync(false)
+        exits = listOf(now + 3_600_000L to ApplicationExitInfo.REASON_USER_REQUESTED)
+        ProtectionGaps.checkStorageCleared(context)
+        assertEquals(false, ProtectionGaps.cleared.value?.known)
+        vault.setSetupCompletedSync(true)
+        ProtectionGaps.onEngineUp(context)
+        assertTrue(ProtectionGaps.gaps.value.single { it.kind == ProtectionGaps.Kind.DATA_CLEARED }.unknownStart)
     }
 
     @Test

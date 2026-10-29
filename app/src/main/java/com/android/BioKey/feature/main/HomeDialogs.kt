@@ -2,6 +2,7 @@ package com.android.BioKey.feature.main
 
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
@@ -26,7 +28,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
@@ -156,6 +160,10 @@ internal fun HomeDialogs(
             onFix = {
                 overlays.showProtectionSheet = false
                 onAllowNotifications()
+            },
+            onTurnOffFix = {
+                overlays.showProtectionSheet = false
+                homeViewModel.switchShieldOff(vault)
             },
             onPause = {
                 overlays.showProtectionSheet = false
@@ -390,70 +398,103 @@ private fun ProtectionSheet(
     look: ProtectionLook,
     onAction: () -> Unit,
     onFix: () -> Unit,
+    onTurnOffFix: () -> Unit,
     onPause: () -> Unit,
     onLockAll: () -> Unit,
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         ProtectDialogWindow()
-        Column(
+        ProtectionSheetContent(look, onAction, onFix, onTurnOffFix, onPause, onLockAll)
+    }
+}
+
+/** The status sheet's contents: what protection is doing, and its actions. */
+@Composable
+internal fun ProtectionSheetContent(
+    look: ProtectionLook,
+    onAction: () -> Unit,
+    onFix: () -> Unit,
+    onTurnOffFix: () -> Unit,
+    onPause: () -> Unit,
+    onLockAll: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .rejectObscuredTouches()
+            .padding(horizontal = 28.dp)
+            .padding(bottom = 28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .rejectObscuredTouches()
-                .padding(horizontal = 28.dp)
-                .padding(bottom = 28.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .size(72.dp)
+                .background(look.container, CircleShape),
+            contentAlignment = Alignment.Center
         ) {
-            Box(
-                modifier = Modifier
-                    .size(72.dp)
-                    .background(look.container, CircleShape),
-                contentAlignment = Alignment.Center
+            Icon(look.icon, contentDescription = null, tint = look.content, modifier = Modifier.size(36.dp))
+        }
+        Spacer(Modifier.height(16.dp))
+        Text(
+            look.title,
+            style = MaterialTheme.typography.headlineSmall,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.semantics { heading() }
+        )
+        Spacer(Modifier.height(8.dp))
+        // The summary centred; anything more (compatibility mode, apps not covered, notifications
+        // showing) as a short start-aligned list under it, easier to read than centred lines.
+        val lines = look.body.lines()
+        Text(
+            lines.first(),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+        if (lines.size > 1) {
+            Spacer(Modifier.height(12.dp))
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(look.icon, contentDescription = null, tint = look.content, modifier = Modifier.size(36.dp))
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    lines.drop(1).forEach { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
             }
-            Spacer(Modifier.height(16.dp))
-            Text(
-                look.title,
-                style = MaterialTheme.typography.headlineSmall,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.semantics { heading() }
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                look.body,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            Spacer(Modifier.height(24.dp))
-            if (look.action != null) {
-                Button(onClick = onAction, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text(look.action) }
-            } else {
-                // Something to put right first (notifications showing in full): its button leads.
-                if (look.fix != null) {
-                    Button(
-                        onClick = onFix,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError)
-                    ) { Text(look.fix) }
-                    Spacer(Modifier.height(8.dp))
+        }
+        Spacer(Modifier.height(24.dp))
+        if (look.action != null) {
+            Button(onClick = onAction, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text(look.action) }
+        } else {
+            // Something to put right first (notifications showing in full): its button leads.
+            if (look.fix != null) {
+                Button(
+                    onClick = onFix,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError)
+                ) { Text(look.fix) }
+                // Or, if it was meant, stop hiding (as on home's card: recorded, with Undo).
+                TextButton(onClick = onTurnOffFix, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.home_shield_turn_off_hiding))
                 }
-                // Before handing the phone over, say: every locked app asks again, without waiting
-                // for the screen to turn off.
-                val lockAllContent: @Composable RowScope.() -> Unit = {
-                    Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.shortcut_lock_all_long))
-                }
-                if (look.fix != null) FilledTonalButton(onClick = onLockAll, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), content = lockAllContent)
-                else Button(onClick = onLockAll, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), content = lockAllContent)
                 Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = onPause, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
-                    Icon(Icons.Default.PauseCircle, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.home_pause_protection))
-                }
+            }
+            // Before handing the phone over, say: every locked app asks again, without waiting
+            // for the screen to turn off.
+            val lockAllContent: @Composable RowScope.() -> Unit = {
+                Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.shortcut_lock_all_long))
+            }
+            if (look.fix != null) FilledTonalButton(onClick = onLockAll, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), content = lockAllContent)
+            else Button(onClick = onLockAll, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), content = lockAllContent)
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = onPause, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+                Icon(Icons.Default.PauseCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.home_pause_protection))
             }
         }
     }

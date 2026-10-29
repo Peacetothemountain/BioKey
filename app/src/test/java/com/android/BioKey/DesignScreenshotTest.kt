@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.asImageBitmap
@@ -288,6 +290,37 @@ class DesignScreenshotTest {
         }
     }
 
+    /** Review after a reset: the reset as a time locking was off, a change made since, and the hold naming it. */
+    @Test fun reviewAfterReset() {
+        val at = reviewAt
+        val gaps = listOf(
+            ProtectionGaps.Gap(at + 60_000L, at + 60_000L, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, 4L, ProtectionGaps.Change.LOCK_OFF.encodeDuringHold("Chase", byReset = true)),
+            ProtectionGaps.Gap(at - 40 * 60_000L, at, ProtectionGaps.Kind.DATA_CLEARED, 3L)
+        )
+        shoot("review_reset") {
+            com.android.BioKey.feature.main.SecurityActivityDialog(
+                attempts = emptyList(), gaps = gaps, labelOf = { it.label },
+                onClear = {}, onDismiss = {}, onMarkReviewed = null, heldUntil = at + 24 * 60 * 60_000L, heldByReset = true
+            )
+        }
+    }
+
+    /** The status sheet while notifications show in full, in compatibility mode with an app it can't see. */
+    @Test fun sheetNotificationsShowing() = shoot("sheet_notifications_showing") {
+        androidx.compose.material3.Surface(
+            color = androidx.compose.material3.MaterialTheme.colorScheme.surfaceContainerLow,
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            modifier = androidx.compose.ui.Modifier.padding(top = 48.dp)
+        ) {
+            com.android.BioKey.feature.main.ProtectionSheetContent(
+                look = com.android.BioKey.feature.main.protectionLook(
+                    ProtectionEngine.Mode.COMPATIBILITY, true, 0L, 5, 1, LockTimeoutMode.IMMEDIATE, notificationsShowing = true
+                ),
+                onAction = {}, onFix = {}, onTurnOffFix = {}, onPause = {}, onLockAll = {}
+            )
+        }
+    }
+
     /** Review opened with the screen lock, no hold: Mark reviewed, and Clear. */
     @Test fun reviewScreenLock() {
         val at = reviewAt
@@ -325,7 +358,7 @@ class DesignScreenshotTest {
     }
     @Test fun setup() = shoot("setup") { SetupScreenExpressive(onSetupComplete = {}) }
     @Test fun setupAfterStorageCleared() = shoot("setup_cleared") {
-        SetupScreenExpressive(clearedAt = System.currentTimeMillis() - 3_600_000L, onSetupComplete = {})
+        SetupScreenExpressive(cleared = ProtectionGaps.Cleared(System.currentTimeMillis() - 3_600_000L), onSetupComplete = {})
     }
 
     private fun cover(actions: Boolean, status: String? = null) = @Composable {

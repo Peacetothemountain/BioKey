@@ -142,7 +142,7 @@ class MainActivity : ComponentActivity() {
                         authError = setupAuthError,
                         needsScreenLock = setupNeedsScreenLock,
                         // Followed: the check runs as BioKey starts, maybe after setup first shows.
-                        clearedAt = ProtectionGaps.cleared.collectAsStateWithLifecycle().value,
+                        cleared = ProtectionGaps.cleared.collectAsStateWithLifecycle().value,
                         onSetupComplete = ::completeSetup
                     )
                     !isAuthenticated -> BioKeyLockScreen(

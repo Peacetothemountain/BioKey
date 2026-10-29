@@ -323,6 +323,7 @@ internal fun gapLine(context: Context, gap: ProtectionGaps.Gap): String {
                 context.getString(
                     when {
                         change?.first?.fromScreenLock == false -> R.string.card_gap_event
+                        ProtectionGaps.Change.duringReset(gap.detail) -> R.string.card_gap_changed_during_reset
                         ProtectionGaps.Change.duringHold(gap.detail) -> R.string.card_gap_changed_during_hold
                         else -> R.string.card_gap_changed_with_screen_lock
                     },
@@ -331,7 +332,10 @@ internal fun gapLine(context: Context, gap: ProtectionGaps.Gap): String {
             }
         }
     }
-    if (gap.kind == ProtectionGaps.Kind.DATA_CLEARED) return context.getString(R.string.card_gap_storage_cleared, timeRange(context, gap))
+    if (gap.kind == ProtectionGaps.Kind.DATA_CLEARED) {
+        return if (gap.unknownStart) context.getString(R.string.card_gap_storage_cleared_unknown, attemptTime(context, gap.to))
+        else context.getString(R.string.card_gap_storage_cleared, timeRange(context, gap))
+    }
     if (gap.unknownStart) return context.getString(R.string.card_gap_force_stopped_unknown, attemptTime(context, gap.to))
     return context.getString(if (gap.kind == ProtectionGaps.Kind.SWITCHED_OFF) R.string.card_gap_switched_off else R.string.card_gap_force_stopped, timeRange(context, gap))
 }
@@ -501,8 +505,11 @@ internal fun SecurityActivityDialog(
                                             ProtectionGaps.Kind.BIOMETRICS_CHANGED -> R.string.card_change_biometrics_changed_hint
                                             ProtectionGaps.Kind.BIOMETRICS_REMOVED -> R.string.card_change_biometrics_removed_hint
                                             ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED -> R.string.card_change_shield_access_hint
-                                            else -> if (ProtectionGaps.Change.duringHold(change.detail)) R.string.card_change_during_hold_hint
-                                            else R.string.card_change_screen_lock_hint
+                                            else -> when {
+                                                ProtectionGaps.Change.duringReset(change.detail) -> R.string.card_change_during_reset_hint
+                                                ProtectionGaps.Change.duringHold(change.detail) -> R.string.card_change_during_hold_hint
+                                                else -> R.string.card_change_screen_lock_hint
+                                            }
                                         }
                                     ),
                                     style = MaterialTheme.typography.bodyMedium,
@@ -524,15 +531,25 @@ internal fun SecurityActivityDialog(
                         offs.forEach { gap ->
                             Column(Modifier.semantics(mergeDescendants = true) { }) {
                                 Text(gapLine(context, gap), style = MaterialTheme.typography.titleSmall)
-                                Text(stringResource(R.string.card_gap_hint), style = MaterialTheme.typography.bodyMedium, color = note)
+                                if (gap.kind == ProtectionGaps.Kind.DATA_CLEARED) {
+                                    // A reset: what it may hide, and that it stays (it starts a hold).
+                                    Text(stringResource(R.string.card_gap_reset_hint), style = MaterialTheme.typography.bodyMedium, color = note)
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(stringResource(R.string.card_gap_reset_note), style = MaterialTheme.typography.bodySmall, color = note)
+                                } else {
+                                    Text(stringResource(R.string.card_gap_hint), style = MaterialTheme.typography.bodyMedium, color = note)
+                                }
                             }
                         }
                     }
-                    Text(
-                        stringResource(R.string.card_gaps_note),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = note
-                    )
+                    // What switches it off: for those, not for a reset (which says so itself).
+                    if (offs.any { it.kind != ProtectionGaps.Kind.DATA_CLEARED }) {
+                        Text(
+                            stringResource(R.string.card_gaps_note),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = note
+                        )
+                    }
                     Spacer(Modifier.height(16.dp))
                 }
                 if (attempts.isNotEmpty()) {
@@ -555,7 +572,7 @@ internal fun SecurityActivityDialog(
                         color = note
                     )
                 }
-                if (gaps.any { it.isBiometricChange || it.kind == ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK }) {
+                if (gaps.any { it.kind.holds || it.kind == ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK }) {
                     // What to do about them: look over the faces, fingerprints and screen lock.
                     OutlinedButton(
                         onClick = { IntentNavigationHelper.openSecuritySettings(context) },

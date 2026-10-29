@@ -252,14 +252,17 @@ object ProtectionAlerts {
     fun remindIfStorageCleared(context: Context) {
         val app = context.applicationContext
         if (SecurityVault.getInstance(app).isSetupCompleted()) return
-        val after = ProtectionGaps.clearedAt(app) ?: return
+        ProtectionGaps.load(app)
+        val cleared = ProtectionGaps.cleared.value ?: return
         val manager = NotificationManagerCompat.from(app)
         if (!manager.areNotificationsEnabled()) return
         UnlockAttempts.ensureChannel(app)
-        val text = app.getString(
-            R.string.storage_cleared_notification_text,
-            DateUtils.formatDateTime(app, after, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_ABBREV_MONTH)
-        )
+        val text = if (cleared.known) {
+            app.getString(
+                R.string.storage_cleared_notification_text,
+                DateUtils.formatDateTime(app, cleared.after, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_ABBREV_MONTH)
+            )
+        } else app.getString(R.string.storage_cleared_notification_text_unknown)
         val open = PendingIntent.getActivity(
             app,
             ID_STORAGE_CLEARED,

@@ -50,6 +50,7 @@
     <string name="activity_recorded_notification_text">Something was recorded in BioKey\'s security activity. Open BioKey to see what.</string>
     <string name="storage_cleared_notification_title">BioKey was reset</string>
     <string name="storage_cleared_notification_text">BioKey\'s storage was cleared after %1$s, so no app is locked. Open BioKey to set it up again.</string>
+    <string name="storage_cleared_notification_text_unknown">BioKey\'s storage was cleared, so no app is locked. Open BioKey to set it up again.</string>
     <string name="biometric_unavailable_notification_text">Your face or fingerprint couldn\'t be used, so your screen lock was allowed. Open BioKey to see when.</string>
     <string name="gaps_notification_text">Locked apps could be opened without a check for a while. Open BioKey to see when.</string>
     <plurals name="attempts_title">
@@ -172,7 +173,8 @@
     <!-- First-run setup (SetupScreenExpressive.kt). -->
     <string name="setup_title">Set up BioKey</string>
     <string name="setup_subtitle">Lock any app behind your face, fingerprint or screen lock.</string>
-    <string name="setup_storage_cleared">Its storage was cleared after %1$s, when it last ran, and every lock and record went with it. Once you finish setup, this is recorded in Security activity, and for a day nothing here can prove it\'s you.</string>
+    <string name="setup_storage_cleared">Its storage was cleared some time after BioKey last ran (%1$s), and every lock and record went with it. Once setup is done, this is recorded in Security activity, and some actions wait a day.</string>
+    <string name="setup_storage_cleared_unknown">Its storage was cleared at a time that can\'t be told (the phone\'s clock was changed), and every lock and record went with it. Once setup is done, this is recorded in Security activity, and some actions wait a day.</string>
     <string name="setup_restricted_title">Allow restricted settings</string>
     <!-- ⋮ is the App info page's overflow menu. -->
     <string name="setup_restricted_text">Android blocks this for apps installed outside the Play Store. Try the accessibility switch once; then in App info tap ⋮ &gt; “Allow restricted settings”.</string>
@@ -186,6 +188,7 @@
     <string name="setup_screen_lock_text">BioKey uses your PIN, pattern or password as the fallback.</string>
     <string name="setup_notifications_title">Allow notifications (optional)</string>
     <string name="setup_notifications_text">So BioKey can tell you if app locking ever stops.</string>
+    <string name="setup_notifications_text_reset">Android took this back when BioKey was reset. Allow it so BioKey can tell you if app locking stops again.</string>
     <string name="setup_confirm_title">Confirm it\'s you</string>
     <string name="setup_confirm_text">One check with your face, fingerprint or screen lock to finish.</string>
     <!-- Each step's state, said aloud by screen readers. -->
@@ -354,7 +357,8 @@
     <string name="card_gap_biometrics_removed">%1$s · No face or fingerprint is set up any more</string>
     <string name="card_gap_protection_changed">Protection changed</string>
     <string name="card_gap_changed_with_screen_lock">%1$s · %2$s (BioKey was opened with the screen lock)</string>
-    <string name="card_gap_changed_during_hold">%1$s · %2$s (within a day of a face or fingerprint change, or BioKey being reset)</string>
+    <string name="card_gap_changed_during_hold">%1$s · %2$s (within a day of a face or fingerprint change)</string>
+    <string name="card_gap_changed_during_reset">%1$s · %2$s (within a day of BioKey being reset)</string>
     <string name="card_gap_event">%1$s · %2$s</string>
     <string name="card_gap_force_stopped_unknown">BioKey was force-stopped, for a time that can\'t be told (the clock was set back), until %1$s</string>
     <string name="card_gap_shield_access_revoked_range">%1$s · Notification access was off while Hide notification content was on</string>
@@ -378,6 +382,9 @@
     <string name="card_gap_switched_off">%1$s · Switched off</string>
     <string name="card_gap_force_stopped">%1$s · BioKey was force-stopped</string>
     <string name="card_gap_storage_cleared">%1$s · BioKey reset: its storage was cleared, and every lock and record with it</string>
+    <string name="card_gap_storage_cleared_unknown">Until %1$s · BioKey reset: its storage was cleared at a time that can\'t be told (the clock was changed)</string>
+    <string name="card_gap_reset_hint">If you didn\'t, someone who could open Android\'s settings reset BioKey: check your faces and fingerprints</string>
+    <string name="card_gap_reset_note">A reset forgets which faces and fingerprints were there, so for a day nothing proves it\'s you. It can\'t be cleared here; it goes 7 days after you\'ve seen it.</string>
 
     <!-- When an unlocked app, off screen, locks again. -->
     <string name="card_session_immediately">Re-locks immediately after you leave it</string>
@@ -403,6 +410,7 @@
     <string name="home_shield_no_access_text">Hide notification content is on, but BioKey\'s notification access is off, so locked apps\' notifications show in full.</string>
     <string name="home_shield_no_access_action">Allow access</string>
     <string name="home_shield_no_access_off">Turn off</string>
+    <string name="home_shield_turn_off_hiding">Turn off hiding</string>
     <string name="home_shield_turned_off">Hide notification content is off</string>
     <string name="activity_held_intro">Until then nothing proves it\'s you here, so:</string>
     <string-array name="activity_held_refused">
@@ -451,7 +459,8 @@
     <string name="permission_both">%1$s and %2$s</string>
     <string name="settings_shield_allow_access">Locked apps\' notifications show in full · tap to allow notification access</string>
     <string name="card_change_screen_lock_hint">If it wasn\'t you, someone knows your screen lock</string>
-    <string name="card_change_during_hold_hint">If it wasn\'t you, whoever made that change may have done it</string>
+    <string name="card_change_during_hold_hint">If it wasn\'t you, whoever added or removed the face or fingerprint may have done it</string>
+    <string name="card_change_during_reset_hint">If it wasn\'t you, whoever reset BioKey may have done it</string>
     <string name="card_change_biometrics_note">Anyone who knows your screen lock can do this in Android\'s settings. It can\'t be cleared here; it goes 7 days after you\'ve seen it.</string>
     <string name="card_gap_hint">Locked apps could be opened without a check</string>
     <string name="card_gaps_note">Switched off in Android\'s settings, or BioKey force-stopped. Android stopping BioKey on its own isn\'t listed, but some phone makers\' battery savers force-stop apps just as a person would.</string>

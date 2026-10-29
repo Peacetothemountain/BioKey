@@ -1,5 +1,6 @@
 package com.android.BioKey.core.security
 
+import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.content.Context
@@ -11,6 +12,7 @@ import android.provider.Settings
 import androidx.annotation.PluralsRes
 import androidx.annotation.StringRes
 import androidx.annotation.VisibleForTesting
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.edit
 import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
@@ -106,21 +108,28 @@ object ProtectionGaps {
 
         fun encode(vararg args: String) = (listOf(CODE_MARK + name) + args).joinToString(SEPARATOR)
 
-        /** As [encode], for a change made within a day of a face or fingerprint change ([UnlockAttempts.holding]). */
-        fun encodeDuringHold(vararg args: String) = HOLD_MARK + encode(*args)
+        /**
+         * As [encode], for a change made during a hold ([UnlockAttempts.holding]): within a day of a
+         * face or fingerprint change, or of BioKey being reset ([byReset]).
+         */
+        fun encodeDuringHold(vararg args: String, byReset: Boolean = false) = (if (byReset) RESET_MARK else HOLD_MARK) + encode(*args)
 
         companion object {
             private const val CODE_MARK = "#"
             private const val SEPARATOR = "\u001F"
 
             private const val HOLD_MARK = "!"
+            private const val RESET_MARK = "~"
 
-            /** Made within a day of a face or fingerprint change, whatever opened BioKey. */
-            fun duringHold(detail: String) = detail.startsWith(HOLD_MARK + CODE_MARK)
+            /** Made during a hold, whatever opened BioKey: a face or fingerprint change's, or a reset's. */
+            fun duringHold(detail: String) = detail.startsWith(HOLD_MARK + CODE_MARK) || duringReset(detail)
+
+            /** Made within a day of BioKey being reset ([Kind.DATA_CLEARED]). */
+            fun duringReset(detail: String) = detail.startsWith(RESET_MARK + CODE_MARK)
 
             /** A stored detail's code and arguments; null for a record written as plain text (older ones). */
             fun decode(detail: String): Pair<Change, List<String>>? {
-                val coded = detail.removePrefix(HOLD_MARK)
+                val coded = detail.removePrefix(HOLD_MARK).removePrefix(RESET_MARK)
                 if (!coded.startsWith(CODE_MARK)) return null
                 val parts = coded.removePrefix(CODE_MARK).split(SEPARATOR)
                 val change = entries.find { it.name == parts.first() } ?: return null
@@ -165,10 +174,18 @@ object ProtectionGaps {
     private const val KEY_STORAGE_SEEN = "storage_seen"
     /** When BioKey's storage was cleared, on BioKey's clock, until it's set up again and recorded. */
     private const val KEY_CLEARED_AT = "cleared_at"
+    /** ... and whether that time can't be told (the phone's clock was set back since). */
+    private const val KEY_CLEARED_UNKNOWN = "cleared_unknown"
 
-    private val _cleared = MutableStateFlow<Long?>(null)
-    /** When BioKey's storage was cleared ([checkStorageCleared]), until that's recorded; else null. */
-    val cleared: StateFlow<Long?> = _cleared.asStateFlow()
+    private fun cleared(p: SharedPreferences) =
+        if (p.contains(KEY_CLEARED_AT)) Cleared(p.getLong(KEY_CLEARED_AT, 0L), known = !p.getBoolean(KEY_CLEARED_UNKNOWN, false)) else null
+
+    /** BioKey's storage was cleared some time after [after] (BioKey's clock), or at a time that can't be told ([known] false). */
+    data class Cleared(val after: Long, val known: Boolean = true)
+
+    private val _cleared = MutableStateFlow<Cleared?>(null)
+    /** BioKey's storage was cleared ([checkStorageCleared]), until that's recorded; else null. */
+    val cleared: StateFlow<Cleared?> = _cleared.asStateFlow()
 
     private val _gaps = MutableStateFlow<List<Gap>>(emptyList())
     /** Newest first. */
@@ -198,6 +215,19 @@ object ProtectionGaps {
     internal var updatedAt: (Context) -> Long = {
         runCatching { it.packageManager.getPackageInfo(it.packageName, 0).lastUpdateTime }.getOrDefault(0L)
     }
+    /**
+     * Anything in BioKey's storage written before this process started: storage from before (an
+     * update keeps it), not one cleared since. A clearing empties it, and everything after is
+     * this process's own.
+     */
+    @VisibleForTesting
+    internal var storageFromBefore: (Context) -> Boolean = { context ->
+        val started = System.currentTimeMillis() - (SystemClock.elapsedRealtime() - android.os.Process.getStartElapsedRealtime())
+        runCatching { context.dataDir.walkTopDown().any { it.isFile && it.lastModified() < started - STORAGE_AGE_SLACK_MS } }.getOrDefault(true)
+    }
+    /** Files a little older than this process (written as it started) are still its own. */
+    private const val STORAGE_AGE_SLACK_MS = 10_000L
+
     /** BioKey's process exits Android remembers: (when, why). */
     @VisibleForTesting
     internal var exits: (Context) -> List<Pair<Long, Int>> = { context ->
@@ -217,7 +247,7 @@ object ProtectionGaps {
             val p = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val kept = runCatching { parse(p.getString(KEY_GAPS, null)) }.getOrDefault(emptyList())
             prefs = p
-            _cleared.value = if (p.contains(KEY_CLEARED_AT)) p.getLong(KEY_CLEARED_AT, 0L) else null
+            _cleared.value = cleared(p)
             // What's seen and past its time goes from the disk too, not only from what's shown.
             val fresh = kept.fresh(context)
             if (fresh != kept) save(p, fresh) else _gaps.value = kept
@@ -335,7 +365,7 @@ object ProtectionGaps {
                 switchedOffFrom != null -> found += Gap(switchedOffFrom, now, Kind.SWITCHED_OFF)
             }
             // Its storage was cleared ([checkStorageCleared]): nothing locked from then until set up again.
-            if (setUp && p.contains(KEY_CLEARED_AT)) found += Gap(p.getLong(KEY_CLEARED_AT, now).coerceAtMost(now), now, Kind.DATA_CLEARED)
+            cleared(p)?.takeIf { setUp }?.let { found += Gap(it.after.coerceAtMost(now), now, Kind.DATA_CLEARED, unknownStart = !it.known) }
             if (setUp && found.isNotEmpty()) {
                 recorded = true
                 save(p, (found.map { it.copy(seq = UnlockAttempts.nextSeq(context)).stamped(context) } + _gaps.value).fresh(context))
@@ -346,7 +376,7 @@ object ProtectionGaps {
                 putLong(KEY_CLOCK_OFFSET, now - wallNow())
                 putLong(KEY_LAST_UPDATE, update)
                 putStringSet(KEY_EXITS_SEEN, exits.mapTo(HashSet()) { it.first.toString() })
-                if (setUp) remove(KEY_CLEARED_AT)
+                if (setUp) remove(KEY_CLEARED_AT).remove(KEY_CLEARED_UNKNOWN)
             }
             if (setUp) _cleared.value = null
         }
@@ -368,35 +398,47 @@ object ProtectionGaps {
      * recorded ([Kind.DATA_CLEARED]), which starts a day's hold like a face or fingerprint change:
      * a clearing also forgets which faces and fingerprints were there.
      */
+    // REASON_PACKAGE_UPDATED is only read on Android 14+, where it exists ([sdk]).
+    @SuppressLint("InlinedApi")
     fun checkStorageCleared(context: Context) {
         val app = context.applicationContext
         val p = load(app) ?: return
         val cleared = synchronized(lock) {
             if (p.contains(KEY_STORAGE_SEEN)) return@synchronized false
-            // Set up already (a version from before this check): not cleared.
-            val since = updatedAt(app) + UPDATE_WINDOW_MS
-            val last = if (SecurityVault.getInstance(app).isSetupCompleted()) null
-                else exits(app).map { it.first }.filter { it > since }.maxOrNull()
+            // Set up already, or anything in it older than this process (a version from before this
+            // check, updated): not cleared. Its files' ages, not the update's time, so neither a
+            // clock set back nor an update after the clearing can hide one.
+            val last = if (SecurityVault.getInstance(app).isSetupCompleted() || storageFromBefore(app)) null
+                else exits(app)
+                    // An update's own stop (Android 14+ says so) isn't one.
+                    .filterNot { sdk() >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && it.second == ApplicationExitInfo.REASON_PACKAGE_UPDATED }
+                    .maxOfOrNull { it.first }
+            // Dated at or after the phone's "now": its clock was set back since, and when can't be told.
+            val unknown = last != null && last >= wallNow()
             p.edit {
                 putBoolean(KEY_STORAGE_SEEN, true)
                 // Android's exit times are on the phone's clock: converted to BioKey's.
-                if (last != null) putLong(KEY_CLEARED_AT, (last + clock() - wallNow()).coerceAtMost(clock()))
+                if (last != null) {
+                    putLong(KEY_CLEARED_AT, if (unknown) clock() else (last + clock() - wallNow()).coerceAtMost(clock()))
+                    putBoolean(KEY_CLEARED_UNKNOWN, unknown)
+                }
             }
-            if (p.contains(KEY_CLEARED_AT)) _cleared.value = p.getLong(KEY_CLEARED_AT, 0L)
+            _cleared.value = cleared(p)
             last != null
         }
         if (cleared) {
             DiagnosticLog.log("BioKey's storage was cleared since it last ran")
             ProtectionAlerts.remindIfStorageCleared(app)
-            // Also without the accessibility service, said again every so often until set up.
-            ProtectionCheckJob.schedule(app)
+            // Also without the accessibility service, said again every so often until set up (where
+            // it can be: from Android 13 a clearing takes back the notification permission too).
+            if (NotificationManagerCompat.from(app).areNotificationsEnabled()) ProtectionCheckJob.schedule(app)
         }
     }
 
-    /** [cleared], its storage read first. */
+    /** When, as [cleared] has it, its storage read first. */
     fun clearedAt(context: Context): Long? {
         load(context)
-        return _cleared.value
+        return _cleared.value?.after
     }
 
     /**
@@ -424,7 +466,10 @@ object ProtectionGaps {
         return recorder.submit<Long?> {
             when {
                 SecurityEngine.ownerProven(app, openedWithBiometric) -> null
-                UnlockAttempts.holding(app) -> recordEvent(app, Kind.CHANGED_WITH_SCREEN_LOCK, change.encodeDuringHold(*args))
+                UnlockAttempts.holding(app) -> recordEvent(
+                    app, Kind.CHANGED_WITH_SCREEN_LOCK,
+                    change.encodeDuringHold(*args, byReset = UnlockAttempts.heldBy(app) == Kind.DATA_CLEARED)
+                )
                 else -> recordEvent(app, Kind.CHANGED_WITH_SCREEN_LOCK, change.encode(*args))
             }
         }
