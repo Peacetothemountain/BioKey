@@ -25,12 +25,22 @@ object TrustedClock {
     }
 
     @Volatile private var anchor: Pair<Long, Long>? = null
-    /** The anchor came from the phone's clock: network time is tried again until it's there. */
+    /** The anchor came from the phone's clock: network time is tried again (once a minute) until it's there. */
     @Volatile private var anchoredOnWall = false
+    /** When network time was last asked for (clock since boot): at most once a minute. */
+    @Volatile private var lastTry = Long.MIN_VALUE
+
+    /** Whether "now" rests on the network's time, which changing the phone's date doesn't move. */
+    fun onNetworkTime(): Boolean {
+        now()
+        return !anchoredOnWall
+    }
 
     fun now(): Long {
         val current = anchor
-        if (current == null || anchoredOnWall) {
+        val since = elapsed()
+        if (current == null || (anchoredOnWall && since - lastTry >= 60_000L)) {
+            lastTry = since
             val network = networkTime()
             if (network != null) {
                 anchor = network to elapsed()
@@ -48,5 +58,6 @@ object TrustedClock {
     internal fun resetForTests() {
         anchor = null
         anchoredOnWall = false
+        lastTry = Long.MIN_VALUE
     }
 }

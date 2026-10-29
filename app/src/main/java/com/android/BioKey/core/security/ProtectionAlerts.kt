@@ -47,7 +47,7 @@ object ProtectionAlerts {
     private const val PREFS = "biokey_protection_alerts"
     private const val KEY_REMINDERS_STOPPED = "reminders_stopped"
 
-    private fun remindersStopped(context: Context) =
+    fun remindersStopped(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_REMINDERS_STOPPED, false)
 
     /**
@@ -121,6 +121,8 @@ object ProtectionAlerts {
         // Noted now, not after the grace: the process may not live that long. An engine back
         // within moments makes it no gap (ProtectionGaps' minimum).
         ProtectionGaps.onEngineDown(app)
+        // The owner stopped the reminders (a deliberate switch-off): still recorded, not alerted.
+        if (remindersStopped(app)) return
         // Reminders that outlive BioKey's process, until an engine runs again.
         ProtectionCheckJob.schedule(app)
         main.removeCallbacksAndMessages(STOP_TOKEN)

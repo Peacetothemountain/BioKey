@@ -97,6 +97,7 @@ class DesignScreenshotTest {
         ProtectionEngine.overrideModeForTests = null
         SecurityVault.selfProtectionRemovedForTests = false
         UnlockAttempts.clock = System::currentTimeMillis
+        UnlockAttempts.hasStrongBiometric = com.android.BioKey.core.security.SecurityEngine::hasEnrolledStrongBiometric
         ProtectionGaps.clock = System::currentTimeMillis
     }
 
@@ -139,7 +140,7 @@ class DesignScreenshotTest {
 
     /** The whole Settings page, on a tall screen. */
     @Test fun settingsFull() {
-        RuntimeEnvironment.setQualifiers("w412dp-h1900dp")
+        RuntimeEnvironment.setQualifiers("w412dp-h2400dp")
         shoot("settings_full") { SettingsScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onNavigateBack = {}, onPauseRequested = {}) }
     }
     @Test fun message() = shoot("message") {
@@ -147,7 +148,7 @@ class DesignScreenshotTest {
             MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {})
             val data = object : androidx.compose.material3.SnackbarData {
                 override val visuals = com.android.BioKey.ui.theme.BioKeyMessages.Message(
-                    "Chase unlocked", androidx.compose.material.icons.Icons.Default.LockOpen, "Undo", null,
+                    "Lock removed from Chase", androidx.compose.material.icons.Icons.Default.LockOpen, "Undo", null,
                     androidx.compose.material3.SnackbarDuration.Short
                 )
                 override fun performAction() {}
@@ -212,6 +213,21 @@ class DesignScreenshotTest {
         UnlockAttempts.load(context)
         UnlockAttempts.hasStrongBiometric = { true }
         shoot("main_intro") { MainScreenExpressive(mode = ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
+    }
+
+    /** App locking switched off in Accessibility: the one urgent card, and a way to stop the reminders. */
+    @Test fun mainSwitchedOff() {
+        SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        shoot("main_switched_off") { MainScreenExpressive(mode = ProtectionEngine.Mode.OFF, onPauseRequested = {}) }
+    }
+
+    /** Face or fingerprint only on, Settings not locked: the calm suggestion, with Not now. */
+    @Test fun mainLockSettings() {
+        SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        SecurityVault.getInstance(context).setBiometricOnly(true)
+        UnlockAttempts.hasStrongBiometric = { true }
+        UnlockAttempts.setEnabled(context, true)
+        shoot("main_lock_settings") { MainScreenExpressive(mode = ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
     }
 
     @Test fun ownLock() = shoot("lock") {

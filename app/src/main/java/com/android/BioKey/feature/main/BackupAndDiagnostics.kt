@@ -77,6 +77,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import com.android.BioKey.core.data.openFor
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
@@ -269,6 +270,10 @@ internal fun rememberBackupActions(): BackupActions {
                     val lockedBefore = vault.getLockedPackages()
                     val shieldBefore = vault.isNotificationShieldEnabled()
                     val delayBefore = vault.timeoutModeFlow.value
+                    val delaysBefore = lockedBefore.associateWith { vault.getTimeoutMode(it).openFor }
+                    val biometricOnlyBefore = vault.biometricOnlyFlow.value
+                    val alertsBefore = UnlockAttempts.enabled.value
+                    val screenLockNotesBefore = UnlockAttempts.screenLockUnlocks.value
                     val restore = {
                     // Off the main thread (restoring sweeps notifications), and in the backup's
                     // scope, so leaving Settings meanwhile doesn't stop it halfway to its message.
@@ -285,7 +290,11 @@ internal fun rememberBackupActions(): BackupActions {
                             // What the restore actually did, compared with before.
                             val weakened = (lockedBefore - vault.getLockedPackages()).isNotEmpty() ||
                                 shieldBefore && !vault.isNotificationShieldEnabled() ||
-                                vault.timeoutModeFlow.value.openFor > delayBefore.openFor
+                                vault.timeoutModeFlow.value.openFor > delayBefore.openFor ||
+                                delaysBefore.any { (pkg, openFor) -> vault.getTimeoutMode(pkg).openFor > openFor } ||
+                                biometricOnlyBefore && !vault.biometricOnlyFlow.value ||
+                                alertsBefore && !UnlockAttempts.enabled.value ||
+                                screenLockNotesBefore && !UnlockAttempts.screenLockUnlocks.value
                             if (weakened) ProtectionGaps.recordIfScreenLock(activity, "A backup restored that weakens protection")
                             // Let auto-sort go through the restored profiles on the next unlock.
                             InstalledAppsCache.autoSortedVersion = -1

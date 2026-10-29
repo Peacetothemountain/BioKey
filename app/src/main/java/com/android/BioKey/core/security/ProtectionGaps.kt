@@ -32,10 +32,15 @@ import org.json.JSONObject
  *   Android 14 it's recorded the same way as a force stop). Some phone makers' battery managers
  *   force-stop apps just as a person would: those show too.
  *
+ * Alongside the gaps, moments ([recordEvent]): a face or fingerprint added or removed, and changes
+ * that weaken protection made from BioKey opened with the screen lock ([recordIfScreenLock]: a
+ * pause, a lock or profile switched off, a longer delay, a restore, and the like).
+ *
  * A gap's length is measured on the clock since boot where it can be, and its order on
  * [UnlockAttempts]' sequence numbers, so changing the phone's clock neither shortens nor hides
- * it. A pause from BioKey itself isn't a gap: it's behind authentication. Kept in BioKey's
- * private storage: times only, at most [MAX_KEPT], seen ones for [UnlockAttempts.MAX_AGE_MS].
+ * it. A pause from BioKey itself isn't a gap: it's behind authentication, and recorded as a change
+ * when the screen lock allowed it. Kept in BioKey's private storage: times, and for changes what
+ * changed; at most [MAX_KEPT], seen ones for [UnlockAttempts.MAX_AGE_MS] of network time.
  * Someone who clears BioKey's storage deletes this too, but that also undoes BioKey's setup,
  * which the owner can't miss.
  */
@@ -70,6 +75,8 @@ object ProtectionGaps {
     private const val KEY_STOPPED_AT = "stopped_at"
     private const val KEY_STOPPED_ELAPSED = "stopped_elapsed"
     private const val KEY_STOPPED_BOOT = "stopped_boot"
+    /** Trusted time minus the phone's clock, while an engine last ran: for reading Android's exit times. */
+    private const val KEY_CLOCK_OFFSET = "clock_offset"
     /** The process exits already looked at, by their time: Android keeps the last few. */
     private const val KEY_EXITS_SEEN = "exits_seen"
 
@@ -137,7 +144,9 @@ object ProtectionGaps {
     private fun List<Gap>.fresh(context: Context): List<Gap> {
         val now = TrustedClock.now()
         val seen = UnlockAttempts.seenSeq(context)
-        val kept = filterNot { it.seq <= seen && now - it.to > UnlockAttempts.MAX_AGE_MS }.sortedByDescending { it.seq }
+        // Aged only on the network's time: on the phone's own clock, a date set ahead could age them.
+        val ageing = TrustedClock.onNetworkTime()
+        val kept = filterNot { ageing && it.seq <= seen && now - it.to > UnlockAttempts.MAX_AGE_MS }.sortedByDescending { it.seq }
         val unseen = kept.filter { it.seq > seen }
         return (unseen.take(UnlockAttempts.MAX_UNSEEN) + kept.filter { it.seq <= seen }.take((MAX_KEPT - unseen.size).coerceAtLeast(0)))
             .sortedByDescending { it.seq }
@@ -190,8 +199,12 @@ object ProtectionGaps {
             // Dated after "now": the clock was set back since. Still a stop, of a length that can't be
             // told, so it's kept whatever its length looks like.
             val clockMoved = forceStopAt != null && forceStopAt > wallNow()
-            // Android stamps exits on the phone's clock; "now" is BioKey's trusted one.
-            val forceStop = forceStopAt?.let { it + (now - wallNow()) }?.coerceAtMost(now)
+            // Android stamps exits on the phone's clock; "now" is BioKey's trusted one. Converted with
+            // the difference between the two as it is now and as it was while an engine last ran, and
+            // the earlier result kept: the phone's clock moved either side of the stop can only
+            // lengthen the gap, never shorten it.
+            val offsets = listOfNotNull(now - wallNow(), if (p.contains(KEY_CLOCK_OFFSET)) p.getLong(KEY_CLOCK_OFFSET, 0L) else null)
+            val forceStop = forceStopAt?.let { at -> offsets.minOf { at + it } }?.coerceAtMost(now)
             when {
                 forceStop != null && (switchedOffFrom == null || forceStop < switchedOffFrom) && (clockMoved || now - forceStop >= MIN_GAP_MS) ->
                     found += Gap(forceStop, now, Kind.FORCE_STOPPED)
@@ -204,6 +217,7 @@ object ProtectionGaps {
             }
             p.edit {
                 remove(KEY_STOPPED_AT).remove(KEY_STOPPED_ELAPSED).remove(KEY_STOPPED_BOOT)
+                putLong(KEY_CLOCK_OFFSET, now - wallNow())
                 putStringSet(KEY_EXITS_SEEN, exits.mapTo(HashSet()) { it.first.toString() })
             }
         }
@@ -217,7 +231,7 @@ object ProtectionGaps {
      * opening BioKey with a face or fingerprint, or on a phone without one, it's the owner's own.
      */
     fun recordIfScreenLock(context: Context, what: String) {
-        if (SecurityEngine.INSTANCE.ownAppOpenedWithBiometric || !SecurityEngine.hasEnrolledStrongBiometric(context)) return
+        if (SecurityEngine.INSTANCE.actingWithBiometric() || !SecurityEngine.hasEnrolledStrongBiometric(context)) return
         recordEvent(context, Kind.CHANGED_WITH_SCREEN_LOCK, what)
     }
 

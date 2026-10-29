@@ -192,7 +192,9 @@ object UnlockAttempts {
     private fun List<Attempt>.fresh(p: SharedPreferences): List<Attempt> {
         val now = TrustedClock.now()
         val seen = p.getLong(KEY_SEEN_SEQ, 0L)
-        val kept = filterNot { it.seq <= seen && now - it.lastAt > MAX_AGE_MS }.sortedByDescending { it.seq }
+        // Aged only on the network's time: on the phone's own clock, a date set ahead could age them.
+        val ageing = TrustedClock.onNetworkTime()
+        val kept = filterNot { ageing && it.seq <= seen && now - it.lastAt > MAX_AGE_MS }.sortedByDescending { it.seq }
         val unseen = kept.filter { it.seq > seen }
         return (unseen.take(MAX_UNSEEN) + kept.filter { it.seq <= seen }.take((MAX_KEPT - unseen.size).coerceAtLeast(0)))
             .sortedByDescending { it.seq }
@@ -202,11 +204,6 @@ object UnlockAttempts {
      * The owner won't hear of security activity: BioKey's notifications, or its security-activity
      * channel, are switched off. BioKey's home screen says so.
      */
-    fun alertsMuted(context: Context): Boolean {
-        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return true
-        return channelMuted(context)
-    }
-
     /**
      * BioKey's notifications are allowed, but its security-activity or protection-alert channel is
      * switched off in Android's settings. (All of them off is home's "Alerts are off" row.)

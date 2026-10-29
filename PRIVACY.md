@@ -153,15 +153,21 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   most 50 seen ones are kept; until then none is deleted for its age, and none to make room for
   newer ones short of 500. Times are taken and ages measured on the network's time where the
   phone has it (Android 13 and later), so changing the phone's date doesn't move them; on Android
-  12, or with no network time, on the phone's clock as it was when BioKey last started.
+  12, or with no network time, times are taken on the phone's clock as it was when BioKey last
+  started, and nothing is deleted for its age until network time is back. Opening Review counts as
+  seeing them only when BioKey was opened with your face or fingerprint (or none is set up).
   Turning the alerts off deletes them; a restored backup that turns them off leaves them in place.
   Clearing them, or turning the alerts off, asks for your face or fingerprint where one is set up.
 - **Times app locking was off, and other changes:** when BioKey's protection was switched off or
   BioKey was force-stopped, and when it came back; when a face or fingerprint was added or removed
   on the phone; and, on a phone with a face or fingerprint, each way protection was weakened from
-  BioKey opened with the screen lock (paused, an app's lock switched off, a profile switched off
-  or deleted, "Hide notification content" switched off, a backup restored that unlocks apps),
-  which names the app or profile. Shown on BioKey's home screen until you clear them, kept like
+  BioKey opened with the screen lock and not confirmed with a face or fingerprint: protection
+  paused; an app's lock switched off; a locked app moved or added into a profile that's off, or
+  taken out of its profile; a profile switched off or deleted; a longer re-lock delay, for a
+  profile or the default; "Hide notification content" switched off; the reminders that app
+  locking is off stopped; and a backup restored that unlocks apps, makes a delay longer, or
+  switches off the notification shield, face or fingerprint only, failed unlock alerts or their
+  screen lock option. These name the app or profile. Shown on BioKey's home screen until you clear them, kept like
   failed unlocks (seen ones 7 days, at most 20); a face or fingerprint added or removed can't be
   cleared, only aged out, so whoever added one can't erase the record of it. To measure them BioKey keeps, while
   protection is off, when it stopped (on the phone's clock and on its clock since the last
@@ -177,7 +183,7 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   apps you haven't locked: going from a locked app to one of them is logged only as going to "a
   helper app" or "another app". It also notes how long app locking was off and, when failed
   unlock alerts are on, failed unlocks of locked apps (which app, not whose face or finger). It keeps at most 500 entries from the
-  last 3 days, measured on a clock that changing the phone's date doesn't move. You can view and
+  last 3 days, measured on the same clock as failed unlocks (above). You can view and
   delete it in BioKey's settings; deleting it or turning it off asks for your face or fingerprint
   (your screen lock where none is set up).
 
@@ -204,8 +210,9 @@ settings, Restore from a backup). This happens only when you ask for it.
   new-app offers, and
   self-protection in builds that have it). Nothing else: no diagnostic log, no failed unlocks or
   times protection was off, no notifications, no authentication data. Restoring a backup never
-  deletes the failed unlocks kept on the phone, and one that would switch off face or fingerprint
-  only or the alerts asks for your face or fingerprint first.
+  deletes the failed unlocks kept on the phone, and always asks for your face or fingerprint first
+  (your screen lock where none is set up). It doesn't switch the notification shield on unless it's
+  already on here: that waits for BioKey's explanation on this phone.
 - **How it's protected:** the file is sealed with a password you choose (at least 8 characters),
   using AES-256-GCM with a key derived from your password by PBKDF2-SHA256 (600,000 rounds).
   Without the password the file reveals nothing, not even which apps are locked, and any change
@@ -269,3 +276,7 @@ happened.
 ## Contact
 
 Questions about this policy or about BioKey: NB Designs, <support.nbdesigns@gmail.com>.
+
+If you email us, we receive your email address and whatever you choose to send (a shared
+diagnostic log, for example). We use it only to answer you, keep it no longer than that takes,
+and delete it on request.

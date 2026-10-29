@@ -135,7 +135,7 @@ class SecurityVault private constructor(private val context: Context) {
     private val _timeoutModeFlow = MutableStateFlow(LockTimeoutMode.IMMEDIATE)
     val timeoutModeFlow: StateFlow<LockTimeoutMode> = _timeoutModeFlow.asStateFlow()
 
-    private val _notificationShieldFlow = MutableStateFlow(true)
+    private val _notificationShieldFlow = MutableStateFlow(false)
     val notificationShieldFlow: StateFlow<Boolean> = _notificationShieldFlow.asStateFlow()
     private val _biometricOnlyFlow = MutableStateFlow(false)
     /** The owner's choice; [SecurityEngine] applies it only while a strong face or fingerprint is set up. */
@@ -412,7 +412,9 @@ class SecurityVault private constructor(private val context: Context) {
         } ?: throw IllegalArgumentException("No profiles in backup")
         val selected = validPackages(strings("selected"))
         val excluded = PasswordManager.expand(validPackages(strings("autoSortExcluded")))
-        val shield = state.optBoolean("notificationShield", true)
+        // On only if the backup says so and it's already agreed to on this phone (the explanation
+        // comes before notification access, here, not on the phone the backup came from).
+        val shield = state.optBoolean("notificationShield", false) && _notificationShieldFlow.value
         val selfProtection = state.optBoolean("selfProtection", false) && selfProtectionAvailable
         mutate { sel, profs ->
             sel.clear()

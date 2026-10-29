@@ -79,6 +79,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.BioKey.BuildConfig
 import com.android.BioKey.R
+import com.android.BioKey.core.data.openFor
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.NewAppSuggestions
@@ -192,8 +193,8 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                     IntentNavigationHelper.openNotificationListenerSettings(if (activity.isDestroyed) appContext else activity)
                 }
             } else {
-                // The shield is on by default, so this may be the only moment to ask: without the
-                // permission it can hide notifications but can't stand in for them.
+                // Just switched on: without BioKey's own notifications it can hide notifications but
+                // can't stand in for them.
                 notifications.request()
             }
         }
@@ -273,20 +274,24 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 confirmOwner(activity, if (on) "Use only your face or fingerprint" else "Allow your screen lock again") {
                     vault.setBiometricOnly(on)
                     // Settings is where someone with the PIN would add their own fingerprint.
-                    if (on && SETTINGS_PACKAGE !in vault.selectedAppsFlow.value) {
+                    if (on && SETTINGS_PACKAGE !in vault.getLockedPackages()) {
                         BioKeyMessages.show("Lock Settings too? It's where a fingerprint can be added", Icons.Default.Lock, actionLabel = "Lock") {
                             vault.setAppLock(SETTINGS_PACKAGE, true)
+                            BioKeyMessages.show("Settings locked", Icons.Default.Lock)
                         }
                     }
                 }
             }
         ) else null,
-        if ((biometricOnly || attemptAlerts) && strongBiometric && SETTINGS_PACKAGE !in lockedApps) SettingItem(
-            icon = Icons.Default.Warning,
-            title = "Settings isn't locked",
-            subtitle = "With your PIN, someone could add their own fingerprint there · tap to lock Settings",
-            warning = true,
-            onClick = { vault.setAppLock(SETTINGS_PACKAGE, true) }
+        // A suggestion, the same as home's card: where face or fingerprint only is on.
+        if (biometricOnly && strongBiometric && SETTINGS_PACKAGE !in lockedApps) SettingItem(
+            icon = Icons.Default.Lock,
+            title = "Lock Settings too",
+            subtitle = "With your PIN, someone could add their own fingerprint there · tap to lock it",
+            onClick = {
+                vault.setAppLock(SETTINGS_PACKAGE, true)
+                BioKeyMessages.show("Settings locked", Icons.Default.Lock)
+            }
         ) else null,
         SettingItem(
             icon = Icons.Default.NotificationsOff,
@@ -303,16 +308,18 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 if (!on) {
                     vault.setNotificationShield(false)
                     ProtectionGaps.recordIfScreenLock(context, "Hide notification content switched off")
-                } else if (!notifListenerActive) {
-                    // Saved only on Agree: "Not now" leaves it off.
+                } else {
+                    // Always the explanation first, even with notification access already granted some
+                    // other way. Saved only on Agree: "Not now" leaves it off.
                     disclosures.request(Disclosure.NOTIFICATIONS) {
                         vault.setNotificationShield(true)
-                        notificationAccessTrip.awaiting = true
-                        IntentNavigationHelper.openNotificationListenerSettings(context)
+                        if (!notifListenerActive) {
+                            notificationAccessTrip.awaiting = true
+                            IntentNavigationHelper.openNotificationListenerSettings(context)
+                        } else {
+                            notifications.request()
+                        }
                     }
-                } else {
-                    vault.setNotificationShield(true)
-                    notifications.request()
                 }
             }
         ),

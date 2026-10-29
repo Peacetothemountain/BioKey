@@ -165,6 +165,32 @@ class ProtectionGapsTest {
     }
 
     @Test
+    fun settingTheClockBackAfterAForceStopDoesntShortenIt() {
+        // The engine ran with the phone's clock right; BioKey was force-stopped, then the phone's
+        // clock set back an hour before BioKey came back ten minutes later.
+        var wall = now
+        ProtectionGaps.wallNow = { wall }
+        val stoppedAt = now
+        exits = listOf(stoppedAt to ApplicationExitInfo.REASON_USER_REQUESTED)
+        pass(10 * 60_000L)
+        wall = now - 60 * 60_000L
+        ProtectionGaps.onEngineUp(context)
+        assertEquals(10 * 60_000L, gaps.single().let { it.to - it.from })
+    }
+
+    @Test
+    fun settingTheClockAheadBeforeAForceStopDoesntShortenIt() {
+        // The phone's clock set an hour ahead while the engine ran, then BioKey force-stopped.
+        var wall = now + 60 * 60_000L
+        ProtectionGaps.wallNow = { wall }
+        exits = listOf(wall to ApplicationExitInfo.REASON_USER_REQUESTED)
+        pass(10 * 60_000L)
+        wall += 10 * 60_000L
+        ProtectionGaps.onEngineUp(context)
+        assertEquals(10 * 60_000L, gaps.single().let { it.to - it.from })
+    }
+
+    @Test
     fun aMomentsEventIsRecorded() {
         ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK)
         assertEquals(ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, gaps.single().kind)

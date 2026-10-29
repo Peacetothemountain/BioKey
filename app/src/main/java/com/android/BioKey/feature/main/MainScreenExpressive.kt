@@ -1,5 +1,6 @@
 package com.android.BioKey.feature.main
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.text.format.DateUtils
@@ -121,6 +122,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.edit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
@@ -133,6 +135,7 @@ import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.data.SecurityProfile
+import com.android.BioKey.core.data.openFor
 import com.android.BioKey.core.security.LockAllNow
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
@@ -332,6 +335,8 @@ fun MainScreenExpressive(
     fun isOn(pkg: String) = PasswordManager.aliasesOf(pkg).any { it in selectedApps }
     /** Actually locked: switched on, and its profile (if any) is on too. */
     fun isLocked(pkg: String) = PasswordManager.aliasesOf(pkg).any { it in lockedApps }
+    /** Locked as the vault has it this moment, paused or not: for telling what a change just unlocked. */
+    fun lockedInVault(pkg: String) = PasswordManager.aliasesOf(pkg).any { it in vault.getLockedPackages() }
     /** Never covered, so its switch can only be turned off. */
     fun isHomeScreen(pkg: String) = pkg in homeScreens
 
@@ -404,6 +409,14 @@ fun MainScreenExpressive(
     var alertsMuted by remember { mutableStateOf(false) }
     val attemptsEnabled by UnlockAttempts.enabled.collectAsStateWithLifecycle()
     val biometricOnlyOn by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
+    val homePrefs = remember { context.getSharedPreferences(HOME_PREFS, Context.MODE_PRIVATE) }
+    var lockSettingsDismissed by remember { mutableStateOf(homePrefs.getBoolean(KEY_LOCK_SETTINGS_DISMISSED, false)) }
+    // Read again on every visit: an engine coming back clears it.
+    var remindersStopped by remember { mutableStateOf(false) }
+    LifecycleResumeEffect(Unit) {
+        remindersStopped = ProtectionAlerts.remindersStopped(context)
+        onPauseOrDispose { }
+    }
     LifecycleResumeEffect(Unit) {
         val job = scope.launch(Dispatchers.IO) {
             hasStrongBiometric = UnlockAttempts.hasStrongBiometric(context)
@@ -616,10 +629,20 @@ fun MainScreenExpressive(
                         if (paused) {
                             FilledTonalButton(onClick = ::onProtectionAction) { Text(look.action) }
                         } else {
-                            // Switched off on purpose: the owner can stop the reminders (until it's back on).
-                            TextButton(onClick = {
-                                confirmOwner(activity, "Stop reminding me") { ProtectionAlerts.stopReminders(context) }
-                            }) { Text("Stop reminding") }
+                            // Switched off in Accessibility (maybe on purpose): the owner can stop the
+                            // reminders until it's back on. Not offered for a crash or a missing permission.
+                            if (mode == ProtectionEngine.Mode.OFF && !remindersStopped) {
+                                TextButton(
+                                    onClick = {
+                                        confirmOwner(activity, "Stop reminding me") {
+                                            ProtectionAlerts.stopReminders(context)
+                                            remindersStopped = true
+                                            BioKeyMessages.show("No more reminders until app locking is back on", Icons.Default.NotificationsOff)
+                                        }
+                                    },
+                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer)
+                                ) { Text("Stop reminding") }
+                            }
                             UrgentButton(look.action, ::onProtectionAction)
                         }
                     }
@@ -684,7 +707,7 @@ fun MainScreenExpressive(
 
             // Calm cards after the urgent ones. With your PIN, someone could add their own fingerprint
             // in Settings: lock it.
-            if ((biometricOnlyOn || attemptsEnabled) && hasStrongBiometric && SETTINGS_PACKAGE !in selectedApps) {
+            if (biometricOnlyOn && hasStrongBiometric && look.action == null && SETTINGS_PACKAGE !in lockedApps && !lockSettingsDismissed) {
                 item(key = "lock_settings") {
                     ActionCard(
                         icon = Icons.Default.Fingerprint,
@@ -692,7 +715,16 @@ fun MainScreenExpressive(
                         subtitle = "Anyone with your PIN could add their own fingerprint there",
                         modifier = Modifier.animateItem()
                     ) {
-                        FilledTonalButton(onClick = { vault.setAppLock(SETTINGS_PACKAGE, true) }) { Text("Lock Settings") }
+                        TextButton(onClick = {
+                            lockSettingsDismissed = true
+                            homePrefs.edit { putBoolean(KEY_LOCK_SETTINGS_DISMISSED, true) }
+                        }) { Text("Not now") }
+                        FilledTonalButton(onClick = {
+                            vault.setAppLock(SETTINGS_PACKAGE, true)
+                            BioKeyMessages.show("Settings locked", Icons.Default.Lock, actionLabel = "Undo") {
+                                vault.setAppLock(SETTINGS_PACKAGE, false)
+                            }
+                        }) { Text("Lock Settings") }
                     }
                 }
             }
@@ -867,16 +899,16 @@ fun MainScreenExpressive(
                 defaultTimeout = defaultTimeout,
                 onLockedChange = { toggleLock(app, it) },
                 onMoveToProfile = { profileId ->
-                    val wasLocked = isLocked(pkg)
+                    val wasLocked = lockedInVault(pkg)
                     vault.moveAppToProfile(pkg, profileId)
                     // Into a profile that's off: no longer locked.
-                    if (wasLocked && !vault.isAppLocked(pkg)) ProtectionGaps.recordIfScreenLock(context, "${app.label} moved where it isn't locked")
+                    if (wasLocked && !lockedInVault(pkg)) ProtectionGaps.recordIfScreenLock(context, "${app.label} moved where it isn't locked")
                 },
                 onRemoveFromProfile = {
                     val former = profileOf(pkg)
-                    val wasLocked = isLocked(pkg)
+                    val wasLocked = lockedInVault(pkg)
                     vault.removeAppFromProfile(pkg)
-                    if (wasLocked && !vault.isAppLocked(pkg)) ProtectionGaps.recordIfScreenLock(context, "${app.label} taken out of ${former?.name ?: "its profile"}, unlocking it")
+                    if (wasLocked && !lockedInVault(pkg)) ProtectionGaps.recordIfScreenLock(context, "${app.label} taken out of ${former?.name ?: "its profile"}, unlocking it")
                     optionsForPackage = null
                     if (former != null) {
                         BioKeyMessages.show("Removed ${app.label} from ${former.name}", Icons.Default.RemoveCircleOutline, actionLabel = "Undo") {
@@ -895,8 +927,14 @@ fun MainScreenExpressive(
     }
 
     if (showActivity && (attempts.isNotEmpty() || gaps.isNotEmpty())) {
-        // Reviewed: the notification has done its job (merely opening BioKey doesn't count).
-        LaunchedEffect(Unit) { UnlockAttempts.markSeen(context) }
+        // Reviewed: the notification has done its job (merely opening BioKey doesn't count). Not when
+        // BioKey was opened with the screen lock on a phone with a face or fingerprint: someone who
+        // only knows the PIN mustn't be able to quiet it.
+        LaunchedEffect(Unit) {
+            if (SecurityEngine.INSTANCE.ownAppOpenedWithBiometric || !SecurityEngine.hasEnrolledStrongBiometric(context)) {
+                UnlockAttempts.markSeen(context)
+            }
+        }
         SecurityActivityDialog(
             attempts = attempts,
             gaps = gaps,
@@ -995,7 +1033,17 @@ fun MainScreenExpressive(
             lockedApps = lockedApps,
             homeScreens = homeScreens,
             onAdd = { packages ->
+                val wereLocked = packages.filter(::lockedInVault)
                 vault.addAppsToProfile(currentProfile.id, packages)
+                // Into a profile that's off: those that were locked aren't any more.
+                val unlocked = wereLocked.filterNot(::lockedInVault)
+                if (unlocked.isNotEmpty()) {
+                    ProtectionGaps.recordIfScreenLock(
+                        context,
+                        if (unlocked.size == 1) "${labelByPackage[unlocked.single()] ?: unlocked.single()} added to ${currentProfile.name}, which is off"
+                        else "${unlocked.size} locked apps added to ${currentProfile.name}, which is off"
+                    )
+                }
                 showAddApps = false
             },
             onDismiss = { showAddApps = false }
@@ -1372,3 +1420,7 @@ private fun EmptyState(text: String, actionLabel: String?, onAction: () -> Unit)
 }
 
 private const val SETTINGS_PACKAGE = "com.android.settings"
+
+/** The home screen's own small memory: cards the owner put away. */
+private const val HOME_PREFS = "biokey_home"
+private const val KEY_LOCK_SETTINGS_DISMISSED = "lock_settings_dismissed"

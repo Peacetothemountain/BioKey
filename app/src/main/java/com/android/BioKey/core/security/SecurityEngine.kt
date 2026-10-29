@@ -125,6 +125,12 @@ class SecurityEngine private constructor() {
     fun confirmWithBiometric(activity: Activity, title: String, onRefused: (String) -> Unit = {}, onConfirmed: () -> Unit) {
         val app = activity.applicationContext
         val strong = hasStrongBiometric(activity)
+        // Set up but unusable right now (a fault, an update pending): not the screen lock instead.
+        // Nothing here needs doing this minute, and the PIN mustn't be enough to erase records.
+        if (!strong && hasEnrolledStrongBiometric(activity)) {
+            onRefused(activity.getString(R.string.prompt_biometric_unavailable))
+            return
+        }
         val brand = activity.getString(R.string.brand_name)
         var record: Long? = null
         val ownMisses = mutableMapOf<Long, Int>()
@@ -137,6 +143,9 @@ class SecurityEngine private constructor() {
                     biometric = result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC,
                     ownMisses = ownMisses
                 )
+                if (result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC) {
+                    confirmedWithBiometricAt = android.os.SystemClock.elapsedRealtime()
+                }
                 onConfirmed()
             }
 
@@ -183,6 +192,16 @@ class SecurityEngine private constructor() {
      */
     @Volatile var ownAppOpenedWithBiometric = false
         private set
+
+    /** When a face or fingerprint last confirmed an action ([confirmWithBiometric]), on the clock since boot. */
+    @Volatile private var confirmedWithBiometricAt = 0L
+
+    /**
+     * The owner's own doing, as far as BioKey can tell: BioKey opened with a face or fingerprint,
+     * or this very action confirmed with one a moment ago.
+     */
+    fun actingWithBiometric(): Boolean = ownAppOpenedWithBiometric ||
+        android.os.SystemClock.elapsedRealtime() - confirmedWithBiometricAt in 0..10_000L
 
     /**
      * Shows the system prompt hosted by [activity], which must be resumed and on top: the system

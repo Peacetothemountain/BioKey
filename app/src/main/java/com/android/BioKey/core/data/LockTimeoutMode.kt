@@ -13,3 +13,7 @@ enum class LockTimeoutMode(val durationMillis: Long) {
         fun fromName(name: String?): LockTimeoutMode = entries.find { it.name == name } ?: IMMEDIATE
     }
 }
+
+/** How long a delay keeps an app open, for telling a longer one from a shorter: "screen off" is longest. */
+val LockTimeoutMode.openFor: Long
+    get() = if (this == LockTimeoutMode.ON_SCREEN_OFF) Long.MAX_VALUE else durationMillis

@@ -17,6 +17,7 @@
     <string name="prompt_verify">Verify it\'s you</string>
     <string name="prompt_use_biometric">Use your face or fingerprint</string>
     <string name="prompt_cancel">Cancel</string>
+    <string name="prompt_biometric_unavailable">Your face or fingerprint can\'t be used right now. Try again later.</string>
     <string name="prompt_unavailable">Authentication isn\'t available right now</string>
 
     <!-- Lock all now (home screen, status sheet, launcher shortcut, Quick Settings tile). -->
@@ -39,7 +40,7 @@
 
     <!-- Failed unlock alerts and times app locking was off. Which app is never named in the notification. -->
     <string name="activity_channel_name">Security activity</string>
-    <string name="activity_channel_description">Failed unlocks of locked apps, and times app locking was off. Told the next time you unlock your phone.</string>
+    <string name="activity_channel_description">Failed unlocks of locked apps, times app locking was off, faces or fingerprints added or removed, and changes made from BioKey opened with the screen lock. Told the next time you unlock your phone.</string>
     <string name="activity_title">Security activity</string>
     <string name="gaps_title">App locking was off</string>
     <string name="biometrics_changed_notification_text">A face or fingerprint was added or removed on this phone. If it wasn\'t you, check them in Android\'s settings.</string>

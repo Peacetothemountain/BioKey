@@ -21,7 +21,8 @@ For whoever publishes BioKey to Google Play. Users don't need any of this.
 3. The emulator gantlet passes on the foldable profiles: `python tools/emulator_gantlet.py`.
 4. `versionCode` and `versionName` are bumped in `app/build.gradle.kts`.
 5. `CHANGELOG.md` has an entry for the version.
-6. If anything BioKey reads, keeps or shares changed: `PRIVACY.md` and `docs/privacy.md` are updated together (with a new effective date), and so are the in-app disclosures (`feature/main/Disclosures.kt`) and the Play Console Data safety form.
+6. On the test phone, with **Face or fingerprint only** on, lock **Settings** (home suggests it): otherwise anyone with the PIN can add a fingerprint there, and the gantlets don't cover that.
+7. If anything BioKey reads, keeps or shares changed: `PRIVACY.md` and `docs/privacy.md` are updated together (with a new effective date), and so are the in-app disclosures (`feature/main/Disclosures.kt`) and the Play Console Data safety form.
 
 ## Building the bundle
 

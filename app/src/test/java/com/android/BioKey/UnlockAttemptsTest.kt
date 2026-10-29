@@ -236,6 +236,7 @@ class UnlockAttemptsTest {
 
     @Test
     fun seenOnesAgeOut() {
+        TrustedClock.networkTime = { now }
         Prompt().miss()
         UnlockAttempts.markSeen(context)
         pass(8L * 24 * 60 * 60_000L)
@@ -249,7 +250,17 @@ class UnlockAttemptsTest {
         val nm = context.getSystemService(NotificationManager::class.java)
         nm.getNotificationChannel(UnlockAttempts.CHANNEL_ID).importance.let { }
         nm.createNotificationChannel(nm.getNotificationChannel(UnlockAttempts.CHANNEL_ID).apply { importance = NotificationManager.IMPORTANCE_NONE })
-        assertTrue(UnlockAttempts.alertsMuted(context))
+        assertTrue(UnlockAttempts.channelMuted(context))
+    }
+
+    @Test
+    fun withoutNetworkTimeSeenOnesDontAgeOut() {
+        // On the phone's own clock, a date set ahead mustn't be enough to age the record away.
+        Prompt().miss()
+        UnlockAttempts.markSeen(context)
+        pass(8L * 24 * 60 * 60_000L)
+        UnlockAttempts.prune(context)
+        assertEquals(1, kept.size)
     }
 
     @Test

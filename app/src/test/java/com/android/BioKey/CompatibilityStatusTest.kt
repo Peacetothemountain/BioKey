@@ -2,6 +2,7 @@ package com.android.BioKey
 
 import android.app.Notification
 import android.app.NotificationManager
+import android.app.job.JobScheduler
 import android.content.ComponentName
 import android.content.Context
 import android.os.Looper
@@ -44,6 +45,7 @@ class CompatibilityStatusTest {
         context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE).edit().clear().commit()
         SecurityVault.resetForTests()
         Settings.Secure.putString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, "")
+        context.getSharedPreferences("biokey_protection_alerts", Context.MODE_PRIVATE).edit().clear().commit()
         forgetStartRequest()
     }
 
@@ -73,6 +75,18 @@ class CompatibilityStatusTest {
         val alert = shadowOf(context.getSystemService(NotificationManager::class.java)).allNotifications.single()
         val text = alert.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
         assertTrue(text, text.contains("compatibility mode isn't running"))
+    }
+
+    @Test
+    fun stoppedRemindersStayStoppedWhenItStopsAgain() {
+        ShadowSettings.setCanDrawOverlays(true)
+        SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        ProtectionAlerts.stopReminders(context)
+        assertTrue(ProtectionAlerts.remindersStopped(context))
+        // Stopping again (a restart of the phone, say) neither alerts nor schedules reminders.
+        ProtectionAlerts.serviceStopped(context, now = true)
+        assertTrue(alerts().isEmpty())
+        assertTrue(context.getSystemService(JobScheduler::class.java).allPendingJobs.isEmpty())
     }
 
     @Test

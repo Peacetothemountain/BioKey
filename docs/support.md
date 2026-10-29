@@ -99,7 +99,8 @@ Turn on **Face or fingerprint only** in BioKey's settings (it appears once a fac
 set up on your phone): locked apps and BioKey then don't offer the PIN at all. Lock **Settings**
 too (BioKey offers): with your PIN, someone could otherwise add their own fingerprint there.
 Android can't be stopped from allowing that, but BioKey notices and tells you ("a face or
-fingerprint was added or removed"). After too many failed tries, Android pauses face and
+fingerprint was added or removed"). Home suggests locking Settings while the option is on; **Not
+now** puts the suggestion away, and Settings keeps it under the option. After too many failed tries, Android pauses face and
 fingerprint for a while; if it locks them out for good, lock your phone and unlock it with your PIN
 to bring them back. With the option off, **Failed unlock alerts** and **Also note screen lock
 unlocks** at least show you when it happened.
@@ -119,7 +120,8 @@ the same unlock prompt, those misses were yours and the note goes. Misses follow
 unlock stay on the list, marked with how the app was opened, since someone may have tried and
 handed the phone back. Misses no face or fingerprint followed (unanswered, or followed by the PIN)
 are also notified, the next time you unlock your phone and at least 2 minutes later, without
-naming the app; the notification stays until you open **Review**. Only faces and fingerprints count: Android doesn't tell apps about a wrong PIN, pattern
+naming the app; the notification stays until you open **Review** in BioKey opened with your face
+or fingerprint (opened with the PIN, it stays). Only faces and fingerprints count: Android doesn't tell apps about a wrong PIN, pattern
 or password. If you never use your PIN yourself, turn on **Also note screen lock unlocks** to see
 (listed on the home screen, not notified) whenever someone opens a locked app with it. Notes are kept until you've seen them, then 7 days;
 clear them from **Review** on the home screen (it asks for your face or fingerprint).
@@ -131,6 +133,9 @@ force-stopped it, and locked apps could open without a check meanwhile. The card
 Android stopping BioKey on its own (low memory, a crash) or a restart of the phone doesn't count.
 Some phone makers' battery savers force-stop apps the way a person would, and those do show:
 see "Locking stopped" below to keep BioKey running. Clear it from **Review**.
+
+If you switched it off on purpose, **Stop reminding** on the "App lock is off" card (it asks for
+your face or fingerprint) ends the reminders until app locking is back on. It stays recorded.
 
 ### BioKey offered to lock an app I just installed
 
@@ -150,8 +155,9 @@ backup file first:
    Downloads folder, or a cloud drive.
 
 After installing BioKey again (or on the new phone) and finishing setup, tap **Restore from a
-backup** in its settings, pick the file and enter the password. It replaces your locked apps,
-profiles and settings with the backup's.
+backup** in its settings, pick the file and enter the password, and confirm with your face or
+fingerprint. It replaces your locked apps, profiles and settings with the backup's. The
+notification shield comes back on only after you agree to its explanation on this phone.
 
 The file holds your locked apps, profiles and BioKey settings, sealed with your password. Without
 the password it reveals nothing, not even which apps are locked.
@@ -211,7 +217,8 @@ your fingerprint or screen lock instead. After too many failed attempts, Android
 biometrics for a while; use your PIN, pattern or password. With **Face or fingerprint only** on,
 the PIN isn't offered: wait, and if Android locks face and fingerprint out for good, lock your
 phone and unlock it with your PIN to bring them back. If the sensor itself stops working (a fault,
-an update pending), BioKey allows your screen lock again and records that it did.
+an update pending), BioKey allows your screen lock again for locked apps and records that it did;
+clearing records, turning alerts off and restoring a backup wait until the sensor works again.
 
 ### How do I uninstall BioKey?
 
