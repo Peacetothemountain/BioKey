@@ -48,11 +48,15 @@ object ProtectionGaps {
         BIOMETRICS_CHANGED,
         /** The phone has no strong face or fingerprint any more. */
         BIOMETRICS_REMOVED,
-        /** Protection paused from BioKey opened with the screen lock, not a face or fingerprint. */
-        PAUSED_WITH_SCREEN_LOCK
+        /**
+         * Protection weakened (paused, an app's lock off, a profile off or deleted, the notification
+         * shield off, a backup restored) from BioKey opened with the screen lock, not a face or
+         * fingerprint, on a phone that has one: maybe someone who knows the PIN. [Gap.detail] says what.
+         */
+        CHANGED_WITH_SCREEN_LOCK
     }
 
-    data class Gap(val from: Long, val to: Long, val kind: Kind, val seq: Long = 0L)
+    data class Gap(val from: Long, val to: Long, val kind: Kind, val seq: Long = 0L, val detail: String = "")
 
     /** Shorter than this, a stop is an engine restarting or handing over, not a person. */
     private const val MIN_GAP_MS = 10_000L
@@ -77,11 +81,14 @@ object ProtectionGaps {
     private val lock = Any()
 
     @VisibleForTesting
-    internal var clock: () -> Long = System::currentTimeMillis
+    internal var clock: () -> Long = TrustedClock::now
     @VisibleForTesting
     internal var elapsed: () -> Long = SystemClock::elapsedRealtime
+    @Volatile private var cachedBoot: Int? = null
     @VisibleForTesting
-    internal var bootCount: (Context) -> Int = { Settings.Global.getInt(it.contentResolver, Settings.Global.BOOT_COUNT, 0) }
+    internal var bootCount: (Context) -> Int = { context ->
+        cachedBoot ?: Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, 0).also { cachedBoot = it }
+    }
     /** When BioKey was last installed or updated. */
     @VisibleForTesting
     internal var updatedAt: (Context) -> Long = {
@@ -133,12 +140,12 @@ object ProtectionGaps {
     }
 
     /** Something that happened at one moment ([Kind.BIOMETRICS_CHANGED], a pause): kept and told like a gap. */
-    fun recordEvent(context: Context, kind: Kind) {
+    fun recordEvent(context: Context, kind: Kind, detail: String = "") {
         val p = load(context) ?: return
         if (!SecurityVault.getInstance(context).isSetupCompleted()) return
         val now = clock()
         synchronized(lock) {
-            save(p, (listOf(Gap(now, now, kind, UnlockAttempts.nextSeq(context))) + _gaps.value).fresh(context))
+            save(p, (listOf(Gap(now, now, kind, UnlockAttempts.nextSeq(context), detail)) + _gaps.value).fresh(context))
         }
         DiagnosticLog.log("Security activity: ${kind.name.lowercase().replace('_', ' ')}")
         UnlockAttempts.onActivity(context)
@@ -199,6 +206,16 @@ object ProtectionGaps {
         if (recorded) UnlockAttempts.onActivity(context)
     }
 
+    /**
+     * [what] was done from BioKey opened with the screen lock, on a phone with a strong face or
+     * fingerprint: recorded ([Kind.CHANGED_WITH_SCREEN_LOCK]) and told at the next unlock. Done after
+     * opening BioKey with a face or fingerprint, or on a phone without one, it's the owner's own.
+     */
+    fun recordIfScreenLock(context: Context, what: String) {
+        if (SecurityEngine.INSTANCE.ownAppOpenedWithBiometric || !SecurityEngine.hasStrongBiometric(context)) return
+        recordEvent(context, Kind.CHANGED_WITH_SCREEN_LOCK, what)
+    }
+
     /** No engine is running any more (switched off, a permission revoked). */
     fun onEngineDown(context: Context) {
         val p = load(context) ?: return
@@ -210,10 +227,18 @@ object ProtectionGaps {
         }
     }
 
-    /** Removes the kept gaps; returns them, for Undo. */
+    /**
+     * Removes the kept records; returns them, for Undo. A face or fingerprint added or removed
+     * stays until it ages out: whoever added one could otherwise use it to clear the record of
+     * doing so.
+     */
     fun clear(context: Context): List<Gap> {
         val p = load(context) ?: return emptyList()
-        return synchronized(lock) { _gaps.value.also { save(p, emptyList()) } }
+        return synchronized(lock) {
+            val (stays, goes) = _gaps.value.partition { it.kind == Kind.BIOMETRICS_CHANGED || it.kind == Kind.BIOMETRICS_REMOVED }
+            save(p, stays)
+            goes
+        }
     }
 
     fun restore(context: Context, gaps: List<Gap>) {
@@ -224,7 +249,7 @@ object ProtectionGaps {
     private fun save(p: SharedPreferences, list: List<Gap>) {
         _gaps.value = list
         p.edit {
-            putString(KEY_GAPS, JSONArray().apply { list.forEach { put(JSONObject().put("f", it.from).put("t", it.to).put("k", it.kind.name).put("q", it.seq)) } }.toString())
+            putString(KEY_GAPS, JSONArray().apply { list.forEach { put(JSONObject().put("f", it.from).put("t", it.to).put("k", it.kind.name).put("q", it.seq).put("d", it.detail)) } }.toString())
         }
     }
 
@@ -233,7 +258,7 @@ object ProtectionGaps {
         val array = JSONArray(json)
         return (0 until array.length()).map { i ->
             array.getJSONObject(i).let {
-                Gap(it.getLong("f"), it.getLong("t"), runCatching { Kind.valueOf(it.getString("k")) }.getOrDefault(Kind.SWITCHED_OFF), it.optLong("q"))
+                Gap(it.getLong("f"), it.getLong("t"), runCatching { Kind.valueOf(it.getString("k")) }.getOrDefault(Kind.SWITCHED_OFF), it.optLong("q"), it.optString("d"))
             }
         }
     }

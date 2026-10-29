@@ -23,7 +23,7 @@ class BiometricEnrollmentTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
     private var has = true
-    private var invalidated = false
+    private var key = BiometricEnrollment.KeyState.VALID
 
     @Before
     fun reset() {
@@ -35,7 +35,8 @@ class BiometricEnrollmentTest {
         ProtectionGaps.load(context)
         SecurityVault.getInstance(context).setSetupCompletedSync(true)
         BiometricEnrollment.hasBiometric = { has }
-        BiometricEnrollment.keyInvalidated = { invalidated }
+        BiometricEnrollment.keyState = { key }
+        BiometricEnrollment.renewKeyIfNeeded = { key = BiometricEnrollment.KeyState.VALID }
         BiometricEnrollment.check(context)
     }
 
@@ -52,8 +53,33 @@ class BiometricEnrollmentTest {
 
     @Test
     fun aFingerprintAddedIsRecorded() {
-        invalidated = true
+        key = BiometricEnrollment.KeyState.INVALIDATED
         assertEquals(Change.CHANGED, BiometricEnrollment.check(context))
+        assertEquals(listOf(ProtectionGaps.Kind.BIOMETRICS_CHANGED), events)
+    }
+
+    @Test
+    fun aKeyGoneOnceMadeIsAChange() {
+        // Removing the screen lock and setting it again destroys the key: that's when a fingerprint can be slipped in.
+        key = BiometricEnrollment.KeyState.MISSING
+        assertEquals(Change.CHANGED, BiometricEnrollment.check(context))
+    }
+
+    @Test
+    fun theFirstOneAddedIsRecorded() {
+        has = false
+        BiometricEnrollment.check(context)
+        val removedFirst = events.size
+        has = true
+        assertEquals(Change.CHANGED, BiometricEnrollment.check(context))
+        assertEquals(removedFirst + 1, events.size)
+    }
+
+    @Test
+    fun theyCantBeClearedAway() {
+        key = BiometricEnrollment.KeyState.INVALIDATED
+        BiometricEnrollment.check(context)
+        ProtectionGaps.clear(context)
         assertEquals(listOf(ProtectionGaps.Kind.BIOMETRICS_CHANGED), events)
     }
 

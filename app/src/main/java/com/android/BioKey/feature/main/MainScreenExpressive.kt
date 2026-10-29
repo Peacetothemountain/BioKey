@@ -404,7 +404,7 @@ fun MainScreenExpressive(
     LifecycleResumeEffect(Unit) {
         val job = scope.launch(Dispatchers.IO) {
             hasStrongBiometric = UnlockAttempts.hasStrongBiometric(context)
-            alertsMuted = UnlockAttempts.alertsMuted(context)
+            alertsMuted = UnlockAttempts.channelMuted(context)
             // Past their 7 days, gone from the disk too.
             UnlockAttempts.prune(context)
             ProtectionGaps.prune(context)
@@ -448,6 +448,7 @@ fun MainScreenExpressive(
     fun toggleLock(app: AppItem, locked: Boolean) {
         Haptics.toggle(view, locked)
         vault.setAppLock(app.packageName, locked)
+        if (!locked) ProtectionGaps.recordIfScreenLock(context, "${app.label}'s lock switched off")
         if (!locked) {
             BioKeyMessages.show("${app.label} unlocked", Icons.Default.LockOpen, actionLabel = "Undo") {
                 vault.setAppLock(app.packageName, true)
@@ -614,17 +615,19 @@ fun MainScreenExpressive(
                 }
             }
 
-            // Security alerts can be silenced in Android's settings without BioKey: say so.
-            if (alertsMuted && (attemptsEnabled || gaps.isNotEmpty())) {
+            // One of BioKey's alert channels silenced in Android's settings (all of its notifications
+            // off is the row above): say so. Only one card on the page is urgent at a time.
+            if (alertsMuted && notifications.allowed) {
                 item(key = "alerts_muted") {
                     ActionCard(
                         icon = Icons.Default.NotificationsOff,
                         title = "Security alerts are silenced",
-                        subtitle = "BioKey's security activity notifications are off in Android's settings, so you won't be told of failed unlocks",
-                        urgent = true,
+                        subtitle = "Some of BioKey's alerts are off in Android's settings, so you may not hear of failed unlocks, " +
+                            "changes, or app locking going off",
+                        urgent = look.action == null,
                         modifier = Modifier.animateItem()
                     ) {
-                        UrgentButton("Turn on") { IntentNavigationHelper.openSecurityActivityChannelSettings(context) }
+                        UrgentButton("Turn on", onClick = { IntentNavigationHelper.openSecurityActivityChannelSettings(context) })
                     }
                 }
             }
@@ -723,6 +726,7 @@ fun MainScreenExpressive(
                         onEnabledChange = { on ->
                             Haptics.toggle(view, on)
                             vault.setProfileEnabled(currentProfile.id, on)
+                            if (!on) ProtectionGaps.recordIfScreenLock(context, "${currentProfile.name} profile switched off")
                             if (!on) {
                                 val id = currentProfile.id
                                 BioKeyMessages.show("${currentProfile.name} off · its apps aren't locked", Icons.Default.LockOpen, actionLabel = "Undo") {
@@ -768,8 +772,12 @@ fun MainScreenExpressive(
                             }
                             SectionHeader(
                                 "Locked · ${lockedShown.size}$relock",
-                                color = if (ProtectionEngine.isProtecting(mode) && globalLockEnabled) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.error
+                                color = when {
+                                    !ProtectionEngine.isProtecting(mode) -> MaterialTheme.colorScheme.error
+                                    // A pause the owner chose: calm, like its card.
+                                    !globalLockEnabled -> MaterialTheme.colorScheme.tertiary
+                                    else -> MaterialTheme.colorScheme.primary
+                                }
                             )
                         }
                         appGroup(lockedShown, showProfile = true)
@@ -910,6 +918,7 @@ fun MainScreenExpressive(
             onDelete = {
                 val name = currentProfile.name
                 val deleted = vault.deleteProfile(currentProfile.id)
+                ProtectionGaps.recordIfScreenLock(context, "$name profile deleted")
                 showEditProfile = false
                 filter = FILTER_ALL
                 if (deleted != null) {

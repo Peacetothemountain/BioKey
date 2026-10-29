@@ -44,10 +44,18 @@ class SecurityEngine private constructor() {
         fun isUserCancel(code: Int) = code == ERROR_USER_CANCELED || code == ERROR_CANCELED ||
             code == ERROR_NEGATIVE_BUTTON
 
-        /** Whether a strong (Class 3) face or fingerprint is set up on the phone. */
+        /**
+         * Whether a strong (Class 3) face or fingerprint is set up on the phone. Only "none set up"
+         * (or no such hardware) is no: a sensor briefly unavailable, or waiting for an update, still
+         * has its faces and fingerprints, and mustn't read as their removal.
+         */
         fun hasStrongBiometric(context: Context): Boolean = runCatching {
-            context.getSystemService(BiometricManager::class.java)
-                ?.canAuthenticate(BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
+            when (context.getSystemService(BiometricManager::class.java)?.canAuthenticate(BIOMETRIC_STRONG)) {
+                BiometricManager.BIOMETRIC_SUCCESS,
+                BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE,
+                BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED -> true
+                else -> false
+            }
         }.getOrDefault(false)
 
         /**
@@ -112,12 +120,24 @@ class SecurityEngine private constructor() {
         val strong = hasStrongBiometric(activity)
         val brand = activity.getString(R.string.brand_name)
         var record: Long? = null
+        val ownMisses = mutableMapOf<Long, Int>()
         val cancel = CancellationSignal()
         val callback = object : BiometricPrompt.AuthenticationCallback() {
-            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) = onConfirmed()
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                // Misses this prompt saw, then a match: the owner's, gone like on any prompt.
+                UnlockAttempts.onUnlocked(
+                    app, activity.packageName, brand,
+                    biometric = result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC,
+                    ownMisses = ownMisses
+                )
+                onConfirmed()
+            }
 
             override fun onAuthenticationFailed() {
-                record = UnlockAttempts.onBiometricFailed(app, activity.packageName, brand, record) ?: record
+                UnlockAttempts.onBiometricFailed(app, activity.packageName, brand, record)?.let { id ->
+                    record = id
+                    ownMisses[id] = (ownMisses[id] ?: 0) + 1
+                }
             }
 
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
@@ -152,7 +172,7 @@ class SecurityEngine private constructor() {
 
     /**
      * How BioKey itself was last opened: true with a face or fingerprint. A pause made after it
-     * was opened with the screen lock is recorded ([ProtectionGaps.Kind.PAUSED_WITH_SCREEN_LOCK]).
+     * was opened with the screen lock is recorded ([ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK]).
      */
     @Volatile var ownAppOpenedWithBiometric = false
         private set
@@ -181,6 +201,7 @@ class SecurityEngine private constructor() {
         val app = activity.applicationContext
         val name = appName.ifBlank { activity.getString(R.string.brand_name) }
         val faceOrFingerOnly = biometricOnly(activity)
+        BiometricEnrollment.checkSoon(activity)
 
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {

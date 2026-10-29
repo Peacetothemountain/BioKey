@@ -96,7 +96,8 @@ object DiagnosticLog {
         // Whatever the log's own switch: a replay compares what the engines decided.
         EngineTrace.record("o.log", text)
         if (!enabled) return
-        val entry = Entry(System.currentTimeMillis(), text.replace('\n', ' '))
+        // Stamped on the same clock it's aged on, which a changed date doesn't move.
+        val entry = Entry(TrustedClock.now(), text.replace('\n', ' '))
         synchronized(entries) {
             entries.addLast(entry)
             while (entries.size > MAX_ENTRIES) entries.removeFirst()

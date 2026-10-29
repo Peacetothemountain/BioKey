@@ -34,6 +34,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -117,11 +118,14 @@ enum class Disclosure(
     );
 }
 
+private val KEEPS = listOf(
+    "A log of its own lock decisions about your locked apps, on this phone for 3 days (you can turn it off in Settings)",
+    "Security activity: times app locking was off, faces or fingerprints added or removed, changes made from BioKey opened " +
+        "with your screen lock, and, if you turn them on, failed unlocks. Each until you've seen it, then 7 days"
+)
+
 private val NEVER = listOf(
-    "Nothing BioKey sees leaves this phone, unless you share its diagnostic log: it has no internet access. It keeps a short on-phone log of its own " +
-        "lock decisions (which locked apps it locked or unlocked, failed unlocks, times app locking was off) for 3 days, " +
-        "which you can turn off in Settings. It keeps the times app locking was off for 7 days, and failed unlock alerts, " +
-        "if you turn them on, keep 7 days of failed unlocks.",
+    "Nothing BioKey sees leaves this phone unless you share its diagnostic log or save a backup: it has no internet access.",
     "BioKey never reads what you type, your messages, or the content of the apps you use."
 )
 
@@ -285,6 +289,7 @@ private fun DisclosureSheet(disclosure: Disclosure, onAgree: () -> Unit, onDecli
             Spacer(Modifier.height(20.dp))
             DisclosureSection("What BioKey reads", disclosure.reads)
             DisclosureSection("What it's used for", disclosure.usedFor)
+            DisclosureSection("What it keeps, on this phone", KEEPS)
             DisclosureSection("What it never does", NEVER)
             Spacer(Modifier.height(8.dp))
             Text(
@@ -292,6 +297,11 @@ private fun DisclosureSheet(disclosure: Disclosure, onAgree: () -> Unit, onDecli
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            // The whole policy, before agreeing, not only after setup in Settings.
+            val sheetContext = LocalContext.current
+            TextButton(onClick = { IntentNavigationHelper.openWebPage(sheetContext, IntentNavigationHelper.PRIVACY_POLICY_URL) }) {
+                Text("Read the privacy policy")
+            }
             Spacer(Modifier.height(24.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(onClick = onDecline, modifier = Modifier.weight(1f)) { Text("Not now") }

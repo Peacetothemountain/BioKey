@@ -165,8 +165,8 @@ class ProtectionGapsTest {
 
     @Test
     fun aMomentsEventIsRecorded() {
-        ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.PAUSED_WITH_SCREEN_LOCK)
-        assertEquals(ProtectionGaps.Kind.PAUSED_WITH_SCREEN_LOCK, gaps.single().kind)
+        ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK)
+        assertEquals(ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, gaps.single().kind)
     }
 
     @Test

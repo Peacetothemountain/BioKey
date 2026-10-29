@@ -12,6 +12,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.core.net.toUri
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
@@ -120,6 +121,19 @@ object IntentNavigationHelper {
             appDetails(context)
         )
     )
+
+    const val PRIVACY_POLICY_URL = "https://peacetothemountain.github.io/BioKey/privacy/"
+    const val SUPPORT_URL = "https://peacetothemountain.github.io/BioKey/support/"
+
+    /** A web page (the privacy policy, help) in the browser, which does the fetching: BioKey can't. */
+    fun openWebPage(context: Context, url: String) {
+        LockStateTracker.beginExternalNavigation(preAuthorizeSelfProtection = false)
+        val intent = Intent(Intent.ACTION_VIEW, url.toUri()).apply { if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+        runCatching { context.startActivity(intent) }.onFailure {
+            LockStateTracker.onOwnAppResumed()
+            BioKeyMessages.show("No browser to open $url", Icons.Default.ErrorOutline)
+        }
+    }
 
     fun openAppDetailsSettings(context: Context) = launchFallbackCascade(context, listOf(appDetails(context)))
 

@@ -46,7 +46,8 @@ class DiagnosticLogTest {
         DiagnosticLog.clear()
         DiagnosticLog.log("settled")
         waitUntil("the app's own load") { file.exists() && file.readText().contains("settled") }
-        val now = System.currentTimeMillis()
+        // The log stamps and ages entries on BioKey's trusted clock.
+        val now = com.android.BioKey.core.security.TrustedClock.now()
         file.writeText("${now - 4 * 24 * 60 * 60_000L}\tfrom last week\n${now - 60 * 60_000L}\tfrom this morning\n")
 
         DiagnosticLog.init(context)

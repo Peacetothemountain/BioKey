@@ -32,6 +32,10 @@ object BiometricEnrollment {
     private const val PREFS = "biokey_biometric_enrollment"
     /** A strong face or fingerprint was set up when last looked. */
     private const val KEY_HAD_BIOMETRIC = "had_biometric"
+    /** The key has been made: from then on, its absence means Android destroyed it. */
+    private const val KEY_MADE = "key_made"
+    /** A change was found and is being recorded: written before the key is replaced, so it isn't lost. */
+    private const val KEY_PENDING = "pending"
 
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-enrollment").apply { isDaemon = true } }
 
@@ -39,14 +43,16 @@ object BiometricEnrollment {
     @VisibleForTesting
     internal var hasBiometric: (Context) -> Boolean = SecurityEngine::hasStrongBiometric
 
-    /** Looks at the key; tests set their own. Returns whether it was invalidated (and makes a new one). */
+    /** Looks at the key; tests set their own. */
     @VisibleForTesting
-    internal var keyInvalidated: () -> Boolean = ::checkKey
+    internal var keyState: () -> KeyState = ::checkKey
+
+    enum class KeyState { VALID, INVALIDATED, MISSING }
 
     @VisibleForTesting
     internal fun resetForTests() {
         hasBiometric = SecurityEngine::hasStrongBiometric
-        keyInvalidated = ::checkKey
+        keyState = ::checkKey
     }
 
     /** Looks off the main thread (the Keystore is slow), and records what changed. */
@@ -61,35 +67,55 @@ object BiometricEnrollment {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val has = hasBiometric(context)
         val had = prefs.getBoolean(KEY_HAD_BIOMETRIC, false)
-        val change = when {
+        val made = prefs.getBoolean(KEY_MADE, false)
+        // A change found last time but not yet recorded (the process died in between).
+        val pending = prefs.getString(KEY_PENDING, null)?.let { runCatching { Change.valueOf(it) }.getOrNull() }
+        val change = pending ?: when {
             had && !has -> Change.REMOVED
-            has && runCatching { keyInvalidated() }.getOrDefault(false) -> Change.CHANGED
+            // Set up on a phone that had none, once BioKey was watching: added.
+            !had && has && made -> Change.CHANGED
+            has -> when (runCatching { keyState() }.getOrNull()) {
+                KeyState.INVALIDATED -> Change.CHANGED
+                // Gone although made: Android destroyed it (removing the screen lock does that too).
+                KeyState.MISSING -> if (made) Change.CHANGED else Change.NONE
+                // VALID, or the Keystore failing to answer: nothing to say.
+                else -> Change.NONE
+            }
             else -> Change.NONE
         }
-        if (has != had) prefs.edit { putBoolean(KEY_HAD_BIOMETRIC, has) }
+        // Noted durably before the key is replaced and the record is written.
+        if (change != Change.NONE) prefs.edit(commit = true) { putString(KEY_PENDING, change.name) }
+        if (has) runCatching { renewKeyIfNeeded() }.onSuccess { prefs.edit { putBoolean(KEY_MADE, true) } }
+        prefs.edit { putBoolean(KEY_HAD_BIOMETRIC, has) }
         when (change) {
             Change.CHANGED -> ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.BIOMETRICS_CHANGED)
             Change.REMOVED -> ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.BIOMETRICS_REMOVED)
             Change.NONE -> Unit
         }
+        if (change != Change.NONE) prefs.edit { remove(KEY_PENDING) }
         return change
     }
 
-    /** True when Android destroyed the key since it was made: a strong face or fingerprint changed. */
-    private fun checkKey(): Boolean {
+    /** Whether the key is there and usable; Android destroys or invalidates it when biometrics change. */
+    private fun checkKey(): KeyState {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        val key = store.getKey(ALIAS, null) as? SecretKey ?: run {
-            makeKey()
-            return false
-        }
+        val key = store.getKey(ALIAS, null) as? SecretKey ?: return KeyState.MISSING
         return try {
             // Opening it needs no authentication; Android refuses once the enrolment has changed.
             Cipher.getInstance("AES/GCM/NoPadding").init(Cipher.ENCRYPT_MODE, key)
-            false
+            KeyState.VALID
         } catch (_: KeyPermanentlyInvalidatedException) {
-            store.deleteEntry(ALIAS)
+            KeyState.INVALIDATED
+        }
+    }
+
+    /** A fresh key when there's none or it was invalidated, so the next change is seen too. */
+    @VisibleForTesting
+    internal var renewKeyIfNeeded: () -> Unit = {
+        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        if (checkKey() != KeyState.VALID) {
+            if (store.containsAlias(ALIAS)) store.deleteEntry(ALIAS)
             makeKey()
-            true
         }
     }
 

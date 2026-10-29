@@ -19,9 +19,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.GppBad
 import androidx.compose.material.icons.filled.GppMaybe
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.RemoveModerator
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -43,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -87,8 +90,10 @@ internal fun ActionCard(
     actions: @Composable RowScope.() -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
-    // Tinted towards the error colour rather than a full slab of it: urgent, without drowning the page.
-    val container = if (urgent) lerp(colors.surfaceContainer, colors.errorContainer, 0.7f) else colors.surfaceContainer
+    // Tinted towards the error colour rather than a full slab of it: urgent, without drowning the
+    // page (less in the dark theme, where the error container is a deep, heavy red).
+    val dark = colors.surface.luminance() < 0.5f
+    val container = if (urgent) lerp(colors.surfaceContainer, colors.errorContainer, if (dark) 0.45f else 0.7f) else colors.surfaceContainer
     val content = if (urgent) colors.onErrorContainer else colors.onSurface
     val secondary = if (urgent) colors.onErrorContainer else colors.onSurfaceVariant
     val iconContainer = if (urgent) colors.error else colors.secondaryContainer
@@ -176,9 +181,14 @@ internal fun SecurityActivityCard(
     val newestGap = gaps.firstOrNull()
     val gapIsNewest = newestGap != null && (newestAttempt == null || newestGap.to > newestAttempt.lastAt)
     ActionCard(
-        // Protection off and failed unlocks look different at a glance.
+        // What the newest thing was, at a glance: protection off, a fingerprint changed, a change
+        // from BioKey opened with the PIN, or failed unlocks.
         icon = when {
-            attempts.isEmpty() -> Icons.Default.RemoveModerator
+            gapIsNewest -> when (newestGap!!.kind) {
+                ProtectionGaps.Kind.BIOMETRICS_CHANGED, ProtectionGaps.Kind.BIOMETRICS_REMOVED -> Icons.Default.Fingerprint
+                ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK -> Icons.Default.Password
+                else -> Icons.Default.RemoveModerator
+            }
             urgent -> Icons.Default.GppBad
             else -> Icons.Default.GppMaybe
         },
@@ -194,11 +204,12 @@ internal fun SecurityActivityCard(
         inline = true,
         modifier = modifier
     ) {
-        TextButton(
-            onClick = onReview,
-            colors = cardTextButtonColors(urgent),
-            modifier = Modifier.semantics { contentDescription = "Review security activity" }
-        ) { Text("Review") }
+        // On an urgent card, the one thing to do is the card's strongest button, as on the others.
+        if (urgent) {
+            UrgentButton("Review", onReview, Modifier.semantics { contentDescription = "Review security activity" })
+        } else {
+            TextButton(onClick = onReview, modifier = Modifier.semantics { contentDescription = "Review security activity" }) { Text("Review") }
+        }
     }
 }
 
@@ -251,7 +262,7 @@ internal fun gapLine(context: Context, gap: ProtectionGaps.Gap): String {
     if (!gap.isOff) return attemptTime(context, gap.to) + " · " + when (gap.kind) {
         ProtectionGaps.Kind.BIOMETRICS_CHANGED -> "a face or fingerprint was added or removed"
         ProtectionGaps.Kind.BIOMETRICS_REMOVED -> "no face or fingerprint is set up any more"
-        else -> "paused from BioKey opened with the screen lock"
+        else -> gap.detail.ifEmpty { "Protection changed" }.replaceFirstChar { it.lowercase() } + ", from BioKey opened with the screen lock"
     }
     val day = if (DateUtils.isToday(gap.to)) 0 else DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR
     val range = DateUtils.formatDateRange(context, gap.from, gap.to, DateUtils.FORMAT_SHOW_TIME or day)
@@ -350,14 +361,27 @@ internal fun SecurityActivityDialog(
                 if (changes.isNotEmpty()) {
                     SectionLabel("Changes")
                     changes.forEach { change ->
-                        Text(gapLine(context, change), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = 4.dp))
+                        Column(Modifier.padding(vertical = 4.dp).semantics(mergeDescendants = true) { }) {
+                            Text(gapLine(context, change), style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                when (change.kind) {
+                                    ProtectionGaps.Kind.BIOMETRICS_CHANGED -> "If you didn't, check your faces and fingerprints in Android's settings"
+                                    ProtectionGaps.Kind.BIOMETRICS_REMOVED -> "Your screen lock opens locked apps again"
+                                    else -> "If it wasn't you, someone knows your screen lock"
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = note
+                            )
+                        }
                     }
-                    Text(
-                        "Anyone who knows your screen lock can add their own face or fingerprint in Android's settings. " +
-                            "If you didn't, check them there.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = note
-                    )
+                    if (changes.any { it.kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED }) {
+                        Text(
+                            "Anyone who knows your screen lock can add their own face or fingerprint in Android's settings. " +
+                                "These can't be cleared here: they go 7 days after you've seen them.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = note
+                        )
+                    }
                     Spacer(Modifier.height(16.dp))
                 }
                 val offs = gaps.filter { it.isOff }
@@ -411,9 +435,10 @@ internal fun SecurityActivityDialog(
 /** On an urgent (error-coloured) card, a text button takes the card's own content colour. */
 /** The one thing to do on an urgent card: a filled button in the error colours. */
 @Composable
-internal fun UrgentButton(text: String, onClick: () -> Unit) {
+internal fun UrgentButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Button(
         onClick = onClick,
+        modifier = modifier,
         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError)
     ) { Text(text) }
 }

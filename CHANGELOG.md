@@ -31,8 +31,11 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
 - Clearing security activity, switching failed unlock alerts or the diagnostic log off, deleting
   the log, or restoring a backup that would, needs your face or fingerprint: someone who only knows
   your PIN can't erase the record. Changing the phone's date can't hide or delete it either.
-- Security activity also records a face or fingerprint added or removed on the phone, and a pause
-  made from BioKey opened with the screen lock. Home warns if BioKey's alerts are muted.
+- Security activity also records a face or fingerprint added or removed on the phone (not
+  clearable), and anything that weakens protection done from BioKey opened with the screen lock
+  (a pause, an app's lock off, a profile off or deleted). Home warns if BioKey's alerts are muted,
+  and Settings reminds you to lock Settings while face or fingerprint only is on.
+- The permission explanations link to the privacy policy, and say what BioKey keeps.
 - When nothing is protecting your apps, home says so at the top, with the one thing to do.
 - Settings has the privacy policy and help (About).
 - **New apps:** an app you install that auto-sort doesn't lock gets a "Lock it?" notification;

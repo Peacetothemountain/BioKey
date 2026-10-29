@@ -46,6 +46,7 @@ class UnlockAttemptsTest {
         UnlockAttempts.bootCount = { 3 }
         UnlockAttempts.hasStrongBiometric = { true }
         TrustedClock.resetForTests()
+        TrustedClock.networkTime = { null }
         TrustedClock.wall = { now }
         TrustedClock.elapsed = { sinceBoot }
         UnlockAttempts.setEnabled(context, true)

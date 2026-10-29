@@ -23,7 +23,7 @@ import com.android.BioKey.feature.main.MainActivity
  */
 object ProtectionAlerts {
 
-    private const val CHANNEL_ID = "biokey_protection_alerts"
+    const val CHANNEL_ID = "biokey_protection_alerts"
     private const val ID_SERVICE_STOPPED = 1001
 
     /**
@@ -53,6 +53,9 @@ object ProtectionAlerts {
         )
     }
 
+    /** Set while a reminder posts ([remindIfOff]): the alert comes back, but without a sound. */
+    @Volatile private var reminding = false
+
     private fun post(context: Context, id: Int, title: String, text: String, ongoing: Boolean = false) {
         val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return
@@ -73,6 +76,7 @@ object ProtectionAlerts {
             .setContentIntent(open)
             .setOngoing(ongoing)
             .setAutoCancel(!ongoing)
+            .setSilent(reminding)
             // On the phone's lock screen, only that BioKey has something to say: whoever holds
             // the locked phone isn't told protection is off.
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
@@ -153,6 +157,7 @@ object ProtectionAlerts {
      */
     fun compatibilityStopped(context: Context, missing: String) {
         ProtectionGaps.onEngineDown(context)
+        ProtectionCheckJob.schedule(context.applicationContext)
         main.removeCallbacksAndMessages(STOP_TOKEN)
         post(
             context.applicationContext,
@@ -195,7 +200,12 @@ object ProtectionAlerts {
         val app = context.applicationContext
         if (!SecurityVault.getInstance(app).isSetupCompleted() || ProtectionEngine.isProtecting(app)) return
         if (isShowing(app, ID_SERVICE_STOPPED)) return
-        postServiceStopped(app)
+        reminding = true
+        try {
+            postServiceStopped(app)
+        } finally {
+            reminding = false
+        }
     }
 
     fun serviceRestored(context: Context) {

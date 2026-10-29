@@ -60,6 +60,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -82,6 +83,7 @@ import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.NewAppSuggestions
 import com.android.BioKey.core.security.ProtectionEngine
+import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
@@ -145,6 +147,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     val attemptAlerts by UnlockAttempts.enabled.collectAsStateWithLifecycle()
     val screenLockUnlocks by UnlockAttempts.screenLockUnlocks.collectAsStateWithLifecycle()
     val biometricOnly by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
+    val lockedApps by vault.lockedAppsFlow.collectAsStateWithLifecycle()
     var strongBiometric by remember { mutableStateOf(SecurityEngine.hasStrongBiometric(context)) }
     LifecycleResumeEffect(Unit) {
         strongBiometric = SecurityEngine.hasStrongBiometric(context)
@@ -278,6 +281,13 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 }
             }
         ) else null,
+        if (biometricOnly && strongBiometric && SETTINGS_PACKAGE !in lockedApps) SettingItem(
+            icon = Icons.Default.Warning,
+            title = "Settings isn't locked",
+            subtitle = "With your PIN, someone could add their own fingerprint there · tap to lock Settings",
+            warning = true,
+            onClick = { vault.setAppLock(SETTINGS_PACKAGE, true) }
+        ) else null,
         SettingItem(
             icon = Icons.Default.NotificationsOff,
             title = "Hide notification content",
@@ -290,13 +300,18 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             },
             checked = notificationShieldEnabled && notifListenerActive,
             onChange = { on ->
-                vault.setNotificationShield(on)
-                if (on && !notifListenerActive) {
+                if (!on) {
+                    vault.setNotificationShield(false)
+                    ProtectionGaps.recordIfScreenLock(context, "Hide notification content switched off")
+                } else if (!notifListenerActive) {
+                    // Saved only on Agree: "Not now" leaves it off.
                     disclosures.request(Disclosure.NOTIFICATIONS) {
+                        vault.setNotificationShield(true)
                         notificationAccessTrip.awaiting = true
                         IntentNavigationHelper.openNotificationListenerSettings(context)
                     }
-                } else if (on) {
+                } else {
+                    vault.setNotificationShield(true)
                     notifications.request()
                 }
             }
@@ -447,26 +462,19 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     )
 
     // The privacy policy and help, in the browser (Play asks for the policy inside the app too).
-    fun openPage(url: String) {
-        LockStateTracker.beginExternalNavigation(preAuthorizeSelfProtection = false)
-        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) }
-            .onFailure {
-                LockStateTracker.onOwnAppResumed()
-                BioKeyMessages.show("No browser to open $url", Icons.Default.ErrorOutline)
-            }
-    }
+    fun openPage(url: String) = IntentNavigationHelper.openWebPage(context, url)
     val about = listOf(
         SettingItem(
             icon = Icons.Default.Policy,
             title = "Privacy policy",
             subtitle = "What BioKey sees, keeps, and never does · opens in your browser",
-            onClick = { openPage(PRIVACY_POLICY_URL) }
+            onClick = { openPage(IntentNavigationHelper.PRIVACY_POLICY_URL) }
         ),
         SettingItem(
             icon = Icons.AutoMirrored.Filled.HelpOutline,
             title = "Help and support",
             subtitle = "Answers to common questions, and how to reach NB Designs · version ${BuildConfig.VERSION_NAME}",
-            onClick = { openPage(SUPPORT_URL) }
+            onClick = { openPage(IntentNavigationHelper.SUPPORT_URL) }
         )
     )
 
@@ -564,6 +572,8 @@ private fun SettingsSection(title: String, items: List<SettingItem>, footer: Str
                 title = item.title,
                 subtitle = item.subtitle,
                 icon = item.icon,
+                // A row that can't be used now looks it, not only its switch (Material's 38%).
+                modifier = if (item.enabled) Modifier else Modifier.alpha(0.38f),
                 interaction = Modifier.toggleable(value = checked, enabled = item.enabled, role = Role.Switch) { next ->
                     onToggled(next)
                     item.onChange(next)
@@ -634,5 +644,3 @@ private fun PredictiveBackPage(onNavigateBack: () -> Unit, content: @Composable 
 }
 
 private const val SETTINGS_PACKAGE = "com.android.settings"
-private const val PRIVACY_POLICY_URL = "https://peacetothemountain.github.io/BioKey/privacy/"
-private const val SUPPORT_URL = "https://peacetothemountain.github.io/BioKey/support/"

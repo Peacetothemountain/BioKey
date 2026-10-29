@@ -39,8 +39,15 @@ class ProtectionCheckJob : JobService() {
     }
 
     override fun onStartJob(params: JobParameters?): Boolean {
-        if (ProtectionEngine.isProtecting(this)) cancel(this) else ProtectionAlerts.remindIfOff(this)
-        return false
+        // Off the main thread: at a cold start this reads BioKey's storage.
+        Thread {
+            try {
+                if (ProtectionEngine.isProtecting(this)) cancel(this) else ProtectionAlerts.remindIfOff(this)
+            } finally {
+                jobFinished(params, false)
+            }
+        }.start()
+        return true
     }
 
     override fun onStopJob(params: JobParameters?): Boolean = true

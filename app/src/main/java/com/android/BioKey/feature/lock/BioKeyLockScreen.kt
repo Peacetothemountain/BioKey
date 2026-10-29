@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
@@ -85,7 +86,14 @@ fun BioKeyLockScreen(
             // logo stays in the middle.
             if (status == null) Spacer(Modifier.height(with(LocalDensity.current) { statusStyle.lineHeight.toDp() }))
             BioKeyLogo(Modifier.size(LOGO_WIDTH, LOGO_HEIGHT))
-            // No "is locked" caption: the logo says what is locked; screen readers get it above.
+            // Said in words too, not only by the mark (screen readers hear the pane title).
+            Spacer(Modifier.height(16.dp))
+            Text(
+                "BioKey is locked",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.clearAndSetSemantics { }
+            )
             if (status != null) Spacer(Modifier.height(16.dp))
             // Always there, empty when there's nothing to say: a live region is read out when its
             // text changes, not when it first appears.

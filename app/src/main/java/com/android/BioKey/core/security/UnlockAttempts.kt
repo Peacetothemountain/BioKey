@@ -127,9 +127,9 @@ object UnlockAttempts {
     private val main = Handler(Looper.getMainLooper())
     private val NOTIFY_TOKEN = Any()
 
-    /** The wall clock, for display; tests set their own. */
+    /** When things happen ([TrustedClock]: the phone's date changed doesn't move it); tests set their own. */
     @VisibleForTesting
-    internal var clock: () -> Long = System::currentTimeMillis
+    internal var clock: () -> Long = TrustedClock::now
     @VisibleForTesting
     internal var elapsed: () -> Long = SystemClock::elapsedRealtime
     /** The phone's restart count: read once, it can't change while the process lives. */
@@ -204,8 +204,16 @@ object UnlockAttempts {
      */
     fun alertsMuted(context: Context): Boolean {
         if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return true
-        val channel = context.getSystemService(NotificationManager::class.java).getNotificationChannel(CHANNEL_ID) ?: return false
-        return channel.importance == NotificationManager.IMPORTANCE_NONE
+        return channelMuted(context)
+    }
+
+    /**
+     * BioKey's notifications are allowed, but its security-activity or protection-alert channel is
+     * switched off in Android's settings. (All of them off is home's "Alerts are off" row.)
+     */
+    fun channelMuted(context: Context): Boolean {
+        val nm = context.getSystemService(NotificationManager::class.java)
+        return listOf(CHANNEL_ID, ProtectionAlerts.CHANNEL_ID).any { nm.getNotificationChannel(it)?.importance == NotificationManager.IMPORTANCE_NONE }
     }
 
     /** Drops what's seen and past its time; BioKey's home screen calls this as it shows them. */
@@ -315,9 +323,16 @@ object UnlockAttempts {
     fun onActivity(context: Context) = scheduleNotification(context.applicationContext, 0L)
 
     /** The owner opened Review in BioKey: everything up to now has been seen. */
-    fun markSeen(context: Context) {
+    fun markSeen(context: Context, upTo: Long = Long.MAX_VALUE) {
         val p = load(context) ?: return
-        p.edit { putLong(KEY_SEEN_SEQ, p.getLong(KEY_SEQ, 0L)).putLong(KEY_NOTIFIED_SEQ, p.getLong(KEY_SEQ, 0L)) }
+        synchronized(lock) {
+            // Up to the newest record actually there (and shown), not a number handed out a moment
+            // ago to one another thread hasn't stored yet.
+            val newest = maxOf(_attempts.value.maxOfOrNull { it.seq } ?: 0L, ProtectionGaps.gaps.value.maxOfOrNull { it.seq } ?: 0L)
+            val seen = minOf(newest, upTo)
+            if (seen > p.getLong(KEY_SEEN_SEQ, 0L)) p.edit { putLong(KEY_SEEN_SEQ, seen) }
+            if (seen > p.getLong(KEY_NOTIFIED_SEQ, 0L)) p.edit { putLong(KEY_NOTIFIED_SEQ, seen) }
+        }
         NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
     }
 
@@ -435,16 +450,20 @@ object UnlockAttempts {
         ensureChannel(app)
         val res = app.resources
         // Everything not yet reviewed, not just what's new: a later miss doesn't hide an earlier gap.
+        val offs = gaps.filter { it.kind == ProtectionGaps.Kind.SWITCHED_OFF || it.kind == ProtectionGaps.Kind.FORCE_STOPPED }
         val title = when {
             gaps.isEmpty() -> res.getQuantityString(R.plurals.attempts_title, attempts.size, attempts.size)
-            attempts.isEmpty() -> res.getString(R.string.gaps_title)
+            attempts.isEmpty() && offs.size == gaps.size -> res.getString(R.string.gaps_title)
             else -> res.getString(R.string.activity_title)
         }
         val text = res.getString(
             when {
                 attempts.any { it.unanswered } -> R.string.attempts_notification_text
                 attempts.isNotEmpty() -> R.string.attempts_screen_lock_notification_text
-                else -> R.string.gaps_notification_text
+                offs.isNotEmpty() -> R.string.gaps_notification_text
+                gaps.any { it.kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED || it.kind == ProtectionGaps.Kind.BIOMETRICS_REMOVED } ->
+                    R.string.biometrics_changed_notification_text
+                else -> R.string.changes_notification_text
             }
         )
         val open = PendingIntent.getActivity(

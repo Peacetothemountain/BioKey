@@ -42,6 +42,8 @@
     <string name="activity_channel_description">Failed unlocks of locked apps, and times app locking was off. Told the next time you unlock your phone.</string>
     <string name="activity_title">Security activity</string>
     <string name="gaps_title">App locking was off</string>
+    <string name="biometrics_changed_notification_text">A face or fingerprint was added or removed on this phone. If it wasn\'t you, check them in Android\'s settings.</string>
+    <string name="changes_notification_text">BioKey\'s protection was changed from BioKey opened with your screen lock. Open BioKey to see what.</string>
     <string name="gaps_notification_text">Locked apps could be opened without a check for a while. Open BioKey to see when.</string>
     <plurals name="attempts_title">
         <item quantity="one">Failed unlock attempt</item>

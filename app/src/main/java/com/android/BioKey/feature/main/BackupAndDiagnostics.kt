@@ -81,6 +81,7 @@ import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.ProtectionEngine
+import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.VaultBackup
@@ -268,7 +269,11 @@ internal fun rememberBackupActions(): BackupActions {
                     val weakens = vault.isBiometricOnly() && !current.state.optBoolean("biometricOnly", true) ||
                         UnlockAttempts.enabled.value && !current.state.optBoolean("unlockAttemptAlerts", true) ||
                         UnlockAttempts.screenLockUnlocks.value && !current.state.optBoolean("screenLockUnlocks", true)
+                    val unlocksApps = (vault.getLockedPackages() - current.state.optJSONArray("selected").let { a ->
+                        (0 until (a?.length() ?: 0)).mapTo(HashSet()) { a!!.getString(it) }
+                    }).isNotEmpty()
                     val restore = {
+                        if (unlocksApps) ProtectionGaps.recordIfScreenLock(activity, "A backup restored that unlocks apps")
                     // Off the main thread (restoring sweeps notifications), and in the backup's
                     // scope, so leaving Settings meanwhile doesn't stop it halfway to its message.
                     pending.viewModelScope.launch {
