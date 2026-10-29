@@ -324,6 +324,9 @@ class DesignScreenshotTest {
         BioKeyLockScreen(onUnlockClicked = {}, onCancelClicked = {})
     }
     @Test fun setup() = shoot("setup") { SetupScreenExpressive(onSetupComplete = {}) }
+    @Test fun setupAfterStorageCleared() = shoot("setup_cleared") {
+        SetupScreenExpressive(clearedAt = System.currentTimeMillis() - 3_600_000L, onSetupComplete = {})
+    }
 
     private fun cover(actions: Boolean, status: String? = null) = @Composable {
         val resources = androidx.compose.ui.platform.LocalResources.current

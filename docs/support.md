@@ -148,6 +148,11 @@ Android stopping BioKey on its own (low memory, a crash) or a restart of the pho
 Some phone makers' battery savers force-stop apps the way a person would, and those do show:
 see "Locking stopped" below to keep BioKey running. Clear it from **Review**.
 
+If BioKey's storage was cleared in Android's settings (Apps > BioKey > Storage), every lock and
+record went with it. BioKey says so at each unlock until it's set up again, and on its setup
+screen, then records when. (Android must still remember BioKey running before; an uninstall
+removes that, but then BioKey's icon is gone too.)
+
 If you switched it off on purpose, **Stop reminding** on the "App lock is off" card (it asks for
 your face or fingerprint) ends the reminders until app locking is back on; the card then says
 so, and **Remind me** brings them back. It stays recorded. If app locking fails some other way

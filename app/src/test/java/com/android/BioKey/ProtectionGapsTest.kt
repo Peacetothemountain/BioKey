@@ -281,4 +281,53 @@ class ProtectionGapsTest {
         ProtectionGaps.restore(context, removed)
         assertEquals(1, gaps.size)
     }
+
+    @Test
+    fun clearedStorageIsToldThenRecordedOnceSetUpAgain() {
+        val p = context.getSharedPreferences("biokey_protection_gaps", Context.MODE_PRIVATE)
+        val vault = com.android.BioKey.core.security.SecurityVault.getInstance(context)
+        val before = ProtectionGaps.exits
+        try {
+            // Nothing of BioKey's on the storage, yet Android remembers it running: cleared.
+            p.edit().clear().commit()
+            vault.setSetupCompletedSync(false)
+            ProtectionGaps.exits = { listOf(System.currentTimeMillis() - 60_000L to android.app.ApplicationExitInfo.REASON_USER_REQUESTED) }
+            ProtectionGaps.checkStorageCleared(context)
+            assertTrue(ProtectionGaps.clearedAt(context) != null)
+            // Looked at once per storage: a later start doesn't move it.
+            val at = ProtectionGaps.clearedAt(context)
+            ProtectionGaps.checkStorageCleared(context)
+            assertEquals(at, ProtectionGaps.clearedAt(context))
+            // Set up again with an engine running: recorded, from then until now, and the mark goes.
+            vault.setSetupCompletedSync(true)
+            ProtectionGaps.onEngineUp(context)
+            assertEquals(1, ProtectionGaps.gaps.value.count { it.kind == ProtectionGaps.Kind.DATA_CLEARED })
+            assertEquals(null, ProtectionGaps.clearedAt(context))
+        } finally {
+            ProtectionGaps.exits = before
+        }
+    }
+
+    @Test
+    fun aFreshInstallOrASetUpOneIsntCleared() {
+        val p = context.getSharedPreferences("biokey_protection_gaps", Context.MODE_PRIVATE)
+        val vault = com.android.BioKey.core.security.SecurityVault.getInstance(context)
+        val before = ProtectionGaps.exits
+        try {
+            // Fresh: Android remembers nothing of BioKey.
+            p.edit().clear().commit()
+            vault.setSetupCompletedSync(false)
+            ProtectionGaps.exits = { emptyList() }
+            ProtectionGaps.checkStorageCleared(context)
+            assertEquals(null, ProtectionGaps.clearedAt(context))
+            // Updated from a version before the check, already set up: its exits aren't a clearing.
+            p.edit().clear().commit()
+            vault.setSetupCompletedSync(true)
+            ProtectionGaps.exits = { listOf(System.currentTimeMillis() - 60_000L to android.app.ApplicationExitInfo.REASON_OTHER) }
+            ProtectionGaps.checkStorageCleared(context)
+            assertEquals(null, ProtectionGaps.clearedAt(context))
+        } finally {
+            ProtectionGaps.exits = before
+        }
+    }
 }

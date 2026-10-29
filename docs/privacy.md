@@ -177,7 +177,9 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   Turning the alerts off deletes them; a restored backup that turns them off leaves them in place.
   Clearing them, or turning the alerts off, asks for your face or fingerprint where one is set up.
 - **Times app locking was off, and other changes:** when BioKey's protection was switched off or
-  BioKey was force-stopped, and when it came back; when a face or fingerprint was added or removed
+  BioKey was force-stopped, and when it came back; when BioKey's storage was cleared (worked out
+  from Android's record of BioKey's past process exits, read on the phone), until it was set up
+  again; when a face or fingerprint was added or removed
   on the phone; when a face or fingerprint couldn't be used while "Face or fingerprint only" was on,
   so the screen lock was allowed; when notification access was switched off while "Hide
   notification content" was on, and when it came back or hiding was switched off (whether BioKey

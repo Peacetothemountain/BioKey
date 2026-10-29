@@ -309,7 +309,11 @@ fun MainScreenExpressive(
     fun isUnwatched(app: AppItem) = mode == ProtectionEngine.Mode.COMPATIBILITY && app.inOtherProfile && isLocked(app.packageName) &&
         !isHomeScreen(app.packageName)
     val unwatchedCount = remember(installedApps, lockedApps, profiles, mode, homeScreens) { installedApps.count(::isUnwatched) }
-    val look = protectionLook(mode, globalLockEnabled, pausedUntil, lockedCount, unwatchedCount, defaultTimeout)
+    val home by homeViewModel.state.collectAsStateWithLifecycle()
+    val look = protectionLook(
+        mode, globalLockEnabled, pausedUntil, lockedCount, unwatchedCount, defaultTimeout,
+        notificationsShowing = home.shieldWithoutAccess && vault.isSetupCompleted()
+    )
 
     /**
      * Locked apps open right now. Every unlock and lock (an app's re-lock delay running out
@@ -356,7 +360,6 @@ fun MainScreenExpressive(
     LaunchedEffect(overlays.showActivity) { if (overlays.showActivity) homeViewModel.restoreReview { overlays.showActivity = true } }
     // Review's state goes with the screen, so it's worked out again when it comes back.
     DisposableEffect(homeViewModel) { onDispose { homeViewModel.forgetReview() } }
-    val home by homeViewModel.state.collectAsStateWithLifecycle()
     val attemptsEnabled by UnlockAttempts.enabled.collectAsStateWithLifecycle()
     val biometricOnlyOn by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
     val seenUpTo by UnlockAttempts.seen.collectAsStateWithLifecycle()

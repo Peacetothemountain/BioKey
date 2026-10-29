@@ -57,10 +57,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -145,12 +146,16 @@ internal fun ActionCard(
                 }
                 if (sideBySide) {
                     CompositionLocalProvider(LocalContentColor provides content) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
+                        MaterialTheme(colorScheme = if (urgent) colors.copy(primary = colors.onErrorContainer) else colors) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
+                        }
                     }
                 }
             }
             if (!sideBySide) {
                 CompositionLocalProvider(LocalContentColor provides content) {
+                    // On an urgent card, a text button is in the card's own colour.
+                    MaterialTheme(colorScheme = if (urgent) colors.copy(primary = colors.onErrorContainer) else colors) {
                     // Wrapping, so two buttons at large text go on two lines instead of squeezing.
                     FlowRow(
                         Modifier.fillMaxWidth().padding(start = iconSize + CARD_ICON_GAP, top = 8.dp),
@@ -158,6 +163,7 @@ internal fun ActionCard(
                         itemVerticalAlignment = Alignment.CenterVertically,
                         content = actions
                     )
+                    }
                 }
             }
         }
@@ -291,7 +297,8 @@ internal fun attemptTime(context: Context, at: Long): String {
 }
 
 /** Times app locking was off, as against changes that happened at one moment. */
-internal val ProtectionGaps.Gap.isOff get() = kind == ProtectionGaps.Kind.SWITCHED_OFF || kind == ProtectionGaps.Kind.FORCE_STOPPED
+internal val ProtectionGaps.Gap.isOff get() =
+    kind == ProtectionGaps.Kind.SWITCHED_OFF || kind == ProtectionGaps.Kind.FORCE_STOPPED || kind == ProtectionGaps.Kind.DATA_CLEARED
 
 internal val ProtectionGaps.Gap.isBiometricChange get() = kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED || kind == ProtectionGaps.Kind.BIOMETRICS_REMOVED
 
@@ -324,6 +331,7 @@ internal fun gapLine(context: Context, gap: ProtectionGaps.Gap): String {
             }
         }
     }
+    if (gap.kind == ProtectionGaps.Kind.DATA_CLEARED) return context.getString(R.string.card_gap_storage_cleared, timeRange(context, gap))
     if (gap.unknownStart) return context.getString(R.string.card_gap_force_stopped_unknown, attemptTime(context, gap.to))
     return context.getString(if (gap.kind == ProtectionGaps.Kind.SWITCHED_OFF) R.string.card_gap_switched_off else R.string.card_gap_force_stopped, timeRange(context, gap))
 }
@@ -462,19 +470,18 @@ internal fun SecurityActivityDialog(
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 ProtectDialogWindow()
                 // At most one note before the records: why they stay new.
-                val heading = when {
+                if (heldUntil != null) {
                     // The hold explains everything at once: why they stay new, why nothing clears.
-                    heldUntil != null -> stringResource(R.string.activity_held_until)
-                    openedWithScreenLock -> stringResource(R.string.card_activity_screen_lock_note)
-                    else -> null
-                }
-                if (heading != null) {
                     ActivityCallout(
-                        heading,
-                        headline = heldUntil?.let { stringResource(R.string.activity_held_headline_cause, attemptTime(context, it)) },
-                        held = heldUntil != null,
+                        stringResource(R.string.activity_held_intro),
+                        headline = stringResource(R.string.activity_held_headline_cause, attemptTime(context, heldUntil)),
+                        items = stringArrayResource(R.array.activity_held_refused).toList(),
+                        footer = stringResource(R.string.activity_held_footer),
+                        held = true,
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
+                } else if (openedWithScreenLock) {
+                    ActivityCallout(stringResource(R.string.card_activity_screen_lock_note), held = false, modifier = Modifier.padding(bottom = 16.dp))
                 }
                 val changes = gaps.filterNot { it.isOff }
                 if (changes.isNotEmpty()) {
@@ -592,30 +599,38 @@ internal fun UrgentButton(text: String, onClick: () -> Unit, modifier: Modifier 
  * face or fingerprint change is [held] (as an urgent card is), else the calm secondary ones.
  */
 @Composable
-private fun ActivityCallout(text: String, held: Boolean, modifier: Modifier = Modifier, headline: String? = null) {
+private fun ActivityCallout(
+    text: String,
+    held: Boolean,
+    modifier: Modifier = Modifier,
+    headline: String? = null,
+    /** A list after [text], each item's wrapped lines hanging after its bullet. */
+    items: List<String> = emptyList(),
+    footer: String? = null
+) {
     val colors = MaterialTheme.colorScheme
     val dark = colors.surface.luminance() < 0.5f
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = if (held) lerp(colors.surfaceContainerHighest, colors.errorContainer, if (dark) 0.45f else 0.7f) else colors.secondaryContainer,
         contentColor = if (held) colors.onErrorContainer else colors.onSecondaryContainer,
-        modifier = modifier.fillMaxWidth()
+        // One stop for a screen reader: the note is read whole, its list in order.
+        modifier = modifier.fillMaxWidth().semantics(mergeDescendants = true) { }
     ) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Icon(Icons.Default.GppMaybe, contentDescription = null, modifier = Modifier.padding(top = 1.dp).size(20.dp.scaledWithText()))
             Spacer(Modifier.width(12.dp))
             Column {
                 if (headline != null) Text(headline, style = MaterialTheme.typography.titleSmall)
-                // Lines starting with a bullet are a list: wrapped lines hang after the bullet.
-                text.lines().forEach { line ->
-                    if (line.startsWith("• ")) {
-                        Row(Modifier.padding(start = 4.dp, top = 2.dp)) {
-                            Text("•", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.clearAndSetSemantics { })
-                            Spacer(Modifier.width(8.dp))
-                            Text(line.removePrefix("• "), style = MaterialTheme.typography.bodyMedium)
-                        }
-                    } else Text(line, style = MaterialTheme.typography.bodyMedium)
+                Text(text, style = MaterialTheme.typography.bodyMedium)
+                items.forEach { item ->
+                    Row(Modifier.padding(start = 4.dp, top = 2.dp)) {
+                        Text("•", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.clearAndSetSemantics { })
+                        Spacer(Modifier.width(8.dp))
+                        Text(item, style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
+                if (footer != null) Text(footer, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 2.dp))
             }
         }
     }

@@ -72,19 +72,29 @@ internal fun LazyListScope.homeCards(
         }
     }
 
+    // Which card, if any, is the page's one urgent card ([urgentCard]).
+    val notProtecting = look.action != null && vault.isSetupCompleted()
+    val urgent = urgentCard(
+        notProtecting = notProtecting,
+        paused = ProtectionEngine.isProtecting(mode) && !globalLockEnabled,
+        activityUrgent = securityActivityUrgent(attempts, gaps, seenUpTo),
+        notificationsShowing = home.shieldWithoutAccess && vault.isSetupCompleted(),
+        alertsMuted = home.alertsMuted && notifications.allowed
+    )
+
     // Nothing locking right now: the most serious state gets the clearest card, with its one action.
-    if (look.action != null && vault.isSetupCompleted()) {
+    if (notProtecting) {
         item(key = "not_protecting") {
             val activity = LocalActivity.current
             val res = LocalResources.current
             // A pause the owner chose isn't an emergency; off, not running or set up is.
-            val paused = ProtectionEngine.isProtecting(mode) && !globalLockEnabled
+            val paused = urgent != UrgentCard.NOT_PROTECTING
             val quiet = mode == ProtectionEngine.Mode.OFF && home.remindersStopped
             ActionCard(
                 icon = look.icon,
                 title = look.title,
                 subtitle = if (quiet) stringResource(R.string.home_reminders_off_body, look.body) else look.body,
-                urgent = !paused,
+                urgent = urgent == UrgentCard.NOT_PROTECTING,
                 modifier = Modifier.animateItem()
             ) {
                 if (paused) {
@@ -116,11 +126,9 @@ internal fun LazyListScope.homeCards(
         }
     }
 
-    // The shield is on but its access was taken away: notifications show in full right now, so
-    // it's the page's urgent card unless protection or security activity already is. Switching
-    // the shield off stays offered beside it: the owner may have meant it.
-    val shieldUrgent = home.shieldWithoutAccess && vault.isSetupCompleted() &&
-        look.action == null && !securityActivityUrgent(attempts, gaps, seenUpTo)
+    // The shield is on but its access was taken away: notifications show in full right now.
+    // Switching the shield off stays offered beside it: the owner may have meant it.
+    val shieldUrgent = urgent == UrgentCard.NOTIFICATIONS_SHOWING
     if (home.shieldWithoutAccess && vault.isSetupCompleted()) {
         item(key = "shield_no_access") {
             val context = LocalContext.current
@@ -148,7 +156,7 @@ internal fun LazyListScope.homeCards(
 
     // One of BioKey's alert channels silenced in Android's settings (all of its notifications
     // off is the row above): say so. Only one card on the page is urgent at a time.
-    val alertsUrgent = look.action == null && !securityActivityUrgent(attempts, gaps, seenUpTo) && !shieldUrgent
+    val alertsUrgent = urgent == UrgentCard.ALERTS_MUTED
     if (home.alertsMuted && notifications.allowed) {
         item(key = "alerts_muted") {
             val context = LocalContext.current
@@ -186,7 +194,7 @@ internal fun LazyListScope.homeCards(
             // One urgent card on the page: not protecting outranks this.
             SecurityActivityCard(
                 attempts, gaps, attemptLabel, onReview = onReview, modifier = Modifier.animateItem(),
-                urgent = securityActivityUrgent(attempts, gaps, seenUpTo) && !(look.action != null && vault.isSetupCompleted() && !(ProtectionEngine.isProtecting(mode) && !globalLockEnabled))
+                urgent = urgent == UrgentCard.ACTIVITY
             )
         }
     }
@@ -223,4 +231,27 @@ internal fun LazyListScope.homeCards(
             }
         }
     }
+}
+
+/** Home's cards that can be urgent, most serious first. */
+internal enum class UrgentCard { NOT_PROTECTING, ACTIVITY, NOTIFICATIONS_SHOWING, ALERTS_MUTED, NONE }
+
+/**
+ * The one card on home shown as urgent: the most serious of those showing. Not protecting comes
+ * first, unless it's a pause the owner chose (never an emergency, and then the next one is);
+ * then security activity not yet reviewed, notifications showing in full under the shield, and
+ * BioKey's alerts silenced.
+ */
+internal fun urgentCard(
+    notProtecting: Boolean,
+    paused: Boolean,
+    activityUrgent: Boolean,
+    notificationsShowing: Boolean,
+    alertsMuted: Boolean
+): UrgentCard = when {
+    notProtecting && !paused -> UrgentCard.NOT_PROTECTING
+    activityUrgent -> UrgentCard.ACTIVITY
+    notificationsShowing -> UrgentCard.NOTIFICATIONS_SHOWING
+    alertsMuted -> UrgentCard.ALERTS_MUTED
+    else -> UrgentCard.NONE
 }

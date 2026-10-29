@@ -48,6 +48,8 @@
     <string name="changes_notification_text">BioKey\'s protection was changed from BioKey opened with your screen lock. Open BioKey to see what.</string>
     <string name="log_shared_notification_text">BioKey\'s diagnostic log was shared from BioKey opened with your screen lock. Open BioKey to see when.</string>
     <string name="activity_recorded_notification_text">Something was recorded in BioKey\'s security activity. Open BioKey to see what.</string>
+    <string name="storage_cleared_notification_title">BioKey was reset</string>
+    <string name="storage_cleared_notification_text">BioKey\'s storage was cleared on %1$s, so no app is locked. Open BioKey to set it up again.</string>
     <string name="biometric_unavailable_notification_text">Your face or fingerprint couldn\'t be used, so your screen lock was allowed. Open BioKey to see when.</string>
     <string name="gaps_notification_text">Locked apps could be opened without a check for a while. Open BioKey to see when.</string>
     <plurals name="attempts_title">
@@ -170,6 +172,7 @@
     <!-- First-run setup (SetupScreenExpressive.kt). -->
     <string name="setup_title">Set up BioKey</string>
     <string name="setup_subtitle">Lock any app behind your face, fingerprint or screen lock.</string>
+    <string name="setup_storage_cleared">BioKey\'s storage was cleared on %1$s, and every lock and record went with it. If that wasn\'t you, someone who could open Android\'s settings did it. Setting BioKey up again records when.</string>
     <string name="setup_restricted_title">Allow restricted settings</string>
     <!-- ⋮ is the App info page's overflow menu. -->
     <string name="setup_restricted_text">Android blocks this for apps installed outside the Play Store. Try the accessibility switch once; then in App info tap ⋮ &gt; “Allow restricted settings”.</string>
@@ -221,6 +224,9 @@
     <string name="home_paused_body">Locked apps open without a check until you resume.</string>
     <string name="home_resume_protection">Resume protection</string>
     <string name="home_protected">Protected</string>
+    <string name="home_apps_locked_short">Apps locked</string>
+    <string name="home_notifications_showing_title">Apps locked, notifications showing</string>
+    <string name="home_notifications_showing_body">Locked apps\' notifications show in full: BioKey\'s notification access is off.</string>
     <string name="home_protected_compat">Compatibility mode (works with Advanced Protection)</string>
     <plurals name="home_unwatched">
         <item quantity="one">%d locked app isn\'t protected in your work profile: compatibility mode can\'t see apps there</item>
@@ -341,7 +347,7 @@
 
     <!-- When a failed unlock or a change happened: "Yesterday, 2:14 PM", "Oct 27, 2:14 PM". -->
     <string name="card_time_yesterday">Yesterday, %1$s</string>
-    <string name="card_time_date">%1$s, %2$s</string>
+    <string name="card_time_date">%1$s,\u00A0%2$s</string>
 
     <!-- One time app locking was off, or one change: when · what. -->
     <string name="card_gap_biometrics_changed">%1$s · A face or fingerprint was added or removed</string>
@@ -371,6 +377,7 @@
     <string name="change_biometric_unavailable">Face or fingerprint couldn\'t be used, so the screen lock was allowed</string>
     <string name="card_gap_switched_off">%1$s · Switched off</string>
     <string name="card_gap_force_stopped">%1$s · BioKey was force-stopped</string>
+    <string name="card_gap_storage_cleared">%1$s · BioKey\'s storage was cleared, and every lock and record with it</string>
 
     <!-- When an unlocked app, off screen, locks again. -->
     <string name="card_session_immediately">Re-locks immediately after you leave it</string>
@@ -397,8 +404,15 @@
     <string name="home_shield_no_access_action">Allow access</string>
     <string name="home_shield_no_access_off">Turn off</string>
     <string name="home_shield_turned_off">Hide notification content is off</string>
-    <string name="activity_held_until">Until then nothing proves it\'s you here, so:\n• records can\'t be marked seen or cleared\n• failed-unlock alerts, “Also note screen lock unlocks” and the log can\'t be switched off, nor the log deleted\n• backups can\'t be restored\nOther changes are recorded.</string>
-    <string name="activity_held_headline_cause">Face or fingerprint changed · held until %1$s</string>
+    <string name="activity_held_intro">Until then nothing proves it\'s you here, so:</string>
+    <string-array name="activity_held_refused">
+        <item>records can\'t be marked seen or cleared</item>
+        <item>failed-unlock alerts, “Also note screen lock unlocks” and the log can\'t be switched off</item>
+        <item>the log can\'t be deleted</item>
+        <item>backups can\'t be restored</item>
+    </string-array>
+    <string name="activity_held_footer">Other changes are recorded.</string>
+    <string name="activity_held_headline_cause">Face or fingerprint changed · some actions wait until %1$s</string>
     <string name="held_refused">Not until %1$s: a face or fingerprint was added or removed, so this can\'t be done yet.</string>
     <string name="change_biometric_only_off">Face or fingerprint only switched off</string>
     <string name="change_reminders_stopped">Reminders that app locking is off stopped</string>

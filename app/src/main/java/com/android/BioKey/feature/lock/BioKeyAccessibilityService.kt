@@ -32,6 +32,7 @@ import com.android.BioKey.core.diagnostics.LatencyMarks
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
+import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.main.MainActivity
@@ -218,8 +219,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     // The keyguard just went away: whatever is on screen must be re-checked even if
                     // no window event arrives (e.g. a locked app was left open when the screen went off).
                     Intent.ACTION_USER_PRESENT -> {
-                        // Not before setup: nothing on screen is looked at until then.
-                        if (::vault.isInitialized && vault.isSetupCompleted()) windowList()?.let { updateMasks(it, full = false) }
+                        // Cleared and not set up again: said at every unlock until it is.
+                        ProtectionGaps.remindIfCleared(this@BioKeyAccessibilityService)
+                        windowList()?.let { updateMasks(it, full = false) }
                         reevaluateForeground()
                         mainHandler.postDelayed(::reevaluateForeground, 250)
                     }
@@ -398,7 +400,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private val revokeSelfProtectionAfterExitRunnable = Runnable { guarded("Self-protection exit check", ::revokeSelfProtectionAfterExit) }
     private val trailingSelfProtectionRunnable = Runnable { guarded("Self-protection check", ::checkSelfProtectionAgain) }
     private val maskRecheckRunnable = Runnable {
-        guarded("Mask check") { if (::vault.isInitialized && vault.isSetupCompleted()) windowList()?.let { updateMasks(it, full = false) } }
+        guarded("Mask check") { windowList()?.let { updateMasks(it, full = false) } }
     }
 
     /** Runs a Handler task, where an exception would crash the service: it is logged instead. */
@@ -896,9 +898,17 @@ class BioKeyAccessibilityService : AccessibilityService() {
      * if they can't be read. Read once per event ([eventWindows]): handling one asks for them up to
      * four times, and nothing changes on screen in between, as the next event says.
      */
+    /**
+     * Before setup (and the explanation it shows first), no window is looked at, whatever asks:
+     * every look goes through [windowList] or [activeRoot], which both check this.
+     */
+    private fun setUp() = ::vault.isInitialized && vault.isSetupCompleted()
+
+    /** The active window's root node, under the same rule as [windowList]. */
+    private fun activeRoot(): AccessibilityNodeInfo? = if (setUp()) rootInActiveWindow else null
+
     private fun windowList(): List<AccessibilityWindowInfo>? {
-        // Before setup (and the explanation it shows first), no window is looked at, whatever asks.
-        if (!::vault.isInitialized || !vault.isSetupCompleted()) return null
+        if (!setUp()) return null
         if (handlingEvent) eventWindows?.let { return it }
         val list: List<AccessibilityWindowInfo>? = try {
             val byDisplay = windowsOnAllDisplays
@@ -1470,7 +1480,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 pkg = packageOf(front)
                 windowId = front.id
             } else {
-                val root = rootInActiveWindow
+                val root = activeRoot()
                 pkg = root?.packageName?.toString()
                 windowId = root?.windowId ?: -1
                 root?.release()
@@ -1612,7 +1622,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun onShieldTimeout(target: String, attempt: Int): Boolean {
         try {
             val stillExposed = if (target == SELF_PROTECTION_PENDING_KEY) {
-                val foreground = rootInActiveWindow?.let { root -> root.packageName?.toString().also { root.release() } }
+                val foreground = activeRoot()?.let { root -> root.packageName?.toString().also { root.release() } }
                     ?: foregroundPackage
                 foreground != null && SelfProtectionDetector.isHostPackage(foreground) && shouldGuardSelf() && (selfProtection?.isGuardedScreen(foreground, null) == true)
             } else {
@@ -1637,7 +1647,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun isUnderShield(target: String): Boolean {
         val list = windowList()
         val front = list?.let(::frontWindow)?.let(::packageOf)
-            ?: rootInActiveWindow?.let { root -> root.packageName?.toString().also { root.release() } }
+            ?: activeRoot()?.let { root -> root.packageName?.toString().also { root.release() } }
             ?: foregroundPackage
         if (mayBe(target, front)) return true
         return list?.any { w ->

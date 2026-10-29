@@ -259,7 +259,9 @@ internal fun protectionLook(
     lockedCount: Int,
     /** Locked apps with a copy in another profile, which compatibility mode can't see. */
     unwatchedCount: Int,
-    defaultTimeout: LockTimeoutMode
+    defaultTimeout: LockTimeoutMode,
+    /** "Hide notification content" is on without notification access: locked apps' notifications show in full. */
+    notificationsShowing: Boolean = false
 ): ProtectionLook {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
@@ -290,6 +292,14 @@ internal fun protectionLook(
             } else stringResource(R.string.home_protection_paused),
             stringResource(R.string.home_paused_body),
             stringResource(R.string.home_resume_protection)
+        )
+        // Apps lock, but what the owner asked hidden shows: "Protected" would overstate it.
+        notificationsShowing -> ProtectionLook(
+            colors.errorContainer, colors.onErrorContainer, Icons.Default.GppMaybe, stringResource(R.string.home_apps_locked_short),
+            stringResource(R.string.home_notifications_showing_title),
+            apps + SEPARATOR + stringResource(defaultTimeout.relockPhraseRes).lowercase() + "\n" +
+                stringResource(R.string.home_notifications_showing_body),
+            null
         )
         else -> ProtectionLook(
             colors.primaryContainer, colors.onPrimaryContainer, Icons.Default.VerifiedUser, stringResource(R.string.home_protected),

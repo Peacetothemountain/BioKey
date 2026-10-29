@@ -99,6 +99,8 @@ class BioKeyApplication : Application() {
                 UnlockAttempts.load(app)
                 NewAppSuggestions.load(app)
                 ProtectionGaps.load(app)
+                // Early, before anything else is written: a cleared storage is told from an empty one here.
+                ProtectionGaps.checkStorageCleared(app)
                 BiometricEnrollment.checkSoon(app)
                 ShieldAccessWatch.checkSoon(app).get()
                 // Channel names and descriptions as this version words them, before any is posted.

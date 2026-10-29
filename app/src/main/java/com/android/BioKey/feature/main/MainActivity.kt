@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -142,6 +143,7 @@ class MainActivity : ComponentActivity() {
                         isAuthenticating = isSetupAuthenticating,
                         authError = setupAuthError,
                         needsScreenLock = setupNeedsScreenLock,
+                        clearedAt = remember { ProtectionGaps.clearedAt(this@MainActivity) },
                         onSetupComplete = ::completeSetup
                     )
                     !isAuthenticated -> BioKeyLockScreen(
@@ -322,6 +324,8 @@ class MainActivity : ComponentActivity() {
                 setupNeedsScreenLock = false
                 Haptics.confirm(window.decorView)
                 vault.setSetupCompletedSync(true)
+                // A clearing of BioKey's storage before this setup: recorded now, its alert gone.
+                ProtectionGaps.onSetUp(this)
                 vault.resumeProtection()
                 // Only now, set up, does refresh start compatibility mode where it is the engine:
                 // waiting for the next resume would leave apps uncovered under "Protected".
