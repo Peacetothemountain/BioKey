@@ -19,19 +19,16 @@ object LockAllNow {
     /** [includeOwnApp]: false from BioKey's own screens, which the owner is using. */
     fun run(context: Context, includeOwnApp: Boolean, reason: String): Outcome {
         val vault = SecurityVault.getInstance(context)
-        if (!vault.isSetupCompleted() || !ProtectionEngine.isProtecting(context)) {
-            // Nothing covers apps now, but sessions still end: they'd carry over once it does.
-            LockStateTracker.lockAll(includeOwnApp, reason)
-            return Outcome.NOT_PROTECTING
-        }
-        if (!vault.isProtectionActive()) {
-            // Resuming already ends every session but BioKey's own.
-            vault.resumeProtection()
-            if (includeOwnApp) LockStateTracker.lockOwnApp()
-            return Outcome.RESUMED_AND_LOCKED
-        }
+        // A pause ends whatever else is wrong: once an engine runs again, nothing stays open.
+        val wasPaused = vault.isSetupCompleted() && !vault.isProtectionActive()
+        if (wasPaused) vault.resumeProtection()
+        // Sessions end even with nothing covering apps now: they'd carry over once something does.
         LockStateTracker.lockAll(includeOwnApp, reason)
-        return Outcome.LOCKED
+        return when {
+            !vault.isSetupCompleted() || !ProtectionEngine.isProtecting(context) -> Outcome.NOT_PROTECTING
+            wasPaused -> Outcome.RESUMED_AND_LOCKED
+            else -> Outcome.LOCKED
+        }
     }
 
     /** What to tell the user afterwards. */

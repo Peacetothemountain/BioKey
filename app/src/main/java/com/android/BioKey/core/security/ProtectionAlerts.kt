@@ -47,8 +47,8 @@ object ProtectionAlerts {
         val nm = context.getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL_ID) != null) return
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Protection alerts", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Warns when app locking stops working"
+            NotificationChannel(CHANNEL_ID, context.getString(R.string.alerts_channel_name), NotificationManager.IMPORTANCE_HIGH).apply {
+                description = context.getString(R.string.alerts_channel_description)
             }
         )
     }
@@ -108,8 +108,8 @@ object ProtectionAlerts {
             post(
                 context,
                 ID_SERVICE_STOPPED,
-                "App lock is off",
-                "BioKey's compatibility mode isn't running, so locked apps are not protected. Tap to open BioKey and start it.",
+                context.getString(R.string.alert_off_title),
+                context.getString(R.string.alert_compat_not_running),
                 ongoing = true
             )
             return
@@ -119,8 +119,8 @@ object ProtectionAlerts {
             post(
                 context,
                 ID_SERVICE_STOPPED,
-                "Switch BioKey to compatibility mode",
-                "Advanced Protection reserves accessibility for accessibility tools. Tap to give BioKey usage access and display-over-apps instead, so it keeps locking your apps.",
+                context.getString(R.string.alert_switch_to_compat_title),
+                context.getString(R.string.alert_switch_to_compat),
                 ongoing = true
             )
             return
@@ -128,8 +128,8 @@ object ProtectionAlerts {
         post(
             context,
             ID_SERVICE_STOPPED,
-            "App lock is off",
-            "BioKey's app lock service stopped, so locked apps are not protected. Tap to open BioKey and turn it back on.",
+            context.getString(R.string.alert_off_title),
+            context.getString(R.string.alert_service_stopped),
             ongoing = true
         )
     }
@@ -144,8 +144,8 @@ object ProtectionAlerts {
         post(
             context.applicationContext,
             ID_SERVICE_STOPPED,
-            "App lock is off",
-            "BioKey's compatibility mode lost $missing, so locked apps are not protected. Tap to open BioKey and turn it back on.",
+            context.getString(R.string.alert_off_title),
+            context.getString(R.string.alert_compat_lost, missing),
             ongoing = true
         )
     }

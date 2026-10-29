@@ -60,6 +60,17 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
          */
         fun isHostPackage(pkg: String) = pkg in HOST_PACKAGES
 
+        /** Android's own confirm-your-PIN and biometric screens (also used outside self-protection). */
+        fun isCredentialConfirmationClass(className: String?): Boolean {
+            if (className.isNullOrBlank()) return false
+            return className.contains("ConfirmDeviceCredential", ignoreCase = true) ||
+                className.contains("ConfirmLockPattern", ignoreCase = true) ||
+                className.contains("ConfirmLockPassword", ignoreCase = true) ||
+                className.contains("ConfirmCommonPassword", ignoreCase = true) ||
+                className.contains("BiometricPrompt", ignoreCase = true) ||
+                className.contains("AuthContainerView", ignoreCase = true)
+        }
+
         private const val SETTINGS_PKG = "com.android.settings"
         private const val PLAY_STORE_PKG = "com.android.vending"
 
@@ -275,15 +286,6 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
 
     fun isHost(pkg: String) = isHostPackage(pkg)
 
-    fun isCredentialConfirmationClass(className: String?): Boolean {
-        if (className.isNullOrBlank()) return false
-        return className.contains("ConfirmDeviceCredential", ignoreCase = true) ||
-            className.contains("ConfirmLockPattern", ignoreCase = true) ||
-            className.contains("ConfirmLockPassword", ignoreCase = true) ||
-            className.contains("ConfirmCommonPassword", ignoreCase = true) ||
-            className.contains("BiometricPrompt", ignoreCase = true) ||
-            className.contains("AuthContainerView", ignoreCase = true)
-    }
 
     /**
      * Whether [pkg]'s window is one of BioKey's guarded screens: [event]'s window, or without an

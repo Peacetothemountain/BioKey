@@ -11,6 +11,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.feature.main.IntentNavigationHelper
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -61,14 +62,24 @@ class SettingsLinkPinningTest {
     }
 
     @Test
-    fun withNoSystemHandlerInSightThePageStaysImplicit() {
-        // Only a non-system app claims it (no screen lock is set there): left as it was, as before pinning.
+    fun aPageOnlyAnotherAppAnswersIsNeverOpened() {
+        // Only a non-system app claims it: it isn't opened at all, and BioKey says so.
         val action = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
         shadowOf(context.packageManager)
             .addResolveInfoForIntent(action, handler("com.example.fake", "com.example.fake.FakeSettings", system = false))
 
-        assertTrue(IntentNavigationHelper.launchFallbackCascade(context, listOf(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))))
-        assertNull(nextStarted().component)
+        assertFalse(IntentNavigationHelper.launchFallbackCascade(context, listOf(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))))
+        assertNull(shadowOf(context as Application).nextStartedActivity)
+    }
+
+    @Test
+    fun withSeveralSystemAppsSettingsItselfIsChosen() {
+        val action = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+        val pm = shadowOf(context.packageManager)
+        pm.addResolveInfoForIntent(action, handler("com.oem.tools", "com.oem.tools.A11y", system = true))
+        pm.addResolveInfoForIntent(action, handler("com.android.settings", "com.android.settings.A11y", system = true))
+        assertTrue(IntentNavigationHelper.launchFallbackCascade(context, listOf(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))))
+        assertEquals("com.android.settings", nextStarted().component?.packageName)
     }
 
     @Test

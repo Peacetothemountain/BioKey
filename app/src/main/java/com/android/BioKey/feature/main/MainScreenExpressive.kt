@@ -14,7 +14,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -43,7 +42,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -114,6 +112,8 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -381,13 +381,27 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     val attemptsChosen by UnlockAttempts.chosen.collectAsStateWithLifecycle()
     val gaps by ProtectionGaps.gaps.collectAsStateWithLifecycle()
     var showActivity by rememberSaveable { mutableStateOf(false) }
+    var hasStrongBiometric by remember { mutableStateOf(false) }
+    LifecycleResumeEffect(Unit) {
+        val job = scope.launch(Dispatchers.IO) {
+            hasStrongBiometric = UnlockAttempts.hasStrongBiometric(context)
+            // Past their 7 days, gone from the disk too.
+            UnlockAttempts.prune(context)
+            ProtectionGaps.prune(context)
+        }
+        onPauseOrDispose { job.cancel() }
+    }
     val labelByPackage = remember(installedApps) { installedApps.associate { it.packageName to it.label } }
     fun attemptLabel(attempt: UnlockAttempts.Attempt) = labelByPackage[attempt.packageName] ?: attempt.label
 
-    /** Ends every locked app's session at once; BioKey itself stays open, it's in use. */
-    fun lockAllNow() {
+    /**
+     * Ends every locked app's session at once. [includeOwnApp]: BioKey too, for the status sheet's
+     * "Lock all apps now" (the phone is about to be handed over); the unlocked card's Lock all
+     * leaves BioKey open, where the owner is.
+     */
+    fun lockAllNow(includeOwnApp: Boolean) {
         Haptics.confirm(view)
-        val outcome = LockAllNow.run(context, includeOwnApp = false, reason = "locked from BioKey")
+        val outcome = LockAllNow.run(context, includeOwnApp = includeOwnApp, reason = "locked from BioKey")
         BioKeyMessages.show(LockAllNow.message(context, outcome), Icons.Default.Lock)
     }
 
@@ -450,6 +464,8 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                     homeScreen && isOn(app.packageName) -> MaterialTheme.colorScheme.error
                     homeScreen -> MaterialTheme.colorScheme.onSurfaceVariant
                     unwatched -> MaterialTheme.colorScheme.error
+                    // A state, not a category: its own colour.
+                    isUnlockedNow(app.packageName) && isLocked(app.packageName) -> MaterialTheme.colorScheme.tertiary
                     profile != null && profile.enabled -> MaterialTheme.colorScheme.primary
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
@@ -548,74 +564,38 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                 }
             }
 
-            // Asked once: failed unlock alerts keep a record, so they start only when the owner says so.
-            if (!attemptsChosen && vault.isSetupCompleted()) {
+            // Asked once, and only where it can help: a strong face or fingerprint is set up.
+            if (!attemptsChosen && vault.isSetupCompleted() && hasStrongBiometric) {
                 item(key = "attempts_intro") {
-                    ActionCard(
-                        icon = Icons.Default.GppMaybe,
-                        title = "Know when someone tries your apps",
-                        subtitle = "BioKey can note each face or fingerprint that fails on a locked app and tell you later. " +
-                            "Kept on this phone for 7 days.",
-                        modifier = Modifier.animateItem()
-                    ) {
-                        TextButton(onClick = { UnlockAttempts.setEnabled(context, false) }) { Text("Not now") }
-                        FilledTonalButton(onClick = {
+                    AttemptsIntroCard(
+                        onNotNow = { UnlockAttempts.setEnabled(context, false) },
+                        onTurnOn = {
                             UnlockAttempts.setEnabled(context, true)
                             if (!notifications.allowed) notifications.request()
-                        }) { Text("Turn on") }
-                    }
+                        },
+                        modifier = Modifier.animateItem()
+                    )
                 }
             }
 
             if (attempts.isNotEmpty() || gaps.isNotEmpty()) {
                 item(key = "activity") {
                     // Shown: the notification has done its job.
-                    LaunchedEffect(attempts) { UnlockAttempts.markSeen(context) }
-                    val urgent = gaps.isNotEmpty() || attempts.any { it.unanswered }
-                    val newestAttempt = attempts.firstOrNull()
-                    val newestGap = gaps.firstOrNull()
-                    val gapIsNewest = newestGap != null && (newestAttempt == null || newestGap.to > newestAttempt.lastAt)
-                    ActionCard(
-                        icon = if (urgent) Icons.Default.GppBad else Icons.Default.GppMaybe,
-                        iconTint = if (urgent) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
-                        iconContainer = if (urgent) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
-                        title = when {
-                            gaps.isEmpty() -> LocalResources.current.getQuantityString(R.plurals.attempts_title, attempts.size, attempts.size)
-                            attempts.isEmpty() -> if (gaps.size == 1) "App locking was off" else "App locking was off ${gaps.size} times"
-                            else -> "Security activity"
-                        },
-                        subtitle = if (gapIsNewest) gapLine(context, newestGap!!) else newestAttempt?.let {
-                            "${attemptLabel(it)} · ${attemptTime(context, it.at)} · ${UnlockAttempts.describe(context, it)}"
-                        }.orEmpty(),
-                        onClick = { showActivity = true },
-                        onClickLabel = "Review",
-                        modifier = Modifier.animateItem()
-                    ) {
-                        TextButton(onClick = { showActivity = true }) { Text("Review") }
-                    }
+                    LaunchedEffect(attempts, gaps) { UnlockAttempts.markSeen(context) }
+                    SecurityActivityCard(attempts, gaps, ::attemptLabel, onReview = { showActivity = true }, modifier = Modifier.animateItem())
                 }
             }
 
             if (unlockedNowApps.isNotEmpty()) {
                 item(key = "unlocked_now") {
-                    val first = unlockedNowApps.first()
-                    val single = unlockedNowApps.size == 1
-                    ActionCard(
-                        icon = Icons.Default.LockOpen,
-                        title = if (single) "${first.label} is unlocked" else "${unlockedNowApps.size} apps unlocked",
-                        subtitle = if (single) rememberSessionPhrase(first.packageName, vault.getTimeoutMode(first.packageName))
-                        else unlockedNowApps.joinToString(", ") { it.label },
-                        onClick = if (single) null else ({ showUnlocked = true }),
-                        onClickLabel = "Choose which to lock",
+                    UnlockedNowCard(
+                        apps = unlockedNowApps,
+                        timeoutOf = vault::getTimeoutMode,
+                        onLock = ::lockOne,
+                        onChoose = { showUnlocked = true },
+                        onLockAll = { lockAllNow(includeOwnApp = false) },
                         modifier = Modifier.animateItem()
-                    ) {
-                        if (single) {
-                            FilledTonalButton(onClick = { lockOne(first) }) { Text("Lock") }
-                        } else {
-                            TextButton(onClick = { showUnlocked = true }) { Text("Choose") }
-                            FilledTonalButton(onClick = ::lockAllNow) { Text("Lock all") }
-                        }
-                    }
+                    )
                 }
             }
 
@@ -643,7 +623,12 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                         items(profiles, key = { it.id }) { profile ->
                             val apps = appCountByProfile[profile.id] ?: 0
                             FilterChoice(
-                                label = "${profile.name} · " + if (profile.enabled) "$apps" else "off",
+                                // An empty profile says just its name: "· 0" is noise.
+                                label = profile.name + when {
+                                    !profile.enabled -> " · off"
+                                    apps == 0 -> ""
+                                    else -> " · $apps"
+                                },
                                 description = "${profile.name} profile, " + when {
                                     !profile.enabled -> "off"
                                     apps == 1 -> "1 app"
@@ -713,9 +698,11 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                     if (lockedShown.isNotEmpty()) {
                         item(key = "h_locked", contentType = CONTENT_HEADER) {
                             // How they re-lock, said once, only while something actually locks them.
-                            val relock = if (ProtectionEngine.isProtecting(mode) && globalLockEnabled) {
-                                " · " + defaultTimeout.relockPhrase.replaceFirstChar { it.lowercase() }
-                            } else ""
+                            val relock = when {
+                                !ProtectionEngine.isProtecting(mode) -> " · not protected now"
+                                !globalLockEnabled -> " · paused"
+                                else -> " · " + defaultTimeout.relockPhrase.replaceFirstChar { it.lowercase() }
+                            }
                             SectionHeader("Locked · ${lockedShown.size}$relock")
                         }
                         appGroup(lockedShown, showProfile = true)
@@ -762,7 +749,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
             },
             onLockAll = {
                 showProtectionSheet = false
-                lockAllNow()
+                lockAllNow(includeOwnApp = true)
             },
             onDismiss = { showProtectionSheet = false }
         )
@@ -825,7 +812,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
             onLock = ::lockOne,
             onLockAll = {
                 showUnlocked = false
-                lockAllNow()
+                lockAllNow(includeOwnApp = false)
             },
             onDismiss = { showUnlocked = false }
         )
@@ -911,6 +898,7 @@ private fun MainHeader(
     onOpenSettings: () -> Unit,
     onLogoPlaced: (Rect) -> Unit = {}
 ) {
+    val labelStyle = headerLabelStyle(status.shortLabel, "Settings")
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -920,6 +908,7 @@ private fun MainHeader(
         HeaderTile(
             icon = status.icon,
             label = status.shortLabel,
+            labelStyle = labelStyle,
             container = status.container,
             content = status.content,
             contentDescription = "${status.title}. Details",
@@ -940,6 +929,7 @@ private fun MainHeader(
         HeaderTile(
             icon = Icons.Default.Settings,
             label = "Settings",
+            labelStyle = labelStyle,
             container = MaterialTheme.colorScheme.surfaceContainerHigh,
             content = MaterialTheme.colorScheme.onSurface,
             contentDescription = "Settings",
@@ -948,11 +938,35 @@ private fun MainHeader(
     }
 }
 
+/**
+ * The header tiles' label style: labelLarge, made smaller only as far as both [labels] need to
+ * fit a tile on one line (large text would otherwise break "Protected" mid-word), and the same
+ * for both, so they never look mismatched.
+ */
+@Composable
+private fun headerLabelStyle(vararg labels: String): TextStyle {
+    val base = MaterialTheme.typography.labelLarge
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val width = with(density) { (HeaderTileWidth - 8.dp).roundToPx() }
+    return remember(labels.toList(), base, density) {
+        var size = base.fontSize
+        while (size.value > 9f && labels.any { measurer.measure(it, base.copy(fontSize = size), maxLines = 1, softWrap = false).size.width > width }) {
+            size = (size.value - 0.5f).sp
+        }
+        base.copy(fontSize = size)
+    }
+}
+
+private val HeaderTileWidth = 84.dp
+
 /** A circle around an icon, with its label underneath; the whole column is the touch target. */
 @Composable
 private fun HeaderTile(
     icon: ImageVector,
     label: String,
+    /** Shared by both tiles ([headerLabelStyle]), so their labels match. */
+    labelStyle: TextStyle,
     container: Color,
     content: Color,
     contentDescription: String,
@@ -961,7 +975,7 @@ private fun HeaderTile(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .width(84.dp)
+            .width(HeaderTileWidth)
             .springPress()
             .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick, role = Role.Button)
@@ -977,17 +991,13 @@ private fun HeaderTile(
             Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(32.dp))
         }
         Spacer(Modifier.height(8.dp))
-        // One line that shrinks to fit: with large text, "Protected" or "Settings" would otherwise
-        // break in the middle of the word in a tile this narrow.
-        val labelStyle = MaterialTheme.typography.labelLarge
         Text(
             label,
             style = labelStyle,
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
             maxLines = 1,
-            softWrap = false,
-            autoSize = TextAutoSize.StepBased(minFontSize = 9.sp, maxFontSize = labelStyle.fontSize)
+            softWrap = false
         )
     }
 }
@@ -1127,210 +1137,6 @@ private fun Modifier.horizontalBleed(px: Int): Modifier = if (px <= 0) this else
     val width = constraints.maxWidth + 2 * px
     val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
     layout(constraints.maxWidth, placeable.height) { placeable.place(-px, 0) }
-}
-
-/** "2:14 PM" today, "Yesterday, 2:14 PM", else "Oct 27, 2:14 PM": when a failed unlock happened. */
-private fun attemptTime(context: android.content.Context, at: Long): String {
-    val time = DateUtils.formatDateTime(context, at, DateUtils.FORMAT_SHOW_TIME)
-    return when {
-        DateUtils.isToday(at) -> time
-        DateUtils.isToday(at + DateUtils.DAY_IN_MILLIS) -> "Yesterday, $time"
-        else -> DateUtils.formatDateTime(context, at, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR) + ", $time"
-    }
-}
-
-/** When an unlocked app, off screen, locks again: "Locks again in 4 min", or how it will. */
-private fun sessionPhrase(mode: LockTimeoutMode, remainingMs: Long?): String = when {
-    mode == LockTimeoutMode.ON_SCREEN_OFF -> "Stays unlocked until the screen turns off"
-    remainingMs == null -> "Locks again " + mode.shortLabel.replaceFirstChar { it.lowercase() }.removePrefix("after ") + " after you leave it"
-    remainingMs < 60_000L -> "Locks again in less than a minute"
-    else -> "Locks again in ${(remainingMs + 59_999L) / 60_000L} min"
-}
-
-/** "3:02 – 3:10 PM · switched off": when app locking was off. */
-private fun gapLine(context: android.content.Context, gap: ProtectionGaps.Gap): String {
-    val day = if (DateUtils.isToday(gap.to)) 0 else DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR
-    val range = DateUtils.formatDateRange(context, gap.from, gap.to, DateUtils.FORMAT_SHOW_TIME or day)
-    return range + if (gap.unannounced) " · BioKey was stopped" else " · switched off"
-}
-
-/**
- * "Locks again in 4 min", kept current while BioKey is in front: it changes on the minute, so
- * it's read again exactly then, and not at all while BioKey is out of sight.
- */
-@Composable
-private fun rememberSessionPhrase(pkg: String, mode: LockTimeoutMode): String {
-    var phrase by remember(pkg, mode) { mutableStateOf(sessionPhrase(mode, null)) }
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(pkg, mode, lifecycle) {
-        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            while (true) {
-                val remaining = LockStateTracker.awayRemainingMs(pkg, mode)
-                phrase = sessionPhrase(mode, remaining)
-                val toNextMinute = remaining?.let { it % 60_000L }?.takeIf { it > 0L } ?: 60_000L
-                delay(toNextMinute + 50L)
-            }
-        }
-    }
-    return phrase
-}
-
-/**
- * A card at the top of home: what needs the owner, with its actions under the text, so a long
- * title or large text never squeezes them. [onClick] opens the details; [onClickLabel] says so
- * to screen readers.
- */
-@Composable
-private fun ActionCard(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    modifier: Modifier = Modifier,
-    iconTint: Color = MaterialTheme.colorScheme.onSecondaryContainer,
-    iconContainer: Color = MaterialTheme.colorScheme.secondaryContainer,
-    onClick: (() -> Unit)? = null,
-    onClickLabel: String? = null,
-    actions: @Composable RowScope.() -> Unit
-) {
-    val shape = RoundedCornerShape(28.dp)
-    Surface(
-        shape = shape,
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        modifier = modifier
-            .padding(horizontal = GroupInset)
-            .padding(bottom = 8.dp)
-            .fillMaxWidth()
-            .clip(shape)
-            .then(if (onClick != null) Modifier.clickable(onClickLabel = onClickLabel, role = Role.Button, onClick = onClick) else Modifier)
-    ) {
-        Column(Modifier.padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 8.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
-                Box(Modifier.size(40.dp).background(iconContainer, CircleShape), contentAlignment = Alignment.Center) {
-                    Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(22.dp))
-                }
-                Spacer(Modifier.width(16.dp))
-                Column(Modifier.weight(1f).padding(end = 4.dp)) {
-                    Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
-                    if (subtitle.isNotEmpty()) {
-                        Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically,
-                content = actions
-            )
-        }
-    }
-}
-
-/** The unlocked apps, each with its countdown and its own Lock, and Lock all. */
-@Composable
-private fun UnlockedAppsDialog(
-    apps: List<AppItem>,
-    timeoutOf: (String) -> LockTimeoutMode,
-    onLock: (AppItem) -> Unit,
-    onLockAll: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Default.LockOpen, contentDescription = null) },
-        title = { Text("Unlocked now") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                ProtectDialogWindow()
-                apps.forEach { app ->
-                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        AppIcon(app)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(app.label, style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                rememberSessionPhrase(app.packageName, timeoutOf(app.packageName)),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        TextButton(
-                            onClick = { onLock(app) },
-                            modifier = Modifier.semantics { contentDescription = "Lock ${app.label}" }
-                        ) { Text("Lock") }
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onLockAll) { Text("Lock all") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
-    )
-}
-
-/** Every failed unlock and gap in protection kept, newest first, and the way to clear them. */
-@Composable
-private fun SecurityActivityDialog(
-    attempts: List<UnlockAttempts.Attempt>,
-    gaps: List<ProtectionGaps.Gap>,
-    labelOf: (UnlockAttempts.Attempt) -> String,
-    onClear: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    val context = LocalContext.current
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Default.GppBad, contentDescription = null) },
-        title = { Text("While you were away") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                ProtectDialogWindow()
-                if (gaps.isNotEmpty()) {
-                    Text(
-                        "App locking was off",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.semantics { heading() }
-                    )
-                    gaps.forEach { gap ->
-                        Text(gapLine(context, gap), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 4.dp))
-                    }
-                    Text(
-                        "Switched off in Android's settings, or BioKey stopped while the phone was in use. Locked apps " +
-                            "opened without a check meanwhile.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(16.dp))
-                }
-                if (attempts.isNotEmpty()) {
-                    Text(
-                        "Failed unlocks",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.semantics { heading() }
-                    )
-                    attempts.forEach { attempt ->
-                        Column(Modifier.padding(vertical = 4.dp).semantics(mergeDescendants = true) { }) {
-                            Text(labelOf(attempt), style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                attemptTime(context, attempt.at) + " · " + UnlockAttempts.describe(context, attempt),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                    Text(
-                        "Faces or fingerprints that didn't match. When yours worked within 2 minutes, they were you and " +
-                            "aren't listed. Android doesn't tell apps about a wrong PIN.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-        dismissButton = { TextButton(onClick = onClear) { Text("Clear") } }
-    )
 }
 
 /** [description]: what screen readers say in place of a short [label] ("Finance profile, 2 apps" for "Finance · 2"). */

@@ -102,9 +102,11 @@ fun BioKeyLockScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .systemBarsPadding()
+                // The same width as LockCoverView's buttons: the screen less 32dp each side, at most 360dp.
+                .padding(horizontal = 32.dp)
                 .widthIn(max = 360.dp)
                 .fillMaxWidth()
-                .padding(horizontal = 32.dp, vertical = 24.dp),
+                .padding(vertical = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {

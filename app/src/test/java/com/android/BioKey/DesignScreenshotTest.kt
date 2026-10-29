@@ -191,12 +191,14 @@ class DesignScreenshotTest {
         unlockAndLeave("com.example.signal")
         val today = java.util.Calendar.getInstance().apply { set(java.util.Calendar.HOUR_OF_DAY, 15); set(java.util.Calendar.MINUTE, 2) }.timeInMillis
         ProtectionGaps.clock = { today }
+        ProtectionGaps.elapsed = { 1_000_000L }
         ProtectionGaps.bootCount = { 1 }
-        ProtectionGaps.installTime = { 1L }
+        ProtectionGaps.exits = { emptyList() }
         SecurityVault.getInstance(context).setSetupCompletedSync(true)
         ProtectionGaps.onEngineUp(context)
         ProtectionGaps.onEngineDown(context)
         ProtectionGaps.clock = { today + 8 * 60_000L }
+        ProtectionGaps.elapsed = { 1_000_000L + 8 * 60_000L }
         ProtectionGaps.onEngineUp(context)
         RuntimeEnvironment.setFontScale(2f)
         shoot("main_active_large_text") { MainScreenExpressive(mode = ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
@@ -208,6 +210,7 @@ class DesignScreenshotTest {
         context.getSharedPreferences("biokey_unlock_attempts", android.content.Context.MODE_PRIVATE).edit().clear().commit()
         UnlockAttempts.resetForTests()
         UnlockAttempts.load(context)
+        UnlockAttempts.hasStrongBiometric = { true }
         shoot("main_intro") { MainScreenExpressive(mode = ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
     }
 

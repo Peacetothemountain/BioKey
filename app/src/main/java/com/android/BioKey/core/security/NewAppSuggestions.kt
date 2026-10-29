@@ -7,12 +7,15 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.edit
 import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.feature.main.MainActivity
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -102,12 +105,14 @@ object NewAppSuggestions {
             .setContentIntent(open)
             .setAutoCancel(true)
             .addAction(R.drawable.ic_tile_lock_all, context.getString(R.string.new_app_lock), lock)
+            .setGroup(GROUP)
             .build()
         try {
             manager.notify(notificationId(pkg), notification)
         } catch (_: SecurityException) {
             // POST_NOTIFICATIONS revoked between the check and notify.
         }
+        updateSummary(context)
     }
 
     /** The notification's Lock button. Not exported: only the notification BioKey posted can send it. */
@@ -116,10 +121,63 @@ object NewAppSuggestions {
             if (intent.action != ACTION_LOCK) return
             val pkg = intent.data?.schemeSpecificPart ?: return
             NotificationManagerCompat.from(context).cancel(notificationId(pkg))
-            // Still installed and openable: the button may be tapped long after.
-            if (context.packageManager.getLaunchIntentForPackage(pkg) == null) return
-            SecurityVault.getInstance(context).setAppLock(pkg, true)
-            DiagnosticLog.log("Locked $pkg from the new-app notification")
+            // The vault may have to be read from disk (BioKey just started for this): not on the main thread.
+            val pending: PendingResult? = goAsync()
+            val app = context.applicationContext
+            worker.execute {
+                try {
+                    // Still installed and openable: the button may be tapped long after.
+                    if (app.packageManager.getLaunchIntentForPackage(pkg) != null) {
+                        SecurityVault.getInstance(app).setAppLock(pkg, true)
+                        DiagnosticLog.log("Locked $pkg from the new-app notification")
+                    }
+                    updateSummary(app)
+                } finally {
+                    pending?.finish()
+                }
+            }
+        }
+    }
+
+    /** Where the Lock button's work runs; tests run it at once. */
+    @VisibleForTesting
+    internal var worker: Executor = Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-new-app").apply { isDaemon = true } }
+
+    private const val GROUP = "com.android.BioKey.NEW_APPS"
+    private const val SUMMARY_ID = 1999
+
+    /**
+     * Several offers at once (a new phone restoring its apps) gather under one summary, which
+     * opens BioKey; a lone offer stands on its own.
+     */
+    private fun updateSummary(context: Context) {
+        val manager = NotificationManagerCompat.from(context)
+        val offers = runCatching {
+            context.getSystemService(NotificationManager::class.java).activeNotifications
+                .count { it.notification.group == GROUP && it.id != SUMMARY_ID }
+        }.getOrDefault(0)
+        if (offers < 2) {
+            manager.cancel(SUMMARY_ID)
+            return
+        }
+        val open = PendingIntent.getActivity(
+            context,
+            SUMMARY_ID,
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val summary = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_biokey_mark)
+            .setContentTitle(context.resources.getQuantityString(R.plurals.new_apps_summary, offers, offers))
+            .setContentText(context.getString(R.string.new_apps_summary_text))
+            .setGroup(GROUP)
+            .setGroupSummary(true)
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .build()
+        try {
+            manager.notify(SUMMARY_ID, summary)
+        } catch (_: SecurityException) {
         }
     }
 }

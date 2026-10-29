@@ -180,6 +180,14 @@ class OwnSessionTest {
     fun aSettingsPageThatOpensKeepsThem() {
         val page = ComponentName("com.example.settings", "com.example.settings.PageActivity")
         val pm = shadowOf(context.packageManager)
+        // A system app's page: BioKey opens settings pages only there.
+        pm.installPackage(android.content.pm.PackageInfo().apply {
+            packageName = page.packageName
+            applicationInfo = android.content.pm.ApplicationInfo().apply {
+                packageName = page.packageName
+                flags = android.content.pm.ApplicationInfo.FLAG_SYSTEM
+            }
+        })
         pm.addActivityIfNotPresent(page)
         pm.addIntentFilterForActivity(page, IntentFilter("com.example.SETTINGS_PAGE").apply { addCategory(Intent.CATEGORY_DEFAULT) })
         shadowOf(context as Application).checkActivities(true)

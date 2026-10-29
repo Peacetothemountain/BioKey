@@ -103,19 +103,22 @@ paused, it resumes it.
 ### What are failed unlock alerts?
 
 When you turn them on (BioKey asks once on its home screen, or Settings > Failed unlock alerts),
-BioKey notes each face or fingerprint that didn't match on a locked app. If yours works on that app
-within 2 minutes, it was you and the note goes. Otherwise, 2 minutes later, a notification says
-someone tried, without naming the app, and BioKey's home screen lists which app and when. Opening
-the app with your PIN after a mismatch is listed too, marked as such, but not notified. Only faces
-and fingerprints count: Android doesn't tell apps about a wrong PIN, pattern or password. Notes are
-kept 7 days; clear them from **Review** on the home screen.
+BioKey notes each face or fingerprint that didn't match on a locked app. If yours then matches on
+the same unlock prompt, those misses were yours and the note goes. Misses followed by a later
+unlock (with your face, fingerprint or PIN) stay on the list, marked with how the app was opened,
+since someone may have tried and handed the phone back. Misses nobody followed with an unlock are
+also notified, the next time you unlock your phone and at least 2 minutes later, without naming
+the app. Only faces and fingerprints count: Android doesn't tell apps about a wrong PIN, pattern
+or password. If you never use your PIN yourself, turn on **Also note screen lock unlocks** to see
+whenever someone opens a locked app with it. Notes are kept 7 days; clear them from **Review** on
+the home screen.
 
 ### BioKey says "App locking was off"
 
 Someone (maybe you) switched BioKey off in Android's settings, revoked one of its permissions, or
-force-stopped it while the phone was in use, and locked apps opened without a check meanwhile. The
-card shows when. A restart of the phone, an update of BioKey, or Android stopping it while the
-screen was off doesn't count. Clear it from **Review**.
+force-stopped it, and locked apps could open without a check meanwhile. The card shows when.
+Android stopping BioKey on its own (low memory, a battery saver) or a restart of the phone
+doesn't count. Clear it from **Review**.
 
 ### BioKey offered to lock an app I just installed
 

@@ -360,7 +360,9 @@ class LockCoverView(context: Context) : FrameLayout(context) {
      */
     private fun unlockLabel(): CharSequence {
         val glyph = context.getDrawable(R.drawable.ic_fingerprint)?.mutate() ?: return "Unlock"
-        val size = dp(22)
+        // As tall as the text's own line, no taller: a bigger glyph would stretch the line and
+        // push the word below the button's centre.
+        val size = primaryButton.paint.fontMetricsInt.let { it.descent - it.ascent }
         glyph.setBounds(0, 0, size, size)
         glyph.setTint(primaryButton.currentTextColor)
         return SpannableString("${Typography.nbsp}  Unlock").apply {

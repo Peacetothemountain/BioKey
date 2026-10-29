@@ -1,12 +1,12 @@
 package com.android.BioKey
 
+import android.app.ApplicationExitInfo
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -15,9 +15,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Times app locking was off: switched off, or stopped while the phone was in use. Not a restart
- * of the phone, an update of BioKey, Android stopping it while the screen was off, or a moment's
- * handover.
+ * Times app locking was off: switched off, or force-stopped (as Android records it). Not a stop
+ * by Android itself, a restart, a moment's handover; and a changed clock doesn't shorten one.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -25,16 +24,18 @@ class ProtectionGapsTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
     private var now = 1_800_000_000_000L
+    private var sinceBoot = 50_000_000L
     private var boot = 7
-    private var installed = 1_000L
+    private var exits = listOf<Pair<Long, Int>>()
 
     @Before
     fun reset() {
         context.getSharedPreferences("biokey_protection_gaps", Context.MODE_PRIVATE).edit().clear().commit()
         ProtectionGaps.resetForTests()
         ProtectionGaps.clock = { now }
+        ProtectionGaps.elapsed = { sinceBoot }
         ProtectionGaps.bootCount = { boot }
-        ProtectionGaps.installTime = { installed }
+        ProtectionGaps.exits = { exits }
         SecurityVault.getInstance(context).setSetupCompletedSync(true)
         ProtectionGaps.onEngineUp(context)
     }
@@ -46,66 +47,83 @@ class ProtectionGapsTest {
     }
 
     private val gaps get() = ProtectionGaps.gaps.value
+    private fun pass(ms: Long) {
+        now += ms
+        sinceBoot += ms
+    }
 
     @Test
     fun switchedOffThenBackOnIsAGap() {
-        now += 60_000L
+        pass(60_000L)
         ProtectionGaps.onEngineDown(context)
-        now += 8 * 60_000L
+        pass(8 * 60_000L)
         ProtectionGaps.onEngineUp(context)
         val gap = gaps.single()
         assertEquals(8 * 60_000L, gap.to - gap.from)
-        assertFalse(gap.unannounced)
+        assertEquals(ProtectionGaps.Kind.SWITCHED_OFF, gap.kind)
+    }
+
+    @Test
+    fun aShortSwitchOffStillCounts() {
+        ProtectionGaps.onEngineDown(context)
+        pass(20_000L)
+        ProtectionGaps.onEngineUp(context)
+        assertEquals(1, gaps.size)
     }
 
     @Test
     fun aHandoverIsNoGap() {
         ProtectionGaps.onEngineDown(context)
-        now += 3_000L
+        pass(2_000L)
         ProtectionGaps.onEngineUp(context)
         assertTrue(gaps.isEmpty())
     }
 
     @Test
-    fun stoppedWithoutAWordWhileInUseIsAGap() {
-        now += 30_000L
-        ProtectionGaps.touch(context, screenOn = true)
-        // Force-stopped here: nothing is told. Back five minutes later.
-        now += 5 * 60_000L
+    fun settingTheClockBackDoesntShortenIt() {
+        ProtectionGaps.onEngineDown(context)
+        sinceBoot += 10 * 60_000L
+        now -= 60 * 60_000L
         ProtectionGaps.onEngineUp(context)
-        assertTrue(gaps.single().unannounced)
+        assertEquals(10 * 60_000L, gaps.single().let { it.to - it.from })
     }
 
     @Test
-    fun stoppedWhileTheScreenWasOffIsNoGap() {
-        ProtectionGaps.touch(context, screenOn = false)
-        now += 60 * 60_000L
+    fun aForceStopIsAGap() {
+        pass(60_000L)
+        val stoppedAt = now
+        exits = listOf(stoppedAt to ApplicationExitInfo.REASON_USER_REQUESTED)
+        pass(5 * 60_000L)
+        ProtectionGaps.onEngineUp(context)
+        val gap = gaps.single()
+        assertEquals(ProtectionGaps.Kind.FORCE_STOPPED, gap.kind)
+        assertEquals(stoppedAt, gap.from)
+    }
+
+    @Test
+    fun androidStoppingItIsNoGap() {
+        pass(60_000L)
+        exits = listOf(now to ApplicationExitInfo.REASON_LOW_MEMORY, now + 1 to ApplicationExitInfo.REASON_OTHER)
+        pass(5 * 60_000L)
         ProtectionGaps.onEngineUp(context)
         assertTrue(gaps.isEmpty())
     }
 
     @Test
-    fun aRestartOfThePhoneIsNoGap() {
-        ProtectionGaps.touch(context, screenOn = true)
-        boot++
-        now += 10 * 60_000L
+    fun aForceStopIsCountedOnce() {
+        pass(60_000L)
+        exits = listOf(now to ApplicationExitInfo.REASON_USER_REQUESTED)
+        pass(5 * 60_000L)
         ProtectionGaps.onEngineUp(context)
-        assertTrue(gaps.isEmpty())
-    }
-
-    @Test
-    fun anUpdateOfBioKeyIsNoGap() {
-        ProtectionGaps.touch(context, screenOn = true)
-        installed += 1
-        now += 10 * 60_000L
+        pass(60_000L)
         ProtectionGaps.onEngineUp(context)
-        assertTrue(gaps.isEmpty())
+        assertEquals(1, gaps.size)
     }
 
     @Test
     fun clearCanBeUndone() {
         ProtectionGaps.onEngineDown(context)
-        now += 5 * 60_000L
+        pass(5 * 60_000L)
         ProtectionGaps.onEngineUp(context)
         val removed = ProtectionGaps.clear(context)
         assertTrue(gaps.isEmpty())

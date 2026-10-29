@@ -18,13 +18,20 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
   icon. While protection is paused it resumes it; while nothing protects it says so.
 - **Unlocked now:** home shows which locked apps are unlocked right now and when each locks again
   ("Locks again in 4 min"), with Lock and Lock all.
-- **Failed unlock alerts** (optional; BioKey asks once): a face or fingerprint that didn't match on
-  a locked app, and wasn't followed by yours within 2 minutes, is listed on home and notified two
-  minutes later, without naming the app. Kept 7 days.
-- **App locking was off:** if protection is switched off, or BioKey is stopped while the phone is in
-  use, home shows when, from and to.
-- **New apps:** an app you install that auto-sort doesn't lock gets a "Lock it?" notification.
-- Clearer app list: no more "App" under every app, and the default re-lock delay is stated once,
+- **Failed unlock alerts** (optional; BioKey asks once): faces or fingerprints that didn't match on
+  a locked app are listed on home, unless yours then matched on the same prompt. Misses nobody
+  followed with an unlock are notified the next time you unlock your phone, without naming the
+  app. Optionally, also note locked apps opened with the screen lock. Kept 7 days.
+- **App locking was off:** if protection is switched off, or BioKey is force-stopped, home shows
+  when, from and to, and you're told at your next unlock. Android stopping BioKey on its own
+  doesn't count.
+- **New apps:** an app you install that auto-sort doesn't lock gets a "Lock it?" notification;
+  several at once gather under one.
+- BioKey's lock screen and the lock cover now share one Unlock button: the same width, the same
+  fingerprint glyph.
+- Settings pages open only in the phone's own Settings app; if it doesn't have one, BioKey says
+  so instead of opening whatever else answers.
+- Clearer app list: no more "App" under every app, empty profiles don't say "· 0", and the default re-lock delay is stated once,
   in the "Locked" header; a row shows a delay only when it differs. On tablets the header and the
   profile chips run edge to edge. Header labels shrink to fit with large text instead of breaking
   mid-word.

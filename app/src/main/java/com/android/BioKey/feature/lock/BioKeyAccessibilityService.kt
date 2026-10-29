@@ -31,7 +31,6 @@ import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.diagnostics.LatencyMarks
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
-import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
@@ -144,7 +143,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private lateinit var shield: InstantShieldOverlay
     private lateinit var masks: WindowMask
     private lateinit var labels: AppLabels
-    private lateinit var selfProtection: SelfProtectionDetector
+    /** Only in builds with self-protection: the Play build never reads Settings' pages. */
+    private var selfProtection: SelfProtectionDetector? = null
     private val keyguard by lazy { getSystemService(KeyguardManager::class.java) }
     private val power by lazy { getSystemService(PowerManager::class.java) }
     /** The title BioKey's own windows go by (its name): they can't be read, but must never be taken for another app's. */
@@ -283,7 +283,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             onTimeout = ::onShieldTimeout
         )
         masks = WindowMask(this, ::onMaskTapped)
-        selfProtection = SelfProtectionDetector(this)
+        if (SecurityVault.selfProtectionAvailable) selfProtection = SelfProtectionDetector(this)
         // Read now, in the background, rather than on the main thread at the first app switch.
         ForegroundRules.warmUp(this)
         AppInfoCache.onConfiguration(resources.configuration)
@@ -418,7 +418,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (shield.isShowing || LockScreenActivity.isLockScreenResumed || SecurityEngine.INSTANCE.isAuthenticating()) return
         if (LockStateTracker.hasVisitedGuardedSelfProtectionScreen()) {
             val host = activeSelfProtectionHost
-            val stillGuarded = host != null && selfProtection.isGuardedScreen(host, null)
+            val stillGuarded = host != null && (selfProtection?.isGuardedScreen(host, null) == true)
             if (!stillGuarded) {
                 LockStateTracker.clearSelfProtection()
             }
@@ -432,7 +432,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (shield.isShowing || LockScreenActivity.isLockScreenResumed || SecurityEngine.INSTANCE.isAuthenticating() ||
             LockStateTracker.isRecentlyAbandoned(SELF_PROTECTION_PENDING_KEY)
         ) return
-        if (selfProtection.isGuardedScreen(host, null)) {
+        if ((selfProtection?.isGuardedScreen(host, null) == true)) {
             onGuardedScreen()
         } else if (LockStateTracker.hasVisitedGuardedSelfProtectionScreen()) {
             mainHandler.removeCallbacks(revokeSelfProtectionAfterExitRunnable)
@@ -504,7 +504,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || !::vault.isInitialized) return
         EngineTrace.event(event)
-        ProtectionGaps.touch(this)
         handlingEvent = true
         try {
             handleEvent(event)
@@ -566,7 +565,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 ) {
                     isConfirmingDeviceCredential = false
                 }
-                val inSelfProtHost = selfProtection.isHost(eventPkg) && !isConfirmingDeviceCredential
+                val inSelfProtHost = SelfProtectionDetector.isHostPackage(eventPkg) && !isConfirmingDeviceCredential
                 if (inSelfProtHost) {
                     activeSelfProtectionHost = eventPkg
                     updateContentMonitoring(needsSelfProtectionMonitoring())
@@ -578,7 +577,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             }
 
             // Self-protection runs first: installers count as system overlays below.
-            if (eventPkg != null && selfProtection.isHost(eventPkg) && !isConfirmingDeviceCredential) {
+            if (eventPkg != null && SelfProtectionDetector.isHostPackage(eventPkg) && !isConfirmingDeviceCredential) {
                 if (SecurityEngine.INSTANCE.isAuthenticatingFor(SELF_PROTECTION_PENDING_KEY) ||
                     LockStateTracker.isRegularLockPending(SELF_PROTECTION_PENDING_KEY)
                 ) {
@@ -594,11 +593,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     vault.isAccessibilitySelfProtectionEnabled() &&
                     !LockStateTracker.isRecentlyAbandoned(SELF_PROTECTION_PENDING_KEY)
                 ) {
-                    val guarded = selfProtection.isGuardedScreen(eventPkg, event) { delayMs ->
+                    val guarded = selfProtection?.isGuardedScreen(eventPkg, event) { delayMs ->
                         mainHandler.removeCallbacks(trailingSelfProtectionRunnable)
                         mainHandler.postDelayed(trailingSelfProtectionRunnable, delayMs)
                     }
-                    if (guarded) {
+                    if (guarded == true) {
                         if (onGuardedScreen()) return
                     } else if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
                         if (LockStateTracker.hasVisitedGuardedSelfProtectionScreen()) {
@@ -1036,9 +1035,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         // BioKey's own settings pages in split screen or a window event that was missed.
         if (coverAllowed && visible.size > 1) {
             for (pkg in visible) {
-                if (selfProtection.isHost(pkg) && shouldGuardSelf() &&
+                if (SelfProtectionDetector.isHostPackage(pkg) && shouldGuardSelf() &&
                     !LockStateTracker.isRecentlyAbandoned(SELF_PROTECTION_PENDING_KEY) &&
-                    selfProtection.isGuardedScreen(pkg, null)
+                    (selfProtection?.isGuardedScreen(pkg, null) == true)
                 ) {
                     triggerSelfProtection()
                     return
@@ -1333,7 +1332,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             return
         }
 
-        if (!selfProtection.isHost(target)) {
+        if (!SelfProtectionDetector.isHostPackage(target)) {
             mainHandler.removeCallbacks(revokeSelfProtectionAfterExitRunnable)
             LockStateTracker.clearSelfProtection()
             if (LockStateTracker.isExternalNavigationActive()) {
@@ -1470,10 +1469,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 scheduleReconcile(0L)
                 return
             }
-            if (selfProtection.isHost(pkg) && !isConfirmingDeviceCredential) {
+            if (SelfProtectionDetector.isHostPackage(pkg) && !isConfirmingDeviceCredential) {
                 activeSelfProtectionHost = pkg
                 updateContentMonitoring(needsSelfProtectionMonitoring())
-                if (shouldGuardSelf() && selfProtection.isGuardedScreen(pkg, null)) {
+                if (shouldGuardSelf() && (selfProtection?.isGuardedScreen(pkg, null) == true)) {
                     triggerSelfProtection()
                     return
                 }
@@ -1548,7 +1547,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 mainHandler.postDelayed({
                     guarded("Leaving a guarded page") {
                         val host = activeSelfProtectionHost
-                        if (host != null && shouldGuardSelf() && selfProtection.isGuardedScreen(host, null)) {
+                        if (host != null && shouldGuardSelf() && (selfProtection?.isGuardedScreen(host, null) == true)) {
                             pressHome()
                         }
                     }
@@ -1577,7 +1576,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun isDeviceCredentialScreen(pkg: String, cls: String): Boolean {
         if (!SecurityEngine.INSTANCE.isAuthenticating()) return false
         if (pkg != "com.android.settings" && pkg != "com.miui.securitycenter" && pkg != "com.android.systemui") return false
-        return selfProtection.isCredentialConfirmationClass(cls)
+        return SelfProtectionDetector.isCredentialConfirmationClass(cls)
     }
 
     private fun isSystemOrOverlay(pkg: String, cls: String): Boolean {
@@ -1603,7 +1602,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             val stillExposed = if (target == SELF_PROTECTION_PENDING_KEY) {
                 val foreground = rootInActiveWindow?.let { root -> root.packageName?.toString().also { root.release() } }
                     ?: foregroundPackage
-                foreground != null && selfProtection.isHost(foreground) && shouldGuardSelf() && selfProtection.isGuardedScreen(foreground, null)
+                foreground != null && SelfProtectionDetector.isHostPackage(foreground) && shouldGuardSelf() && (selfProtection?.isGuardedScreen(foreground, null) == true)
             } else {
                 !LockStateTracker.isAppUnlocked(target, vault.getTimeoutMode(target)) && isUnderShield(target)
             }

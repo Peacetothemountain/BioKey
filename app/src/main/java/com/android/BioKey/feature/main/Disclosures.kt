@@ -118,9 +118,10 @@ enum class Disclosure(
 }
 
 private val NEVER = listOf(
-    "Nothing BioKey sees leaves this phone: it has no internet access. It keeps a short on-phone log of its own " +
+    "Nothing BioKey sees leaves this phone, unless you share its diagnostic log: it has no internet access. It keeps a short on-phone log of its own " +
         "lock decisions (which locked apps it locked or unlocked, failed unlocks, times app locking was off) for 3 days, " +
-        "which you can turn off in Settings. Failed unlock alerts, if you turn them on, keep 7 days of failed unlocks.",
+        "which you can turn off in Settings. It keeps the times app locking was off for 7 days, and failed unlock alerts, " +
+        "if you turn them on, keep 7 days of failed unlocks.",
     "BioKey never reads what you type, your messages, or the content of the apps you use."
 )
 

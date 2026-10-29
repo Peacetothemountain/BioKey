@@ -25,11 +25,13 @@ import androidx.compose.material.icons.filled.AddModerator
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.GppBad
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Shield
@@ -131,6 +133,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     val notificationShieldEnabled by vault.notificationShieldFlow.collectAsStateWithLifecycle()
     val autoSortProfiles by vault.autoSortProfilesFlow.collectAsStateWithLifecycle()
     val attemptAlerts by UnlockAttempts.enabled.collectAsStateWithLifecycle()
+    val screenLockUnlocks by UnlockAttempts.screenLockUnlocks.collectAsStateWithLifecycle()
     val newAppOffers by NewAppSuggestions.enabled.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
         // Usually loaded already, as BioKey started.
@@ -142,7 +145,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
 
     var notifListenerActive by remember { mutableStateOf(BioKeyNotificationShieldService.isNotificationAccessGranted(context)) }
     /** An accessibility shortcut switches BioKey's service off without passing any screen self-protection guards. */
-    var shortcutAssigned by remember { mutableStateOf(SelfProtectionDetector.isShortcutAssigned(context)) }
+    var shortcutAssigned by remember { mutableStateOf((SecurityVault.selfProtectionAvailable && SelfProtectionDetector.isShortcutAssigned(context))) }
     var showRelockSheet by remember { mutableStateOf(false) }
     val activity = LocalActivity.current as ComponentActivity
     val notificationAccessTrip = remember(activity) { ViewModelProvider(activity)[NotificationAccessTrip::class.java] }
@@ -158,7 +161,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             readOnOpen[0] = false
         } else {
             notifListenerActive = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
-            shortcutAssigned = SelfProtectionDetector.isShortcutAssigned(context)
+            shortcutAssigned = (SecurityVault.selfProtectionAvailable && SelfProtectionDetector.isShortcutAssigned(context))
         }
         if (notificationAccessTrip.awaiting) {
             notificationAccessTrip.awaiting = false
@@ -263,17 +266,33 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         SettingItem(
             icon = Icons.Default.GppBad,
             title = "Failed unlock alerts",
-            subtitle = "When a face or fingerprint that isn't yours fails on a locked app · kept 7 days on this phone",
+            subtitle = "Tells you when a face or fingerprint fails on a locked app and the app isn't opened. " +
+                "Kept 7 days on this phone; turning this off deletes them",
             checked = attemptAlerts,
             onChange = { on ->
-                UnlockAttempts.setEnabled(context, on)
+                val removed = UnlockAttempts.setEnabled(context, on)
                 if (on && !notifications.allowed) notifications.request()
+                if (removed.isNotEmpty()) {
+                    BioKeyMessages.show("Failed unlocks deleted", Icons.Default.Delete, actionLabel = "Undo") {
+                        UnlockAttempts.setEnabled(context, true)
+                        UnlockAttempts.restore(context, removed)
+                    }
+                }
             }
         ),
+        // For an owner who never uses the PIN: anyone else who knows it shows up.
+        if (attemptAlerts) SettingItem(
+            icon = Icons.Default.Password,
+            title = "Also note screen lock unlocks",
+            subtitle = "Lists each locked app opened with your PIN, pattern or password instead of a face or fingerprint. " +
+                "Listed, not notified",
+            checked = screenLockUnlocks,
+            onChange = { on -> UnlockAttempts.setScreenLockUnlocks(context, on) }
+        ) else null,
         SettingItem(
             icon = Icons.Default.AddModerator,
             title = "Offer to lock new apps",
-            subtitle = "After you install an app auto-sort doesn't lock, a notification asks whether to lock it",
+            subtitle = "When you install an app that auto-sort doesn't lock, a notification offers to lock it",
             checked = newAppOffers,
             onChange = { on ->
                 NewAppSuggestions.setEnabled(context, on)
@@ -306,7 +325,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                     // Switched on already (running or not): saved now, guarding once it runs.
                     mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> {
                         vault.setAccessibilitySelfProtectionEnabled(true)
-                        shortcutAssigned = SelfProtectionDetector.isShortcutAssigned(context)
+                        shortcutAssigned = (SecurityVault.selfProtectionAvailable && SelfProtectionDetector.isShortcutAssigned(context))
                     }
                     // Saved only on Agree: "Not now" leaves it off.
                     mode == ProtectionEngine.Mode.OFF -> disclosures.request(Disclosure.ACCESSIBILITY) {
@@ -430,7 +449,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 item { SettingsSection("Diagnostics", diagnostics) { Haptics.toggle(view, it) } }
                 item {
                     Text(
-                        text = "BioKey has no internet access. Nothing it sees leaves this phone.",
+                        text = "BioKey has no internet access. Nothing it sees leaves this phone, unless you share the diagnostic log.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 32.dp, vertical = 24.dp)

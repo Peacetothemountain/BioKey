@@ -119,10 +119,11 @@ internal val LockTimeoutMode.shortLabel: String
     get() = when (this) {
         LockTimeoutMode.IMMEDIATE -> "Immediately"
         LockTimeoutMode.ON_SCREEN_OFF -> "When screen turns off"
-        LockTimeoutMode.GRACE_30_SECONDS -> "After 30 seconds"
-        LockTimeoutMode.GRACE_1_MINUTE -> "After 1 minute"
-        LockTimeoutMode.GRACE_5_MINUTES -> "After 5 minutes"
-        LockTimeoutMode.GRACE_15_MINUTES -> "After 15 minutes"
+        // A number never parts from its unit at a line break.
+        LockTimeoutMode.GRACE_30_SECONDS -> "After 30${Typography.nbsp}seconds"
+        LockTimeoutMode.GRACE_1_MINUTE -> "After 1${Typography.nbsp}minute"
+        LockTimeoutMode.GRACE_5_MINUTES -> "After 5${Typography.nbsp}minutes"
+        LockTimeoutMode.GRACE_15_MINUTES -> "After 15${Typography.nbsp}minutes"
     }
 
 /** "Re-locks immediately", "Re-locks after 5 minutes"… */

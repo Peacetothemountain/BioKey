@@ -40,7 +40,10 @@ class SecurityEngine private constructor() {
         fun isUserCancel(code: Int) = code == ERROR_USER_CANCELED || code == ERROR_CANCELED
     }
 
-    private class Attempt(val packageName: String, val host: WeakReference<Activity>, val cancel: CancellationSignal)
+    private class Attempt(val packageName: String, val host: WeakReference<Activity>, val cancel: CancellationSignal) {
+        /** Faces or fingerprints this prompt saw that didn't match. Only on the main thread. */
+        var misses = 0
+    }
 
     @Volatile private var active: Attempt? = null
         set(value) {
@@ -101,19 +104,22 @@ class SecurityEngine private constructor() {
 
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                // Told even for a prompt already superseded (a fold restarted it): a match is a match.
+                // A face or fingerprint proves this prompt's misses were the owner's; the screen lock doesn't.
+                UnlockAttempts.onUnlocked(
+                    app, packageName, name,
+                    biometric = result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC,
+                    missesHere = attempt.misses
+                )
                 if (active !== attempt) return
                 active = null
-                // A face or fingerprint proves the owner; the screen lock doesn't (UnlockAttempts).
-                UnlockAttempts.onUnlocked(
-                    app, packageName,
-                    biometric = result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC
-                )
                 onSuccess()
             }
 
             // Each miss is kept as it happens: a prompt can go without an error (its screen
             // killed), and the misses before it are the ones that matter.
             override fun onAuthenticationFailed() {
+                attempt.misses++
                 UnlockAttempts.onBiometricFailed(app, packageName, name)
             }
 

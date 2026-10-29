@@ -37,6 +37,7 @@ class NewAppSuggestionsTest {
         vault = SecurityVault.getInstance(context)
         vault.setSetupCompletedSync(true)
         NewAppSuggestions.setEnabled(context, true)
+        NewAppSuggestions.worker = java.util.concurrent.Executor { it.run() }
         shadowOf(context as Application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
         // A launchable app.
         val pm = shadowOf(context.packageManager)

@@ -31,8 +31,9 @@ object IntentNavigationHelper {
     fun launchFallbackCascade(context: Context, intents: List<Intent>): Boolean {
         LockStateTracker.beginExternalNavigation(preAuthorizeSelfProtection = true)
         for (intent in intents) {
-            // A page that sets the screen lock never goes to whatever answers: only the system's.
-            if (!pinToSystemHandler(context, intent) && intent.action in SCREEN_LOCK_ACTIONS) continue
+            // A page opens only in the system's own app, never in whatever else answers: the next
+            // page in the list is tried instead (every list ends with one the system always has).
+            if (!pinToSystemHandler(context, intent)) continue
             if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             try {
                 context.startActivity(intent)
@@ -48,23 +49,25 @@ object IntentNavigationHelper {
         return false
     }
 
-    /** Pages where the screen lock is set: never opened anywhere but in the system's own app. */
-    private val SCREEN_LOCK_ACTIONS = setOf(DevicePolicyManager.ACTION_SET_NEW_PASSWORD, Settings.ACTION_SECURITY_SETTINGS)
-
     /**
      * Sends a settings intent straight to the system app that handles it, so another app that
      * claims the same action can't be offered in a chooser and pose as Settings (to fish for the
      * screen lock, say) while BioKey's leave pass is open. Every page BioKey opens is declared in
-     * its manifest's queries, so the system's handler is always seen. Returns whether it was
-     * pinned; if not (no system handler, or only the chooser), the intent is left as it was.
+     * its manifest's queries, so the system's handler is always seen. Where several system apps
+     * answer, Settings itself is preferred. Returns whether it was pinned (false: no system app
+     * answers, and it isn't opened).
      */
     internal fun pinToSystemHandler(context: Context, intent: Intent): Boolean {
         if (intent.component != null) return true
-        val handler = context.packageManager.resolveActivity(intent, PackageManager.MATCH_SYSTEM_ONLY)?.activityInfo ?: return false
-        if (handler.packageName == "android") return false
+        val handlers = context.packageManager.queryIntentActivities(intent, PackageManager.MATCH_SYSTEM_ONLY)
+            .mapNotNull { it.activityInfo }
+            .filter { it.packageName != "android" }
+        val handler = handlers.firstOrNull { it.packageName == SETTINGS_PACKAGE } ?: handlers.firstOrNull() ?: return false
         intent.setClassName(handler.packageName, handler.name)
         return true
     }
+
+    private const val SETTINGS_PACKAGE = "com.android.settings"
 
     private fun appDetails(context: Context) =
         Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
@@ -85,7 +88,7 @@ object IntentNavigationHelper {
             ComponentName(context, BioKeyAccessibilityService::class.java).flattenToString()
         )
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            context.packageManager.resolveActivity(details, 0) != null
+            context.packageManager.resolveActivity(details, PackageManager.MATCH_SYSTEM_ONLY) != null
         ) details else Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
     }
 
@@ -117,11 +120,11 @@ object IntentNavigationHelper {
         return when {
             !ProtectionEngine.hasUsageAccess(context) -> launchFallbackCascade(
                 context,
-                listOf(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS, pkgUri), Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                listOf(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS, pkgUri), Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS), appDetails(context))
             )
             !ProtectionEngine.canDrawOverlays(context) -> launchFallbackCascade(
                 context,
-                listOf(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri), Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
+                listOf(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri), Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION), appDetails(context))
             )
             else -> false
         }

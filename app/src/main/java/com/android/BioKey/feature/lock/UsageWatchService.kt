@@ -34,7 +34,6 @@ import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.diagnostics.LatencyMarks
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
-import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
@@ -241,8 +240,6 @@ class UsageWatchService : Service() {
     private val pollTask = object : Runnable {
         override fun run() {
             if (!polling) return
-            // Still running: a gap in these is what someone force-stopping BioKey leaves (ProtectionGaps).
-            ProtectionGaps.touch(this@UsageWatchService)
             val batch = readScreen()
             if (EngineTrace.enabled) traceBatch(batch)
             if (shouldHandOver(batch)) handler.post { onBatch(batch) }

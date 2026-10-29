@@ -27,10 +27,8 @@ class LockAllTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
-        when (LockAllNow.run(this, includeOwnApp = true, reason = "lock-all tile")) {
-            LockAllNow.Outcome.NOT_PROTECTING -> openBioKey()
-            else -> render(subtitle = getString(R.string.lock_all_done))
-        }
+        val outcome = LockAllNow.run(this, includeOwnApp = true, reason = "lock-all tile")
+        if (outcome == LockAllNow.Outcome.NOT_PROTECTING) openBioKey() else render(subtitle = LockAllNow.message(this, outcome))
     }
 
     private fun openBioKey() {
@@ -50,8 +48,9 @@ class LockAllTileService : TileService() {
         val tile = qsTile ?: return
         val protecting = vault.isSetupCompleted() && ProtectionEngine.isProtecting(this)
         tile.label = getString(R.string.lock_all_tile_label)
-        // Inactive rather than unavailable when nothing protects: a tap opens BioKey to fix it.
-        tile.state = if (protecting) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
+        // An action, not a switch: it rests inactive, and is never unavailable (a tap with
+        // nothing protecting opens BioKey to fix it).
+        tile.state = Tile.STATE_INACTIVE
         tile.subtitle = subtitle ?: when {
             !protecting -> getString(R.string.lock_all_tile_not_protecting)
             !vault.isProtectionActive() -> getString(R.string.lock_all_tile_paused)

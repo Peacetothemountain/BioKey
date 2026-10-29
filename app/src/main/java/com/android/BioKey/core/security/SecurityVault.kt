@@ -381,6 +381,7 @@ class SecurityVault private constructor(private val context: Context) {
             .put("autoSortExcluded", JSONArray(autoSortExcluded.sorted()))
             // The two switches kept beside the vault: their choices, not what they recorded.
             .put("unlockAttemptAlerts", UnlockAttempts.enabled.value)
+            .put("screenLockUnlocks", UnlockAttempts.screenLockUnlocks.value)
             .put("newAppOffers", NewAppSuggestions.enabled.value)
     }
 
@@ -420,7 +421,9 @@ class SecurityVault private constructor(private val context: Context) {
         if (!shield) BioKeyNotificationShieldService.restoreAllSnoozedNotifications()
         if (!selfProtection) LockStateTracker.clearSelfProtection()
         // Older backups don't have these: what's set on this phone stays.
-        if (state.has("unlockAttemptAlerts")) UnlockAttempts.setEnabled(context, state.optBoolean("unlockAttemptAlerts"))
+        // Older backups don't say: what's set on this phone stays. Records here are never deleted by a restore.
+        if (state.has("unlockAttemptAlerts")) UnlockAttempts.setEnabled(context, state.optBoolean("unlockAttemptAlerts"), keepRecords = true)
+        if (state.has("screenLockUnlocks")) UnlockAttempts.setScreenLockUnlocks(context, state.optBoolean("screenLockUnlocks"))
         if (state.has("newAppOffers")) NewAppSuggestions.setEnabled(context, state.optBoolean("newAppOffers"))
         DiagnosticLog.log("Settings restored from a backup")
     }

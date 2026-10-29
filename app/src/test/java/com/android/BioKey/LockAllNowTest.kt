@@ -117,6 +117,19 @@ class LockAllNowTest {
     }
 
     @Test
+    fun aPauseEndsEvenWithNothingProtecting() {
+        // Paused, and the engine down too: once it's back, nothing may stay open.
+        ProtectionEngine.overrideModeForTests = ProtectionEngine.Mode.OFF
+        try {
+            vault.pauseProtection(null)
+            assertEquals(LockAllNow.Outcome.NOT_PROTECTING, LockAllNow.run(context, includeOwnApp = true, reason = "test"))
+            assertTrue(vault.isProtectionActive())
+        } finally {
+            ProtectionEngine.overrideModeForTests = null
+        }
+    }
+
+    @Test
     fun theShortcutLocksEverythingBioKeyIncluded() {
         protecting()
         try {
