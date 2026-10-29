@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.AddModerator
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ErrorOutline
@@ -54,6 +55,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
@@ -152,7 +154,15 @@ internal class NotificationAccessTrip : ViewModel() {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> Unit, onPauseRequested: () -> Unit) {
+fun SettingsScreenExpressive(
+    mode: ProtectionEngine.Mode,
+    onNavigateBack: () -> Unit,
+    onPauseRequested: () -> Unit,
+    /** "Face or fingerprint only" just turned on: home brings back its Lock Settings card. */
+    onBiometricOnlyOn: () -> Unit = {},
+    /** Shown as a pane beside home (tablets): it closes rather than goes back. */
+    asPane: Boolean = false
+) {
     val context = LocalContext.current
     val res = LocalResources.current
     val view = LocalView.current
@@ -215,7 +225,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             withContext(Dispatchers.IO) {
                 strongBiometric = SecurityEngine.hasStrongBiometric(context)
                 notifListenerActive = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
-                shortcutAssigned = SecurityVault.selfProtectionAvailable && SelfProtectionDetector.isShortcutAssigned(context)
+                shortcutAssigned = SelfProtectionDetector.isShortcutAssigned(context)
             }
             afterNotificationAccessTrip()
         }
@@ -277,7 +287,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                         // Within a day of a face or fingerprint change, the new one doesn't prove the owner: recorded then.
                         if (!on) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.BIOMETRIC_ONLY_OFF)
                         // Home asks about locking Android's Settings again, even if put away before.
-                        if (on) homePrefs(context).edit { remove(KEY_LOCK_SETTINGS_DISMISSED) }
+                        if (on) onBiometricOnlyOn()
                     }
                 }
             ) else null,
@@ -435,7 +445,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                     // Switched on already (running or not): saved now, guarding once it runs.
                     mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> {
                         vault.setAccessibilitySelfProtectionEnabled(true)
-                        shortcutAssigned = (SecurityVault.selfProtectionAvailable && SelfProtectionDetector.isShortcutAssigned(context))
+                        shortcutAssigned = SelfProtectionDetector.isShortcutAssigned(context)
                     }
                     // Saved only on Agree: "Not now" leaves it off.
                     mode == ProtectionEngine.Mode.OFF -> disclosures.request(Disclosure.ACCESSIBILITY) {
@@ -446,7 +456,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             }
         ) else null,
         // The shortcut only matters while the service is on: it switches it off at once.
-        if (selfProtectionEnabled && mode == ProtectionEngine.Mode.ACCESSIBILITY && shortcutAssigned) {
+        if (mode == ProtectionEngine.Mode.ACCESSIBILITY && shortcutAssigned) {
             SettingItem(
                 icon = Icons.Default.Warning,
                 title = stringResource(R.string.settings_shortcut_warning_title),
@@ -542,19 +552,22 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 .rejectObscuredTouches()
                 .nestedScroll(scrollBehavior.nestedScrollConnection),
             topBar = {
-                LargeTopAppBar(
-                    title = { Text(settingsTitle) },
-                    navigationIcon = {
-                        IconButton(onClick = onNavigateBack, modifier = Modifier.springPress()) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.settings_back))
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer
-                    ),
-                    scrollBehavior = scrollBehavior
+                // Beside home (a pane), it closes, and its title sits level with home's header.
+                val navigationIcon: @Composable () -> Unit = {
+                    IconButton(onClick = onNavigateBack, modifier = Modifier.springPress()) {
+                        if (asPane) Icon(Icons.Default.Close, contentDescription = stringResource(R.string.common_close))
+                        else Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.settings_back))
+                    }
+                }
+                val barColors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer
                 )
+                if (asPane) {
+                    TopAppBar(title = { Text(settingsTitle) }, navigationIcon = navigationIcon, colors = barColors)
+                } else {
+                    LargeTopAppBar(title = { Text(settingsTitle) }, navigationIcon = navigationIcon, colors = barColors, scrollBehavior = scrollBehavior)
+                }
             }
         ) { padding ->
             val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()

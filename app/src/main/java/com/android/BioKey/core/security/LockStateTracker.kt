@@ -728,6 +728,7 @@ object LockStateTracker {
     }
 
     fun lockOwnApp() {
+        SecurityEngine.INSTANCE.forgetOwnProof()
         ownUnlockedAt = 0L
         ownLastActiveAt = 0L
         ownInForeground = false

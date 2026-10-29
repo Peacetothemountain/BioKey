@@ -79,15 +79,16 @@ class SecurityEngine private constructor() {
             status == BiometricManager.BIOMETRIC_SUCCESS || status == BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE ||
                 status == BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED || status == BiometricManager.BIOMETRIC_ERROR_NOT_ENABLED_FOR_APPS
 
+        /** [hasEnrolledStrongBiometric], as [ownerProven] asks it; tests set their own. */
+        @androidx.annotation.VisibleForTesting
+        @Volatile
+        internal var enrolledForProof: (Context) -> Boolean = { hasEnrolledStrongBiometric(it) }
+
         /**
          * What's done in BioKey now is the owner's own doing, as far as BioKey can tell: it was
          * opened with a face or fingerprint, or the phone has none set up (then the screen lock is
          * all there is). Otherwise it may be someone who only knows the PIN.
          */
-        /** [hasEnrolledStrongBiometric], as [ownerProven] asks it; tests set their own. */
-        @androidx.annotation.VisibleForTesting
-        internal var enrolledForProof: (Context) -> Boolean = { hasEnrolledStrongBiometric(it) }
-
         fun ownerProven(context: Context): Boolean =
             // Within a day of a face or fingerprint added or removed, nothing proves the owner: the
             // new one may be whoever made the change, and with all of them removed, the screen lock
@@ -221,6 +222,11 @@ class SecurityEngine private constructor() {
      */
     @Volatile var ownAppOpenedWithBiometric = false
         private set
+
+    /** BioKey locked itself: whatever it was opened with no longer proves anything ([ownerProven]). */
+    fun forgetOwnProof() {
+        ownAppOpenedWithBiometric = false
+    }
 
     /**
      * Shows the system prompt hosted by [activity], which must be resumed and on top: the system

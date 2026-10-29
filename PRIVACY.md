@@ -123,7 +123,7 @@ list of installed packages (`QUERY_ALL_PACKAGES`).
   each time you unlock your phone and about every 15 minutes while it's still off, unless you stop
   the reminders in BioKey; on the lock screen it says only "BioKey"); security activity (failed unlocks, times app locking was off, changes),
   told the next time you unlock your phone, never naming the app and never shown on the lock
-  screen, staying until you open Review; the offer to lock an app you just installed (its name hidden on the lock screen if your
+  screen, staying until you've reviewed it; the offer to lock an app you just installed (its name hidden on the lock screen if your
   phone hides sensitive notification content there); and the notification shield's stand-ins.
 - **Start at boot** (`RECEIVE_BOOT_COMPLETED`): after a restart, BioKey starts compatibility mode
   if that is in use, or warns you if protection is off.
@@ -165,7 +165,8 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   made within a day of a face or fingerprint change), nothing is counted as seen, and nothing that
   clears or silences BioKey's records can be done: clearing them, turning the alerts, their screen
   lock option or the diagnostic log off, deleting the log, or restoring a backup. After the day,
-  review them again.
+  review them again (if Review is still open on BioKey's screen then, with a face or fingerprint
+  that now counts, they count as seen).
   Turning the alerts off deletes them; a restored backup that turns them off leaves them in place.
   Clearing them, or turning the alerts off, asks for your face or fingerprint where one is set up.
 - **Times app locking was off, and other changes:** when BioKey's protection was switched off or
@@ -183,8 +184,9 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   or fingerprint change, "Face or fingerprint only" switched off. These name the app or profile.
   (Restoring a backup, stopping the reminders, and switching off face or fingerprint only, the
   alerts or the diagnostic log can't be done with the screen lock at all on such a phone: they ask
-  for a face or fingerprint; and within that day, none of what's listed above as refused can be
-  done at all, and stopping the reminders is recorded.) Shown on BioKey's home screen until you clear them, kept like
+  for a face or fingerprint; and within that day, clearing records, switching off the alerts,
+  their screen lock option or the log, deleting the log and restoring a backup can't be done at
+  all, and stopping the reminders is recorded.) Shown on BioKey's home screen until you clear them, kept like
   failed unlocks (seen ones 7 days, at most 20); a face or fingerprint added or removed can't be
   cleared, only aged out, so whoever added one can't erase the record of it. To measure them BioKey keeps, while
   protection is off, when it stopped (on the phone's clock and on its clock since the last

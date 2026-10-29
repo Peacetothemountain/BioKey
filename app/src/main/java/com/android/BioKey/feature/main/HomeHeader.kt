@@ -47,6 +47,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -74,7 +75,9 @@ internal fun HomeHeader(
     animated: Boolean,
     sidePadPx: Int,
     onOpenStatus: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    /** Settings open beside home (tablets): its tile shows it's selected. Null where it opens over home. */
+    settingsSelected: Boolean? = null
 ) {
     // Where the header, its logo and its two labelled tiles are on screen: the
     // constellation thins out round them, so no link cuts through the mark or a label.
@@ -95,6 +98,7 @@ internal fun HomeHeader(
                 animated = animated,
                 onOpenStatus = onOpenStatus,
                 onOpenSettings = onOpenSettings,
+                settingsSelected = settingsSelected,
                 onPlaced = { part, bounds -> quietZones[part] = bounds }
             )
         }
@@ -111,6 +115,7 @@ private fun MainHeader(
     animated: Boolean,
     onOpenStatus: () -> Unit,
     onOpenSettings: () -> Unit,
+    settingsSelected: Boolean? = null,
     /** Where each part (0 status, 1 logo, 2 settings) is on screen. */
     onPlaced: (part: Int, bounds: Rect) -> Unit = { _, _ -> }
 ) {
@@ -149,9 +154,10 @@ private fun MainHeader(
             icon = Icons.Default.Settings,
             label = settings,
             labelStyle = labelStyle,
-            container = MaterialTheme.colorScheme.surfaceContainerHigh,
-            content = MaterialTheme.colorScheme.onSurface,
+            container = if (settingsSelected == true) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+            content = if (settingsSelected == true) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
             contentDescription = settings,
+            selected = settingsSelected,
             onClick = onOpenSettings
         )
     }
@@ -194,7 +200,9 @@ private fun HeaderTile(
     content: Color,
     contentDescription: String,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** A tile that toggles something (Settings' pane): announced as selected or not. */
+    selected: Boolean? = null
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -202,8 +210,11 @@ private fun HeaderTile(
             .width(HeaderTileWidth)
             .springPress()
             .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick, role = Role.Button)
-            .semantics(mergeDescendants = true) { this.contentDescription = contentDescription }
+            .clickable(onClick = onClick, role = if (selected != null) Role.Tab else Role.Button)
+            .semantics(mergeDescendants = true) {
+                this.contentDescription = contentDescription
+                if (selected != null) this.selected = selected
+            }
             .padding(vertical = 6.dp)
     ) {
         Box(

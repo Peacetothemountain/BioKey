@@ -77,10 +77,13 @@ object ShieldAccessWatch {
         worker.submit {}.get()
     }
 
-    /** [check], off the calling thread. */
-    fun checkSoon(context: Context) {
+    /**
+     * [check], on the one thread every look runs on (in order with [switchOffSoon] and its Undo):
+     * returns when it's done, for callers that wait.
+     */
+    fun checkSoon(context: Context): Future<*> {
         val app = context.applicationContext
-        worker.execute { runCatching { check(app) } }
+        return worker.submit { runCatching { check(app) } }
     }
 
     /** Looks at the shield and its access, records what changed; returns the record it ended by hiding being off, if any. */

@@ -42,7 +42,7 @@
 
     <!-- Failed unlock alerts and times app locking was off. Which app is never named in the notification. -->
     <string name="activity_channel_name">Security activity</string>
-    <string name="activity_channel_description">Failed unlocks of locked apps, times app locking was off, faces or fingerprints added or removed, notification access switched off under Hide notification content, times a face or fingerprint couldn\'t be used so the screen lock was allowed, and changes made from BioKey opened with the screen lock. Told the next time you unlock your phone.</string>
+    <string name="activity_channel_description">Failed unlocks of locked apps, times app locking was off, faces or fingerprints added or removed, notification access switched off under Hide notification content, times a face or fingerprint couldn\'t be used so the screen lock was allowed, and changes made from BioKey opened with the screen lock or within a day of a face or fingerprint change, reminders stopped meanwhile. Told the next time you unlock your phone.</string>
     <string name="activity_title">Security activity</string>
     <string name="gaps_title">App locking was off</string>
     <string name="biometrics_changed_notification_text">A face or fingerprint was added or removed on this phone. If it wasn\'t you, check them in Android\'s settings.</string>
@@ -236,7 +236,7 @@
     <string name="home_reminders_stopped">No more reminders until app locking is back on</string>
     <string name="home_alerts_muted_title">Security alerts are silenced</string>
     <string name="home_alerts_muted_text">Some of BioKey\'s alerts are off in Android\'s settings, so you may not hear of failed unlocks, changes, or app locking going off</string>
-    <string name="home_lock_settings_text">Anyone who knows your screen lock could add their own fingerprint there. Locking it also puts switching BioKey off behind your face or fingerprint.</string>
+    <string name="home_lock_settings_text">Anyone who knows your screen lock could add their own fingerprint there. Once it\'s locked, opening Android Settings, BioKey\'s own switch included, asks for your face or fingerprint.</string>
 
     <!-- Home: security activity. -->
     <string name="home_confirm_mark_reviewed">Mark as reviewed</string>
@@ -341,8 +341,8 @@
     <string name="card_time_date">%1$s, %2$s</string>
 
     <!-- One time app locking was off, or one change: when · what. -->
-    <string name="card_gap_biometrics_changed">%1$s · a face or fingerprint was added or removed</string>
-    <string name="card_gap_biometrics_removed">%1$s · no face or fingerprint is set up any more</string>
+    <string name="card_gap_biometrics_changed">%1$s · A face or fingerprint was added or removed</string>
+    <string name="card_gap_biometrics_removed">%1$s · No face or fingerprint is set up any more</string>
     <string name="card_gap_protection_changed">Protection changed</string>
     <string name="card_gap_changed_with_screen_lock">%1$s · %2$s (BioKey was opened with the screen lock)</string>
     <string name="card_gap_changed_during_hold">%1$s · %2$s (within a day of a face or fingerprint change)</string>
@@ -394,7 +394,8 @@
     <string name="home_shield_no_access_action">Allow access</string>
     <string name="home_shield_no_access_off">Turn off</string>
     <string name="home_shield_turned_off">Hide notification content is off</string>
-    <string name="activity_held_until">Held until %1$s: a face or fingerprint was just added or removed. Until then nothing proves it\'s you here, and nothing can be marked seen, cleared, switched off or restored, so whoever made the change can\'t hide it.</string>
+    <string name="activity_held_until">A face or fingerprint was just added or removed. Until then nothing proves it\'s you here: nothing can be marked seen or cleared, records and alerts can\'t be switched off, backups can\'t be restored, and other changes are recorded, so whoever made the change can\'t hide it.</string>
+    <string name="activity_held_headline">Held until %1$s</string>
     <string name="held_refused">Not until %1$s: a face or fingerprint was just added or removed, so BioKey\'s records can\'t be cleared or silenced, and backups can\'t be restored, yet.</string>
     <string name="change_biometric_only_off">Face or fingerprint only switched off</string>
     <string name="change_reminders_stopped">Reminders that app locking is off stopped</string>

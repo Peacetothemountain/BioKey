@@ -83,7 +83,7 @@ class HomeViewModelTest {
         Thread.sleep(200)
         idle()
         // A hold that has just ended: worked out again, the owner proven, so it counts as seen.
-        runBlocking { vm.recheckWhenHoldEnds(TrustedClock.now() - 2_000L, shown) }
+        runBlocking { vm.recheckWhenHoldEnds(TrustedClock.now() - 2_000L) { shown } }
         assertTrue(UnlockAttempts.seenSeq(app) >= shown)
     }
 }

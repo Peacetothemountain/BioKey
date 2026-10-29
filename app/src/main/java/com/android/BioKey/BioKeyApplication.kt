@@ -100,7 +100,7 @@ class BioKeyApplication : Application() {
                 NewAppSuggestions.load(app)
                 ProtectionGaps.load(app)
                 BiometricEnrollment.checkSoon(app)
-                ShieldAccessWatch.check(app)
+                ShieldAccessWatch.checkSoon(app).get()
                 // Channel names and descriptions as this version words them, before any is posted.
                 ProtectionAlerts.ensureChannels(app)
                 UnlockAttempts.ensureChannel(app)

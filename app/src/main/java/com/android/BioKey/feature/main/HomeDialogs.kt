@@ -31,6 +31,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,6 +44,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.android.BioKey.R
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.SecurityProfile
@@ -221,7 +223,14 @@ internal fun HomeDialogs(
         // whose face or fingerprint was only just added, mustn't be able to quiet it.
         val openedAt = remember { shownUpTo }
         LaunchedEffect(shownUpTo) { homeViewModel.reviewShowing(shownUpTo, openedAt) }
-        LaunchedEffect(review.heldUntil) { homeViewModel.recheckWhenHoldEnds(review.heldUntil, shownUpTo) }
+        // What it shows by then, not when the wait began; and only while BioKey is on screen.
+        val latestShown by rememberUpdatedState(shownUpTo)
+        val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+        LaunchedEffect(review.heldUntil, lifecycle) {
+            lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+                homeViewModel.recheckWhenHoldEnds(review.heldUntil) { latestShown }
+            }
+        }
         SecurityActivityDialog(
             attempts = attempts,
             gaps = gaps,

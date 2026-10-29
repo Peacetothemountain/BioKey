@@ -70,7 +70,9 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
   record then and there; Undo switches it back on and reopens that record (the switch-off stays
   recorded: notifications may have been read meanwhile). Stopping the reminders is recorded too,
   and a flood of records can't push a face or fingerprint change out. Review offers to open
-  Android's security settings.
+  Android's security settings. On tablets, Settings opens beside home (its tile shows it's open;
+  the pane closes with ×). Setup lists the steps in the order they're done and highlights the one
+  the main button does. The accessibility-shortcut warning shows in every build.
 - Reviewed security activity is shown calmly; only something new makes the card urgent. Review
   says until when a face or fingerprint change stays new. Moving or adding a locked app into a
   profile that re-locks later, or taking it out of one, is recorded.

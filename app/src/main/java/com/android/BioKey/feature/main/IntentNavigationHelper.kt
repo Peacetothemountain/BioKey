@@ -74,6 +74,12 @@ object IntentNavigationHelper {
     private fun appDetails(context: Context) =
         Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
 
+    /** Android's security page: faces, fingerprints and the screen lock, without choosing a new one. */
+    fun openSecuritySettings(context: Context) = launchFallbackCascade(
+        context,
+        listOf(Intent(Settings.ACTION_SECURITY_SETTINGS), Intent(Settings.ACTION_SETTINGS))
+    )
+
     fun openScreenLockSetup(context: Context) = launchFallbackCascade(
         context,
         listOf(

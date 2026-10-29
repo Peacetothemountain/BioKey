@@ -141,20 +141,11 @@ fun SetupScreenExpressive(
         val opensExternally: Boolean = true,
         /** Done after another step has been tried (restricted settings, after the accessibility switch): never the one to do now. */
         val afterAnother: Boolean = false,
+        /** Not needed to finish (notifications): never the step the main button does. */
+        val optional: Boolean = false,
         val onClick: (() -> Unit)?
     )
     val steps = buildList {
-        if (restrictedSettingsBlocked) {
-            add(
-                Step(
-                    Icons.Default.Policy, stringResource(R.string.setup_restricted_title),
-                    // Android offers the ⋮ item only once its "restricted setting" dialog has been seen.
-                    stringResource(R.string.setup_restricted_text),
-                    done = false,
-                    afterAnother = true
-                ) { IntentNavigationHelper.openAppDetailsSettings(context) }
-            )
-        }
         if (compatibilityMode) {
             add(
                 Step(
@@ -179,6 +170,17 @@ fun SetupScreenExpressive(
                 )
             )
         }
+        if (restrictedSettingsBlocked) {
+            add(
+                Step(
+                    Icons.Default.Policy, stringResource(R.string.setup_restricted_title),
+                    // Android offers the ⋮ item only once its "restricted setting" dialog has been seen.
+                    stringResource(R.string.setup_restricted_text),
+                    done = false,
+                    afterAnother = true
+                ) { IntentNavigationHelper.openAppDetailsSettings(context) }
+            )
+        }
         if (needsScreenLock) {
             add(
                 Step(
@@ -195,6 +197,7 @@ fun SetupScreenExpressive(
                     Icons.Default.Notifications, stringResource(R.string.setup_notifications_title),
                     stringResource(R.string.setup_notifications_text),
                     done = notifications.allowed,
+                    optional = true,
                     // Android's own question from 13 on; before that, only its settings page.
                     opensExternally = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU,
                     onClick = {
@@ -262,7 +265,7 @@ fun SetupScreenExpressive(
             Spacer(Modifier.height(28.dp))
             // The step to do now: the first one not done that the main button below does (the
             // restricted-settings step comes after the accessibility switch has been tried).
-            val current = steps.indexOfFirst { !it.done && !it.afterAnother }
+            val current = steps.indexOfFirst { !it.done && !it.afterAnother && !it.optional }
             Group(count = steps.size) { i ->
                 val step = steps[i]
                 val state = when {
@@ -281,7 +284,7 @@ fun SetupScreenExpressive(
                     leading = { StepBadge(if (step.done) Icons.Default.CheckCircle else step.icon, state) },
                     onClick = step.onClick.takeIf { !step.done },
                     // One that can't be done yet looks it, but stays readable: it says what's coming.
-                    modifier = if (state == StepState.BLOCKED) Modifier.alpha(0.7f) else Modifier,
+                    modifier = if (state == StepState.BLOCKED) Modifier.alpha(0.85f) else Modifier,
                     // Said aloud, as the tick, the ring and the colour only show it.
                     stateDescription = stringResource(
                         when {
@@ -320,6 +323,8 @@ fun SetupScreenExpressive(
         Button(
             onClick = {
                 when {
+                    // No screen lock yet: setting one is what's next, not finishing again.
+                    ready && needsScreenLock -> IntentNavigationHelper.openScreenLockSetup(context)
                     ready -> finish()
                     compatibilityMode -> openCompatibility()
                     else -> openAccessibility()
@@ -346,6 +351,7 @@ fun SetupScreenExpressive(
                 stringResource(
                     when {
                         isAuthenticating -> R.string.setup_button_confirming
+                        ready && needsScreenLock -> R.string.setup_screen_lock_title
                         ready -> R.string.setup_button_finish
                         compatibilityMode -> R.string.setup_button_next_permission
                         else -> R.string.setup_button_accessibility

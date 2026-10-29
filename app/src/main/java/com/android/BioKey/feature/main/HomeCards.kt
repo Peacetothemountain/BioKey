@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.RemoveModerator
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -461,11 +462,18 @@ internal fun SecurityActivityDialog(
                 // At most one note before the records: why they stay new.
                 val heading = when {
                     // The hold explains everything at once: why they stay new, why nothing clears.
-                    heldUntil != null -> stringResource(R.string.activity_held_until, attemptTime(context, heldUntil))
+                    heldUntil != null -> stringResource(R.string.activity_held_until)
                     openedWithScreenLock -> stringResource(R.string.card_activity_screen_lock_note)
                     else -> null
                 }
-                if (heading != null) ActivityCallout(heading, held = heldUntil != null, modifier = Modifier.padding(bottom = 16.dp))
+                if (heading != null) {
+                    ActivityCallout(
+                        heading,
+                        headline = heldUntil?.let { stringResource(R.string.activity_held_headline, attemptTime(context, it)) },
+                        held = heldUntil != null,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                }
                 val changes = gaps.filterNot { it.isOff }
                 if (changes.isNotEmpty()) {
                     SectionLabel(stringResource(R.string.card_activity_changes))
@@ -492,13 +500,6 @@ internal fun SecurityActivityDialog(
                                 }
                             }
                         }
-                    }
-                    if (changes.any { it.isBiometricChange || it.kind == ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK }) {
-                        // What to do about them: check the faces and fingerprints, or change the screen lock.
-                        TextButton(
-                            onClick = { IntentNavigationHelper.openScreenLockSetup(context) },
-                            contentPadding = PaddingValues(horizontal = 0.dp)
-                        ) { Text(stringResource(R.string.activity_open_security_settings)) }
                     }
                     Spacer(Modifier.height(16.dp))
                 }
@@ -540,6 +541,17 @@ internal fun SecurityActivityDialog(
                         color = note
                     )
                 }
+                if (gaps.any { it.isBiometricChange || it.kind == ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK }) {
+                    // What to do about them: look over the faces, fingerprints and screen lock.
+                    FilledTonalButton(
+                        onClick = { IntentNavigationHelper.openSecuritySettings(context) },
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(18.dp.scaledWithText()))
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.activity_open_security_settings))
+                    }
+                }
             }
         },
         confirmButton = {
@@ -578,7 +590,7 @@ internal fun UrgentButton(text: String, onClick: () -> Unit, modifier: Modifier 
  * face or fingerprint change is [held] (as an urgent card is), else the calm secondary ones.
  */
 @Composable
-private fun ActivityCallout(text: String, held: Boolean, modifier: Modifier = Modifier) {
+private fun ActivityCallout(text: String, held: Boolean, modifier: Modifier = Modifier, headline: String? = null) {
     val colors = MaterialTheme.colorScheme
     val dark = colors.surface.luminance() < 0.5f
     Surface(
@@ -590,7 +602,10 @@ private fun ActivityCallout(text: String, held: Boolean, modifier: Modifier = Mo
         Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Icon(Icons.Default.GppMaybe, contentDescription = null, modifier = Modifier.padding(top = 1.dp).size(20.dp.scaledWithText()))
             Spacer(Modifier.width(12.dp))
-            Text(text, style = MaterialTheme.typography.bodyMedium)
+            Column {
+                if (headline != null) Text(headline, style = MaterialTheme.typography.titleSmall)
+                Text(text, style = MaterialTheme.typography.bodyMedium)
+            }
         }
     }
 }

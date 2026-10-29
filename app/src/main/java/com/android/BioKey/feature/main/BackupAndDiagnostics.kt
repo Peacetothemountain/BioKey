@@ -279,8 +279,9 @@ internal fun rememberBackupActions(
                     // scope, so leaving Settings meanwhile doesn't stop it halfway to its message.
                     pending.viewModelScope.launch {
                         // Checked again as it runs: a face or fingerprint change recorded meanwhile refuses it.
-                        if (withContext(Dispatchers.Default) { UnlockAttempts.holding(activity) }) {
-                            BioKeyMessages.show(res.getString(R.string.held_refused, attemptTime(activity, UnlockAttempts.heldUntil(activity) ?: 0L)), Icons.Default.ErrorOutline)
+                        val app = activity.applicationContext
+                        if (withContext(Dispatchers.Default) { UnlockAttempts.holding(app) }) {
+                            BioKeyMessages.show(res.getString(R.string.held_refused, attemptTime(app, UnlockAttempts.heldUntil(app) ?: 0L)), Icons.Default.ErrorOutline)
                             return@launch
                         }
                         val restored = try {

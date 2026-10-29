@@ -76,7 +76,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(lockSettingsDismissed = dismissed) }
             val stopped = ProtectionAlerts.remindersStopped(app).also { lastRemindersStopped = it }
             _state.update { it.copy(remindersStopped = stopped) }
-            ShieldAccessWatch.check(app)
+            ShieldAccessWatch.checkSoon(app).get()
             val withoutAccess = ShieldAccessWatch.lastWithoutAccess ?: false
             _state.update { it.copy(shieldWithoutAccess = withoutAccess) }
         }
@@ -93,12 +93,14 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     /** "Remind me": only strengthens, so no authentication. */
     fun resumeReminders() {
+        lastRemindersStopped = false
         ProtectionAlerts.resumeReminders(app)
         _state.update { it.copy(remindersStopped = false) }
     }
 
     /** "Stop reminding", once the owner has confirmed it. */
     fun stopReminders() {
+        lastRemindersStopped = true
         ProtectionAlerts.stopReminders(app)
         ProtectionGaps.recordIfScreenLock(app, ProtectionGaps.Change.REMINDERS_STOPPED)
         _state.update { it.copy(remindersStopped = true) }
@@ -112,7 +114,14 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(shieldWithoutAccess = false) }
     }
 
-    /** The Lock Settings card's "Not now": put away for good. */
+    /** "Face or fingerprint only" turned on: the Lock Settings card comes back, even if put away before. */
+    fun undismissLockSettings() {
+        _state.update { it.copy(lockSettingsDismissed = false) }
+        lastLockSettingsDismissed = false
+        homePrefs(app).edit { remove(KEY_LOCK_SETTINGS_DISMISSED) }
+    }
+
+    /** The Lock Settings card's "Not now": put away until "Face or fingerprint only" is next turned on. */
     fun dismissLockSettings() {
         _state.update { it.copy(lockSettingsDismissed = true) }
         lastLockSettingsDismissed = true
@@ -180,13 +189,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** The hold ([heldUntil]) ends while Review is open: worked out again then. */
-    suspend fun recheckWhenHoldEnds(heldUntil: Long?, shownUpTo: Long) {
+    suspend fun recheckWhenHoldEnds(heldUntil: Long?, shownUpTo: () -> Long) {
         val until = heldUntil ?: return
         delay((until - TrustedClock.now()).coerceAtLeast(0L) + 1_000L)
         val now = lookAtReview()
         _review.value = now
         // The owner proven now, with Review still open: what it shows counts as seen, as on opening.
-        if (now.ownerProven) withContext(Dispatchers.Default) { UnlockAttempts.markSeen(app, shownUpTo) }
+        if (now.ownerProven) withContext(Dispatchers.Default) { UnlockAttempts.markSeen(app, shownUpTo()) }
     }
 
     /** Mark reviewed: on the application's scope, so it isn't stopped halfway by the screen going. */

@@ -58,7 +58,7 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
                             { UnlockAttempts.onUserPresent(app) },
                             { ProtectionAlerts.remindIfOff(app) },
                             { BiometricEnrollment.checkSoon(app) },
-                            { ShieldAccessWatch.check(app) }
+                            { ShieldAccessWatch.checkSoon(app).get() }
                         ).forEach { step ->
                             runCatching(step).onFailure { DiagnosticLog.log("Unlock check failed: ${it.javaClass.simpleName}") }
                         }

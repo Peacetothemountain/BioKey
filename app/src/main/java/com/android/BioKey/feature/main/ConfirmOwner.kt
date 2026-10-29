@@ -28,6 +28,14 @@ internal fun confirmOwner(activity: Activity?, title: String, silencesRecords: B
         activity,
         title,
         onRefused = { reason -> BioKeyMessages.show(reason, Icons.Default.ErrorOutline) },
-        onConfirmed = action
+        onConfirmed = {
+            // A face or fingerprint change recorded while the prompt was up refuses it too.
+            val until = if (silencesRecords) UnlockAttempts.heldUntil(activity) else null
+            if (until != null) {
+                BioKeyMessages.show(activity.getString(R.string.held_refused, attemptTime(activity, until)), Icons.Default.ErrorOutline)
+            } else {
+                action()
+            }
+        }
     )
 }

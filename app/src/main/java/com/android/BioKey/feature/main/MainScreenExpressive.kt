@@ -528,7 +528,8 @@ fun MainScreenExpressive(
                         animated = headerActive,
                         sidePadPx = sidePadPx,
                         onOpenStatus = { overlays.showProtectionSheet = true },
-                        onOpenSettings = { showSettings = if (twoPane) !showSettings else true }
+                        onOpenSettings = { showSettings = if (twoPane) !showSettings else true },
+                        settingsSelected = if (twoPane) showSettings else null
                     )
                 }
 
@@ -700,7 +701,10 @@ fun MainScreenExpressive(
             Row(Modifier.fillMaxSize()) {
                 if (twoPane) VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Box(Modifier.weight(1f)) {
-                    SettingsScreenExpressive(mode = mode, onNavigateBack = { showSettings = false }, onPauseRequested = onPauseRequested)
+                    SettingsScreenExpressive(
+                        mode = mode, onNavigateBack = { showSettings = false }, onPauseRequested = onPauseRequested,
+                        onBiometricOnlyOn = homeViewModel::undismissLockSettings, asPane = twoPane
+                    )
                 }
             }
         }
