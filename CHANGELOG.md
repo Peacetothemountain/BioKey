@@ -2,6 +2,18 @@
 
 BioKey's releases, newest first. The version is the `versionName` in `app/build.gradle.kts`.
 
+## Unreleased
+
+- Self-protection is gone from the Google Play version: Play's Accessibility API policy doesn't
+  allow an app to stop you switching it off or uninstalling it, outside parental-control and
+  enterprise apps. If you had it on, it's off. Builds from source can still include it (see the
+  README).
+- The setup screens now say everything the Accessibility service reads (each new window's title)
+  and does (pressing Home or Back for you), and that notification access sees which app posted each
+  notification, not only locked apps' ones, as the privacy policy already did.
+- Settings pages BioKey opens go straight to the Settings app, so another app can't offer to open
+  them instead and pose as Settings.
+
 ## 1.0.2 (26 October 2026)
 
 - An app in a profile that's switched off now shows its lock switch off (and greyed out), and is

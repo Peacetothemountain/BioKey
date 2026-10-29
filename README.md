@@ -40,7 +40,7 @@ An app lock for Android, modelled on Android 17's own App Lock: the apps you cho
 - An unlocked app stays unlocked while you use it, and locks again when you leave: at once, after a delay you choose, or when the screen turns off.
 - Profiles (Finance, Social, Work, or your own), each with its own re-lock delay and on/off switch.
 - Optional notification shield: a locked app's notifications are hidden until you unlock it.
-- BioKey locks itself, and can optionally guard its own settings and uninstall.
+- BioKey locks itself. Builds from source can also guard its own settings and uninstall (not the Google Play version).
 - Works under Android's Advanced Protection, through compatibility mode.
 - Pause for 15 minutes, an hour, or until you turn it back on, from the app or a Quick Settings tile.
 - Password-protected backup and restore of your setup.
@@ -61,7 +61,7 @@ Requires Android 12 or later.
 | **Profiles** | Group apps (Finance, Social, Work, or your own) with their own re-lock delay and their own on/off switch. An app is locked when its own switch is on and its profile is on; switching either off never takes it out of the profile. Each profile is edited from its own page. An app lives in at most one profile. Optional auto-sort puts recognised apps into the built-in profiles. |
 | **Notification shield** | Optional. A locked app's notifications are snoozed and replaced with "N hidden notifications" until you unlock it; tapping the stand-in unlocks and opens the original. Tapped on the phone's lock screen, a stand-in asks you to unlock the phone first. Calls, alarms, media and navigation always show. |
 | **BioKey locks itself** | BioKey's own screens need authentication, and lock again as soon as you leave them (except for the system settings pages and the backup file picker BioKey opens itself, and a locked app's lock screen BioKey brings up over them, until it closes) or after 3 minutes of inactivity. |
-| **Self-protection** | Optional (off by default), accessibility engine only. BioKey's App info page (force stop, uninstall, clear storage), its accessibility switch, notification access and the uninstall dialog require authentication. Pages you open from inside BioKey are pre-authorised. |
+| **Self-protection** | Not in the Google Play version (see [Self-protection builds](#self-protection-builds)). Optional (off by default), accessibility engine only. BioKey's App info page (force stop, uninstall, clear storage), its accessibility switch, notification access and the uninstall dialog require authentication. Pages you open from inside BioKey are pre-authorised. |
 | **Protection alert** | A notification fires if protection stops (the accessibility service is switched off, or compatibility mode loses a permission or can't start). |
 | **Pause** | Pause for 15 minutes, 1 hour, or until turned back on, from the app or the Quick Settings tile (behind authentication). |
 | **Backup and restore** | Your locked apps, profiles and settings, saved to a file you choose, sealed with a password (AES-256-GCM, key from PBKDF2-SHA256). Restore after a reinstall or on a new phone. |
@@ -74,9 +74,9 @@ Requires Android 12 or later.
 | | Accessibility engine (default) | Compatibility mode |
 |---|---|---|
 | **Used when** | The accessibility service is on | Accessibility is unavailable, e.g. Android 17's Advanced Protection, which reserves accessibility for genuine accessibility tools |
-| **Sees** | Which app is on screen; the label of what you tap on the home screen, in its search or in Recents; app names on Recents cards (while Recents is open and a locked app is unlocked); with self-protection on, BioKey's own Settings pages | Which app was just opened, and whether a locked app is still on screen (usage access) |
+| **Sees** | Which app is on screen; the label of what you tap on the home screen, in its search or in Recents; app names on Recents cards (while Recents is open and a locked app is unlocked); with self-protection on (not in the Play version), BioKey's own Settings pages | Which app was just opened, and whether a locked app is still on screen (usage access) |
 | **Covers locked apps** | From the tap, before the app has a window | As the app opens, with an overlay: it checks every 0.15 s, so a cold launch is covered as it opens, while a warm one can show for about half a second first (see [Limits](#limits)) |
-| **Self-protection** | Yes (optional) | No |
+| **Self-protection** | Yes (optional; not in the Play version) | No |
 | **Extra** | | A low-priority notification while running (required by Android) |
 
 BioKey switches between them by itself, including the moment Advanced Protection is turned on or off.
@@ -90,7 +90,7 @@ Android 17 QPR2 (API 37.2) adds a native App Lock (`PackageManager.getEnableAppL
 
 | Permission | Why |
 |---|---|
-| Accessibility service | Sees which app is on screen; reads the label of what you tap on the home screen, in its search or in Recents, and, while Recents is open and a locked app is unlocked, the app names on its cards; with self-protection on, recognises BioKey's own settings pages. Doesn't read what you type. |
+| Accessibility service | Sees which app is on screen; reads the label of what you tap on the home screen, in its search or in Recents, and, while Recents is open and a locked app is unlocked, the app names on its cards; with self-protection on (not in the Play version), recognises BioKey's own settings pages. Doesn't read what you type. |
 | `USE_BIOMETRIC` | Face and fingerprint authentication, through the system prompt. |
 | `HIDE_OVERLAY_WINDOWS` | Hides other apps' overlays while BioKey's screens are showing. |
 | `POST_NOTIFICATIONS` | The protection alert and hidden-notification stand-ins. |
@@ -105,7 +105,7 @@ BioKey is built to stay within Google Play's rules, so Play Protect and Advanced
 
 - **Honest accessibility declaration** (`isAccessibilityTool="false"`), and compatibility mode for when Android reserves accessibility for real accessibility tools.
 - **Prominent disclosure and consent** in the app before every sensitive permission (accessibility, usage access + overlay, notification access). Only **Agree** continues; Back or dismissing is not consent.
-- **No blocking of uninstall or disable unless you turn it on**: self-protection is opt-in.
+- **No blocking of uninstall or disable**: the Google Play version has no self-protection, since Play's Accessibility API policy allows that only to parental-control and enterprise apps. Builds from source can include it, opt-in.
 - **Minimum permissions**: no `INTERNET`, no `QUERY_ALL_PACKAGES`, no battery-optimisation exemption, no `VIBRATE`.
 
 Installs from Google Play are exempt from Android's restricted settings and from Play Protect's fraud protection for sideloaded apps that request accessibility or notification access. A build installed from a file has to be allowed restricted settings first (see [Support](https://peacetothemountain.github.io/BioKey/support/)).
@@ -176,6 +176,16 @@ A relative `storeFile` path is resolved from the project root. Without `key.prop
 ```
 
 Its version name ends in `-debugsigned`, so it can't be mistaken for a real release.
+
+### Self-protection builds
+
+Release builds, including the one on Google Play, leave self-protection out: its switch isn't shown, and a saved or restored "on" reads as off. Google Play's Accessibility API policy doesn't allow an app to stop users disabling or uninstalling it, outside parental-control and enterprise apps. Debug builds always have it, so its tests run. For a release you install yourself:
+
+```bash
+./gradlew :app:assembleRelease -Pbiokey.selfProtection=true
+```
+
+Its version name ends in `-selfprotection`. Never upload one to Google Play.
 
 Publishing to Google Play (Play Console declarations, signing, developer verification, the privacy-policy page) is covered in [docs/RELEASING.md](docs/RELEASING.md).
 

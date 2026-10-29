@@ -5,7 +5,7 @@ permalink: /privacy/
 ---
 # BioKey privacy policy
 
-_Effective 24 October 2026_
+_Effective 28 October 2026_
 
 BioKey is an app lock for Android, made by NB Designs. It keeps the apps you choose behind your
 face, fingerprint or screen lock. This policy explains what BioKey can see on your phone, what it
@@ -48,7 +48,8 @@ called "Bio Key App Lock Service". BioKey is not an accessibility tool, and says
   unlocked, so closing that app from Recents locks it again.
 - The title Android gives each new window. BioKey uses it only to tell Google Password Manager's
   own screens apart from sign-in sheets that appear over other apps.
-- If you turn on self-protection (off by default): the text of Android's Settings pages about
+- Not in the Google Play version: builds made from BioKey's source code can include
+  self-protection (off by default). Turned on, it reads the text of Android's Settings pages about
   BioKey itself (its App info page, its accessibility switch, notification access and the
   uninstall dialog), so BioKey can ask for your authentication before it is switched off or
   uninstalled.
@@ -102,8 +103,8 @@ can also see which home screens, keyboards, photo and file pickers, galleries an
 installed, whether Google Play services and Credential Manager are installed, and the Settings
 app's own labels. This is used only on the phone: to tell going Home (which ends a locked app's
 session) apart from a short trip to a keyboard, a picker or the camera (which doesn't), to
-recognise Google Password Manager, and, for self-protection, to recognise BioKey's own Settings
-pages. BioKey doesn't request access to the full list of installed packages
+recognise Google Password Manager, to open Settings pages in the Settings app itself, and, for
+self-protection (not in the Google Play version), to recognise BioKey's own Settings pages. BioKey doesn't request access to the full list of installed packages
 (`QUERY_ALL_PACKAGES`).
 
 ### Other permissions
@@ -155,7 +156,8 @@ BioKey can save your settings to a backup file, and restore them, from its setti
 settings, Restore from a backup). This happens only when you ask for it.
 
 - **What's in it:** which apps you've locked, your profiles and their re-lock delays, and BioKey's
-  settings (default re-lock delay, notification shield, self-protection, auto-sort). Nothing else:
+  settings (default re-lock delay, notification shield, auto-sort, and self-protection in builds
+  that have it). Nothing else:
   no diagnostic log, no notifications, no authentication data.
 - **How it's protected:** the file is sealed with a password you choose (at least 8 characters),
   using AES-256-GCM with a key derived from your password by PBKDF2-SHA256 (600,000 rounds).

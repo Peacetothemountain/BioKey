@@ -19,6 +19,14 @@ val allowDebugSignedRelease = providers.gradleProperty("biokey.allowDebugSignedR
     .map { it.toBoolean() }
     .getOrElse(false)
 
+// Self-protection (asking for authentication before BioKey can be switched off or uninstalled)
+// is left out of release builds: Google Play's Accessibility API policy forbids preventing users
+// from disabling or uninstalling an app outside parental-control and enterprise apps. A release
+// for sideloading can opt back in with: ./gradlew assembleRelease -Pbiokey.selfProtection=true
+val selfProtectionInRelease = providers.gradleProperty("biokey.selfProtection")
+    .map { it.toBoolean() }
+    .getOrElse(false)
+
 android {
     namespace = "com.android.BioKey"
     compileSdk { version = release(37) { minorApiLevel = 2 } }
@@ -45,7 +53,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Self-protection's tests run on debug builds, so they always have it.
+            buildConfigField("boolean", "SELF_PROTECTION", "true")
+        }
         release {
+            buildConfigField("boolean", "SELF_PROTECTION", "$selfProtectionInRelease")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -62,6 +75,8 @@ android {
                 }
                 else -> signingConfig = null // Produces an unsigned APK; configure key.properties to sign.
             }
+            // Marked too, so a build with self-protection is never mistaken for the Play build.
+            if (selfProtectionInRelease) versionNameSuffix = (versionNameSuffix ?: "") + "-selfprotection"
         }
     }
 

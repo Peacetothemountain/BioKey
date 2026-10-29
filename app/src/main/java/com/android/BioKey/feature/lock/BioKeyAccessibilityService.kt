@@ -425,7 +425,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     private fun checkSelfProtectionAgain() {
         val host = activeSelfProtectionHost ?: return
-        if (!::vault.isInitialized) return
+        // Switched off (or not in this build): no reading Settings pages' text at all.
+        if (!::vault.isInitialized || !vault.isAccessibilitySelfProtectionEnabled()) return
         if (shield.isShowing || LockScreenActivity.isLockScreenResumed || SecurityEngine.INSTANCE.isAuthenticating() ||
             LockStateTracker.isRecentlyAbandoned(SELF_PROTECTION_PENDING_KEY)
         ) return

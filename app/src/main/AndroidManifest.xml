@@ -25,7 +25,9 @@
         <package android:name="com.google.android.gms" />
         <package android:name="com.google.android.apps.credentialmanager" />
         <package android:name="com.android.credentialmanager" />
-        <!-- Settings' own labels ("Force stop", "Uninstall"...), read in the phone's language for self-protection. -->
+        <!-- Settings itself: its pages open straight in it, never in an app posing as it
+             (IntentNavigationHelper), and self-protection reads its labels ("Force stop",
+             "Uninstall"...) in the phone's language. -->
         <package android:name="com.android.settings" />
         <!-- Apps the user can pick to lock. -->
         <intent>

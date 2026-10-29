@@ -57,6 +57,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
+import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.IconBadge
 
@@ -76,16 +77,20 @@ enum class Disclosure(
     ACCESSIBILITY(
         Icons.Default.Accessibility,
         "BioKey uses the Accessibility service",
-        reads = listOf(
+        reads = listOfNotNull(
             "Which app is on screen",
             "The label of what you tap on the home screen, in its search or in Recents",
             "The names of apps on Recents cards, while Recents is open and an app you've locked is unlocked",
+            "The title Android gives each new window, to tell Google Password Manager's screens from sign-in sheets over other apps",
             "The text of system Settings pages about BioKey itself (App info, Accessibility, notification access, uninstall)"
+                .takeIf { SecurityVault.selfProtectionAvailable }
         ),
-        usedFor = listOf(
+        usedFor = listOfNotNull(
             "Covering apps you've locked until you authenticate, even before they open",
+            "Pressing Home or Back for you, to leave a locked app you didn't unlock",
             "Ending a locked app's session when you close it from Recents",
             "Asking for authentication before BioKey can be switched off, if you turn that on"
+                .takeIf { SecurityVault.selfProtectionAvailable }
         )
     ),
     COMPATIBILITY(
@@ -100,7 +105,8 @@ enum class Disclosure(
     NOTIFICATIONS(
         Icons.Default.Notifications,
         "BioKey uses notification access",
-        reads = listOf("Notifications from apps you've locked"),
+        // Android hands every new notification to the listener; say so, not just the locked apps' ones.
+        reads = listOf("Which app posted each new notification, and what kind it is (calls, alarms, media and navigation are never hidden)"),
         usedFor = listOf("Hiding their content until you unlock the app, then putting them back"),
         // Hidden notifications are snoozed for up to a day, and only BioKey's access can bring them back early.
         turningOff = "You can turn this off at any time in Android settings. To bring hidden notifications back, " +

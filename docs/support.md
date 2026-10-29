@@ -63,7 +63,6 @@ off. In compatibility mode:
 
 - A locked app is covered as it opens rather than at the tap, so an app that was still in memory
   can show for about half a second first.
-- BioKey can't guard its own settings (self-protection).
 - Android requires a low-priority notification while it runs.
 
 Both permissions are needed: if either is turned off, BioKey stops locking and sends you an alert.
@@ -158,13 +157,6 @@ biometrics for a while; use your PIN, pattern or password.
 
 ### How do I uninstall BioKey?
 
-If **Protect BioKey's settings** is on, Android's uninstall dialog asks for your authentication
-first; you can switch it off in BioKey's settings beforehand. Switch off **Hide notification
-content** first too, so no notifications stay hidden. Uninstalling deletes everything BioKey kept
-on the phone; backup files you saved stay where you saved them.
-
-### An accessibility shortcut can switch BioKey off
-
-A shortcut (the volume keys or the accessibility button) assigned to Bio Key App Lock Service
-switches it off without authentication. BioKey's settings warn you while one is assigned; remove
-it in Settings > Accessibility > Bio Key App Lock Service if you rely on self-protection.
+Switch off **Hide notification content** in BioKey's settings first, so no notifications stay
+hidden. Uninstalling deletes everything BioKey kept on the phone; backup files you saved stay where
+you saved them.

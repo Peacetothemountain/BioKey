@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.provider.Settings
 import androidx.annotation.VisibleForTesting
 import androidx.core.content.edit
+import com.android.BioKey.BuildConfig
 import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.data.AppClassifier
 import com.android.BioKey.core.data.LockTimeoutMode
@@ -45,6 +46,13 @@ import org.json.JSONObject
 class SecurityVault private constructor(private val context: Context) {
 
     companion object {
+        /**
+         * Whether this build has self-protection at all. The Play build doesn't (see
+         * app/build.gradle.kts): its switch is hidden, and a saved or restored "on" reads as off.
+         */
+        @VisibleForTesting
+        internal var selfProtectionAvailable = BuildConfig.SELF_PROTECTION
+
         private const val PREF_NAME = "biokey_vault"
         private const val KEY_LOCKED = "locked_apps_set"
         private const val KEY_GLOBAL = "global_lock_enabled"
@@ -386,7 +394,7 @@ class SecurityVault private constructor(private val context: Context) {
         val selected = validPackages(strings("selected"))
         val excluded = PasswordManager.expand(validPackages(strings("autoSortExcluded")))
         val shield = state.optBoolean("notificationShield", true)
-        val selfProtection = state.optBoolean("selfProtection", false)
+        val selfProtection = state.optBoolean("selfProtection", false) && selfProtectionAvailable
         mutate { sel, profs ->
             sel.clear()
             sel += selected
@@ -509,8 +517,9 @@ class SecurityVault private constructor(private val context: Context) {
     }
 
     fun setAccessibilitySelfProtectionEnabled(enabled: Boolean) {
-        setPreference { _accessibilitySelfProtectionFlow.value = enabled }
-        if (!enabled) LockStateTracker.clearSelfProtection()
+        val on = enabled && selfProtectionAvailable
+        setPreference { _accessibilitySelfProtectionFlow.value = on }
+        if (!on) LockStateTracker.clearSelfProtection()
     }
 
     /**
@@ -603,7 +612,8 @@ class SecurityVault private constructor(private val context: Context) {
         _notificationShieldFlow.value = prefs.getBoolean(KEY_NOTIFICATION_SHIELD, true)
         _setupCompletedFlow.value = prefs.getBoolean(KEY_SETUP_COMPLETED, false)
         // Opt-in (Play policy: no blocking of uninstall/disable unless the user chose it).
-        _accessibilitySelfProtectionFlow.value = prefs.getBoolean(KEY_SELF_PROTECTION, false)
+        // Off in a build without it, even if an earlier build saved it on.
+        _accessibilitySelfProtectionFlow.value = prefs.getBoolean(KEY_SELF_PROTECTION, false) && selfProtectionAvailable
         _autoSortProfilesFlow.value = prefs.getBoolean(KEY_AUTO_SORT, true)
 
         // A timed pause survives a restart only while its time is left.

@@ -6,6 +6,7 @@ import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -30,6 +31,7 @@ object IntentNavigationHelper {
     fun launchFallbackCascade(context: Context, intents: List<Intent>): Boolean {
         LockStateTracker.beginExternalNavigation(preAuthorizeSelfProtection = true)
         for (intent in intents) {
+            pinToSystemHandler(context, intent)
             if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             try {
                 context.startActivity(intent)
@@ -43,6 +45,19 @@ object IntentNavigationHelper {
         LockStateTracker.onOwnAppResumed()
         BioKeyMessages.show("Couldn't open that settings page on this phone", Icons.Default.ErrorOutline)
         return false
+    }
+
+    /**
+     * Sends a settings intent straight to the system app that handles it, so another app that
+     * claims the same action can't be offered in a chooser and pose as Settings (to fish for the
+     * screen lock, say) while BioKey's leave pass is open. Where no system handler is visible to
+     * BioKey, or only the chooser resolves, the intent stays implicit as before.
+     */
+    internal fun pinToSystemHandler(context: Context, intent: Intent) {
+        if (intent.component != null) return
+        val handler = context.packageManager.resolveActivity(intent, PackageManager.MATCH_SYSTEM_ONLY)?.activityInfo ?: return
+        if (handler.packageName == "android") return
+        intent.setClassName(handler.packageName, handler.name)
     }
 
     private fun appDetails(context: Context) =

@@ -244,7 +244,8 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 }
             }
         ),
-        SettingItem(
+        // Not in the Play build (see SecurityVault.selfProtectionAvailable).
+        if (SecurityVault.selfProtectionAvailable) SettingItem(
             icon = Icons.Default.AdminPanelSettings,
             title = "Protect BioKey's settings",
             subtitle = when {
@@ -278,7 +279,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                     }
                 }
             }
-        ),
+        ) else null,
         // The shortcut only matters while the service is on: it switches it off at once.
         if (selfProtectionEnabled && mode == ProtectionEngine.Mode.ACCESSIBILITY && shortcutAssigned) {
             SettingItem(
