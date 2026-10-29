@@ -26,13 +26,13 @@ HSPLcom/android/BioKey/core/security/SecurityVault**->**(**)**
 HSPLcom/android/BioKey/core/security/SecurityEngine**->**(**)**
 HSPLcom/android/BioKey/core/security/ProtectionEngine**->**(**)**
 HSPLcom/android/BioKey/core/security/AdvancedProtection**->**(**)**
-HSPLcom/android/BioKey/core/security/WindowProtection**->**(**)**
+HSPLcom/android/BioKey/ui/security/WindowProtection**->**(**)**
 Lcom/android/BioKey/core/security/LockStateTracker**;
 Lcom/android/BioKey/core/security/SecurityVault**;
 Lcom/android/BioKey/core/security/SecurityEngine**;
 Lcom/android/BioKey/core/security/ProtectionEngine**;
 Lcom/android/BioKey/core/security/AdvancedProtection**;
-Lcom/android/BioKey/core/security/WindowProtection**;
+Lcom/android/BioKey/ui/security/WindowProtection**;
 HSPLcom/android/BioKey/core/data/PasswordManager**->**(**)**
 HSPLcom/android/BioKey/core/data/LockTimeoutMode**->**(**)**
 HSPLcom/android/BioKey/core/data/SecurityProfile**->**(**)**

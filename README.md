@@ -314,9 +314,10 @@ core/diagnostics   DiagnosticLog (on-phone log of lock decisions), EngineTrace (
                    latency marks)
 core/receiver      Boot receiver
 feature/lock       BioKeyAccessibilityService, WindowReader (every look at the screen),
-                   UsageWatchService (compatibility mode), ForegroundRules, SessionRules, LockLauncher, InstantShieldOverlay, WindowMask,
-                   LockScreenActivity, LockCoverView, SelfProtectionDetector, RecentsWatcher,
-                   AppInfoCache, AppLabels, ScreenReceiver
+                   UsageWatchService (compatibility mode), ForegroundRules, SessionRules,
+                   LockLauncher, InstantShieldOverlay, WindowMask, LockScreenActivity,
+                   LockCoverView, SelfProtectionDetector, RecentsWatcher, AppInfoCache,
+                   AppLabels, ScreenReceiver
 feature/main       MainActivity (BioKey's own lock), main screen, profile sheets, settings,
                    backup and diagnostic log
 feature/setup      First-run setup
@@ -326,7 +327,8 @@ ui                 AppIcons
 ui/brand           KeyMark (the launcher icon's key, in vector), BioKeyLogo and WordmarkView (it, still),
                    BioKeyMarkSideways (the home header's, swirling), header constellation
 ui/theme           BioKeyTheme, components, callout, messages, system haptics, press animation
-ui/disclosure      What BioKey reads and keeps, shown before each permission; notification permission
+ui/disclosure      What BioKey reads and keeps, shown before each permission; the
+                   notification permission
 ui/navigation      IntentNavigationHelper (Settings pages, pinned to the Settings app)
 ui/security        WindowProtection (secure windows, obscured-touch rejection)
 ui/format          Record times

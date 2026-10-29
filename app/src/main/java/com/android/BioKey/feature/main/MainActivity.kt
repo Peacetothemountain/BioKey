@@ -288,7 +288,7 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Touches and key presses keep BioKey's session alive. Dialogs and sheets count their own
-     * ([com.android.BioKey.core.security.ProtectDialogWindow]); screen readers are counted by
+     * ([com.android.BioKey.ui.security.ProtectDialogWindow]); screen readers are counted by
      * [WindowProtection.countAccessibilityInteractions].
      */
     override fun onUserInteraction() {
