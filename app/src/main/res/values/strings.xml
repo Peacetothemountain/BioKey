@@ -42,7 +42,7 @@
 
     <!-- Failed unlock alerts and times app locking was off. Which app is never named in the notification. -->
     <string name="activity_channel_name">Security activity</string>
-    <string name="activity_channel_description">Failed unlocks of locked apps, times app locking was off, faces or fingerprints added or removed, notification access switched off under Hide notification content, and changes made from BioKey opened with the screen lock. Told the next time you unlock your phone.</string>
+    <string name="activity_channel_description">Failed unlocks of locked apps, times app locking was off, faces or fingerprints added or removed, notification access switched off under Hide notification content, times a face or fingerprint couldn\'t be used so the screen lock was allowed, and changes made from BioKey opened with the screen lock. Told the next time you unlock your phone.</string>
     <string name="activity_title">Security activity</string>
     <string name="gaps_title">App locking was off</string>
     <string name="biometrics_changed_notification_text">A face or fingerprint was added or removed on this phone. If it wasn\'t you, check them in Android\'s settings.</string>
@@ -87,7 +87,7 @@
     <string name="common_not_locked">Not locked</string>
 
     <!-- Prominent disclosures (Disclosures.kt): shown before BioKey sends the user to grant a sensitive permission. -->
-    <string name="disclosure_turning_off">You can turn this off at any time in Android settings.</string>
+    <string name="disclosure_turning_off">You can turn this off at any time in Android settings. (If you\'ve locked Android Settings in BioKey, opening it asks for your face or fingerprint first, or your screen lock if they can\'t be used.)</string>
     <string name="disclosure_accessibility_title">BioKey uses the Accessibility service</string>
     <string name="disclosure_accessibility_reads_app_on_screen">Which app is on screen</string>
     <string name="disclosure_accessibility_reads_tap_labels">The label of what you tap on the home screen, in its search or in Recents</string>
@@ -321,7 +321,7 @@
     </plurals>
     <!-- App · when · what happened. -->
     <!-- A no-break space after each dot: a line never ends on a separator. -->
-    <string name="card_attempt_line">%1$s · %2$s · %3$s</string>
+    <string name="card_attempt_line">%1$s · %2$s · %3$s</string>
     <string name="card_review">Review</string>
     <string name="card_review_description">Review security activity</string>
 
@@ -338,13 +338,13 @@
     <string name="card_time_date">%1$s, %2$s</string>
 
     <!-- One time app locking was off, or one change: when · what. -->
-    <string name="card_gap_biometrics_changed">%1$s · a face or fingerprint was added or removed</string>
-    <string name="card_gap_biometrics_removed">%1$s · no face or fingerprint is set up any more</string>
+    <string name="card_gap_biometrics_changed">%1$s · a face or fingerprint was added or removed</string>
+    <string name="card_gap_biometrics_removed">%1$s · no face or fingerprint is set up any more</string>
     <string name="card_gap_protection_changed">Protection changed</string>
-    <string name="card_gap_changed_with_screen_lock">%1$s · %2$s (BioKey was opened with the screen lock)</string>
-    <string name="card_gap_event">%1$s · %2$s</string>
+    <string name="card_gap_changed_with_screen_lock">%1$s · %2$s (BioKey was opened with the screen lock)</string>
+    <string name="card_gap_event">%1$s · %2$s</string>
     <string name="card_gap_force_stopped_unknown">BioKey was force-stopped, for a time that can\'t be told (the clock was set back), until %1$s</string>
-    <string name="card_gap_shield_access_revoked_range">%1$s · notification access was off while Hide notification content was on</string>
+    <string name="card_gap_shield_access_revoked_range">%1$s · notification access was off while Hide notification content was on</string>
     <!-- What a record of a change says ([ProtectionGaps.Change]). -->
     <string name="change_paused">Protection paused</string>
     <string name="change_lock_off">%1$s\'s lock switched off</string>
@@ -362,8 +362,8 @@
     <string name="change_default_delay_longer">Default re-lock delay made longer: %1$s</string>
     <string name="change_shield_off">Hide notification content switched off</string>
     <string name="change_biometric_unavailable">Face or fingerprint couldn\'t be used, so the screen lock was allowed</string>
-    <string name="card_gap_switched_off">%1$s · switched off</string>
-    <string name="card_gap_force_stopped">%1$s · BioKey was force-stopped</string>
+    <string name="card_gap_switched_off">%1$s · switched off</string>
+    <string name="card_gap_force_stopped">%1$s · BioKey was force-stopped</string>
 
     <!-- When an unlocked app, off screen, locks again. -->
     <string name="card_session_immediately">Re-locks immediately after you leave it</string>
@@ -382,13 +382,14 @@
     <string name="card_activity_changes">Changes</string>
     <string name="card_change_biometrics_changed_hint">If you didn\'t, check your faces and fingerprints in Android\'s settings</string>
     <string name="card_change_biometrics_removed_hint">Your screen lock opens locked apps again</string>
-    <string name="card_gap_shield_access_revoked">%1$s · notification access switched off while Hide notification content was on</string>
+    <string name="card_gap_shield_access_revoked">%1$s · notification access switched off while Hide notification content was on</string>
     <string name="card_change_shield_access_hint">Locked apps\' notifications show in full until it\'s back on</string>
     <string name="shield_access_notification_text">Notification access was switched off, so locked apps\' notifications show in full. Open BioKey to turn it back on.</string>
     <string name="home_shield_no_access_title">Notifications aren\'t hidden</string>
     <string name="home_shield_no_access_text">Hide notification content is on, but BioKey\'s notification access is off, so locked apps\' notifications show in full.</string>
     <string name="home_shield_no_access_action">Allow access</string>
     <string name="home_shield_no_access_off">Turn off</string>
+    <string name="home_confirm_shield_off">Show locked apps\' notifications in full</string>
     <string name="home_shield_turned_off">Hide notification content is off</string>
     <string name="activity_held_until">A face or fingerprint added or removed stays new, and its alert keeps coming back, until %1$s: whoever made the change can\'t hide it from you.</string>
     <string name="app_label_unknown">This app</string>
@@ -421,12 +422,12 @@
     <string name="permission_both">%1$s and %2$s</string>
     <string name="settings_shield_allow_access">Locked apps\' notifications show in full · tap to allow notification access</string>
     <string name="card_change_screen_lock_hint">If it wasn\'t you, someone knows your screen lock</string>
-    <string name="card_change_biometrics_note">Anyone who knows your screen lock can add their own face or fingerprint in Android\'s settings. These can\'t be cleared here: they go 7 days after you\'ve seen them.</string>
+    <string name="card_change_biometrics_note">Anyone who knows your screen lock can do this in Android\'s settings. It can\'t be cleared here: it stays new for a day, then goes 7 days after you\'ve seen it.</string>
     <string name="card_gap_hint">Locked apps could be opened without a check</string>
     <string name="card_gaps_note">Switched off in Android\'s settings, or BioKey force-stopped. Android stopping BioKey on its own isn\'t listed, but some phone makers\' battery savers force-stop apps just as a person would.</string>
     <string name="card_failed_unlocks">Failed unlocks</string>
     <!-- When · what happened. -->
-    <string name="card_attempt_detail">%1$s · %2$s</string>
+    <string name="card_attempt_detail">%1$s · %2$s</string>
     <string name="card_attempts_note">Faces or fingerprints that didn\'t match. Misses your own face or fingerprint then fixed, on the same prompt, were you and aren\'t listed. Android doesn\'t tell apps about a wrong PIN.</string>
     <string name="card_mark_reviewed">Mark reviewed</string>
     <string name="card_clear">Clear</string>

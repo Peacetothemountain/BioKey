@@ -38,7 +38,7 @@ import org.json.JSONObject
  *
  * Alongside the gaps, moments ([recordEvent]): a face or fingerprint added or removed, and changes
  * that weaken protection made from BioKey opened with the screen lock ([recordIfScreenLock]: a
- * pause, a lock or profile switched off, a longer delay, a restore, and the like).
+ * pause, a lock or profile switched off, a longer delay, and the like).
  *
  * A gap's length is measured on the clock since boot where it can be, and its order on
  * [UnlockAttempts]' sequence numbers, so changing the phone's clock neither shortens nor hides
@@ -318,9 +318,33 @@ object ProtectionGaps {
      * opening BioKey with a face or fingerprint, or on a phone without one, it's the owner's own.
      */
     fun recordIfScreenLock(context: Context, change: Change, vararg args: String) {
-        if (SecurityEngine.ownerProven(context)) return
-        recordEvent(context, Kind.CHANGED_WITH_SCREEN_LOCK, change.encode(*args))
+        val app = context.applicationContext
+        recorder.execute {
+            if (!SecurityEngine.ownerProven(app)) recordEvent(app, Kind.CHANGED_WITH_SCREEN_LOCK, change.encode(*args))
+        }
     }
+
+    /**
+     * Undo of [change] moments after it ([recordIfScreenLock]): its record goes too, if it's still
+     * the newest one, so an undone change doesn't read as a real one. In order with the recording.
+     */
+    fun retract(context: Context, change: Change) {
+        val app = context.applicationContext
+        recorder.execute {
+            val p = load(app) ?: return@execute
+            synchronized(lock) {
+                val newest = _gaps.value.maxByOrNull { it.seq } ?: return@execute
+                if (newest.kind == Kind.CHANGED_WITH_SCREEN_LOCK && Change.decode(newest.detail)?.first == change &&
+                    clock() - newest.to < 60_000L
+                ) save(p, _gaps.value - newest)
+            }
+        }
+    }
+
+    /** Where screen-lock changes are recorded: in order, off the main thread. */
+    @VisibleForTesting
+    internal var recorder: java.util.concurrent.Executor =
+        java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-records").apply { isDaemon = true } }
 
     private val recordedOnce = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
 
@@ -364,10 +388,13 @@ object ProtectionGaps {
      * stays until it ages out: whoever added one could otherwise use it to clear the record of
      * doing so.
      */
-    fun clear(context: Context): List<Gap> {
+    fun clear(context: Context, upTo: Long = Long.MAX_VALUE): List<Gap> {
         val p = load(context) ?: return emptyList()
+        val limit = UnlockAttempts.clearableUpTo(context, upTo)
         return synchronized(lock) {
-            val (stays, goes) = _gaps.value.partition { it.kind == Kind.BIOMETRICS_CHANGED || it.kind == Kind.BIOMETRICS_REMOVED }
+            val (stays, goes) = _gaps.value.partition {
+                it.kind == Kind.BIOMETRICS_CHANGED || it.kind == Kind.BIOMETRICS_REMOVED || it.seq > limit
+            }
             save(p, stays)
             goes
         }

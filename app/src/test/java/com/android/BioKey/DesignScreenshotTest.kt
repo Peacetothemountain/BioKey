@@ -240,6 +240,8 @@ class DesignScreenshotTest {
         SecurityVault.getInstance(context).setSetupCompletedSync(true)
         SecurityVault.getInstance(context).setNotificationShield(true)
         com.android.BioKey.feature.notification.ShieldAccessWatch.hasAccess = { false }
+        // As BioKey's start does: the home screen opens with what it found.
+        com.android.BioKey.feature.notification.ShieldAccessWatch.check(context)
         try {
             shoot("main_shield_no_access") { MainScreenExpressive(mode = ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
         } finally {

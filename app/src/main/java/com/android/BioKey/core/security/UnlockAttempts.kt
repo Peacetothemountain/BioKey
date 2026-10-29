@@ -119,6 +119,8 @@ object UnlockAttempts {
     /** The last sequence number handed out ([nextSeq]), for these records and [ProtectionGaps]'. */
     private const val KEY_SEQ = "seq"
     /** Records up to this sequence number have been seen in BioKey (Review): kept until they age. */
+    /** The newest record the owner has reviewed, whether or not a hold has let it count yet. */
+    private const val KEY_REVIEWED_SEQ = "reviewed_seq"
     private const val KEY_SEEN_SEQ = "seen_seq"
     /** Records up to this sequence number have been notified. */
     private const val KEY_NOTIFIED_SEQ = "notified_seq"
@@ -340,6 +342,7 @@ object UnlockAttempts {
      */
     fun onUserPresent(context: Context) {
         val p = load(context) ?: return
+        applyPendingReview(context)
         p.edit { putLong(KEY_PRESENT_SEQ, p.getLong(KEY_SEQ, 0L)).putBoolean(KEY_REPOST, true) }
         scheduleNotification(context.applicationContext, 0L)
     }
@@ -351,6 +354,10 @@ object UnlockAttempts {
     fun markSeen(context: Context, upTo: Long = Long.MAX_VALUE) {
         val p = load(context) ?: return
         synchronized(lock) {
+            // Kept, so a review held back by a face or fingerprint change takes effect by itself
+            // once the hold ends ([applyPendingReview]), not only at the next Review.
+            val wanted = minOf(upTo, maxOf(_attempts.value.maxOfOrNull { it.seq } ?: 0L, ProtectionGaps.gaps.value.maxOfOrNull { it.seq } ?: 0L))
+            if (wanted > p.getLong(KEY_REVIEWED_SEQ, 0L)) p.edit { putLong(KEY_REVIEWED_SEQ, wanted) }
             // Up to the newest record actually there (and shown), not a number handed out a moment
             // ago to one another thread hasn't stored yet.
             val newest = maxOf(_attempts.value.maxOfOrNull { it.seq } ?: 0L, ProtectionGaps.gaps.value.maxOfOrNull { it.seq } ?: 0L)
@@ -364,6 +371,20 @@ object UnlockAttempts {
         _seen.value = seenSeq(context)
         cancelIfAllSeen(context)
     }
+
+    /** A review a hold kept back ([markSeen]) applies once the hold has ended. */
+    private fun applyPendingReview(context: Context) {
+        val p = load(context) ?: return
+        val wanted = p.getLong(KEY_REVIEWED_SEQ, 0L)
+        if (wanted > p.getLong(KEY_SEEN_SEQ, 0L)) markSeen(context, wanted)
+    }
+
+    /**
+     * What Review > Clear may remove: up to [upTo], and nothing at all while a face or fingerprint
+     * change is held (whoever made it could otherwise clear what happened around it).
+     */
+    fun clearableUpTo(context: Context, upTo: Long): Long =
+        if (heldBiometricChange(context, seenSeq(context)) != null) 0L else upTo
 
     /** Still something new (held back, or newer than what was shown): the alert stays. */
     private fun cancelIfAllSeen(context: Context) {
@@ -400,22 +421,32 @@ object UnlockAttempts {
     /** When the oldest face-or-fingerprint record still held back stops being held, on [TrustedClock]; null if none. */
     fun heldUntil(context: Context): Long? {
         val seen = seenSeq(context)
-        val seq = heldBiometricChange(context, seen) ?: return null
-        val gap = ProtectionGaps.gaps.value.firstOrNull { it.seq == seq } ?: return null
+        val first = heldBiometricChange(context, seen) ?: return null
         val boot = bootCount(context)
         val since = elapsed()
         val now = TrustedClock.now()
-        return when {
-            gap.boot == boot -> now + (BIOMETRIC_HOLD_MS - (since - gap.toElapsed))
-            gap.net && TrustedClock.onNetworkTime() -> gap.to + BIOMETRIC_HOLD_MS
-            else -> now + (BIOMETRIC_HOLD_MS - since)
-        }
+        val onNet = TrustedClock.onNetworkTime()
+        // The last of them to be let go: the alert lasts until then.
+        return ProtectionGaps.gaps.value
+            .filter { it.isBiometricRecord && it.seq >= first }
+            .maxOfOrNull { gap ->
+                when {
+                    gap.boot == boot -> now + (BIOMETRIC_HOLD_MS - (since - gap.toElapsed))
+                    gap.net && onNet -> gap.to + BIOMETRIC_HOLD_MS
+                    else -> now + (BIOMETRIC_HOLD_MS - since)
+                }
+            }
     }
 
     /** Removes everything kept; returns it, for Undo. */
-    fun clear(context: Context): List<Attempt> {
+    fun clear(context: Context, upTo: Long = Long.MAX_VALUE): List<Attempt> {
         val p = load(context) ?: return emptyList()
-        val old = synchronized(lock) { _attempts.value.also { save(p, emptyList()) } }
+        val limit = clearableUpTo(context, upTo)
+        val old = synchronized(lock) {
+            val (goes, stays) = _attempts.value.partition { it.seq <= limit }
+            save(p, stays)
+            goes
+        }
         cancelIfAllSeen(context)
         return old
     }

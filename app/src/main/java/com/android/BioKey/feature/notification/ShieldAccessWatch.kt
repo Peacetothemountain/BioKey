@@ -26,7 +26,14 @@ object ShieldAccessWatch {
 
     /** Whether the shield is on but can't work: home's card. */
     fun shieldWithoutAccess(context: Context): Boolean =
-        SecurityVault.getInstance(context).isNotificationShieldEnabled() && !hasAccess(context)
+        (SecurityVault.getInstance(context).isNotificationShieldEnabled() && !hasAccess(context)).also { lastWithoutAccess = it }
+
+    /** Whether BioKey had notification access, as last looked at ([check]); null before the first look. */
+    @Volatile var lastKnownAccess: Boolean? = null
+        private set
+    /** [shieldWithoutAccess] as last worked out, for a screen's first frame; null before the first time. */
+    @Volatile var lastWithoutAccess: Boolean? = null
+        private set
 
     private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-shield-access").apply { isDaemon = true } }
 
@@ -42,6 +49,8 @@ object ShieldAccessWatch {
         val p = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val shieldOn = SecurityVault.getInstance(app).isNotificationShieldEnabled()
         val access = hasAccess(app)
+        lastKnownAccess = access
+        lastWithoutAccess = shieldOn && !access
         val had = p.getBoolean(KEY_HAD_ACCESS, false)
         when {
             shieldOn && access -> if (!had) {

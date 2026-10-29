@@ -63,6 +63,11 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
   own settings; Lock Android Settings has a Lock button. The lock screen scrolls instead of running
   under the status bar in landscape. Setup's constellation keeps clear of its title.
 - Auto-sort never files an app you locked into a profile that's off.
+- While a face or fingerprint change is new, Review can't clear anything (whoever made it can't
+  erase what happened around it), and Clear only ever removes what Review showed. A review made
+  meanwhile takes effect by itself when the day is up. Switching hiding off from home asks for
+  your face or fingerprint, ends the revoked-access record then and there, and Undo takes the
+  record back.
 - Reviewed security activity is shown calmly; only something new makes the card urgent. Review
   says until when a face or fingerprint change stays new. Moving or adding a locked app into a
   profile that re-locks later, or taking it out of one, is recorded.

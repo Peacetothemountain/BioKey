@@ -26,8 +26,8 @@ It applies to BioKey 1.0 and later, as published on Google Play
 - **Everything stays on your phone.** What BioKey keeps (your locked apps, profiles and
   settings, a short log of its own lock decisions, the times app locking was off, faces or
   fingerprints added or removed, notification access switched off while Hide notification content
-  was on, changes made from BioKey opened with the screen lock, and, if you turn them on, failed
-  unlock alerts) stays in its private storage, unless you choose to save a
+  was on, a face or fingerprint that couldn't be used under "Face or fingerprint only", changes
+  made from BioKey opened with the screen lock, and, if you turn them on, failed unlock alerts) stays in its private storage, unless you choose to save a
   backup file or share the log yourself.
 
 ## What BioKey can see, and why
@@ -166,7 +166,8 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   (or none is set up); otherwise Review offers "Mark reviewed", which asks for one. A face or
   fingerprint added or removed stays new for a day whatever Review says (if its age can't be told
   after a restart, until the phone has been on for a day), so whoever made the change can't use it
-  to quiet the alert.
+  to quiet the alert; meanwhile nothing in Review can be cleared, and a review you made takes effect
+  by itself once the day is up.
   Turning the alerts off deletes them; a restored backup that turns them off leaves them in place.
   Clearing them, or turning the alerts off, asks for your face or fingerprint where one is set up.
 - **Times app locking was off, and other changes:** when BioKey's protection was switched off or

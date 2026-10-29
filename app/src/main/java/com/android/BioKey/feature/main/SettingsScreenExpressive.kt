@@ -75,6 +75,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -100,6 +101,7 @@ import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.SelfProtectionDetector
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
+import com.android.BioKey.feature.notification.ShieldAccessWatch
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupInset
@@ -177,7 +179,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         }
     }
 
-    var notifListenerActive by remember { mutableStateOf(BioKeyNotificationShieldService.isBound || !vault.isNotificationShieldEnabled()) }
+    var notifListenerActive by remember { mutableStateOf(ShieldAccessWatch.lastKnownAccess ?: BioKeyNotificationShieldService.isBound) }
     /** An accessibility shortcut switches BioKey's service off without passing any screen self-protection guards. */
     var shortcutAssigned by remember { mutableStateOf(false) }
     var showRelockSheet by remember { mutableStateOf(false) }
@@ -353,6 +355,8 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 if (!on) {
                     vault.setNotificationShield(false)
                     ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.SHIELD_OFF)
+                    // An open record of the access going ends now, not at the next look.
+                    ShieldAccessWatch.checkSoon(context)
                 } else {
                     turnShieldOn()
                 }
@@ -569,7 +573,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                         stringResource(R.string.settings_section_privacy),
                         privacy,
                         // Snoozed notifications can only be brought back while BioKey still has access.
-                        footer = if (notifListenerActive) {
+                        footer = if (notificationShieldEnabled && notifListenerActive) {
                             stringResource(R.string.settings_hide_notifications_footer)
                         } else null
                     ) { Haptics.toggle(view, it) }
@@ -645,7 +649,12 @@ private fun SettingsSection(title: String, items: List<SettingItem>, footer: Str
                 // An action row's button is its one target: the row itself isn't a second.
                 onClick = if (item.action != null) null else item.onClick,
                 trailing = if (item.action != null && item.onClick != null) {
-                    { FilledTonalButton(onClick = item.onClick) { Text(item.action) } }
+                    {
+                        // The row isn't a target of its own: the button says what it does in full.
+                        FilledTonalButton(onClick = item.onClick, modifier = Modifier.semantics { contentDescription = item.title }) {
+                            Text(item.action)
+                        }
+                    }
                 } else if (item.onClick == null || item.goes == Goes.NOWHERE) null else {
                     {
                         Icon(

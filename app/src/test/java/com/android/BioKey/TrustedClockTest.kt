@@ -23,10 +23,12 @@ class TrustedClockTest {
 
     @Before
     fun reset() {
-        TrustedClock.resetForTests()
+        // Hooks first: a background thread asking for the time after the reset uses these too.
         TrustedClock.wall = { wall }
         TrustedClock.elapsed = { sinceBoot }
         TrustedClock.networkTime = { asked++; network?.let { it + sinceBoot } }
+        TrustedClock.resetForTests()
+        asked = 0
     }
 
     @After

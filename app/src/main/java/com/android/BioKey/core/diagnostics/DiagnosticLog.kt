@@ -77,6 +77,10 @@ object DiagnosticLog {
         val f = File(context.filesDir, FILE_NAME)
         io.execute {
             boot = Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, 0)
+            // Logged before this was known (this process's start): they're from this boot.
+            synchronized(entries) {
+                for (i in entries.indices) if (entries[i].boot == -1 && entries[i].elapsed > 0L) entries[i] = entries[i].copy(boot = boot)
+            }
             enabled = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, true)
             val saved = runCatching {
                 if (!f.exists()) emptyList() else f.readLines().mapNotNull(::parse)

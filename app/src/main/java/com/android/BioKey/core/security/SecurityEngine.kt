@@ -52,6 +52,13 @@ class SecurityEngine private constructor() {
         /** [hasStrongBiometric] as last asked, without asking; null if never asked in this process. */
         fun lastKnownStrongBiometric(): Boolean? = lastStrongStatus?.let { it == BiometricManager.BIOMETRIC_SUCCESS }
 
+        /** [hasEnrolledStrongBiometric] as last asked, without asking; null if never asked in this process. */
+        @SuppressLint("InlinedApi")
+        fun lastKnownEnrolledStrongBiometric(): Boolean? = lastStrongStatus?.let {
+            it == BiometricManager.BIOMETRIC_SUCCESS || it == BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE ||
+                it == BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED || it == BiometricManager.BIOMETRIC_ERROR_NOT_ENABLED_FOR_APPS
+        }
+
         /**
          * A strong (Class 3) face or fingerprint can be used right now: what prompts and "Face or
          * fingerprint only" go by. A sensor unavailable or awaiting an update can't be, so the

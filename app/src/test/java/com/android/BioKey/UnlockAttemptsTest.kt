@@ -268,6 +268,71 @@ class UnlockAttemptsTest {
         }
     }
 
+    /** A face or fingerprint change recorded now, on this test's clocks. */
+    private fun biometricChange(): Long {
+        com.android.BioKey.core.security.SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        ProtectionGaps.clock = { now }
+        ProtectionGaps.elapsed = { sinceBoot }
+        ProtectionGaps.bootCount = { 3 }
+        return ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.BIOMETRICS_CHANGED)!!
+    }
+
+    private fun restoreGapClocks() {
+        ProtectionGaps.clock = TrustedClock::now
+        ProtectionGaps.elapsed = android.os.SystemClock::elapsedRealtime
+    }
+
+    @Test
+    fun whileAChangeIsHeldNothingCanBeCleared() {
+        try {
+            Prompt().miss()
+            biometricChange()
+            Prompt("com.example.other").miss()
+            assertTrue(UnlockAttempts.clear(context).isEmpty())
+            assertTrue(ProtectionGaps.clear(context).isEmpty())
+            assertEquals(2, kept.size)
+        } finally {
+            restoreGapClocks()
+        }
+    }
+
+    @Test
+    fun aReviewHeldBackTakesEffectOnceTheDayIsUp() {
+        try {
+            val seq = biometricChange()
+            UnlockAttempts.markSeen(context)
+            assertTrue(UnlockAttempts.seenSeq(context) < seq)
+            pass(25L * 60 * 60_000L)
+            // No new Review: the next unlock applies the one already made.
+            UnlockAttempts.onUserPresent(context)
+            assertTrue(UnlockAttempts.seenSeq(context) >= seq)
+        } finally {
+            restoreGapClocks()
+        }
+    }
+
+    @Test
+    fun heldUntilIsTheLastOfTheHeldChanges() {
+        try {
+            biometricChange()
+            pass(60 * 60_000L)
+            biometricChange()
+            val until = UnlockAttempts.heldUntil(context)!!
+            // The second one, an hour later, is let go a day after it.
+            assertTrue(until - TrustedClock.now() > 23L * 60 * 60_000L)
+        } finally {
+            restoreGapClocks()
+        }
+    }
+
+    @Test
+    fun reviewedActivityIsntUrgent() {
+        Prompt().miss()
+        val attempts = kept
+        assertTrue(com.android.BioKey.feature.main.securityActivityUrgent(attempts, emptyList(), 0L))
+        assertFalse(com.android.BioKey.feature.main.securityActivityUrgent(attempts, emptyList(), attempts.maxOf { it.seq }))
+    }
+
     @Test
     fun reviewMarksOnlyWhatItShowed() {
         Prompt().miss()

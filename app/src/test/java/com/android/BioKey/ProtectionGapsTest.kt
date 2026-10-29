@@ -140,6 +140,33 @@ class ProtectionGapsTest {
     }
 
     @Test
+    fun beforeAndroid14TheDateSetToTheLastUpdateDoesntExcuseAForceStop() {
+        // No update since the engine last ran: a stop "near" the old update time is a force stop.
+        ProtectionGaps.sdk = { 33 }
+        val updated = now - 60 * 60_000L
+        ProtectionGaps.updatedAt = { updated }
+        ProtectionGaps.onEngineUp(context)
+        exits = listOf(updated + 2_000L to ApplicationExitInfo.REASON_USER_REQUESTED)
+        pass(5 * 60_000L)
+        ProtectionGaps.onEngineUp(context)
+        assertEquals(ProtectionGaps.Kind.FORCE_STOPPED, gaps.single().kind)
+    }
+
+    @Test
+    fun anUndoneChangeIsTakenBack() {
+        ProtectionGaps.recorder = java.util.concurrent.Executor { it.run() }
+        try {
+            // Recorded only for a screen-lock session on a phone with a face or fingerprint: here,
+            // straight through recordEvent, as recordIfScreenLock would.
+            ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, ProtectionGaps.Change.SHIELD_OFF.encode())
+            ProtectionGaps.retract(context, ProtectionGaps.Change.SHIELD_OFF)
+            assertTrue(gaps.isEmpty())
+        } finally {
+            ProtectionGaps.recorder = java.util.concurrent.Executors.newSingleThreadExecutor()
+        }
+    }
+
+    @Test
     fun onAndroid14AForceStopRightAfterAnUpdateStillCounts() {
         // Android 14+ tells an update apart: a force stop just after one is still a force stop.
         ProtectionGaps.sdk = { 34 }

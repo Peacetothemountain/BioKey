@@ -64,6 +64,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.android.BioKey.R
 import com.android.BioKey.core.data.LockTimeoutMode
@@ -142,7 +143,7 @@ internal fun ActionCard(
                 CompositionLocalProvider(LocalContentColor provides content) {
                     // Wrapping, so two buttons at large text go on two lines instead of squeezing.
                     FlowRow(
-                        Modifier.fillMaxWidth(),
+                        Modifier.fillMaxWidth().padding(start = 56.dp, top = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                         itemVerticalAlignment = Alignment.CenterVertically,
                         content = actions
@@ -182,7 +183,7 @@ internal fun SecurityActivityCard(
     onReview: () -> Unit,
     modifier: Modifier = Modifier,
     /** Whether this is the page's one urgent card ([securityActivityUrgent], unless another one is). */
-    urgent: Boolean = securityActivityUrgent(attempts, gaps, UnlockAttempts.seen.value)
+    urgent: Boolean = securityActivityUrgent(attempts, gaps, UnlockAttempts.seen.collectAsStateWithLifecycle().value)
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -427,28 +428,22 @@ internal fun SecurityActivityDialog(
 ) {
     val context = LocalContext.current
     val note = MaterialTheme.colorScheme.onSurfaceVariant
+    val anyNew = securityActivityUrgent(attempts, gaps, UnlockAttempts.seen.collectAsStateWithLifecycle().value)
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Default.GppBad, contentDescription = null) },
+        icon = { Icon(if (anyNew) Icons.Default.GppBad else Icons.Default.GppMaybe, contentDescription = null) },
         title = { Text(stringResource(R.string.activity_title)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 ProtectDialogWindow()
-                if (heldUntil != null) {
-                    Text(
-                        stringResource(R.string.activity_held_until, attemptTime(context, heldUntil)),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = note,
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    )
+                // At most one note before the records: why they stay new.
+                val heading = when {
+                    onMarkReviewed != null -> stringResource(R.string.card_activity_screen_lock_note)
+                    heldUntil != null -> stringResource(R.string.activity_held_until, attemptTime(context, heldUntil))
+                    else -> null
                 }
-                if (onMarkReviewed != null) {
-                    Text(
-                        stringResource(R.string.card_activity_screen_lock_note),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = note,
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    )
+                if (heading != null) {
+                    Text(heading, style = MaterialTheme.typography.bodyMedium, color = note, modifier = Modifier.padding(bottom = 16.dp))
                 }
                 val changes = gaps.filterNot { it.isOff }
                 if (changes.isNotEmpty()) {
@@ -468,14 +463,10 @@ internal fun SecurityActivityDialog(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = note
                             )
+                            if (change.isBiometricChange) {
+                                Text(stringResource(R.string.card_change_biometrics_note), style = MaterialTheme.typography.bodySmall, color = note)
+                            }
                         }
-                    }
-                    if (changes.any { it.kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED }) {
-                        Text(
-                            stringResource(R.string.card_change_biometrics_note),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = note
-                        )
                     }
                     Spacer(Modifier.height(16.dp))
                 }
@@ -516,14 +507,16 @@ internal fun SecurityActivityDialog(
             }
         },
         confirmButton = {
-            FlowRow(horizontalArrangement = Arrangement.End) {
-                if (onMarkReviewed != null) TextButton(onClick = onMarkReviewed) { Text(stringResource(R.string.card_mark_reviewed)) }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
                 TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) }
+                // What this visit is for, when it's opened with the screen lock.
+                if (onMarkReviewed != null) FilledTonalButton(onClick = onMarkReviewed) { Text(stringResource(R.string.card_mark_reviewed)) }
             }
         },
         // Destructive: in the error colour, and behind a face or fingerprint (and Undo). Not offered
-        // when only a face or fingerprint change is left: that can't be cleared.
-        dismissButton = if (attempts.isNotEmpty() || gaps.any { !it.isBiometricChange }) {
+        // when only a face or fingerprint change is left (that can't be cleared), nor while one is
+        // held: whoever made it could otherwise clear what happened around it.
+        dismissButton = if (heldUntil == null && (attempts.isNotEmpty() || gaps.any { !it.isBiometricChange })) {
             {
                 TextButton(onClick = onClear, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
                     Text(stringResource(R.string.card_clear))
