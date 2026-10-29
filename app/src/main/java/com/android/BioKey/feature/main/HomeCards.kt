@@ -60,6 +60,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -605,7 +606,16 @@ private fun ActivityCallout(text: String, held: Boolean, modifier: Modifier = Mo
             Spacer(Modifier.width(12.dp))
             Column {
                 if (headline != null) Text(headline, style = MaterialTheme.typography.titleSmall)
-                Text(text, style = MaterialTheme.typography.bodyMedium)
+                // Lines starting with a bullet are a list: wrapped lines hang after the bullet.
+                text.lines().forEach { line ->
+                    if (line.startsWith("• ")) {
+                        Row(Modifier.padding(start = 4.dp, top = 2.dp)) {
+                            Text("•", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.clearAndSetSemantics { })
+                            Spacer(Modifier.width(8.dp))
+                            Text(line.removePrefix("• "), style = MaterialTheme.typography.bodyMedium)
+                        }
+                    } else Text(line, style = MaterialTheme.typography.bodyMedium)
+                }
             }
         }
     }
