@@ -202,7 +202,7 @@ class LockScreenActivity : ComponentActivity() {
             finishSilently()
             return
         }
-        showOverKeyguard(isKeyguardLocked())
+        showOverKeyguard(coversAppOverKeyguard())
 
         cover = LockCoverView(this).apply {
             onUnlock = ::showPrompt
@@ -308,7 +308,7 @@ class LockScreenActivity : ComponentActivity() {
         super.onNewIntent(intent)
         // Already leaving: if the app is still in front, the engine's shield brings a new lock.
         if (isFinishing) return
-        showOverKeyguard(isKeyguardLocked())
+        showOverKeyguard(coversAppOverKeyguard())
         val newPkg = intent.getStringExtra(EXTRA_LOCKED_PACKAGE).orEmpty()
         val newSelfProt = intent.getBooleanExtra(EXTRA_SELF_PROTECTION, false)
         if (newPkg == lockedPackage && newSelfProt == isSelfProtection) {
@@ -648,6 +648,13 @@ class LockScreenActivity : ComponentActivity() {
     }
 
     private fun isKeyguardLocked() = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+
+    /**
+     * The keyguard is up with the screen on: the app this covers can only be over it (the camera,
+     * say). With the screen off, it's an app left on screen as the phone locked: its cover waits
+     * behind the keyguard (see [showOverKeyguard]).
+     */
+    private fun coversAppOverKeyguard() = isKeyguardLocked() && !isScreenOff()
 
     private fun isScreenOff() = getSystemService(PowerManager::class.java)?.isInteractive == false
 

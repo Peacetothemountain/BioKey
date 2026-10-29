@@ -1262,7 +1262,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
      * animation shows the app for a moment before the phone-unlocked broadcast covers it.
      */
     private fun coverLeftOnScreen(pkg: String) {
-        if (!isRunning || !vault.isProtectionActive() || !needsCover(pkg)) return
+        // A home screen is never covered, even one left switched on.
+        if (!isRunning || isLauncher(pkg) || !vault.isProtectionActive() || !needsCover(pkg)) return
         DiagnosticLog.log("Covered $pkg (on screen as the phone locked)")
         LockStateTracker.setRegularLockPending(pkg)
         launchLockScreen(pkg, isSelfProtection = false)

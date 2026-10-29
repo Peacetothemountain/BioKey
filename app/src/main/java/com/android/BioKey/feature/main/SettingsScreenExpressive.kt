@@ -496,9 +496,10 @@ fun SettingsScreenExpressive(
         )
     )
 
-    var logEnabled by remember { mutableStateOf(DiagnosticLog.isEnabled()) }
     var showLog by remember { mutableStateOf(false) }
     val logVersion by DiagnosticLog.version.collectAsStateWithLifecycle()
+    // Read again whenever the log changes: a restore can switch it.
+    val logEnabled = remember(logVersion) { DiagnosticLog.isEnabled() }
     val logCount = remember(logVersion) { DiagnosticLog.entries().size }
     val diagnostics = listOf(
         SettingItem(
@@ -507,10 +508,7 @@ fun SettingsScreenExpressive(
             subtitle = stringResource(R.string.settings_log_summary),
             checked = logEnabled,
             onChange = { on ->
-                fun apply() {
-                    DiagnosticLog.setEnabled(context, on)
-                    logEnabled = on
-                }
+                fun apply() = DiagnosticLog.setEnabled(context, on)
                 // Off deletes it, and with it a trace of who unlocked what.
                 if (on) apply() else confirmOwner(activity, res.getString(R.string.settings_confirm_log_off), silencesRecords = true, action = ::apply)
             }

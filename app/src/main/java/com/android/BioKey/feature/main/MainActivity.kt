@@ -223,9 +223,10 @@ class MainActivity : ComponentActivity() {
 
         if (!vault.isSetupCompleted()) return
 
-        // Back from another app's lock screen brought up over BioKey: only within that trip's lease,
-        // which can run out while that lock screen is up (a lapsed one ends the session it kept).
-        LockStateTracker.isOwnLockScreenHopActive()
+        // Back from a trip of BioKey's own (a settings page, the file picker, another app's lock
+        // screen brought up over it): only within that trip's lease, which can run out while it's
+        // away (a lapsed one ends the session it kept, as having run out).
+        LockStateTracker.isOwnTripActive()
         if (LockStateTracker.isOwnAppUnlocked()) {
             LockStateTracker.onOwnAppResumed()
             isAuthenticated = true
