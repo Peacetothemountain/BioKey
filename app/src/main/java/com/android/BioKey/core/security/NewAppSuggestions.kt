@@ -54,7 +54,8 @@ object NewAppSuggestions {
         if (on) ensureChannel(context)
     }
 
-    private fun notificationId(pkg: String) = 2000 + (pkg.hashCode() and 0x7fff)
+    // Clear of every other id BioKey posts (compatibility mode's own is 2001).
+    private fun notificationId(pkg: String) = 10_000 + (pkg.hashCode() and 0x7fff)
 
     fun ensureChannel(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)

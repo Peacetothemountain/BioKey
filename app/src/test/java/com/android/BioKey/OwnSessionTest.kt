@@ -66,6 +66,25 @@ class OwnSessionTest {
     }
 
     @Test
+    fun lockingEverythingTellsBioKeysScreensAtOnceAndIsNoTimeout() {
+        LockStateTracker.onOwnAppUnlocked()
+        val before = LockStateTracker.ownLocks.value
+        // "Lock all" from a tile, the shortcut or the status sheet, with BioKey on screen.
+        LockStateTracker.lockAll(reason = "test")
+        assertTrue(LockStateTracker.ownLocks.value > before)
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
+        assertFalse(LockStateTracker.ownSessionTimedOut)
+    }
+
+    @Test
+    fun aSessionThatRanOutIsATimeout() {
+        LockStateTracker.onOwnAppUnlocked()
+        advance(LockStateTracker.OWN_APP_IDLE_MS + 1_000)
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
+        assertTrue(LockStateTracker.ownSessionTimedOut)
+    }
+
+    @Test
     fun aScreenReaderMovingThroughBioKeyKeepsItUnlocked() {
         unlockAndIdle()
         sendFromWindow(AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED)

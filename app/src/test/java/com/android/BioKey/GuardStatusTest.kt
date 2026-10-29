@@ -28,6 +28,8 @@ class GuardStatusTest {
         assertEquals(Status.NOT_PROTECTING, BioKeyTileService.status(setupCompleted = true, enabled = true, engineRunning = false))
         assertEquals(Status.PAUSED, BioKeyTileService.status(setupCompleted = true, enabled = false, engineRunning = true))
         assertEquals(Status.SETUP_REQUIRED, BioKeyTileService.status(setupCompleted = false, enabled = true, engineRunning = true))
+        // Paused with nothing running: resuming wouldn't protect anything, so it says so.
+        assertEquals(Status.NOT_PROTECTING, BioKeyTileService.status(setupCompleted = true, enabled = false, engineRunning = false))
     }
 
     @Test

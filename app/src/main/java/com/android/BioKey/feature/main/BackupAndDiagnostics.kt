@@ -337,7 +337,10 @@ private fun discard(context: Context, uri: Uri) {
 }
 
 private fun write(context: Context, uri: Uri, bytes: ByteArray) {
-    val out = context.contentResolver.openOutputStream(uri, "wt") ?: error("No output stream")
+    // Some providers (cloud drives) refuse "wt"; the picker has just created the file, so "w" is
+    // as good there.
+    val out = runCatching { context.contentResolver.openOutputStream(uri, "wt") }.getOrNull()
+        ?: context.contentResolver.openOutputStream(uri, "w") ?: error("No output stream")
     out.use { it.write(bytes) }
 }
 

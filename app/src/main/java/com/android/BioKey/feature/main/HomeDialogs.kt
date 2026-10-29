@@ -182,6 +182,27 @@ internal fun HomeDialogs(
     overlays.optionsForPackage?.let { pkg ->
         val app = installedApps.firstOrNull { it.packageName == pkg }
         if (app != null) {
+            // "Remove from …", or "No profile" among the choices: the same change, recorded and undone alike.
+            fun removeFromProfile() {
+                val former = profileOf(pkg)
+                val wasLocked = lockedInVault(pkg)
+                val delayBefore = vault.getTimeoutMode(pkg).openFor
+                vault.removeAppFromProfile(pkg)
+                // Out of a strict profile, it follows the default delay: maybe a longer one.
+                if (wasLocked && (!lockedInVault(pkg) || vault.getTimeoutMode(pkg).openFor > delayBefore)) {
+                    ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.TAKEN_OUT, app.label, former?.name.orEmpty())
+                }
+                overlays.optionsForPackage = null
+                if (former != null) {
+                    BioKeyMessages.show(
+                        res.getString(R.string.home_removed_from_profile, app.label, former.name),
+                        Icons.Default.RemoveCircleOutline,
+                        actionLabel = res.getString(R.string.common_undo)
+                    ) {
+                        vault.moveAppToProfile(pkg, former.id, switchOn = false)
+                    }
+                }
+            }
             AppOptionsSheet(
                 app = app,
                 isLocked = isOn(pkg),
@@ -190,7 +211,8 @@ internal fun HomeDialogs(
                 profiles = profiles,
                 defaultTimeout = defaultTimeout,
                 onLockedChange = { onToggleLock(app, it) },
-                onMoveToProfile = { profileId ->
+                onMoveToProfile = move@{ profileId ->
+                    if (profileId == null) return@move removeFromProfile()
                     val wasLocked = lockedInVault(pkg)
                     val delayBefore = vault.getTimeoutMode(pkg).openFor
                     vault.moveAppToProfile(pkg, profileId)
@@ -203,26 +225,7 @@ internal fun HomeDialogs(
                             ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.MOVED_LONGER_DELAY, app.label, vault.profileOf(pkg)?.name.orEmpty())
                     }
                 },
-                onRemoveFromProfile = {
-                    val former = profileOf(pkg)
-                    val wasLocked = lockedInVault(pkg)
-                    val delayBefore = vault.getTimeoutMode(pkg).openFor
-                    vault.removeAppFromProfile(pkg)
-                    // Out of a strict profile, it follows the default delay: maybe a longer one.
-                    if (wasLocked && (!lockedInVault(pkg) || vault.getTimeoutMode(pkg).openFor > delayBefore)) {
-                        ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.TAKEN_OUT, app.label, former?.name.orEmpty())
-                    }
-                    overlays.optionsForPackage = null
-                    if (former != null) {
-                        BioKeyMessages.show(
-                            res.getString(R.string.home_removed_from_profile, app.label, former.name),
-                            Icons.Default.RemoveCircleOutline,
-                            actionLabel = res.getString(R.string.common_undo)
-                        ) {
-                            vault.moveAppToProfile(pkg, former.id, switchOn = false)
-                        }
-                    }
-                },
+                onRemoveFromProfile = ::removeFromProfile,
                 onNewProfile = {
                     overlays.newProfileForPackage = pkg
                     overlays.optionsForPackage = null

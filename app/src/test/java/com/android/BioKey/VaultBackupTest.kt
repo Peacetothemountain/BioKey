@@ -4,8 +4,10 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.SecurityProfile
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.VaultBackup
 import java.nio.ByteBuffer
 import java.util.Base64
@@ -95,6 +97,42 @@ class VaultBackupTest {
         assertTrue(again.isAppLocked("com.example.chat"))
         assertEquals(LockTimeoutMode.GRACE_5_MINUTES, again.timeoutModeFlow.value)
         assertEquals(listOf("com.example.other"), again.exportState().getJSONArray("autoSortExcluded").let { a -> List(a.length()) { a.getString(it) } })
+    }
+
+    @Test
+    fun theDiagnosticLogSwitchComesBackAsItWas() {
+        try {
+            DiagnosticLog.setEnabled(context, false)
+            val saved = freshVault().exportState()
+            DiagnosticLog.setEnabled(context, true)
+            freshVault().restoreState(saved)
+            assertFalse(DiagnosticLog.isEnabled())
+        } finally {
+            DiagnosticLog.setEnabled(context, true)
+        }
+    }
+
+    @Test
+    fun anUnansweredFailedUnlockQuestionIsAskedOnTheNewPhoneToo() {
+        UnlockAttempts.resetForTests()
+        context.getSharedPreferences("biokey_unlock_attempts", Context.MODE_PRIVATE).edit().clear().commit()
+        UnlockAttempts.load(context)
+        val saved = freshVault().exportState()
+        assertFalse(saved.getBoolean("unlockAttemptAlertsChosen"))
+
+        freshVault().restoreState(saved)
+        // Not taken as "no": the one-time question still comes.
+        assertFalse(UnlockAttempts.chosen.value)
+
+        // Answered "no" on the old phone: that's restored, as an answer.
+        UnlockAttempts.setEnabled(context, false)
+        val answered = freshVault().exportState()
+        UnlockAttempts.resetForTests()
+        context.getSharedPreferences("biokey_unlock_attempts", Context.MODE_PRIVATE).edit().clear().commit()
+        UnlockAttempts.load(context)
+        freshVault().restoreState(answered)
+        assertTrue(UnlockAttempts.chosen.value)
+        assertFalse(UnlockAttempts.enabled.value)
     }
 
     @Test

@@ -34,6 +34,8 @@ object BiometricEnrollment {
     private const val KEY_HAD_BIOMETRIC = "had_biometric"
     /** The key has been made: from then on, its absence means Android destroyed it. */
     private const val KEY_MADE = "key_made"
+    /** Looked at with BioKey set up: from then on, a first face or fingerprint is someone adding one. */
+    private const val KEY_WATCHING = "watching"
     /** A change was found and is being recorded: written before the key is replaced, so it isn't lost. */
     private const val KEY_PENDING = "pending"
 
@@ -84,12 +86,15 @@ object BiometricEnrollment {
         val has = hasBiometric(context)
         val had = prefs.getBoolean(KEY_HAD_BIOMETRIC, false)
         val made = prefs.getBoolean(KEY_MADE, false)
+        val watching = prefs.getBoolean(KEY_WATCHING, false)
         // A change found last time but not yet recorded (the process died in between).
         val pending = prefs.getString(KEY_PENDING, null)?.let { runCatching { Change.valueOf(it) }.getOrNull() }
         val change = pending ?: when {
             had && !has -> Change.REMOVED
-            // Set up on a phone that had none, once BioKey was watching: added.
-            !had && has && made -> Change.CHANGED
+            // Set up on a phone that had none, once BioKey was watching (a PIN-only phone, or one
+            // whose last was removed): added. Not during BioKey's own setup, which may send the
+            // owner to set one up.
+            !had && has && (made || watching) -> Change.CHANGED
             has -> when (runCatching { keyState() }.getOrNull()) {
                 KeyState.INVALIDATED -> Change.CHANGED
                 // Gone although made: Android destroyed it (removing the screen lock does that too).
@@ -102,7 +107,10 @@ object BiometricEnrollment {
         // Noted durably before the key is replaced and the record is written.
         if (change != Change.NONE) prefs.edit(commit = true) { putString(KEY_PENDING, change.name) }
         if (has) runCatching { renewKeyIfNeeded() }.onSuccess { prefs.edit { putBoolean(KEY_MADE, true) } }
-        prefs.edit { putBoolean(KEY_HAD_BIOMETRIC, has) }
+        prefs.edit {
+            putBoolean(KEY_HAD_BIOMETRIC, has)
+            if (SecurityVault.getInstance(context).isSetupCompleted()) putBoolean(KEY_WATCHING, true)
+        }
         when (change) {
             Change.CHANGED -> ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.BIOMETRICS_CHANGED)
             Change.REMOVED -> ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.BIOMETRICS_REMOVED)

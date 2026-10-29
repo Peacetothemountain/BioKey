@@ -14,6 +14,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
@@ -586,7 +590,7 @@ object LockStateTracker {
         if (ownUnlockedAt == 0L) return false
         if (now() - ownLastActiveAt < OWN_APP_IDLE_MS) return true
         Log.i(TAG, "BioKey session ended after inactivity")
-        lockOwnApp()
+        lockOwnApp(timedOut = true)
         return false
     }
 
@@ -723,11 +727,25 @@ object LockStateTracker {
     private fun endTripAway() {
         if (!ownInForeground && ownUnlockedAt != 0L) {
             Log.i(TAG, "BioKey's trip away ran out; session ended")
-            lockOwnApp()
+            lockOwnApp(timedOut = true)
         }
     }
 
-    fun lockOwnApp() {
+    private val ownLocksFlow = MutableStateFlow(0)
+
+    /**
+     * Counts BioKey's own session ending, however it ended (a timeout, "lock all" from a tile or
+     * the shortcut, the screen turning off): its screens follow at once rather than at their next check.
+     */
+    val ownLocks: StateFlow<Int> = ownLocksFlow.asStateFlow()
+
+    /** Whether BioKey's session last ended by running out (3 minutes idle, a trip away), not by being locked. */
+    @Volatile
+    var ownSessionTimedOut = false
+        private set
+
+    fun lockOwnApp(timedOut: Boolean = false) {
+        ownSessionTimedOut = timedOut
         SecurityEngine.INSTANCE.forgetOwnProof()
         ownUnlockedAt = 0L
         ownLastActiveAt = 0L
@@ -735,5 +753,6 @@ object LockStateTracker {
         externalNavigationAt = 0L
         ownPickerAt = 0L
         ownLockScreenHopAt = 0L
+        ownLocksFlow.update { it + 1 }
     }
 }

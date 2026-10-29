@@ -313,7 +313,11 @@ fun MainScreenExpressive(
     fun isUnwatched(app: AppItem) = mode == ProtectionEngine.Mode.COMPATIBILITY && app.inOtherProfile && isLocked(app.packageName) &&
         !isHomeScreen(app.packageName)
     val unwatchedCount = remember(installedApps, lockedApps, profiles, mode, homeScreens) { installedApps.count(::isUnwatched) }
-    val home by homeViewModel.state.collectAsStateWithLifecycle()
+    val homeState by homeViewModel.state.collectAsStateWithLifecycle()
+    val shieldOn by vault.notificationShieldFlow.collectAsStateWithLifecycle()
+    // Hiding switched off in Settings (or by a restore) meanwhile: its warning goes now, not at
+    // home's next resume.
+    val home = if (shieldOn) homeState else homeState.copy(shieldWithoutAccess = false)
     val look = protectionLook(
         mode, globalLockEnabled, pausedUntil, lockedCount, unwatchedCount, defaultTimeout,
         notificationsShowing = home.shieldWithoutAccess && vault.isSetupCompleted()

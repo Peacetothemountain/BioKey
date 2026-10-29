@@ -131,9 +131,12 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(isAuthenticated) {
                 if (!isAuthenticated) return@LaunchedEffect
                 lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    // Locked from elsewhere ("lock all" from a tile, the shortcut, the status
+                    // sheet, the screen turning off): BioKey's screens go at once.
+                    launch { LockStateTracker.ownLocks.collect { if (!LockStateTracker.isOwnAppUnlocked()) onOwnSessionEnded() } }
                     while (isAuthenticated) {
                         delay(IDLE_CHECK_INTERVAL_MS)
-                        if (!LockStateTracker.isOwnAppUnlocked()) lockForInactivity()
+                        if (!LockStateTracker.isOwnAppUnlocked()) onOwnSessionEnded()
                     }
                 }
             }
@@ -229,10 +232,9 @@ class MainActivity : ComponentActivity() {
             promptAutoLaunched = true
             return
         }
-        // Still unlocked here only after a trip of BioKey's own, whose session ran out while it
-        // was away: the lock says why, as the idle check did when it ran in the background.
-        if (isAuthenticated) lockForInactivity()
-        isAuthenticated = false
+        // Still unlocked here only after a trip of BioKey's own, whose session ended while it was
+        // away: the lock says why, as the idle check would have with BioKey on screen.
+        onOwnSessionEnded()
         if (!promptAutoLaunched && !isPermanentLockout && !engine.isAuthenticatingFor(packageName)) {
             promptAutoLaunched = true
             window.decorView.post {
@@ -281,7 +283,7 @@ class MainActivity : ComponentActivity() {
         }
         // A touch after BioKey's session ran out locks it rather than counting as activity.
         if (ev.actionMasked == MotionEvent.ACTION_DOWN && isAuthenticated && !LockStateTracker.isOwnAppUnlocked()) {
-            lockForInactivity()
+            onOwnSessionEnded()
             return true
         }
         return super.dispatchTouchEvent(ev)
@@ -297,12 +299,15 @@ class MainActivity : ComponentActivity() {
         LockStateTracker.onOwnAppInteraction()
     }
 
-    private fun lockForInactivity() {
+    /**
+     * BioKey's session is over: its screens lock. The lock says why only when the session ran out
+     * ([LockStateTracker.ownSessionTimedOut]); locked on purpose ("lock all"), it says nothing.
+     */
+    private fun onOwnSessionEnded() {
         if (!isAuthenticated) return
-        LockStateTracker.lockOwnApp()
         isAuthenticated = false
         val minutes = (LockStateTracker.OWN_APP_IDLE_MS / 60_000).toInt()
-        lockMessage = resources.getQuantityString(R.plurals.activity_locked_idle, minutes, minutes)
+        lockMessage = if (LockStateTracker.ownSessionTimedOut) resources.getQuantityString(R.plurals.activity_locked_idle, minutes, minutes) else null
     }
 
     /** Starts or stops compatibility mode as needed, then records which engine protects apps. */

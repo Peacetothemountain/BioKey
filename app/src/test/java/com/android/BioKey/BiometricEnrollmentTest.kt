@@ -81,6 +81,34 @@ class BiometricEnrollmentTest {
     }
 
     @Test
+    fun aFirstOneOnAPinOnlyPhoneIsRecorded() {
+        // BioKey set up on a phone with only a PIN; someone who knows it adds a fingerprint.
+        context.getSharedPreferences("biokey_biometric_enrollment", Context.MODE_PRIVATE).edit().clear().commit()
+        has = false
+        assertEquals(Change.NONE, BiometricEnrollment.check(context))
+        has = true
+        assertEquals(Change.CHANGED, BiometricEnrollment.check(context))
+        assertEquals(listOf(ProtectionGaps.Kind.BIOMETRICS_CHANGED), events)
+    }
+
+    @Test
+    fun oneSetUpDuringBioKeysOwnSetupIsNotRecorded() {
+        context.getSharedPreferences("biokey_biometric_enrollment", Context.MODE_PRIVATE).edit().clear().commit()
+        val vault = SecurityVault.getInstance(context)
+        vault.setSetupCompletedSync(false)
+        try {
+            has = false
+            BiometricEnrollment.check(context)
+            // Setup sent the owner to set up a screen lock and a fingerprint.
+            has = true
+            assertEquals(Change.NONE, BiometricEnrollment.check(context))
+            assertTrue(events.isEmpty())
+        } finally {
+            vault.setSetupCompletedSync(true)
+        }
+    }
+
+    @Test
     fun theyCantBeClearedAway() {
         key = BiometricEnrollment.KeyState.INVALIDATED
         BiometricEnrollment.check(context)

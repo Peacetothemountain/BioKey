@@ -28,8 +28,9 @@ class BioKeyTileService : TileService() {
     companion object {
         internal fun status(setupCompleted: Boolean, enabled: Boolean, engineRunning: Boolean): Status = when {
             !setupCompleted -> Status.SETUP_REQUIRED
-            !enabled -> Status.PAUSED
+            // As home says: nothing running outranks a pause, which resuming wouldn't fix.
             !engineRunning -> Status.NOT_PROTECTING
+            !enabled -> Status.PAUSED
             else -> Status.PROTECTING
         }
     }

@@ -420,8 +420,11 @@ class SecurityVault private constructor(private val context: Context) {
             .put("autoSortExcluded", JSONArray(autoSortExcluded.sorted()))
             // The two switches kept beside the vault: their choices, not what they recorded.
             .put("unlockAttemptAlerts", UnlockAttempts.enabled.value)
+            // Never answered: the new phone asks too, rather than taking the backup's "off" as an answer.
+            .put("unlockAttemptAlertsChosen", UnlockAttempts.chosen.value)
             .put("screenLockUnlocks", UnlockAttempts.screenLockUnlocks.value)
             .put("newAppOffers", NewAppSuggestions.enabled.value)
+            .put("diagnosticLog", DiagnosticLog.isEnabled())
     }
 
     /**
@@ -463,10 +466,14 @@ class SecurityVault private constructor(private val context: Context) {
         if (!shield) listeners.forEach { it.onNotificationShieldOff() }
         if (!selfProtection) LockStateTracker.clearSelfProtection()
         // Older backups don't say: what's set on this phone stays. Records here are never deleted by a restore.
-        if (state.has("unlockAttemptAlerts")) UnlockAttempts.setEnabled(context, state.optBoolean("unlockAttemptAlerts"), keepRecords = true)
+        if (state.has("unlockAttemptAlerts") && state.optBoolean("unlockAttemptAlertsChosen", true)) UnlockAttempts.setEnabled(context, state.optBoolean("unlockAttemptAlerts"), keepRecords = true)
         if (state.has("screenLockUnlocks")) UnlockAttempts.setScreenLockUnlocks(context, state.optBoolean("screenLockUnlocks"))
         if (state.has("newAppOffers")) NewAppSuggestions.setEnabled(context, state.optBoolean("newAppOffers"))
         DiagnosticLog.log("Settings restored from a backup")
+        // Last, so a log switched off by the restore isn't left holding that line.
+        if (state.has("diagnosticLog") && state.optBoolean("diagnosticLog") != DiagnosticLog.isEnabled()) {
+            DiagnosticLog.setEnabled(context, state.optBoolean("diagnosticLog"))
+        }
     }
 
     // ---------------------------------------------------------------------------------------
