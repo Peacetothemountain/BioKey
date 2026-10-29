@@ -61,11 +61,11 @@ val groupColor: Color
 
 /** Section title above a group; a heading for screen readers, so they can jump between sections. */
 @Composable
-fun SectionHeader(text: String, modifier: Modifier = Modifier) {
+fun SectionHeader(text: String, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.primary) {
     Text(
         text = text,
         style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
+        color = color,
         modifier = modifier
             .semantics { heading() }
             .padding(start = GroupInset + 16.dp, end = GroupInset + 16.dp, top = 24.dp, bottom = 10.dp)

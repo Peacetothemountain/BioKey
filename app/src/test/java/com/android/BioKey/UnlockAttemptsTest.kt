@@ -20,8 +20,9 @@ import org.robolectric.annotation.Config
 
 /**
  * Failed unlocks are kept for the owner: unless the same prompt then matched the owner's face or
- * fingerprint; notified only once the phone has been unlocked since and the owner can't be
- * retrying, never naming the app; and only once the owner has said yes.
+ * fingerprint; told once the phone has been unlocked since and the owner can't be retrying,
+ * never naming the app, never on the lock screen; and only once the owner has said yes. Changing
+ * the phone's clock neither hides nor deletes them.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -29,6 +30,7 @@ class UnlockAttemptsTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
     private var now = 1_800_000_000_000L
+    private var sinceBoot = 10_000_000L
     private val bank = "com.example.bank"
     private val notifications get() = shadowOf(context.getSystemService(NotificationManager::class.java))
 
@@ -39,6 +41,8 @@ class UnlockAttemptsTest {
         UnlockAttempts.resetForTests()
         ProtectionGaps.resetForTests()
         UnlockAttempts.clock = { now }
+        UnlockAttempts.elapsed = { sinceBoot }
+        UnlockAttempts.bootCount = { 3 }
         UnlockAttempts.hasStrongBiometric = { true }
         UnlockAttempts.setEnabled(context, true)
         shadowOf(context as Application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
@@ -51,9 +55,26 @@ class UnlockAttemptsTest {
     }
 
     private val kept get() = UnlockAttempts.attempts.value
-    private fun miss(pkg: String = bank) = UnlockAttempts.onBiometricFailed(context, pkg, "Bank")
-    private fun unlocked(biometric: Boolean, missesHere: Int = 0, pkg: String = bank) =
-        UnlockAttempts.onUnlocked(context, pkg, "Bank", biometric, missesHere)
+    private fun pass(ms: Long) {
+        now += ms
+        sinceBoot += ms
+    }
+
+    /** One prompt: its misses, then how it ended. */
+    private inner class Prompt(val pkg: String = bank) {
+        var record: Long? = null
+        val own = mutableMapOf<Long, Int>()
+        fun miss() {
+            UnlockAttempts.onBiometricFailed(context, pkg, "Bank", record)?.let { record = it; own[it] = (own[it] ?: 0) + 1 }
+        }
+        fun matched() = UnlockAttempts.onUnlocked(context, pkg, "Bank", biometric = true, ownMisses = own)
+        fun screenLock() = UnlockAttempts.onUnlocked(context, pkg, "Bank", biometric = false, ownMisses = own)
+    }
+
+    private fun told() {
+        UnlockAttempts.onUserPresent(context)
+        UnlockAttempts.updateNotification(context)
+    }
 
     @Test
     fun offUntilTheOwnerSaysSo() {
@@ -61,134 +82,162 @@ class UnlockAttemptsTest {
         UnlockAttempts.resetForTests()
         UnlockAttempts.load(context)
         assertFalse(UnlockAttempts.chosen.value)
-        miss()
+        Prompt().miss()
         assertTrue(kept.isEmpty())
     }
 
     @Test
-    fun missesOnOnePromptAreOneAttempt() {
-        miss(); now += 5_000L; miss(); now += 5_000L; miss()
+    fun aPromptsMissesAreOneAttempt() {
+        val p = Prompt()
+        p.miss(); pass(5_000L); p.miss(); pass(5_000L); p.miss()
         assertEquals(3, kept.single().failures)
-        assertEquals("3 tries didn't match", UnlockAttempts.describe(context, kept.single()))
-    }
-
-    @Test
-    fun missesFarApartAreSeparateAttempts() {
-        miss()
-        now += 5 * 60_000L
-        miss()
-        assertEquals(2, kept.size)
+        assertEquals("3 tries didn't match", UnlockAttempts.describe(context, kept.single()))
     }
 
     @Test
     fun theOwnersMatchOnTheSamePromptMeansTheMissesWereTheirs() {
-        miss(); miss()
-        unlocked(biometric = true, missesHere = 2)
+        val p = Prompt()
+        p.miss(); p.miss()
+        p.matched()
+        assertTrue(kept.isEmpty())
+    }
+
+    @Test
+    fun evenAPromptLeftUpAWhile() {
+        val p = Prompt()
+        p.miss()
+        pass(5 * 60_000L)
+        p.miss()
+        p.matched()
         assertTrue(kept.isEmpty())
     }
 
     @Test
     fun theOwnersMatchOnALaterPromptKeepsSomeoneElsesMisses() {
         // Someone tried, handed the phone back; the owner opened it 90 s later.
-        miss(); miss(); miss()
-        now += 90_000L
-        unlocked(biometric = true, missesHere = 0)
+        Prompt().apply { miss(); miss(); miss() }
+        pass(90_000L)
+        Prompt().matched()
         val attempt = kept.single()
         assertEquals(Ending.BIOMETRIC, attempt.ending)
-        assertFalse("shown, not notified", attempt.unanswered)
-        assertEquals("3 tries, then opened with your face or fingerprint", UnlockAttempts.describe(context, attempt))
+        assertFalse("answered by the owner's face: not notified", attempt.notifiable)
     }
 
     @Test
-    fun theScreenLockAfterMissesKeepsThemMarked() {
-        miss(); miss()
-        now += 30_000L
-        unlocked(biometric = false)
+    fun ownerProofDoesntNeedTheRecordOnTop() {
+        val mine = Prompt(bank)
+        mine.miss()
+        Prompt("com.example.chat").miss()
+        mine.matched()
+        assertEquals(listOf("com.example.chat"), kept.map { it.packageName })
+    }
+
+    @Test
+    fun theScreenLockAfterMissesIsKeptAndTold() {
+        val p = Prompt()
+        p.miss(); p.miss()
+        pass(30_000L)
+        p.screenLock()
         val attempt = kept.single()
         assertEquals(Ending.SCREEN_LOCK, attempt.ending)
-        assertEquals("2 tries, then opened with your screen lock", UnlockAttempts.describe(context, attempt))
+        assertTrue("someone may know the PIN", attempt.notifiable)
+        pass(UnlockAttempts.OWNER_RETRY_MS)
+        told()
+        assertEquals(1, notifications.allNotifications.size)
     }
 
     @Test
     fun screenLockUnlocksAreNotedOnlyWhenAskedFor() {
-        unlocked(biometric = false)
+        Prompt().screenLock()
         assertTrue(kept.isEmpty())
         UnlockAttempts.setScreenLockUnlocks(context, true)
-        unlocked(biometric = false)
+        Prompt().screenLock()
         assertEquals("opened with your screen lock", UnlockAttempts.describe(context, kept.single()))
     }
 
     @Test
     fun aLockoutAfterAScreenLockUnlockIsANewAttempt() {
-        miss()
-        unlocked(biometric = false)
-        now += 10_000L
-        UnlockAttempts.onLockedOut(context, bank, "Bank")
+        val first = Prompt()
+        first.miss()
+        first.screenLock()
+        pass(10_000L)
+        UnlockAttempts.onLockedOut(context, bank, "Bank", promptRecord = null)
         assertEquals(2, kept.size)
         assertTrue(kept.first().unanswered)
     }
 
     @Test
-    fun aWeekIsKept() {
-        miss("com.example.old")
-        now += 8 * 24 * 60 * 60_000L
-        miss("com.example.new")
-        assertEquals(listOf("com.example.new"), kept.map { it.packageName })
-    }
-
-    @Test
-    fun pastTheirWeekTheyGoFromTheDiskTooOnLoad() {
-        miss()
-        now += 8 * 24 * 60 * 60_000L
-        UnlockAttempts.resetForTests()
-        UnlockAttempts.load(context)
-        assertTrue(kept.isEmpty())
-        UnlockAttempts.resetForTests()
-        now -= 8 * 24 * 60 * 60_000L
-        UnlockAttempts.load(context)
-        assertTrue("deleted, not just hidden", kept.isEmpty())
-    }
-
-    @Test
-    fun notifiedOnlyAfterThePhoneWasUnlockedAgainAndWithoutTheAppsName() {
-        miss()
-        now += UnlockAttempts.OWNER_RETRY_MS + 1_000L
+    fun toldOnlyAfterThePhoneWasUnlockedAgainNeverNamingTheAppNeverOnTheLockScreen() {
+        Prompt().miss()
+        pass(UnlockAttempts.OWNER_RETRY_MS + 1_000L)
         UnlockAttempts.updateNotification(context)
         assertTrue("not while whoever tried may still hold the phone", notifications.allNotifications.isEmpty())
 
-        UnlockAttempts.onUserPresent(context)
-        UnlockAttempts.updateNotification(context)
+        told()
         val posted = notifications.allNotifications.single()
         val text = posted.extras.getCharSequence("android.text").toString() + posted.extras.getCharSequence("android.title")
         assertFalse("which app is never said", text.contains("Bank") || text.contains(bank))
-        assertEquals("BioKey", posted.publicVersion.extras.getCharSequence("android.title").toString())
+        assertEquals(android.app.Notification.VISIBILITY_SECRET, posted.visibility)
     }
 
     @Test
     fun neverWhileTheOwnerMayStillBeRetrying() {
-        UnlockAttempts.onUserPresent(context)
-        now += 1_000L
-        miss()
-        now += 30_000L
-        UnlockAttempts.onUserPresent(context)
-        UnlockAttempts.updateNotification(context)
+        Prompt().miss()
+        pass(30_000L)
+        told()
         assertTrue(notifications.allNotifications.isEmpty())
     }
 
     @Test
-    fun openedAfterwardsIsShownButNotNotified() {
-        miss()
-        unlocked(biometric = false)
-        now += UnlockAttempts.OWNER_RETRY_MS + 1_000L
-        UnlockAttempts.onUserPresent(context)
-        UnlockAttempts.updateNotification(context)
-        assertTrue(notifications.allNotifications.isEmpty())
-        assertEquals(1, kept.size)
+    fun aMissHeldBackIsntSkippedWhenSomethingLaterIsTold() {
+        Prompt("com.example.old").miss()
+        pass(UnlockAttempts.OWNER_RETRY_MS + 1_000L)
+        Prompt("com.example.new").miss()
+        told()
+        assertEquals(1, notifications.allNotifications.size)
+        context.getSystemService(NotificationManager::class.java).cancelAll()
+        // The newer one, held back then, is told once its window has passed.
+        pass(UnlockAttempts.OWNER_RETRY_MS + 1_000L)
+        told()
+        assertEquals(1, notifications.allNotifications.size)
+    }
+
+    @Test
+    fun settingTheClockAheadDeletesNothingUnseen() {
+        Prompt().miss()
+        now += 30L * 24 * 60 * 60_000L
+        Prompt("com.example.chat").miss()
+        assertEquals(2, kept.size)
+        UnlockAttempts.resetForTests()
+        UnlockAttempts.load(context)
+        assertEquals(2, kept.size)
+    }
+
+    @Test
+    fun settingTheClockBackHidesNothing() {
+        Prompt().miss()
+        pass(UnlockAttempts.OWNER_RETRY_MS + 1_000L)
+        told()
+        context.getSystemService(NotificationManager::class.java).cancelAll()
+        now -= 10L * 24 * 60 * 60_000L
+        Prompt("com.example.chat").miss()
+        pass(UnlockAttempts.OWNER_RETRY_MS + 1_000L)
+        told()
+        assertEquals(1, notifications.allNotifications.size)
+    }
+
+    @Test
+    fun seenOnesAgeOut() {
+        Prompt().miss()
+        UnlockAttempts.markSeen(context)
+        now += 8L * 24 * 60 * 60_000L
+        UnlockAttempts.prune(context)
+        assertTrue(kept.isEmpty())
     }
 
     @Test
     fun keptAcrossARestartOfBioKey() {
-        miss(); miss()
+        Prompt().apply { miss(); miss() }
         UnlockAttempts.resetForTests()
         UnlockAttempts.load(context)
         assertEquals(2, kept.single().failures)
@@ -197,7 +246,7 @@ class UnlockAttemptsTest {
 
     @Test
     fun switchingOffDeletesThemWithUndo() {
-        miss()
+        Prompt().miss()
         val removed = UnlockAttempts.setEnabled(context, false)
         assertTrue(kept.isEmpty())
         UnlockAttempts.setEnabled(context, true)
@@ -207,7 +256,7 @@ class UnlockAttemptsTest {
 
     @Test
     fun aRestoredBackupSayingOffKeepsThisPhonesRecords() {
-        miss()
+        Prompt().miss()
         UnlockAttempts.setEnabled(context, false, keepRecords = true)
         assertEquals(1, kept.size)
     }

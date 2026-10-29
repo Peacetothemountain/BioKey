@@ -52,7 +52,7 @@ class HomeCardsTest {
         }
         rule.onNodeWithText("2 apps unlocked").assertIsDisplayed()
         rule.onNodeWithText("Chase, Signal").assertIsDisplayed()
-        rule.onNodeWithText("Choose").performClick()
+        rule.onNodeWithText("See apps").performClick()
         rule.onNodeWithText("Lock all").performClick()
         assertEquals(1, chose)
         assertEquals(1, all)

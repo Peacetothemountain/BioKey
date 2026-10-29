@@ -67,6 +67,9 @@ class MainActivity : ComponentActivity() {
         internal fun isPauseRequest(intent: Intent?): Boolean =
             intent?.action == ACTION_PAUSE_PROTECTION && intent.component?.className == PAUSE_PROTECTION_ALIAS
 
+        /** An app's label to search for as home opens (the new-app offer): harmless from anyone, it only fills the search. */
+        const val EXTRA_SEARCH = "com.android.BioKey.extra.SEARCH"
+
         /** Opens the pause sheet (after BioKey's own check): the tile's way in, through the alias. */
         internal fun pauseIntent(context: Context): Intent =
             Intent(ACTION_PAUSE_PROTECTION).setClassName(context, PAUSE_PROTECTION_ALIAS)
@@ -81,6 +84,7 @@ class MainActivity : ComponentActivity() {
     private var isPermanentLockout by mutableStateOf(false)
     private var protectionMode by mutableStateOf(ProtectionEngine.Mode.OFF)
     private var pauseRequested by mutableStateOf(false)
+    private var searchRequest by mutableStateOf<String?>(null)
     private var isSetupAuthenticating by mutableStateOf(false)
     private var setupAuthError by mutableStateOf<String?>(null)
     /** Setup's final check failed for want of a screen lock: setup offers to open its settings. */
@@ -92,6 +96,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) {
             pauseRequested = isPauseRequest(intent)
+            searchRequest = intent?.getStringExtra(EXTRA_SEARCH)?.take(80)
             // As in onNewIntent: the sheet follows a fresh check unless BioKey is already open and unlocked.
             if (pauseRequested && !LockStateTracker.hasActiveOwnerSession()) LockStateTracker.lockOwnApp()
         }
@@ -137,7 +142,12 @@ class MainActivity : ComponentActivity() {
                             if (!BioKeyAccessibilityService.lockDevice()) finishAffinity()
                         }
                     )
-                    else -> MainScreenExpressive(mode = protectionMode, onPauseRequested = { pauseRequested = true })
+                    else -> MainScreenExpressive(
+                        mode = protectionMode,
+                        onPauseRequested = { pauseRequested = true },
+                        searchRequest = searchRequest,
+                        onSearchRequestTaken = { searchRequest = null }
+                    )
                 }
 
                 if (setupCompleted && isAuthenticated && pauseRequested) {
@@ -158,6 +168,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pauseRequested = isPauseRequest(intent)
+        searchRequest = intent.getStringExtra(EXTRA_SEARCH)?.take(80)
         if (pauseRequested && !LockStateTracker.hasActiveOwnerSession()) {
             LockStateTracker.lockOwnApp()
             isAuthenticated = false

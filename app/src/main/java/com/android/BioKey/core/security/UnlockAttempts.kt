@@ -6,11 +6,11 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.hardware.biometrics.BiometricManager
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.os.UserManager
+import android.provider.Settings
 import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -29,26 +29,30 @@ import org.json.JSONObject
  * Failed unlocks of locked apps, for the owner to see: faces or fingerprints that didn't match on
  * a locked app's prompt. Off until the owner turns it on (BioKey's home screen asks once).
  *
- * - **Who it was.** Only the prompt that saw the misses can say: a face or fingerprint that then
- *   matches on that same prompt was the owner retrying, and its misses go. Misses on an earlier
- *   prompt stay, even if the owner opens the app soon after: someone else may have tried and
- *   handed the phone back. They're marked "then opened with your face or fingerprint", shown but
- *   not notified. Misses followed by the screen lock are kept too ("opened with your screen
- *   lock"): someone may know the PIN.
+ * - **Who it was.** Only the prompt that saw a miss can say: when a face or fingerprint then
+ *   matches on that same prompt, the misses it saw were the owner retrying, and go ([onUnlocked]
+ *   is told exactly which, per record). Misses on any other prompt stay, even if the owner opens
+ *   the app soon after: someone else may have tried and handed the phone back. They're marked with
+ *   how the app was then opened. Misses followed by the screen lock may be someone who knows it.
  * - **Screen lock unlocks** (an extra, off by default): a locked app opened with the screen lock
  *   at all, on a phone with a face or fingerprint set up, is noted too, for owners who never use
- *   the PIN themselves. Shown, not notified.
- * - **When it tells.** Unanswered misses, and times app locking was off ([ProtectionGaps]), are
- *   notified the next time the phone is unlocked after them (whoever tried has likely handed it
- *   back by then), and never within [OWNER_RETRY_MS] of a miss. The notification doesn't name the
- *   app, and on the phone's lock screen says only "BioKey".
+ *   the PIN themselves.
+ * - **When it tells.** Misses nobody followed with a face or fingerprint (unanswered, or answered
+ *   with the screen lock), and times app locking was off ([ProtectionGaps]), are notified the next
+ *   time the phone is unlocked after them (whoever tried has likely handed it back by then), never
+ *   within [OWNER_RETRY_MS] of a miss. The notification never names the app and isn't shown on
+ *   the phone's lock screen at all. It stays until the owner opens Review in BioKey.
+ * - **Clocks.** Every record carries a sequence number, and the time since the phone started:
+ *   what's been seen, what happened before the last unlock and how long ago a miss was are judged
+ *   on those, so changing the phone's date can neither hide a record nor delete it early. A record
+ *   isn't deleted for its age until the owner has seen it.
  * - **What it keeps.** Which app (package name and label), when, how many misses, and how it
- *   ended; in BioKey's private storage, at most [MAX_KEPT] from the last [MAX_AGE_MS], never
- *   backed up. Turning the alerts off in Settings deletes them (with Undo).
+ *   ended; in BioKey's private storage, at most [MAX_KEPT], seen ones for [MAX_AGE_MS], never backed
+ *   up. Turning the alerts off in Settings deletes them (with Undo).
  *
  * Android doesn't tell apps about a wrong PIN, pattern or password: only biometrics count. Each
  * miss is saved as it happens, so a prompt that goes without a word (its screen killed) still
- * leaves its record; a prompt restarted mid-attempt (a rotation, a fold) adds to the same one.
+ * leaves its record.
  */
 object UnlockAttempts {
 
@@ -57,21 +61,29 @@ object UnlockAttempts {
     data class Attempt(
         val packageName: String,
         val label: String,
-        /** The first miss. */
+        /** The first miss (wall clock, for display). */
         val at: Long,
-        /** The latest miss, or the unlock that ended it. */
+        /** The latest miss, or the unlock that ended it (wall clock, for display). */
         val lastAt: Long,
         val failures: Int,
         val lockedOut: Boolean = false,
-        val ending: Ending = Ending.NONE
+        val ending: Ending = Ending.NONE,
+        /** Order of events, whatever the clock says ([nextSeq]). */
+        val seq: Long = 0L,
+        /** [lastAt] on the clock since boot, and which boot. */
+        val lastElapsed: Long = 0L,
+        val boot: Int = -1
     ) {
-        /** Not followed by any unlock: notified, and shown as a warning. */
+        /** Not followed by any unlock: shown as a warning. */
         val unanswered get() = ending == Ending.NONE
+
+        /** Worth telling: misses nobody's face or fingerprint followed. */
+        val notifiable get() = ending != Ending.BIOMETRIC && (failures > 0 || lockedOut)
     }
 
     /** Never notified sooner after a miss than this: the owner may still be retrying. */
     const val OWNER_RETRY_MS = 2 * 60_000L
-    /** Misses on one app this close together are one attempt (a prompt restarted mid-attempt). */
+    /** Misses on one app this close together, from no known prompt, are one attempt. */
     private const val SAME_ATTEMPT_MS = 60_000L
     const val MAX_AGE_MS = 7 * 24 * 60 * 60_000L
     const val MAX_KEPT = 50
@@ -82,10 +94,14 @@ object UnlockAttempts {
     /** The owner has answered BioKey's question (or used the switch in Settings). */
     private const val KEY_CHOSEN = "chosen"
     private const val KEY_ATTEMPTS = "attempts"
-    /** Things up to this time have been seen on BioKey's home screen or notified. */
-    private const val KEY_SEEN_UNTIL = "seen_until"
-    /** The phone was last unlocked then. */
-    private const val KEY_PRESENT_AT = "present_at"
+    /** The last sequence number handed out ([nextSeq]), for these records and [ProtectionGaps]'. */
+    private const val KEY_SEQ = "seq"
+    /** Records up to this sequence number have been seen in BioKey (Review): kept until they age. */
+    private const val KEY_SEEN_SEQ = "seen_seq"
+    /** Records up to this sequence number have been notified. */
+    private const val KEY_NOTIFIED_SEQ = "notified_seq"
+    /** The last sequence number handed out when the phone was last unlocked. */
+    private const val KEY_PRESENT_SEQ = "present_seq"
     const val CHANNEL_ID = "biokey_security_activity"
     private const val NOTIFICATION_ID = 1101
 
@@ -105,17 +121,16 @@ object UnlockAttempts {
     private val main = Handler(Looper.getMainLooper())
     private val NOTIFY_TOKEN = Any()
 
-    /** The wall clock; tests set their own. */
+    /** The wall clock, for display; tests set their own. */
     @VisibleForTesting
     internal var clock: () -> Long = System::currentTimeMillis
+    @VisibleForTesting
+    internal var elapsed: () -> Long = SystemClock::elapsedRealtime
+    @VisibleForTesting
+    internal var bootCount: (Context) -> Int = { Settings.Global.getInt(it.contentResolver, Settings.Global.BOOT_COUNT, 0) }
     /** Whether a strong face or fingerprint is set up; tests set their own. */
     @VisibleForTesting
-    internal var hasStrongBiometric: (Context) -> Boolean = { context ->
-        runCatching {
-            context.getSystemService(BiometricManager::class.java)
-                ?.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
-        }.getOrDefault(false)
-    }
+    internal var hasStrongBiometric: (Context) -> Boolean = SecurityEngine::hasStrongBiometric
 
     /**
      * Reads what's kept, once per process; null before the first unlock after a restart, when
@@ -132,8 +147,9 @@ object UnlockAttempts {
             _chosen.value = p.getBoolean(KEY_CHOSEN, false)
             val kept = runCatching { parse(p.getString(KEY_ATTEMPTS, null)) }.getOrDefault(emptyList())
             prefs = p
-            // What's past its time goes from the disk too, not only from what's shown.
-            if (kept.fresh() != kept) save(p, kept.fresh()) else _attempts.value = kept
+            // What's seen and past its time goes from the disk too, not only from what's shown.
+            val fresh = kept.fresh(p)
+            if (fresh != kept) save(p, fresh) else _attempts.value = kept
         }
         // An alert that was waiting when the process last stopped.
         scheduleNotification(context.applicationContext, 0L)
@@ -146,84 +162,114 @@ object UnlockAttempts {
         main.removeCallbacksAndMessages(NOTIFY_TOKEN)
     }
 
-    private fun List<Attempt>.fresh(): List<Attempt> {
-        val now = clock()
-        return filter { now - it.lastAt <= MAX_AGE_MS }.sortedByDescending { it.at }.take(MAX_KEPT)
+    /** The next number in the order of events, shared with [ProtectionGaps]. */
+    internal fun nextSeq(context: Context): Long {
+        val p = load(context) ?: return 0L
+        synchronized(lock) {
+            val next = p.getLong(KEY_SEQ, 0L) + 1
+            p.edit { putLong(KEY_SEQ, next) }
+            return next
+        }
     }
 
-    /** Drops what's past its time; BioKey's home screen calls this as it shows them. */
+    internal fun seenSeq(context: Context): Long = load(context)?.getLong(KEY_SEEN_SEQ, 0L) ?: 0L
+
+    /** Seen ones past their time go; unseen ones stay, whatever the clock says. */
+    private fun List<Attempt>.fresh(p: SharedPreferences): List<Attempt> {
+        val now = clock()
+        val seen = p.getLong(KEY_SEEN_SEQ, 0L)
+        return filterNot { it.seq <= seen && now - it.lastAt > MAX_AGE_MS }.sortedByDescending { it.seq }.take(MAX_KEPT)
+    }
+
+    /** Drops what's seen and past its time; BioKey's home screen calls this as it shows them. */
     fun prune(context: Context) {
         val p = load(context) ?: return
-        synchronized(lock) { _attempts.value.fresh().let { if (it != _attempts.value) save(p, it) } }
+        synchronized(lock) { _attempts.value.fresh(p).let { if (it != _attempts.value) save(p, it) } }
     }
 
-    /** The attempt [packageName]'s prompt is adding to, if it's still the one at the top. */
-    private fun current(list: List<Attempt>, packageName: String, now: Long): Attempt? = list.firstOrNull()?.takeIf {
-        it.packageName in PasswordManager.aliasesOf(packageName) && it.unanswered && now - it.lastAt in 0..SAME_ATTEMPT_MS
-    }
-
-    /** A face or fingerprint didn't match on [packageName]'s prompt. */
-    fun onBiometricFailed(context: Context, packageName: String, label: String) {
-        val p = load(context) ?: return
-        if (!_enabled.value) return
+    /**
+     * A face or fingerprint didn't match on [packageName]'s prompt. [promptRecord] is the record
+     * this prompt added its last miss to, if any; returns the one it added this one to.
+     */
+    fun onBiometricFailed(context: Context, packageName: String, label: String, promptRecord: Long? = null): Long? {
+        val p = load(context) ?: return null
+        if (!_enabled.value) return null
         val now = clock()
+        val since = elapsed()
+        val boot = bootCount(context)
+        val id: Long
         synchronized(lock) {
             val list = _attempts.value
-            val same = current(list, packageName, now)
-            val updated = if (same != null) listOf(same.copy(lastAt = now, failures = same.failures + 1)) + list.drop(1)
-            else listOf(Attempt(packageName, label, now, now, failures = 1)) + list
-            save(p, updated.fresh())
+            // The same prompt's record; else, for a prompt restarted mid-attempt, a fresh one on the same app.
+            val same = list.firstOrNull { it.seq == promptRecord && it.unanswered }
+                ?: list.firstOrNull()?.takeIf {
+                    promptRecord == null && it.packageName in PasswordManager.aliasesOf(packageName) && it.unanswered &&
+                        it.boot == boot && since - it.lastElapsed in 0..SAME_ATTEMPT_MS
+                }
+            val updated = if (same != null) {
+                list.map { if (it === same) it.copy(lastAt = now, failures = it.failures + 1, lastElapsed = since) else it }
+            } else {
+                listOf(Attempt(packageName, label, now, now, failures = 1, seq = nextSeqLocked(p), lastElapsed = since, boot = boot)) + list
+            }
+            id = (same ?: updated.first()).seq
+            save(p, updated.fresh(p))
         }
         DiagnosticLog.log("A face or fingerprint didn't match on $packageName")
         scheduleNotification(context.applicationContext, OWNER_RETRY_MS)
+        return id
     }
 
+    private fun nextSeqLocked(p: SharedPreferences): Long = (p.getLong(KEY_SEQ, 0L) + 1).also { p.edit { putLong(KEY_SEQ, it) } }
+
     /** Too many misses: biometrics locked out on [packageName]'s prompt. */
-    fun onLockedOut(context: Context, packageName: String, label: String) {
+    fun onLockedOut(context: Context, packageName: String, label: String, promptRecord: Long?) {
         val p = load(context) ?: return
         if (!_enabled.value) return
         val now = clock()
+        val since = elapsed()
+        val boot = bootCount(context)
         synchronized(lock) {
             val list = _attempts.value
-            val same = current(list, packageName, now)
-            val updated = if (same != null) listOf(same.copy(lastAt = now, lockedOut = true)) + list.drop(1)
-            else listOf(Attempt(packageName, label, now, now, failures = 0, lockedOut = true)) + list
-            save(p, updated.fresh())
+            val same = list.firstOrNull { it.seq == promptRecord && it.unanswered }
+            val updated = if (same != null) list.map { if (it === same) it.copy(lastAt = now, lockedOut = true, lastElapsed = since) else it }
+            else listOf(Attempt(packageName, label, now, now, failures = 0, lockedOut = true, seq = nextSeqLocked(p), lastElapsed = since, boot = boot)) + list
+            save(p, updated.fresh(p))
         }
         DiagnosticLog.log("Face and fingerprint locked out on $packageName")
         scheduleNotification(context.applicationContext, OWNER_RETRY_MS)
     }
 
     /**
-     * [packageName] was unlocked, with a face or fingerprint ([biometric]) or the screen lock,
-     * on a prompt that saw [missesHere] misses of its own before.
+     * [packageName] was unlocked, with a face or fingerprint ([biometric]) or the screen lock.
+     * [ownMisses]: the misses this very prompt saw, per record ([onBiometricFailed]'s ids).
      */
-    fun onUnlocked(context: Context, packageName: String, label: String, biometric: Boolean, missesHere: Int) {
+    fun onUnlocked(context: Context, packageName: String, label: String, biometric: Boolean, ownMisses: Map<Long, Int> = emptyMap()) {
         val p = load(context) ?: return
         if (!_enabled.value) return
         val names = PasswordManager.aliasesOf(packageName)
         val now = clock()
+        val since = elapsed()
+        val boot = bootCount(context)
         synchronized(lock) {
             val list = _attempts.value
             val ending = if (biometric) Ending.BIOMETRIC else Ending.SCREEN_LOCK
-            val updated = list.toMutableList()
-            val recent = list.indices.filter { list[it].packageName in names && list[it].unanswered && now - list[it].lastAt in 0..OWNER_RETRY_MS }
-            // The misses this very prompt saw were the owner's, when their face or finger then matched.
-            if (biometric && missesHere > 0 && recent.firstOrNull() == 0) {
-                val top = list[0]
-                updated[0] = top.copy(failures = (top.failures - missesHere).coerceAtLeast(0))
-            }
-            // What's left was someone, maybe: kept, marked with how the app was then opened.
-            for (i in recent) {
-                val a = updated[i]
-                updated[i] = if (a.failures == 0 && !a.lockedOut) a.copy(lastAt = -1L) else a.copy(ending = ending, lastAt = now)
-            }
-            updated.removeAll { it.lastAt == -1L }
-            if (!biometric && recent.isEmpty() && _screenLockUnlocks.value && hasStrongBiometric(context)) {
-                updated.add(0, Attempt(packageName, label, now, now, failures = 0, ending = Ending.SCREEN_LOCK))
+            fun recent(a: Attempt) = a.packageName in names && a.unanswered && a.boot == boot && since - a.lastElapsed in 0..OWNER_RETRY_MS
+            val updated = list.mapNotNull { a ->
+                // The misses this prompt saw were the owner's, when their face or finger then matched.
+                val own = if (biometric) ownMisses[a.seq] ?: 0 else 0
+                val left = a.copy(failures = (a.failures - own).coerceAtLeast(0))
+                when {
+                    !recent(a) && own == 0 -> a
+                    left.failures == 0 && !left.lockedOut -> null
+                    // What's left was someone, maybe: kept, marked with how the app was then opened.
+                    else -> left.copy(ending = ending, lastAt = now, lastElapsed = since)
+                }
+            }.toMutableList()
+            if (!biometric && list.none(::recent) && _screenLockUnlocks.value && hasStrongBiometric(context)) {
+                updated.add(0, Attempt(packageName, label, now, now, failures = 0, ending = Ending.SCREEN_LOCK, seq = nextSeqLocked(p), lastElapsed = since, boot = boot))
                 DiagnosticLog.log("$packageName opened with the screen lock")
             }
-            if (updated != list) save(p, updated.fresh())
+            if (updated != list) save(p, updated.fresh(p))
         }
         scheduleNotification(context.applicationContext, 0L)
     }
@@ -231,18 +277,17 @@ object UnlockAttempts {
     /** The phone was just unlocked: whoever tried has likely handed it back. */
     fun onUserPresent(context: Context) {
         val p = load(context) ?: return
-        p.edit { putLong(KEY_PRESENT_AT, clock()) }
+        p.edit { putLong(KEY_PRESENT_SEQ, p.getLong(KEY_SEQ, 0L)) }
         scheduleNotification(context.applicationContext, 0L)
     }
 
     /** Something else worth telling happened ([ProtectionGaps]). */
     fun onActivity(context: Context) = scheduleNotification(context.applicationContext, 0L)
 
-    /** BioKey's home screen showed them: nothing left to notify. */
+    /** The owner opened Review in BioKey: everything up to now has been seen. */
     fun markSeen(context: Context) {
         val p = load(context) ?: return
-        val newest = maxOf(_attempts.value.maxOfOrNull { it.lastAt } ?: 0L, ProtectionGaps.gaps.value.maxOfOrNull { it.to } ?: 0L)
-        if (newest > p.getLong(KEY_SEEN_UNTIL, 0L)) p.edit { putLong(KEY_SEEN_UNTIL, newest) }
+        p.edit { putLong(KEY_SEEN_SEQ, p.getLong(KEY_SEQ, 0L)).putLong(KEY_NOTIFIED_SEQ, p.getLong(KEY_SEQ, 0L)) }
         NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
     }
 
@@ -257,7 +302,7 @@ object UnlockAttempts {
     /** Puts back what [clear] removed (Undo), with anything recorded since. */
     fun restore(context: Context, attempts: List<Attempt>) {
         val p = load(context) ?: return
-        synchronized(lock) { save(p, (_attempts.value + attempts).distinct().fresh()) }
+        synchronized(lock) { save(p, (_attempts.value + attempts).distinctBy { it.seq }.fresh(p)) }
     }
 
     /**
@@ -289,6 +334,7 @@ object UnlockAttempts {
             put(
                 JSONObject().put("p", it.packageName).put("n", it.label).put("t", it.at).put("u", it.lastAt)
                     .put("f", it.failures).put("l", it.lockedOut).put("e", it.ending.name)
+                    .put("q", it.seq).put("r", it.lastElapsed).put("b", it.boot)
             )
         }
     }.toString()
@@ -302,7 +348,8 @@ object UnlockAttempts {
                 Attempt(
                     it.getString("p"), it.optString("n").ifEmpty { it.getString("p") }, at, it.optLong("u", at),
                     it.optInt("f"), it.optBoolean("l"),
-                    runCatching { Ending.valueOf(it.getString("e")) }.getOrDefault(Ending.NONE)
+                    runCatching { Ending.valueOf(it.getString("e")) }.getOrDefault(Ending.NONE),
+                    it.optLong("q"), it.optLong("r"), it.optInt("b", -1)
                 )
             }
         }
@@ -314,6 +361,7 @@ object UnlockAttempts {
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, context.getString(R.string.activity_channel_name), NotificationManager.IMPORTANCE_DEFAULT).apply {
                 description = context.getString(R.string.activity_channel_description)
+                lockscreenVisibility = NotificationCompat.VISIBILITY_SECRET
             }
         )
     }
@@ -325,24 +373,25 @@ object UnlockAttempts {
     }
 
     /**
-     * Notifies what's unseen and old enough: misses no unlock followed, at least [OWNER_RETRY_MS]
-     * old, and times app locking was off; each only once the phone has been unlocked since.
+     * Notifies what hasn't been: notifiable misses at least [OWNER_RETRY_MS] old, and times app
+     * locking was off; each only once the phone has been unlocked since. A miss still inside its
+     * retry window holds back nothing else, and is looked at again once it's out.
      */
     @VisibleForTesting
     internal fun updateNotification(app: Context) {
         val p = load(app) ?: return
-        val now = clock()
-        val seenUntil = p.getLong(KEY_SEEN_UNTIL, 0L)
-        val presentAt = p.getLong(KEY_PRESENT_AT, 0L)
-        val pendingAttempts = if (_enabled.value) _attempts.value.filter { it.unanswered && it.lastAt > seenUntil } else emptyList()
-        val pendingGaps = ProtectionGaps.gaps.value.filter { it.to > seenUntil }
-        // Not yet: the owner may still be retrying. Look again once they can't be.
-        val retrying = pendingAttempts.filter { now - it.lastAt < OWNER_RETRY_MS }
-        if (retrying.isNotEmpty()) scheduleNotification(app, retrying.maxOf { it.lastAt } + OWNER_RETRY_MS - now)
-        val attempts = pendingAttempts.filter { now - it.lastAt >= OWNER_RETRY_MS && it.lastAt < presentAt }
-        val gaps = pendingGaps.filter { it.to <= presentAt }
-        val manager = NotificationManagerCompat.from(app)
+        val since = elapsed()
+        val boot = bootCount(app)
+        val notified = p.getLong(KEY_NOTIFIED_SEQ, 0L)
+        val presentSeq = p.getLong(KEY_PRESENT_SEQ, 0L)
+        fun retrying(a: Attempt) = a.boot == boot && since - a.lastElapsed < OWNER_RETRY_MS
+        val pendingAttempts = if (_enabled.value) _attempts.value.filter { it.notifiable && it.seq > notified } else emptyList()
+        val retry = pendingAttempts.filter(::retrying)
+        if (retry.isNotEmpty()) scheduleNotification(app, OWNER_RETRY_MS - retry.minOf { since - it.lastElapsed } + 50L)
+        val attempts = pendingAttempts.filter { !retrying(it) && it.seq <= presentSeq }
+        val gaps = ProtectionGaps.gaps.value.filter { it.seq > notified && it.seq <= presentSeq }
         if (attempts.isEmpty() && gaps.isEmpty()) return
+        val manager = NotificationManagerCompat.from(app)
         if (!manager.areNotificationsEnabled()) return
         ensureChannel(app)
         val res = app.resources
@@ -351,40 +400,41 @@ object UnlockAttempts {
             attempts.isEmpty() -> res.getString(R.string.gaps_title)
             else -> res.getString(R.string.activity_title)
         }
-        val text = res.getString(if (attempts.isNotEmpty()) R.string.attempts_notification_text else R.string.gaps_notification_text)
+        val text = res.getString(
+            when {
+                attempts.any { it.unanswered } -> R.string.attempts_notification_text
+                attempts.isNotEmpty() -> R.string.attempts_screen_lock_notification_text
+                else -> R.string.gaps_notification_text
+            }
+        )
         val open = PendingIntent.getActivity(
             app,
             NOTIFICATION_ID,
             Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        // Which app is never said; on the phone's lock screen, not even that something happened.
-        val public = NotificationCompat.Builder(app, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_biokey_mark)
-            .setContentTitle(res.getString(R.string.brand_name))
-            .build()
+        // Which app is never said, and nothing at all shows on the phone's lock screen.
         val notification = NotificationCompat.Builder(app, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_biokey_mark)
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setCategory(NotificationCompat.CATEGORY_STATUS)
-            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setPublicVersion(public)
-            .setOnlyAlertOnce(true)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .setContentIntent(open)
             .setAutoCancel(true)
             .build()
         try {
             manager.notify(NOTIFICATION_ID, notification)
-            val newest = maxOf(attempts.maxOfOrNull { it.lastAt } ?: 0L, gaps.maxOfOrNull { it.to } ?: 0L)
-            p.edit { putLong(KEY_SEEN_UNTIL, maxOf(newest, seenUntil)) }
+            // Up to the oldest still held back, so a held-back miss is never skipped.
+            val upTo = (retry.minOfOrNull { it.seq - 1 } ?: Long.MAX_VALUE).coerceAtMost(maxOf(attempts.maxOfOrNull { it.seq } ?: 0L, gaps.maxOfOrNull { it.seq } ?: 0L))
+            if (upTo > notified) p.edit { putLong(KEY_NOTIFIED_SEQ, upTo) }
         } catch (_: SecurityException) {
             // POST_NOTIFICATIONS revoked between the check and notify.
         }
     }
 
-    /** "3 tries didn't match", "locked out after 5 tries", "opened with your screen lock after 2 tries". */
+    /** "3 tries didn't match", "locked out after 5 tries", "3 tries, then opened with your screen lock". */
     fun describe(context: Context, attempt: Attempt): String {
         val res = context.resources
         val tries = res.getQuantityString(R.plurals.attempts_tries, attempt.failures, attempt.failures)

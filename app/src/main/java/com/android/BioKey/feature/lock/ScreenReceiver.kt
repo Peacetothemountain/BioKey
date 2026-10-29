@@ -7,6 +7,7 @@ import android.content.IntentFilter
 import androidx.core.content.ContextCompat
 import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.UnlockAttempts
 
 /**
@@ -42,7 +43,10 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
             }
             // The phone was unlocked: whoever had it has likely handed it back, so this is when
             // failed unlocks and times app locking was off are told.
-            Intent.ACTION_USER_PRESENT -> UnlockAttempts.onUserPresent(context)
+            Intent.ACTION_USER_PRESENT -> {
+                UnlockAttempts.onUserPresent(context)
+                ProtectionAlerts.remindIfOff(context)
+            }
         }
     }
 }

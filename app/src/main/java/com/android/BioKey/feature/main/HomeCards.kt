@@ -22,14 +22,18 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GppBad
 import androidx.compose.material.icons.filled.GppMaybe
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.RemoveModerator
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,8 +45,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -101,18 +107,32 @@ internal fun ActionCard(
                 }
                 Spacer(Modifier.width(16.dp))
                 Column(Modifier.weight(1f).padding(end = 4.dp)) {
-                    Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+                    // Urgent ones are announced as they appear, not only when reached.
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.semantics {
+                            heading()
+                            if (urgent) liveRegion = LiveRegionMode.Polite
+                        }
+                    )
                     if (subtitle.isNotEmpty()) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = secondary)
                 }
-                if (sideBySide) Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
+                if (sideBySide) {
+                    CompositionLocalProvider(LocalContentColor provides content) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
+                    }
+                }
             }
             if (!sideBySide) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                    verticalAlignment = Alignment.CenterVertically,
-                    content = actions
-                )
+                CompositionLocalProvider(LocalContentColor provides content) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                        verticalAlignment = Alignment.CenterVertically,
+                        content = actions
+                    )
+                }
             }
         }
     }
@@ -149,7 +169,12 @@ internal fun SecurityActivityCard(
     val newestGap = gaps.firstOrNull()
     val gapIsNewest = newestGap != null && (newestAttempt == null || newestGap.to > newestAttempt.lastAt)
     ActionCard(
-        icon = if (urgent) Icons.Default.GppBad else Icons.Default.GppMaybe,
+        // Protection off and failed unlocks look different at a glance.
+        icon = when {
+            attempts.isEmpty() -> Icons.Default.RemoveModerator
+            urgent -> Icons.Default.GppBad
+            else -> Icons.Default.GppMaybe
+        },
         title = when {
             gaps.isEmpty() -> resources.getQuantityString(R.plurals.attempts_title, attempts.size, attempts.size)
             attempts.isEmpty() -> if (gaps.size == 1) "App locking was off" else "App locking was off ${gaps.size} times"
@@ -162,7 +187,7 @@ internal fun SecurityActivityCard(
         inline = true,
         modifier = modifier
     ) {
-        TextButton(onClick = onReview) { Text("Review") }
+        TextButton(onClick = onReview, colors = cardTextButtonColors(urgent)) { Text("Review") }
     }
 }
 
@@ -186,9 +211,12 @@ internal fun UnlockedNowCard(
         modifier = modifier
     ) {
         if (single) {
-            FilledTonalButton(onClick = { onLock(first) }) { Text("Lock") }
+            FilledTonalButton(
+                onClick = { onLock(first) },
+                modifier = Modifier.semantics { contentDescription = "Lock ${first.label}" }
+            ) { Text("Lock") }
         } else {
-            TextButton(onClick = onChoose) { Text("Choose") }
+            TextButton(onClick = onChoose) { Text("See apps") }
             FilledTonalButton(onClick = onLockAll) { Text("Lock all") }
         }
     }
@@ -312,7 +340,7 @@ internal fun SecurityActivityDialog(
                     }
                     Text(
                         "Switched off in Android's settings, or BioKey force-stopped. Android stopping BioKey on its own " +
-                            "(low memory, a battery saver) isn't listed.",
+                            "isn't listed, but some phone makers' battery savers force-stop apps just as a person would.",
                         style = MaterialTheme.typography.bodySmall,
                         color = note
                     )
@@ -331,8 +359,8 @@ internal fun SecurityActivityDialog(
                         }
                     }
                     Text(
-                        "Faces or fingerprints that didn't match. When yours matched on the same prompt, those were you and " +
-                            "aren't listed. Android doesn't tell apps about a wrong PIN.",
+                        "Faces or fingerprints that didn't match. Misses your own face or fingerprint then fixed, on the same " +
+                            "prompt, were you and aren't listed. Android doesn't tell apps about a wrong PIN.",
                         style = MaterialTheme.typography.bodySmall,
                         color = note
                     )
@@ -340,9 +368,19 @@ internal fun SecurityActivityDialog(
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-        dismissButton = { TextButton(onClick = onClear) { Text("Clear") } }
+        // Destructive: in the error colour, and behind a face or fingerprint (and Undo).
+        dismissButton = {
+            TextButton(onClick = onClear, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                Text("Clear")
+            }
+        }
     )
 }
+
+/** On an urgent (error-coloured) card, a text button takes the card's own content colour. */
+@Composable
+private fun cardTextButtonColors(urgent: Boolean) =
+    if (urgent) ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer) else ButtonDefaults.textButtonColors()
 
 @Composable
 private fun SectionLabel(text: String) {

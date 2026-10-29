@@ -36,6 +36,9 @@ class ProtectionGapsTest {
         ProtectionGaps.elapsed = { sinceBoot }
         ProtectionGaps.bootCount = { boot }
         ProtectionGaps.exits = { exits }
+        ProtectionGaps.updatedAt = { 0L }
+        context.getSharedPreferences("biokey_unlock_attempts", Context.MODE_PRIVATE).edit().clear().commit()
+        com.android.BioKey.core.security.UnlockAttempts.resetForTests()
         SecurityVault.getInstance(context).setSetupCompletedSync(true)
         ProtectionGaps.onEngineUp(context)
     }
@@ -118,6 +121,36 @@ class ProtectionGapsTest {
         pass(60_000L)
         ProtectionGaps.onEngineUp(context)
         assertEquals(1, gaps.size)
+    }
+
+    @Test
+    fun theStopThatComesWithAnUpdateIsNoGap() {
+        pass(60_000L)
+        val updated = now
+        ProtectionGaps.updatedAt = { updated }
+        exits = listOf(updated + 2_000L to ApplicationExitInfo.REASON_USER_REQUESTED)
+        pass(5 * 60_000L)
+        ProtectionGaps.onEngineUp(context)
+        assertTrue(gaps.isEmpty())
+    }
+
+    @Test
+    fun theEarliestForceStopStartsTheGap() {
+        pass(60_000L)
+        val first = now
+        exits = listOf(first to ApplicationExitInfo.REASON_USER_REQUESTED, first + 60_000L to ApplicationExitInfo.REASON_USER_REQUESTED)
+        pass(5 * 60_000L)
+        ProtectionGaps.onEngineUp(context)
+        assertEquals(first, gaps.single().from)
+    }
+
+    @Test
+    fun aForceStopDatedAfterNowStillCounts() {
+        // Stopped, then the clock was set back an hour before switching back on.
+        exits = listOf(now + 60 * 60_000L to ApplicationExitInfo.REASON_USER_REQUESTED)
+        pass(5 * 60_000L)
+        ProtectionGaps.onEngineUp(context)
+        assertEquals(ProtectionGaps.Kind.FORCE_STOPPED, gaps.single().kind)
     }
 
     @Test

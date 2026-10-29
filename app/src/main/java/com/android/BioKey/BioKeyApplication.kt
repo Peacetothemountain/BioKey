@@ -91,6 +91,8 @@ class BioKeyApplication : Application() {
                 UnlockAttempts.load(app)
                 NewAppSuggestions.load(app)
                 ProtectionGaps.load(app)
+                // An engine that connected before the first unlock couldn't say so then.
+                if (ProtectionEngine.isProtecting(app)) ProtectionGaps.onEngineUp(app)
                 ProtectionEngine.refresh(app)
                 ProtectionAlerts.checkAccessibilityConnects(app)
             } catch (e: Exception) {

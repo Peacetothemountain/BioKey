@@ -87,6 +87,9 @@ object ProtectionAlerts {
      */
     fun serviceStopped(context: Context, now: Boolean = false) {
         val app = context.applicationContext
+        // Noted now, not after the grace: the process may not live that long. An engine back
+        // within moments makes it no gap (ProtectionGaps' minimum).
+        ProtectionGaps.onEngineDown(app)
         main.removeCallbacksAndMessages(STOP_TOKEN)
         if (now) {
             postServiceStopped(app)
@@ -98,7 +101,6 @@ object ProtectionAlerts {
     }
 
     private fun postServiceStopped(context: Context) {
-        ProtectionGaps.onEngineDown(context)
         if (ProtectionEngine.shouldRunCompatibility(context)) {
             // Compatibility mode is the engine to run and has what it needs, but didn't start
             // (Android limits starting it from the background); opening BioKey starts it. Checked
@@ -173,6 +175,17 @@ object ProtectionAlerts {
 
     private fun isShowing(context: Context, id: Int): Boolean =
         runCatching { context.getSystemService(NotificationManager::class.java).activeNotifications.any { it.id == id } }.getOrDefault(false)
+
+    /**
+     * The phone was just unlocked: if app locking is still off, say so again. Its alert may have
+     * been swiped away by whoever switched it off.
+     */
+    fun remindIfOff(context: Context) {
+        val app = context.applicationContext
+        if (!SecurityVault.getInstance(app).isSetupCompleted() || ProtectionEngine.isProtecting(app)) return
+        if (isShowing(app, ID_SERVICE_STOPPED)) return
+        postServiceStopped(app)
+    }
 
     fun serviceRestored(context: Context) {
         ProtectionGaps.onEngineUp(context)

@@ -1,8 +1,10 @@
 package com.android.BioKey.core.security
 
 import android.app.Activity
+import android.content.Context
 import android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG
 import android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+import android.hardware.biometrics.BiometricManager
 import android.hardware.biometrics.BiometricPrompt
 import android.os.CancellationSignal
 import android.util.Log
@@ -32,17 +34,36 @@ class SecurityEngine private constructor() {
         const val ERROR_NO_BIOMETRICS = BiometricPrompt.BIOMETRIC_ERROR_NO_BIOMETRICS
         const val ERROR_NO_DEVICE_CREDENTIAL = BiometricPrompt.BIOMETRIC_ERROR_NO_DEVICE_CREDENTIAL
         const val ERROR_HW_UNAVAILABLE = BiometricPrompt.BIOMETRIC_ERROR_HW_UNAVAILABLE
+        /** The prompt's Cancel, when it has one (face or fingerprint only): Android's code 13. */
+        const val ERROR_NEGATIVE_BUTTON = 13
 
         /** What every lock tells the user after [ERROR_LOCKOUT_PERMANENT]. */
         const val LOCKOUT_PERMANENT_MESSAGE =
             "Too many attempts. Lock your phone with the power button, then unlock it with your PIN, pattern or password to use biometrics again."
 
-        fun isUserCancel(code: Int) = code == ERROR_USER_CANCELED || code == ERROR_CANCELED
+        fun isUserCancel(code: Int) = code == ERROR_USER_CANCELED || code == ERROR_CANCELED ||
+            code == ERROR_NEGATIVE_BUTTON
+
+        /** Whether a strong (Class 3) face or fingerprint is set up on the phone. */
+        fun hasStrongBiometric(context: Context): Boolean = runCatching {
+            context.getSystemService(BiometricManager::class.java)
+                ?.canAuthenticate(BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
+        }.getOrDefault(false)
+
+        /**
+         * "Face or fingerprint only" is on and can be honoured: then prompts don't offer the screen
+         * lock. With no strong biometric set up (any more), the screen lock is allowed again, or
+         * the owner would be locked out of their own apps.
+         */
+        fun biometricOnly(context: Context): Boolean =
+            SecurityVault.getInstance(context).isBiometricOnly() && hasStrongBiometric(context)
     }
 
     private class Attempt(val packageName: String, val host: WeakReference<Activity>, val cancel: CancellationSignal) {
-        /** Faces or fingerprints this prompt saw that didn't match. Only on the main thread. */
-        var misses = 0
+        /** The failed-unlock record this prompt's misses went to, last ([UnlockAttempts]). Main thread only. */
+        var record: Long? = null
+        /** How many of each record's misses this prompt saw: its own, if a face or fingerprint then matches. */
+        val ownMisses = mutableMapOf<Long, Int>()
     }
 
     @Volatile private var active: Attempt? = null
@@ -79,6 +100,32 @@ class SecurityEngine private constructor() {
     }
 
     /**
+     * A face or fingerprint, and nothing else, before something that removes protection or its
+     * record (clearing security activity, switching alerts off): someone who only knows the
+     * screen lock can't do it. With no strong biometric set up, [onConfirmed] runs at once:
+     * there's nothing stronger to ask for. Not tracked as an unlock attempt.
+     */
+    fun confirmWithBiometric(activity: Activity, title: String, onConfirmed: () -> Unit) {
+        if (!hasStrongBiometric(activity)) {
+            onConfirmed()
+            return
+        }
+        val cancel = CancellationSignal()
+        runCatching {
+            BiometricPrompt.Builder(activity)
+                .setTitle(title)
+                .setSubtitle("Use your face or fingerprint")
+                .setAllowedAuthenticators(BIOMETRIC_STRONG)
+                .setNegativeButton("Cancel", activity.mainExecutor) { _, _ -> }
+                .setConfirmationRequired(false)
+                .build()
+                .authenticate(cancel, activity.mainExecutor, object : BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) = onConfirmed()
+                })
+        }
+    }
+
+    /**
      * Shows the system prompt hosted by [activity], which must be resumed and on top: the system
      * cancels prompts whose host task leaves the foreground.
      */
@@ -101,6 +148,7 @@ class SecurityEngine private constructor() {
         active = attempt
         val app = activity.applicationContext
         val name = appName.ifBlank { activity.getString(R.string.brand_name) }
+        val faceOrFingerOnly = biometricOnly(activity)
 
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
@@ -109,7 +157,7 @@ class SecurityEngine private constructor() {
                 UnlockAttempts.onUnlocked(
                     app, packageName, name,
                     biometric = result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC,
-                    missesHere = attempt.misses
+                    ownMisses = attempt.ownMisses
                 )
                 if (active !== attempt) return
                 active = null
@@ -119,13 +167,15 @@ class SecurityEngine private constructor() {
             // Each miss is kept as it happens: a prompt can go without an error (its screen
             // killed), and the misses before it are the ones that matter.
             override fun onAuthenticationFailed() {
-                attempt.misses++
-                UnlockAttempts.onBiometricFailed(app, packageName, name)
+                UnlockAttempts.onBiometricFailed(app, packageName, name, attempt.record)?.let { id ->
+                    attempt.record = id
+                    attempt.ownMisses[id] = (attempt.ownMisses[id] ?: 0) + 1
+                }
             }
 
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 if (errorCode == BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT || errorCode == ERROR_LOCKOUT_PERMANENT) {
-                    UnlockAttempts.onLockedOut(app, packageName, name)
+                    UnlockAttempts.onLockedOut(app, packageName, name, attempt.record)
                 }
                 if (active !== attempt) {
                     Log.d(TAG, "Ignoring error $errorCode from a superseded prompt")
@@ -139,8 +189,18 @@ class SecurityEngine private constructor() {
         try {
             BiometricPrompt.Builder(activity)
                 .setTitle(promptTitle ?: "Unlock $name")
-                .setSubtitle("Verify it's you")
-                .setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
+                .setSubtitle(if (faceOrFingerOnly) "Use your face or fingerprint" else "Verify it's you")
+                .apply {
+                    if (faceOrFingerOnly) {
+                        // No "Use PIN": someone who knows the screen lock can't use it here.
+                        setAllowedAuthenticators(BIOMETRIC_STRONG)
+                        setNegativeButton("Cancel", activity.mainExecutor) { _, _ ->
+                            callback.onAuthenticationError(ERROR_NEGATIVE_BUTTON, "Cancel")
+                        }
+                    } else {
+                        setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
+                    }
+                }
                 .setConfirmationRequired(false)
                 .build()
                 .authenticate(attempt.cancel, activity.mainExecutor, callback)

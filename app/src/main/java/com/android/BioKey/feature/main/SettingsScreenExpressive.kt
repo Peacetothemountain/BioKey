@@ -1,5 +1,6 @@
 package com.android.BioKey.feature.main
 
+import android.content.Intent
 import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
@@ -21,17 +22,21 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.AddModerator
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.GppBad
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Password
+import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Shield
@@ -65,14 +70,18 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.android.BioKey.BuildConfig
 import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.NewAppSuggestions
 import com.android.BioKey.core.security.ProtectionEngine
+import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.rejectObscuredTouches
@@ -134,6 +143,12 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     val autoSortProfiles by vault.autoSortProfilesFlow.collectAsStateWithLifecycle()
     val attemptAlerts by UnlockAttempts.enabled.collectAsStateWithLifecycle()
     val screenLockUnlocks by UnlockAttempts.screenLockUnlocks.collectAsStateWithLifecycle()
+    val biometricOnly by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
+    var strongBiometric by remember { mutableStateOf(SecurityEngine.hasStrongBiometric(context)) }
+    LifecycleResumeEffect(Unit) {
+        strongBiometric = SecurityEngine.hasStrongBiometric(context)
+        onPauseOrDispose { }
+    }
     val newAppOffers by NewAppSuggestions.enabled.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
         // Usually loaded already, as BioKey started.
@@ -195,7 +210,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         add(
             SettingItem(
                 icon = Icons.Default.Shield,
-                title = "App lock",
+                title = "Lock apps",
                 subtitle = when {
                     mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP -> "Advanced Protection is on · tap to set up compatibility mode"
                     mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING ->
@@ -232,7 +247,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             SettingItem(
                 icon = if (notifications.allowed) Icons.Default.Notifications else Icons.Default.NotificationsOff,
                 title = "Protection alerts",
-                subtitle = if (notifications.allowed) "Tells you if app locking stops"
+                subtitle = if (notifications.allowed) "Tells you if app locking stops, and afterwards when it was off"
                 else "Off: BioKey can't tell you if app locking stops · tap to allow notifications",
                 onClick = if (notifications.allowed) null else notifications::requestOrOpenSettings
             )
@@ -240,6 +255,21 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     }
     val serviceLabel = stringResource(R.string.accessibility_service_label)
     val privacy = listOfNotNull(
+        // Only where a strong face or fingerprint is set up: without one, nothing could unlock.
+        if (strongBiometric || biometricOnly) SettingItem(
+            icon = Icons.Default.Fingerprint,
+            title = "Face or fingerprint only",
+            subtitle = if (biometricOnly && !strongBiometric) "On, but no face or fingerprint is set up: your screen lock works meanwhile"
+            else "Locked apps and BioKey won't take your PIN, so someone who knows it can't open them",
+            checked = biometricOnly,
+            // Either way, a face or fingerprint first: proof it works before relying on it, and no
+            // switching it off for someone who only knows the PIN.
+            onChange = { on ->
+                SecurityEngine.INSTANCE.confirmWithBiometric(activity, if (on) "Use only your face or fingerprint" else "Allow your screen lock again") {
+                    vault.setBiometricOnly(on)
+                }
+            }
+        ) else null,
         SettingItem(
             icon = Icons.Default.NotificationsOff,
             title = "Hide notification content",
@@ -266,33 +296,40 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         SettingItem(
             icon = Icons.Default.GppBad,
             title = "Failed unlock alerts",
-            subtitle = "Tells you when a face or fingerprint fails on a locked app and the app isn't opened. " +
-                "Kept 7 days on this phone; turning this off deletes them",
+            subtitle = "When a face or fingerprint fails on a locked app. Kept 7 days; off deletes them",
             checked = attemptAlerts,
             onChange = { on ->
-                val removed = UnlockAttempts.setEnabled(context, on)
-                if (on && !notifications.allowed) notifications.request()
-                if (removed.isNotEmpty()) {
-                    BioKeyMessages.show("Failed unlocks deleted", Icons.Default.Delete, actionLabel = "Undo") {
-                        UnlockAttempts.setEnabled(context, true)
-                        UnlockAttempts.restore(context, removed)
+                fun apply() {
+                    val removed = UnlockAttempts.setEnabled(context, on)
+                    if (on && !notifications.allowed) notifications.request()
+                    if (removed.isNotEmpty()) {
+                        BioKeyMessages.show("Failed unlocks deleted", Icons.Default.Delete, actionLabel = "Undo") {
+                            UnlockAttempts.setEnabled(context, true)
+                            UnlockAttempts.restore(context, removed)
+                        }
                     }
                 }
+                // Switching them off deletes the record: not for someone who only knows the PIN.
+                if (on) apply() else SecurityEngine.INSTANCE.confirmWithBiometric(activity, "Turn off failed unlock alerts", ::apply)
             }
         ),
         // For an owner who never uses the PIN: anyone else who knows it shows up.
         if (attemptAlerts) SettingItem(
             icon = Icons.Default.Password,
             title = "Also note screen lock unlocks",
-            subtitle = "Lists each locked app opened with your PIN, pattern or password instead of a face or fingerprint. " +
-                "Listed, not notified",
+            subtitle = "Part of failed unlock alerts: each locked app opened with your PIN instead of a face or fingerprint",
             checked = screenLockUnlocks,
-            onChange = { on -> UnlockAttempts.setScreenLockUnlocks(context, on) }
+            onChange = { on ->
+                if (on) UnlockAttempts.setScreenLockUnlocks(context, true)
+                else SecurityEngine.INSTANCE.confirmWithBiometric(activity, "Stop noting screen lock unlocks") {
+                    UnlockAttempts.setScreenLockUnlocks(context, false)
+                }
+            }
         ) else null,
         SettingItem(
             icon = Icons.Default.AddModerator,
             title = "Offer to lock new apps",
-            subtitle = "When you install an app that auto-sort doesn't lock, a notification offers to lock it",
+            subtitle = "After you install an app that auto-sort doesn't lock",
             checked = newAppOffers,
             onChange = { on ->
                 NewAppSuggestions.setEnabled(context, on)
@@ -350,7 +387,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         SettingItem(
             icon = Icons.Default.AutoAwesome,
             title = "Auto-sort into profiles",
-            subtitle = "Puts recognised banking, social and work apps into matching profiles (which locks them)",
+            subtitle = "Puts recognised banking, social and work apps into matching profiles, which locks them",
             checked = autoSortProfiles,
             onChange = vault::setAutoSortProfilesEnabled
         )
@@ -361,13 +398,13 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         SettingItem(
             icon = Icons.Default.Save,
             title = "Back up settings",
-            subtitle = "Saves your locked apps, profiles and settings to a file protected by a password",
+            subtitle = "Your locked apps, profiles and settings, in a file sealed with a password",
             onClick = backupActions.backUp
         ),
         SettingItem(
             icon = Icons.Default.Restore,
             title = "Restore from a backup",
-            subtitle = "Replaces your locked apps, profiles and settings with a backup's, after a new phone or a reinstall",
+            subtitle = "After a new phone or a reinstall: replaces your locked apps, profiles and settings",
             onClick = backupActions.restore
         )
     )
@@ -380,12 +417,15 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         SettingItem(
             icon = Icons.Default.BugReport,
             title = "Diagnostic log",
-            subtitle = "Keeps BioKey's lock decisions about your locked apps (and failed unlocks) on this phone for 3 days, " +
-                "to help track down a problem",
+            subtitle = "BioKey's lock decisions about your locked apps, kept 3 days on this phone, to trace a problem",
             checked = logEnabled,
             onChange = { on ->
-                DiagnosticLog.setEnabled(context, on)
-                logEnabled = on
+                fun apply() {
+                    DiagnosticLog.setEnabled(context, on)
+                    logEnabled = on
+                }
+                // Off deletes it, and with it a trace of who unlocked what.
+                if (on) apply() else SecurityEngine.INSTANCE.confirmWithBiometric(activity, "Turn off the diagnostic log", ::apply)
             }
         ),
         SettingItem(
@@ -393,6 +433,30 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             title = "View diagnostic log",
             subtitle = if (logCount == 0) "Nothing recorded yet" else "$logCount entries from the last 3 days · share it when reporting a problem",
             onClick = { showLog = true }
+        )
+    )
+
+    // The privacy policy and help, in the browser (Play asks for the policy inside the app too).
+    fun openPage(url: String) {
+        LockStateTracker.beginExternalNavigation(preAuthorizeSelfProtection = false)
+        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) }
+            .onFailure {
+                LockStateTracker.onOwnAppResumed()
+                BioKeyMessages.show("No browser to open $url", Icons.Default.ErrorOutline)
+            }
+    }
+    val about = listOf(
+        SettingItem(
+            icon = Icons.Default.Policy,
+            title = "Privacy policy",
+            subtitle = "What BioKey sees, keeps, and never does",
+            onClick = { openPage(PRIVACY_POLICY_URL) }
+        ),
+        SettingItem(
+            icon = Icons.AutoMirrored.Filled.HelpOutline,
+            title = "Help and support",
+            subtitle = "Answers to common questions, and how to reach NB Designs · version ${BuildConfig.VERSION_NAME}",
+            onClick = { openPage(SUPPORT_URL) }
         )
     )
 
@@ -447,9 +511,11 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 item { SettingsSection("Profiles", profiles) { Haptics.toggle(view, it) } }
                 item { SettingsSection("Backup", backup) { Haptics.toggle(view, it) } }
                 item { SettingsSection("Diagnostics", diagnostics) { Haptics.toggle(view, it) } }
+                item { SettingsSection("About", about) { Haptics.toggle(view, it) } }
                 item {
                     Text(
-                        text = "BioKey has no internet access. Nothing it sees leaves this phone, unless you share the diagnostic log.",
+                        text = "BioKey has no internet access. Nothing it sees leaves this phone, unless you share the " +
+                            "diagnostic log or save a backup.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 32.dp, vertical = 24.dp)
@@ -556,3 +622,6 @@ private fun PredictiveBackPage(onNavigateBack: () -> Unit, content: @Composable 
         content()
     }
 }
+
+private const val PRIVACY_POLICY_URL = "https://peacetothemountain.github.io/BioKey/privacy/"
+private const val SUPPORT_URL = "https://peacetothemountain.github.io/BioKey/support/"

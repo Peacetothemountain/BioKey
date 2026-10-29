@@ -42,9 +42,10 @@
     </plurals>
     <string name="attempts_notification_text">A face or fingerprint didn\'t match on a locked app, and it wasn\'t opened. Open BioKey to see which.</string>
     <plurals name="attempts_tries">
-        <item quantity="one">%d try</item>
-        <item quantity="other">%d tries</item>
+        <item quantity="one">%d&#160;try</item>
+        <item quantity="other">%d&#160;tries</item>
     </plurals>
+    <string name="attempts_screen_lock_notification_text">A face or fingerprint didn\'t match on a locked app, which was then opened with your screen lock. Open BioKey to see which.</string>
     <string name="attempts_missed">%1$s didn\'t match</string>
     <string name="attempts_opened_with_screen_lock">%1$s, then opened with your screen lock</string>
     <string name="attempts_opened_with_biometric">%1$s, then opened with your face or fingerprint</string>

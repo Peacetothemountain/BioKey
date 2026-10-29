@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import android.text.format.DateUtils
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.fadeIn
@@ -116,6 +117,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -135,6 +137,7 @@ import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
+import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.rejectObscuredTouches
@@ -176,9 +179,16 @@ internal const val HOME_SCREEN_NOTE = "Home screens can't be locked"
  * Tapping an app opens its options (lock, which profile).
  */
 @Composable
-fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Unit) {
+fun MainScreenExpressive(
+    mode: ProtectionEngine.Mode,
+    onPauseRequested: () -> Unit,
+    /** An app to show as home opens (the new-app offer); [onSearchRequestTaken] once it's in the search. */
+    searchRequest: String? = null,
+    onSearchRequestTaken: () -> Unit = {}
+) {
     val context = LocalContext.current
     val view = LocalView.current
+    val activity = LocalActivity.current
     val vault = remember { SecurityVault.getInstance(context) }
 
     val selectedApps by vault.selectedAppsFlow.collectAsStateWithLifecycle()
@@ -272,6 +282,13 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     settingsVisibility.targetState = showSettings
     var filter by rememberSaveable { mutableStateOf(FILTER_ALL) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(searchRequest) {
+        if (searchRequest != null) {
+            filter = FILTER_ALL
+            searchQuery = searchRequest
+            onSearchRequestTaken()
+        }
+    }
     var optionsForPackage by rememberSaveable { mutableStateOf<String?>(null) }
     var showAddApps by rememberSaveable { mutableStateOf(false) }
     var showNewProfile by rememberSaveable { mutableStateOf(false) }
@@ -403,6 +420,18 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         Haptics.confirm(view)
         val outcome = LockAllNow.run(context, includeOwnApp = includeOwnApp, reason = "locked from BioKey")
         BioKeyMessages.show(LockAllNow.message(context, outcome), Icons.Default.Lock)
+    }
+
+    /** The one thing to do when nothing is protecting: turn an engine on, or resume. */
+    fun onProtectionAction() {
+        when (mode) {
+            ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP ->
+                disclosures.request(Disclosure.COMPATIBILITY) { IntentNavigationHelper.openNextCompatibilityPermission(context) }
+            // Not running too: turning it off and on grants it again, so the disclosure comes first.
+            ProtectionEngine.Mode.OFF, ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING ->
+                disclosures.request(Disclosure.ACCESSIBILITY) { IntentNavigationHelper.openAccessibilitySettings(context) }
+            else -> vault.resumeProtection()
+        }
     }
 
     /** Ends one app's session: the others stay open. */
@@ -564,6 +593,21 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                 }
             }
 
+            // Nothing locking right now: the most serious state gets the clearest card, with its one action.
+            if (look.action != null && vault.isSetupCompleted()) {
+                item(key = "not_protecting") {
+                    ActionCard(
+                        icon = Icons.Default.Warning,
+                        title = look.title,
+                        subtitle = look.body,
+                        urgent = true,
+                        modifier = Modifier.animateItem()
+                    ) {
+                        FilledTonalButton(onClick = ::onProtectionAction) { Text(look.action) }
+                    }
+                }
+            }
+
             // Asked once, and only where it can help: a strong face or fingerprint is set up.
             if (!attemptsChosen && vault.isSetupCompleted() && hasStrongBiometric) {
                 item(key = "attempts_intro") {
@@ -580,8 +624,6 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
 
             if (attempts.isNotEmpty() || gaps.isNotEmpty()) {
                 item(key = "activity") {
-                    // Shown: the notification has done its job.
-                    LaunchedEffect(attempts, gaps) { UnlockAttempts.markSeen(context) }
                     SecurityActivityCard(attempts, gaps, ::attemptLabel, onReview = { showActivity = true }, modifier = Modifier.animateItem())
                 }
             }
@@ -703,7 +745,11 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
                                 !globalLockEnabled -> " · paused"
                                 else -> " · " + defaultTimeout.relockPhrase.replaceFirstChar { it.lowercase() }
                             }
-                            SectionHeader("Locked · ${lockedShown.size}$relock")
+                            SectionHeader(
+                                "Locked · ${lockedShown.size}$relock",
+                                color = if (ProtectionEngine.isProtecting(mode) && globalLockEnabled) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.error
+                            )
                         }
                         appGroup(lockedShown, showProfile = true)
                     }
@@ -734,14 +780,7 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
             look = look,
             onAction = {
                 showProtectionSheet = false
-                when (mode) {
-                    ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP ->
-                        disclosures.request(Disclosure.COMPATIBILITY) { IntentNavigationHelper.openNextCompatibilityPermission(context) }
-                    // Not running too: turning it off and on grants it again, so the disclosure comes first.
-                    ProtectionEngine.Mode.OFF, ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING ->
-                        disclosures.request(Disclosure.ACCESSIBILITY) { IntentNavigationHelper.openAccessibilitySettings(context) }
-                    else -> vault.resumeProtection()
-                }
+                onProtectionAction()
             },
             onPause = {
                 showProtectionSheet = false
@@ -788,17 +827,23 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     }
 
     if (showActivity && (attempts.isNotEmpty() || gaps.isNotEmpty())) {
+        // Reviewed: the notification has done its job (merely opening BioKey doesn't count).
+        LaunchedEffect(Unit) { UnlockAttempts.markSeen(context) }
         SecurityActivityDialog(
             attempts = attempts,
             gaps = gaps,
             labelOf = ::attemptLabel,
             onClear = {
-                val oldAttempts = UnlockAttempts.clear(context)
-                val oldGaps = ProtectionGaps.clear(context)
-                showActivity = false
-                BioKeyMessages.show("Cleared", Icons.Default.Delete, actionLabel = "Undo") {
-                    UnlockAttempts.restore(context, oldAttempts)
-                    ProtectionGaps.restore(context, oldGaps)
+                // The record of who tried: a face or fingerprint to clear it, not just the screen lock.
+                val host = activity
+                if (host != null) SecurityEngine.INSTANCE.confirmWithBiometric(host, "Clear security activity") {
+                    val oldAttempts = UnlockAttempts.clear(context)
+                    val oldGaps = ProtectionGaps.clear(context)
+                    showActivity = false
+                    BioKeyMessages.show("Cleared", Icons.Default.Delete, actionLabel = "Undo") {
+                        UnlockAttempts.restore(context, oldAttempts)
+                        ProtectionGaps.restore(context, oldGaps)
+                    }
                 }
             },
             onDismiss = { showActivity = false }
@@ -958,7 +1003,11 @@ private fun headerLabelStyle(vararg labels: String): TextStyle {
     }
 }
 
-private val HeaderTileWidth = 84.dp
+private val HeaderTileBaseWidth = 84.dp
+
+/** Wider with large text (up to 1.4×), so labels shrink less to fit. */
+private val HeaderTileWidth: Dp
+    @Composable get() = HeaderTileBaseWidth * LocalDensity.current.fontScale.coerceIn(1f, 1.4f)
 
 /** A circle around an icon, with its label underneath; the whole column is the touch target. */
 @Composable
@@ -1028,8 +1077,9 @@ private fun protectionLook(
     val colors = MaterialTheme.colorScheme
     val apps = if (lockedCount == 1) "1 app locked" else "$lockedCount apps locked"
     return when {
+        // Locked apps open without a check here too: the same colours as off.
         mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP -> ProtectionLook(
-            colors.tertiaryContainer, colors.onTertiaryContainer, Icons.Default.GppMaybe, "Set up",
+            colors.errorContainer, colors.onErrorContainer, Icons.Default.GppMaybe, "Set up",
             "Advanced Protection is on",
             "It reserves accessibility for accessibility tools. Allow usage access and display over other apps, and BioKey keeps locking your apps in compatibility mode.",
             "Set up compatibility mode"

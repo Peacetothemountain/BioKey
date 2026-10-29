@@ -93,6 +93,14 @@ history lists them in the meantime.
 
 ## Quick actions and alerts
 
+### Someone knows my PIN. Can they open my locked apps?
+
+Not if you turn on **Face or fingerprint only** in BioKey's settings (it appears once a face or
+fingerprint is set up on your phone). Locked apps and BioKey then don't offer the PIN at all.
+After too many failed tries, Android pauses face and fingerprint for a while; if it locks them out
+for good, lock your phone and unlock it with your PIN to bring them back. With the option off,
+**Failed unlock alerts** and **Also note screen lock unlocks** at least show you when it happened.
+
 ### How do I lock everything at once?
 
 Before handing your phone to someone: long-press BioKey's icon and tap **Lock all now**, or add the

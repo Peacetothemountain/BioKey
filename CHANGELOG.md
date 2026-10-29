@@ -13,6 +13,8 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
   notification, not only locked apps' ones, as the privacy policy already did.
 - Settings pages BioKey opens go straight to the Settings app, so another app can't offer to open
   them instead and pose as Settings. Pages that set your screen lock never open anywhere else.
+- **Face or fingerprint only** (optional): locked apps and BioKey stop accepting your PIN, so
+  someone who knows it can't open them.
 - **Lock all now:** lock every app at once, without waiting for the screen to turn off, from the
   home screen, the status sheet, a new "Lock all" Quick Settings tile, or by long-pressing BioKey's
   icon. While protection is paused it resumes it; while nothing protects it says so.
@@ -24,7 +26,12 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
   app. Optionally, also note locked apps opened with the screen lock. Kept 7 days.
 - **App locking was off:** if protection is switched off, or BioKey is force-stopped, home shows
   when, from and to, and you're told at your next unlock. Android stopping BioKey on its own
-  doesn't count.
+  doesn't count. While it's off, the alert comes back at every unlock.
+- Clearing security activity, or switching failed unlock alerts or the diagnostic log off, needs
+  your face or fingerprint: someone who only knows your PIN can't erase the record. Changing the
+  phone's date can't hide or delete it either.
+- When nothing is protecting your apps, home says so at the top, with the one thing to do.
+- Settings has the privacy policy and help (About).
 - **New apps:** an app you install that auto-sort doesn't lock gets a "Lock it?" notification;
   several at once gather under one.
 - BioKey's lock screen and the lock cover now share one Unlock button: the same width, the same

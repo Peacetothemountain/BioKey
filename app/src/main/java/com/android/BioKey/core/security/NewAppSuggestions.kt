@@ -85,10 +85,12 @@ object NewAppSuggestions {
             Intent(context, LockReceiver::class.java).setAction(ACTION_LOCK).setData(Uri.fromParts("package", pkg, null)),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+        // Tapped, it opens BioKey at that app, to lock it in a profile of the owner's choosing.
         val open = PendingIntent.getActivity(
             context,
             notificationId(pkg),
-            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            Intent(context, MainActivity::class.java).putExtra(MainActivity.EXTRA_SEARCH, label)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val public = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -100,6 +102,7 @@ object NewAppSuggestions {
             .setContentTitle(context.getString(R.string.new_app_title, label))
             .setContentText(context.getString(R.string.new_app_text))
             .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
+            // The new app's name stays off the phone's lock screen.
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPublicVersion(public)
             .setContentIntent(open)
@@ -172,6 +175,7 @@ object NewAppSuggestions {
             .setContentText(context.getString(R.string.new_apps_summary_text))
             .setGroup(GROUP)
             .setGroupSummary(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setContentIntent(open)
             .setAutoCancel(true)
             .build()

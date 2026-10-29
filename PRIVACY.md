@@ -92,8 +92,9 @@ Authentication is done entirely by Android's own system prompt (`BiometricPrompt
 sees, receives or stores your fingerprint, your face, or your PIN, pattern or password: Android
 tells it only whether authentication succeeded, whether it was a face or fingerprint or the
 screen lock, and when a face or fingerprint didn't match (not whose it was). BioKey accepts only
-strong (Class 3) biometrics or your screen lock. Failed unlock alerts, if you turn them on, use
-those mismatches (see below). Android doesn't tell apps about a wrong PIN, pattern or password.
+strong (Class 3) biometrics or your screen lock; with "Face or fingerprint only" on, biometrics
+alone. Failed unlock alerts, if you turn them on, use those mismatches (see below). Android doesn't
+tell apps about a wrong PIN, pattern or password.
 
 ### Installed apps
 
@@ -110,10 +111,11 @@ list of installed packages (`QUERY_ALL_PACKAGES`).
 
 ### Other permissions
 
-- **Notifications** (`POST_NOTIFICATIONS`): the alert if protection stops; failed unlocks and
-  times app locking was off, told the next time you unlock your phone, never naming the app (on
-  the lock screen the notification says only "BioKey"); the offer to lock an app you just
-  installed; and the notification shield's stand-ins.
+- **Notifications** (`POST_NOTIFICATIONS`): the alert if protection stops (shown again each time
+  you unlock your phone while it's still off); failed unlocks and times app locking was off,
+  told the next time you unlock your phone, never naming the app and never shown on the lock
+  screen; the offer to lock an app you just installed (its name hidden on the lock screen if your
+  phone hides sensitive notification content there); and the notification shield's stand-ins.
 - **Start at boot** (`RECEIVE_BOOT_COMPLETED`): after a restart, BioKey starts compatibility mode
   if that is in use, or warns you if protection is off.
 - **Advanced Protection status** (`QUERY_ADVANCED_PROTECTION_MODE`): so BioKey knows to switch to
@@ -139,23 +141,28 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   fingerprints didn't match, whether biometrics locked out, and how the app was then opened, if
   it was. When your face or fingerprint matches on the same prompt, its misses were yours and
   aren't kept. If you also turn on "Also note screen lock unlocks", each locked app opened with
-  your PIN, pattern or password is noted the same way. At most 50 from the last 7 days are kept;
-  older ones are deleted. BioKey's home screen lists them until you clear them. Turning the alerts
-  off deletes them.
+  your PIN, pattern or password is noted the same way. BioKey's home screen lists them until you
+  clear them. At most 50 are kept; once you've seen them (Review), each is deleted 7 days after it
+  happened. Until then none is deleted for its age, so changing the phone's date can't remove one.
+  Turning the alerts off deletes them; a restored backup that turns them off leaves them in place.
+  Clearing them, or turning the alerts off, asks for your face or fingerprint where one is set up.
 - **Times app locking was off:** when BioKey's protection was switched off or BioKey was
-  force-stopped, and when it came back: start and end times only, at most 20 from the last 7
-  days, shown on BioKey's home screen until you clear them. To measure them BioKey keeps, while
+  force-stopped, and when it came back: start and end times only, at most 20, shown on BioKey's
+  home screen until you clear them, and deleted 7 days after they ended once you've seen them. To measure them BioKey keeps, while
   protection is off, when it stopped (on the phone's clock and on its clock since the last
   restart) and the phone's restart count; to tell a force stop from Android stopping BioKey on
   its own, it reads Android's record of why its own process last ended (the reason and the
-  time). This is kept for everyone: it holds no app names.
+  time), and when BioKey itself was last updated (an update stops it too). A number orders these
+  records and failed unlocks, whatever the phone's clock says. This is kept for everyone: it holds
+  no app names.
 - **Diagnostic log** (on by default; turn it off in Settings > Diagnostic log): a short record of
   BioKey's own lock decisions about the apps you've locked, such as which locked app it covered or
   unlocked and why, naming them by package name (for example `com.example.bank`). It never names
   apps you haven't locked: going from a locked app to one of them is logged only as going to "a
   helper app" or "another app". It also notes how long app locking was off and, when failed
   unlock alerts are on, failed unlocks of locked apps (which app, not whose face or finger). It keeps at most 500 entries from the
-  last 3 days. You can view and delete it in BioKey's settings; turning it off deletes it.
+  last 3 days. You can view and delete it in BioKey's settings; turning it off deletes it (with
+  your face or fingerprint, where one is set up).
 
   The log leaves your phone only if you tap **Share** in BioKey's settings, which opens Android's
   share sheet so you choose where it goes (an email to support, for example). A shared log also
@@ -175,8 +182,9 @@ BioKey can save your settings to a backup file, and restore them, from its setti
 settings, Restore from a backup). This happens only when you ask for it.
 
 - **What's in it:** which apps you've locked, your profiles and their re-lock delays, and BioKey's
-  settings (default re-lock delay, notification shield, auto-sort and the apps you've told it to
-  leave alone, failed unlock alerts and their screen lock option, new-app offers, and
+  settings (default re-lock delay, notification shield, face or fingerprint only, auto-sort and
+  the apps you've told it to leave alone, failed unlock alerts and their screen lock option,
+  new-app offers, and
   self-protection in builds that have it). Nothing else: no diagnostic log, no failed unlocks or
   times protection was off, no notifications, no authentication data. Restoring a backup never
   deletes the failed unlocks kept on the phone.
@@ -204,7 +212,9 @@ to the place you choose.
   protection was off).
 - **The diagnostic log** can be deleted on its own in BioKey's settings, or by turning it off.
 - **Failed unlocks and times protection was off** can be cleared from BioKey's home screen
-  (Review > Clear). Turning failed unlock alerts off also deletes the failed unlocks.
+  (Review > Clear). Turning failed unlock alerts off also deletes the failed unlocks. Both ask for
+  your face or fingerprint where one is set up, so someone who only knows your screen lock can't
+  erase them.
 - **Backup files** are yours: delete them wherever you saved them.
 
 NB Designs holds no data about you, so there is nothing to request from us or delete on our side.
@@ -225,6 +235,8 @@ connected with developer access); BioKey's limits are listed at
 
 If you find a security problem, please report it privately to <support.nbdesigns@gmail.com> (see
 <https://github.com/Peacetothemountain/BioKey/blob/main/SECURITY.md>).
+
+This policy is also linked from BioKey's Settings (About > Privacy policy).
 
 ## Changes to this policy
 
