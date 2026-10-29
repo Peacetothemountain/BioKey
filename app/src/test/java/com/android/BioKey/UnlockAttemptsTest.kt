@@ -327,6 +327,21 @@ class UnlockAttemptsTest {
     }
 
     @Test
+    fun aFloodOfRecordsDoesntPushOutAHeldChange() {
+        // Someone with a new fingerprint makes hundreds of records: the change stays, and held.
+        try {
+            biometricChange()
+            repeat(UnlockAttempts.MAX_UNSEEN + 20) {
+                ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, ProtectionGaps.Change.LOCK_OFF.encode("Chase"))
+            }
+            assertTrue(ProtectionGaps.gaps.value.any { it.kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED })
+            assertTrue(UnlockAttempts.holding(context))
+        } finally {
+            restoreGapClocks()
+        }
+    }
+
+    @Test
     fun duringTheHoldItsHolding() {
         try {
             assertFalse(UnlockAttempts.holding(context))

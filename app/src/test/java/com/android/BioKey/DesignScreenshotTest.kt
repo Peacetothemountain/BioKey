@@ -251,18 +251,35 @@ class DesignScreenshotTest {
         }
     }
 
-    /** Review, opened with the PIN, with a fingerprint change held a day and a change from a PIN session. */
+    private val reviewAt get() = java.util.Calendar.getInstance().apply { set(java.util.Calendar.HOUR_OF_DAY, 15); set(java.util.Calendar.MINUTE, 2) }.timeInMillis
+
+    /** Review during a hold: a fingerprint change, a change made since, and Close as the only way out. */
     @Test fun review() {
-        val at = java.util.Calendar.getInstance().apply { set(java.util.Calendar.HOUR_OF_DAY, 15); set(java.util.Calendar.MINUTE, 2) }.timeInMillis
+        val at = reviewAt
         val gaps = listOf(
+            ProtectionGaps.Gap(at + 60_000L, at + 60_000L, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, 4L, ProtectionGaps.Change.PROFILE_OFF.encodeDuringHold("Finance")),
             ProtectionGaps.Gap(at, at, ProtectionGaps.Kind.BIOMETRICS_CHANGED, 3L),
-            ProtectionGaps.Gap(at - 60_000L, at - 60_000L, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, 2L, ProtectionGaps.Change.LOCK_OFF.encode("Chase")),
-            ProtectionGaps.Gap(at - 20 * 60_000L, at - 12 * 60_000L, ProtectionGaps.Kind.SWITCHED_OFF, 1L)
+            ProtectionGaps.Gap(at - 60_000L, at - 60_000L, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, 2L, ProtectionGaps.Change.LOCK_OFF.encode("Chase"))
         )
         shoot("review") {
             com.android.BioKey.feature.main.SecurityActivityDialog(
                 attempts = emptyList(), gaps = gaps, labelOf = { it.label },
-                onClear = {}, onDismiss = {}, onMarkReviewed = {}, heldUntil = at + 24 * 60 * 60_000L
+                onClear = {}, onDismiss = {}, onMarkReviewed = null, heldUntil = at + 24 * 60 * 60_000L
+            )
+        }
+    }
+
+    /** Review opened with the screen lock, no hold: Mark reviewed, and Clear. */
+    @Test fun reviewScreenLock() {
+        val at = reviewAt
+        val gaps = listOf(
+            ProtectionGaps.Gap(at - 60_000L, at - 60_000L, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, 2L, ProtectionGaps.Change.LOCK_OFF.encode("Chase")),
+            ProtectionGaps.Gap(at - 20 * 60_000L, at - 12 * 60_000L, ProtectionGaps.Kind.SWITCHED_OFF, 1L)
+        )
+        shoot("review_screen_lock") {
+            com.android.BioKey.feature.main.SecurityActivityDialog(
+                attempts = emptyList(), gaps = gaps, labelOf = { it.label },
+                onClear = {}, onDismiss = {}, onMarkReviewed = {}
             )
         }
     }

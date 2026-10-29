@@ -14,17 +14,18 @@ import com.android.BioKey.ui.theme.BioKeyMessages
  * record of its access going (if open) ends now. Undo switches it back on and reopens that record;
  * the switch-off's own record stays, since notifications may have been read meanwhile.
  */
-internal fun switchShieldOff(context: Context, vault: SecurityVault, onUndo: () -> Unit = {}) {
-    val res = context.resources
+internal fun switchShieldOff(context: Context, vault: SecurityVault, onUndo: (withoutAccess: Boolean) -> Unit = {}) {
+    // The application's context: the message and its Undo may outlive the screen.
+    val app = context.applicationContext
     vault.setNotificationShield(false)
-    ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.SHIELD_OFF)
-    ShieldAccessWatch.checkSoon(context)
+    ProtectionGaps.recordIfScreenLock(app, ProtectionGaps.Change.SHIELD_OFF)
+    // What this switch-off ended, carried to its own Undo and no other.
+    val ended = ShieldAccessWatch.switchOffSoon(app)
     BioKeyMessages.show(
-        res.getString(R.string.home_shield_turned_off), Icons.Default.NotificationsOff,
-        actionLabel = res.getString(R.string.common_undo)
+        app.getString(R.string.home_shield_turned_off), Icons.Default.NotificationsOff,
+        actionLabel = app.getString(R.string.common_undo)
     ) {
         vault.setNotificationShield(true)
-        ShieldAccessWatch.undoSwitchOffSoon(context)
-        onUndo()
+        ShieldAccessWatch.undoSwitchOffSoon(app, ended, onUndo)
     }
 }

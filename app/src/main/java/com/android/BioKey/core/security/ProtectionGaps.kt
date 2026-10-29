@@ -87,6 +87,7 @@ object ProtectionGaps {
         DEFAULT_DELAY_LONGER(R.string.change_default_delay_longer),
         SHIELD_OFF(R.string.change_shield_off),
         BIOMETRIC_ONLY_OFF(R.string.change_biometric_only_off),
+        REMINDERS_STOPPED(R.string.change_reminders_stopped),
         /** Not a change from a session: the sensor couldn't be used, so the screen lock was allowed. */
         BIOMETRIC_UNAVAILABLE(R.string.change_biometric_unavailable, fromScreenLock = false);
 
@@ -222,7 +223,11 @@ object ProtectionGaps {
         val age = UnlockAttempts.Ageing(bootCount(context), elapsed())
         val kept = filterNot { it.seq <= seen && age.past(it.to, it.net, it.toElapsed, it.boot) }.sortedByDescending { it.seq }
         val unseen = kept.filter { it.seq > seen }
-        return (unseen.take(UnlockAttempts.MAX_UNSEEN) + kept.filter { it.seq <= seen }.take((MAX_KEPT - unseen.size).coerceAtLeast(0)))
+        // An unseen face or fingerprint change is never pushed out: a flood of other records mustn't
+        // be a way to end its hold.
+        val (biometric, others) = unseen.partition { it.kind == Kind.BIOMETRICS_CHANGED || it.kind == Kind.BIOMETRICS_REMOVED }
+        val unseenKept = biometric + others.take((UnlockAttempts.MAX_UNSEEN - biometric.size).coerceAtLeast(0))
+        return (unseenKept + kept.filter { it.seq <= seen }.take((MAX_KEPT - unseenKept.size).coerceAtLeast(0)))
             .sortedByDescending { it.seq }
     }
 

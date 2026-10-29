@@ -429,7 +429,7 @@ fun MainScreenExpressive(
     val biometricOnlyOn by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
     val seenUpTo by UnlockAttempts.seen.collectAsStateWithLifecycle()
     // Read off the main thread; null until then, so the card doesn't flash in and out.
-    var lockSettingsDismissed by remember { mutableStateOf<Boolean?>(null) }
+    var lockSettingsDismissed by remember { mutableStateOf(lastLockSettingsDismissed) }
     // Read again on every visit: an engine coming back clears it.
     var remindersStopped by remember { mutableStateOf(false) }
     // Seeded with what's already known, so the card doesn't pop in after the first frame.
@@ -438,7 +438,7 @@ fun MainScreenExpressive(
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
             withContext(Dispatchers.IO) {
-                lockSettingsDismissed = homePrefs(context).getBoolean(KEY_LOCK_SETTINGS_DISMISSED, false)
+                lockSettingsDismissed = homePrefs(context).getBoolean(KEY_LOCK_SETTINGS_DISMISSED, false).also { lastLockSettingsDismissed = it }
                 remindersStopped = ProtectionAlerts.remindersStopped(context)
                 ShieldAccessWatch.check(context)
                 shieldWithoutAccess = ShieldAccessWatch.lastWithoutAccess ?: false
@@ -680,6 +680,7 @@ fun MainScreenExpressive(
                                     onClick = {
                                         confirmOwner(activity, res.getString(R.string.home_confirm_stop_reminding)) {
                                             ProtectionAlerts.stopReminders(context)
+                                            ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.REMINDERS_STOPPED)
                                             remindersStopped = true
                                             BioKeyMessages.show(res.getString(R.string.home_reminders_stopped), Icons.Default.NotificationsOff)
                                         }
@@ -706,7 +707,7 @@ fun MainScreenExpressive(
                         // Revoked on purpose: switching the shield off ends it (and is recorded like any switch-off).
                         TextButton(onClick = {
                             // As the switch in Settings does: recorded from a screen-lock session, with Undo.
-                            switchShieldOff(context, vault, onUndo = { shieldWithoutAccess = true })
+                            switchShieldOff(context, vault, onUndo = { withoutAccess -> shieldWithoutAccess = withoutAccess })
                             shieldWithoutAccess = false
                         }) { Text(stringResource(R.string.home_shield_no_access_off)) }
                         FilledTonalButton(onClick = {
@@ -784,6 +785,7 @@ fun MainScreenExpressive(
                     ) {
                         TextButton(onClick = {
                             lockSettingsDismissed = true
+                            lastLockSettingsDismissed = true
                             scope.launch(Dispatchers.IO) { homePrefs(context).edit { putBoolean(KEY_LOCK_SETTINGS_DISMISSED, true) } }
                         }) { Text(stringResource(R.string.common_not_now)) }
                         FilledTonalButton(onClick = {
@@ -1018,13 +1020,23 @@ fun MainScreenExpressive(
         // Reviewed: the notification has done its job (merely opening BioKey doesn't count). Not when
         // the owner isn't proven ([SecurityEngine.ownerProven]): someone who only knows the PIN, or
         // whose face or fingerprint was only just added, mustn't be able to quiet it.
+        val openedAt = remember { shownUpTo }
         LaunchedEffect(shownUpTo) {
-            // Something new while it's open: worked out again, so the note and buttons stay true.
-            val now = withContext(Dispatchers.Default) {
+            // Something new while it's open: worked out again, so the note and buttons stay true
+            // (just worked out on opening, otherwise).
+            val now = if (shownUpTo == openedAt) review else withContext(Dispatchers.Default) {
                 ReviewState(ownerProven = SecurityEngine.ownerProven(context), heldUntil = UnlockAttempts.heldUntil(context))
             }
             if (now != review) reviewState = now
             if (now.ownerProven) withContext(Dispatchers.Default) { UnlockAttempts.markSeen(context, shownUpTo) }
+        }
+        // The hold ends while it's open: worked out again then.
+        LaunchedEffect(review.heldUntil) {
+            val until = review.heldUntil ?: return@LaunchedEffect
+            delay((until - com.android.BioKey.core.security.TrustedClock.now()).coerceAtLeast(0L) + 1_000L)
+            reviewState = withContext(Dispatchers.Default) {
+                ReviewState(ownerProven = SecurityEngine.ownerProven(context), heldUntil = UnlockAttempts.heldUntil(context))
+            }
         }
         SecurityActivityDialog(
             attempts = attempts,
@@ -1036,7 +1048,8 @@ fun MainScreenExpressive(
                 {
                     confirmOwner(activity, res.getString(R.string.home_confirm_mark_reviewed)) {
                         showActivity = false
-                        appScope.launch(Dispatchers.Default) { UnlockAttempts.markSeen(context, shownUpTo) }
+                        val app = context.applicationContext
+                        appScope.launch(Dispatchers.Default) { UnlockAttempts.markSeen(app, shownUpTo) }
                     }
                 }
             } else null,
@@ -1044,16 +1057,18 @@ fun MainScreenExpressive(
                 // The record of who tried: a face or fingerprint to clear it, not just the screen lock.
                 confirmOwner(activity, res.getString(R.string.home_confirm_clear_activity), silencesRecords = true) {
                     showActivity = false
+                    // The application's context: this, and its Undo, outlive the screen.
+                    val app = context.applicationContext
                     appScope.launch {
                         val (oldAttempts, oldGaps) = withContext(Dispatchers.Default) {
-                            UnlockAttempts.markSeen(context, shownUpTo)
-                            UnlockAttempts.clear(context, shownUpTo) to ProtectionGaps.clear(context, shownUpTo)
+                            UnlockAttempts.markSeen(app, shownUpTo)
+                            UnlockAttempts.clear(app, shownUpTo) to ProtectionGaps.clear(app, shownUpTo)
                         }
                         // Said only when something went.
                         if (oldAttempts.isNotEmpty() || oldGaps.isNotEmpty()) {
-                            BioKeyMessages.show(res.getString(R.string.home_cleared), Icons.Default.Delete, actionLabel = res.getString(R.string.common_undo)) {
-                                UnlockAttempts.restore(context, oldAttempts)
-                                ProtectionGaps.restore(context, oldGaps)
+                            BioKeyMessages.show(app.getString(R.string.home_cleared), Icons.Default.Delete, actionLabel = app.getString(R.string.common_undo)) {
+                                UnlockAttempts.restore(app, oldAttempts)
+                                ProtectionGaps.restore(app, oldGaps)
                             }
                         }
                     }
@@ -1553,6 +1568,8 @@ private fun EmptyState(text: String, actionLabel: String?, onAction: () -> Unit)
 /** The home screen's own small memory: cards the owner put away. */
 internal fun homePrefs(context: Context) = context.getSharedPreferences("biokey_home", Context.MODE_PRIVATE)
 internal const val KEY_LOCK_SETTINGS_DISMISSED = "lock_settings_dismissed"
+/** [KEY_LOCK_SETTINGS_DISMISSED] as last read in this process: home's first frame, before it reads again. */
+@Volatile internal var lastLockSettingsDismissed: Boolean? = null
 
 /** What Review opens with: whether the owner is proven, and until when a face or fingerprint change is held. */
 private data class ReviewState(val ownerProven: Boolean, val heldUntil: Long?)

@@ -87,6 +87,7 @@ import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.VaultBackup
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.BioKeyMessageHost
@@ -277,6 +278,11 @@ internal fun rememberBackupActions(
                     // Off the main thread (restoring sweeps notifications), and in the backup's
                     // scope, so leaving Settings meanwhile doesn't stop it halfway to its message.
                     pending.viewModelScope.launch {
+                        // Checked again as it runs: a face or fingerprint change recorded meanwhile refuses it.
+                        if (withContext(Dispatchers.Default) { UnlockAttempts.holding(activity) }) {
+                            BioKeyMessages.show(res.getString(R.string.held_refused, attemptTime(activity, UnlockAttempts.heldUntil(activity) ?: 0L)), Icons.Default.ErrorOutline)
+                            return@launch
+                        }
                         val restored = try {
                             withContext(Dispatchers.Default) { vault.restoreState(current.state) }
                             true

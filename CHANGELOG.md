@@ -68,7 +68,9 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
   (or restores a backup) can be done. Clear only ever removes what Review showed. Switching hiding
   off, from home or Settings, is recorded from a screen-lock session and ends the revoked-access
   record then and there; Undo switches it back on and reopens that record (the switch-off stays
-  recorded: notifications may have been read meanwhile).
+  recorded: notifications may have been read meanwhile). Stopping the reminders is recorded too,
+  and a flood of records can't push a face or fingerprint change out. Review offers to open
+  Android's security settings.
 - Reviewed security activity is shown calmly; only something new makes the card urgent. Review
   says until when a face or fingerprint change stays new. Moving or adding a locked app into a
   profile that re-locks later, or taking it out of one, is recorded.

@@ -2,9 +2,11 @@ package com.android.BioKey.feature.notification
 
 import android.content.Context
 import androidx.annotation.VisibleForTesting
+import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
+import java.util.concurrent.Future
 
 /**
  * Notification access taken away while "Hide notification content" is on: locked apps'
@@ -20,8 +22,6 @@ object ShieldAccessWatch {
     private const val KEY_HAD_ACCESS = "had_access"
     /** The record of the access going, until it's back: then it says from when to when. */
     private const val KEY_OPEN_RECORD = "open_record"
-    /** The record a switch-off of hiding last ended, for its Undo. */
-    private const val KEY_ENDED_BY_SWITCH_OFF = "ended_by_switch_off"
 
     @VisibleForTesting
     internal var hasAccess: (Context) -> Boolean = BioKeyNotificationShieldService::isNotificationAccessGranted
@@ -40,26 +40,38 @@ object ShieldAccessWatch {
     private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-shield-access").apply { isDaemon = true } }
 
     /**
-     * Hiding switched back on (Undo) still without access: the record the switch-off ended goes on,
-     * as if it had never been switched off. In order with [checkSoon].
+     * Hiding switched off: looked at now, off the calling thread. The result is the record that
+     * switch-off ended (its access having gone), if any: what its Undo reopens, and nothing else.
      */
-    fun undoSwitchOffSoon(context: Context) {
+    fun switchOffSoon(context: Context): Future<Long?> {
+        val app = context.applicationContext
+        return worker.submit<Long?> { runCatching { check(app) }.getOrNull() }
+    }
+
+    /**
+     * Hiding switched back on (Undo) still without access: the record its switch-off [ended] goes
+     * on, as if it had never been switched off. Then [onDone], on the main thread, with whether
+     * hiding is now on without access.
+     */
+    fun undoSwitchOffSoon(context: Context, ended: Future<Long?>, onDone: (withoutAccess: Boolean) -> Unit = {}) {
         val app = context.applicationContext
         worker.execute {
             runCatching {
                 synchronized(this) {
-                    val p = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    val ended = p.getLong(KEY_ENDED_BY_SWITCH_OFF, 0L)
-                    if (ended > 0L && !hasAccess(app)) {
-                        ProtectionGaps.reopenEvent(app, ended)
-                        p.edit { putLong(KEY_OPEN_RECORD, ended).remove(KEY_ENDED_BY_SWITCH_OFF) }
+                    val seq = ended.get()
+                    if (seq != null && !hasAccess(app)) {
+                        ProtectionGaps.reopenEvent(app, seq)
+                        app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putLong(KEY_OPEN_RECORD, seq) }
                     }
+                    check(app)
                 }
             }
+            val withoutAccess = lastWithoutAccess ?: false
+            ContextCompat.getMainExecutor(app).execute { onDone(withoutAccess) }
         }
     }
 
-    /** Waits for the looks already queued ([checkSoon], [undoSwitchOffSoon]). */
+    /** Waits for the looks already queued ([checkSoon], [switchOffSoon], [undoSwitchOffSoon]). */
     @VisibleForTesting
     internal fun awaitForTests() {
         worker.submit {}.get()
@@ -71,8 +83,9 @@ object ShieldAccessWatch {
         worker.execute { runCatching { check(app) } }
     }
 
+    /** Looks at the shield and its access, records what changed; returns the record it ended by hiding being off, if any. */
     @Synchronized
-    fun check(context: Context) {
+    fun check(context: Context): Long? {
         val app = context.applicationContext
         val p = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val shieldOn = SecurityVault.getInstance(app).isNotificationShieldEnabled()
@@ -80,11 +93,12 @@ object ShieldAccessWatch {
         lastKnownAccess = access
         lastWithoutAccess = shieldOn && !access
         val had = p.getBoolean(KEY_HAD_ACCESS, false)
+        val open = p.getLong(KEY_OPEN_RECORD, 0L).takeIf { it > 0L }
         when {
-            // Hiding on: no switch-off left to undo.
-            shieldOn && access -> if (!had || p.contains(KEY_ENDED_BY_SWITCH_OFF)) {
-                p.getLong(KEY_OPEN_RECORD, 0L).takeIf { it > 0L }?.let { ProtectionGaps.endEvent(app, it) }
-                p.edit { putBoolean(KEY_HAD_ACCESS, true).remove(KEY_OPEN_RECORD).remove(KEY_ENDED_BY_SWITCH_OFF) }
+            // Access back (or first had): an open record ends.
+            shieldOn && access -> if (!had || open != null) {
+                open?.let { ProtectionGaps.endEvent(app, it) }
+                p.edit { putBoolean(KEY_HAD_ACCESS, true).remove(KEY_OPEN_RECORD) }
             }
             shieldOn && had -> {
                 val seq = ProtectionGaps.recordEvent(app, ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED)
@@ -93,19 +107,13 @@ object ShieldAccessWatch {
                     if (seq != null) putLong(KEY_OPEN_RECORD, seq)
                 }
             }
-            // Switched off in BioKey: the owner's choice, nothing to tell.
-            // Each switch-off notes what it ended, or that it ended nothing: Undo reopens only that.
-            !shieldOn -> {
-                // An open record ends here: from when access went to when hiding was switched off.
-                // Remembered, in case that switch-off is undone ([undoSwitchOffSoon]).
-                val open = p.getLong(KEY_OPEN_RECORD, 0L).takeIf { it > 0L }
+            // Switched off in BioKey: an open record ends, from when access went to now.
+            !shieldOn -> if (had || open != null) {
                 open?.let { ProtectionGaps.endEvent(app, it) }
-                p.edit {
-                    putBoolean(KEY_HAD_ACCESS, false).remove(KEY_OPEN_RECORD)
-                    if (open != null) putLong(KEY_ENDED_BY_SWITCH_OFF, open) else remove(KEY_ENDED_BY_SWITCH_OFF)
-                }
+                p.edit { putBoolean(KEY_HAD_ACCESS, false).remove(KEY_OPEN_RECORD) }
+                return open
             }
-            shieldOn && !had && !p.contains(KEY_OPEN_RECORD) -> p.edit { remove(KEY_ENDED_BY_SWITCH_OFF) }
         }
+        return null
     }
 }

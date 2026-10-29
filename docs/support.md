@@ -171,7 +171,8 @@ backup file first:
 
 After installing BioKey again (or on the new phone) and finishing setup, tap **Restore from a
 backup** in its settings, pick the file and enter the password, and confirm with your face or
-fingerprint (your screen lock if none is set up). It replaces your locked apps, profiles and settings with the backup's. The
+fingerprint (your screen lock if none is set up). Within a day of a face or fingerprint being added
+or removed, BioKey refuses to restore, and says until when. It replaces your locked apps, profiles and settings with the backup's. The
 notification shield stays off on a new phone, and BioKey says so: turn on **Hide notification
 content** in its settings (and agree to the explanation) to hide notifications there too.
 

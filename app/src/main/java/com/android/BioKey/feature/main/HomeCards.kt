@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -481,9 +482,18 @@ internal fun SecurityActivityDialog(
                                 color = note
                             )
                             if (change.isBiometricChange) {
+                                Spacer(Modifier.height(4.dp))
                                 Text(stringResource(R.string.card_change_biometrics_note), style = MaterialTheme.typography.bodySmall, color = note)
                             }
                         }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    if (changes.any { it.isBiometricChange || it.kind == ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK }) {
+                        // What to do about them: check the faces and fingerprints, or change the screen lock.
+                        TextButton(
+                            onClick = { IntentNavigationHelper.openScreenLockSetup(context) },
+                            contentPadding = PaddingValues(horizontal = 0.dp)
+                        ) { Text(stringResource(R.string.activity_open_security_settings)) }
                     }
                     Spacer(Modifier.height(16.dp))
                 }
@@ -527,7 +537,7 @@ internal fun SecurityActivityDialog(
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
                 TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) }
                 // What this visit is for, when it's opened with the screen lock.
-                if (onMarkReviewed != null) FilledTonalButton(onClick = onMarkReviewed) { Text(stringResource(R.string.card_mark_reviewed)) }
+                if (onMarkReviewed != null && heldUntil == null) FilledTonalButton(onClick = onMarkReviewed) { Text(stringResource(R.string.card_mark_reviewed)) }
             }
         },
         // Destructive: in the error colour, and behind a face or fingerprint (and Undo). Not offered

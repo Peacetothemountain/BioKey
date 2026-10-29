@@ -173,8 +173,8 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   on the phone; when a face or fingerprint couldn't be used while "Face or fingerprint only" was on,
   so the screen lock was allowed; when notification access was switched off while "Hide
   notification content" was on, and when it came back or hiding was switched off (whether BioKey
-  had that access is also remembered, for this); and, on a phone with a face or fingerprint, each
-  way protection was weakened from
+  had that access is also remembered, for this); and, on a phone with a face or fingerprint (or
+  within a day of one being added or removed), each way protection was weakened from
   BioKey opened with the screen lock and not confirmed with a face or fingerprint: protection
   paused; an app's lock switched off; a locked app moved or added into a profile that's off or
   that re-locks later, or taken out of its profile so it's locked less; a profile switched off or
@@ -183,8 +183,8 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   or fingerprint change, "Face or fingerprint only" switched off. These name the app or profile.
   (Restoring a backup, stopping the reminders, and switching off face or fingerprint only, the
   alerts or the diagnostic log can't be done with the screen lock at all on such a phone: they ask
-  for a face or fingerprint; and within that day, restoring and switching off the alerts or the
-  log can't be done at all.) Shown on BioKey's home screen until you clear them, kept like
+  for a face or fingerprint; and within that day, none of what's listed above as refused can be
+  done at all, and stopping the reminders is recorded.) Shown on BioKey's home screen until you clear them, kept like
   failed unlocks (seen ones 7 days, at most 20); a face or fingerprint added or removed can't be
   cleared, only aged out, so whoever added one can't erase the record of it. To measure them BioKey keeps, while
   protection is off, when it stopped (on the phone's clock and on its clock since the last
@@ -233,7 +233,8 @@ settings, Restore from a backup). This happens only when you ask for it.
   self-protection in builds that have it). Nothing else: no diagnostic log, no failed unlocks or
   times protection was off, no notifications, no authentication data. Restoring a backup never
   deletes the failed unlocks kept on the phone, and always asks for your face or fingerprint first
-  (your screen lock where none is set up). It doesn't switch the notification shield on unless it's
+  (your screen lock where none is set up). Within a day of a face or fingerprint added or removed, it can't be done
+  at all. It doesn't switch the notification shield on unless it's
   already on here: that waits for BioKey's explanation on this phone.
 - **How it's protected:** the file is sealed with a password you choose (at least 8 characters),
   using AES-256-GCM with a key derived from your password by PBKDF2-SHA256 (600,000 rounds).
