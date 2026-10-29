@@ -148,6 +148,14 @@ An app lock running as a regular app can't defend against everything:
 - **Android 12 and 13** have no way to hide an app's screens from other accessibility services: one you have turned on can read and operate BioKey's screens.
 - **Accessibility shortcuts**: a shortcut (volume keys or the accessibility button) assigned to Bio Key App Lock Service switches it off without authentication. Remove it if you rely on self-protection (builds from source only); BioKey's settings warn you while one is assigned. Either way, BioKey shows afterwards when app locking was off.
 - **Self-protection is heuristic.** There's no Android API for "this screen can disable app X", so BioKey recognises those screens by package and content. It's tested against Pixel layouts; other manufacturers' Settings may differ.
+- **Clearing BioKey's storage** (App info > Storage) deletes everything it keeps, the record of failed unlocks and of times app locking was off included. The Play version can't stop that, but it also undoes BioKey's setup and switches its service off, which the owner can't miss.
+- **A restart into safe mode, or with BioKey switched off,** isn't counted as "app locking was off": restarting the phone needs its screen lock.
+
+### Deliberate choices
+
+- **No intruder photos.** Some app locks take a picture of whoever fails to unlock. That needs the camera permission and photographs people who never agreed to it; BioKey records which app and when, and nothing about who.
+- **English only.** BioKey isn't translated. What Android shows outside BioKey (notifications, tiles, the launcher shortcut, the accessibility description) is in `strings.xml`, with plurals, ready for translation.
+- **The diagnostic log is on by default.** With no network access, a user's log is the only way to trace a missed or unexpected lock. It stays on the phone, keeps 3 days, names only locked apps, and leaves only when the user shares it.
 
 ## Building from source
 
