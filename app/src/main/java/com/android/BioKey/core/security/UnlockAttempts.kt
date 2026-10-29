@@ -567,6 +567,9 @@ object UnlockAttempts {
                 gaps.any { it.kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED || it.kind == ProtectionGaps.Kind.BIOMETRICS_REMOVED } ->
                     R.string.biometrics_changed_notification_text
                 gaps.any { it.kind == ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED } -> R.string.shield_access_notification_text
+                // Only records that aren't a change of protection: said as what they are.
+                gaps.all { ProtectionGaps.Change.decode(it.detail)?.first == ProtectionGaps.Change.LOG_SHARED } -> R.string.log_shared_notification_text
+                gaps.all { ProtectionGaps.Change.decode(it.detail)?.first?.fromScreenLock == false } -> R.string.biometric_unavailable_notification_text
                 else -> R.string.changes_notification_text
             }
         )

@@ -487,7 +487,6 @@ internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
                             IconButton(onClick = {
                                 // It names locked apps and their unlocks: the owner's to send, not only the screen lock's.
                                 confirmOwner(logActivity, res.getString(R.string.diagnostics_share_prompt), screenLockIfSensorUnusable = true) {
-                                    ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.LOG_SHARED)
                                     share(context)
                                 }
                             }, enabled = entries.isNotEmpty()) {
@@ -563,5 +562,7 @@ private fun share(context: Context) {
         .putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.diagnostics_share_subject))
         .putExtra(Intent.EXTRA_TEXT, report)
     runCatching { context.startActivity(Intent.createChooser(send, context.getString(R.string.diagnostics_share_chooser))) }
+        // Recorded once it's been offered to another app (Android doesn't say if it was sent).
+        .onSuccess { ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.LOG_SHARED) }
         .onFailure { BioKeyMessages.show(context.getString(R.string.diagnostics_share_failed), Icons.Default.ErrorOutline) }
 }

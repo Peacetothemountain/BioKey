@@ -56,6 +56,12 @@ class RecordWordingTest {
     }
 
     @Test
+    fun theLogSharedSaysWhatHappened() {
+        val text = line(Kind.CHANGED_WITH_SCREEN_LOCK, Change.LOG_SHARED.encode())
+        assertTrue(text, "Diagnostic log opened for sharing" in text)
+    }
+
+    @Test
     fun aForceStopWhoseStartCantBeToldSaysSo() {
         assertTrue(line(Kind.FORCE_STOPPED, unknownStart = true).contains("can't be told"))
     }

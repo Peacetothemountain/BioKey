@@ -190,8 +190,11 @@ class MainActivity : ComponentActivity() {
         if (setupNeedsScreenLock && getSystemService(android.app.KeyguardManager::class.java)?.isDeviceSecure == true) {
             setupNeedsScreenLock = false
             setupAuthError = null
-            // It failed at the last step for want of one: that step now, without another tap.
-            completeSetup()
+            // It failed at the last step for want of one: that step now, without another tap,
+            // once resumed (as the other prompts are shown).
+            window.decorView.post {
+                if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) && !vault.isSetupCompleted()) completeSetup()
+            }
         }
 
         if (!vault.isSetupCompleted()) return

@@ -212,7 +212,7 @@ internal fun LazyListScope.homeCards(
                 FilledTonalButton(onClick = {
                     val undo = vault.lockSettingsApp()
                     BioKeyMessages.show(res.getString(R.string.settings_lock_settings_done), Icons.Default.Lock, actionLabel = res.getString(R.string.common_undo), onAction = undo)
-                }) { Text(stringResource(R.string.new_app_lock)) }
+                }) { Text(stringResource(R.string.settings_lock_action)) }
             }
         }
     }

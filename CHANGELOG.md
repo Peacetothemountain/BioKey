@@ -76,7 +76,8 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
 - BioKey is called BioKey everywhere, Android's Settings included (it was "Bio Key" there).
 - The accessibility service ignores what it sees until setup is done; sharing the diagnostic log
   asks for your face or fingerprint (your screen lock if it can't be used), and is recorded from a
-  screen-lock session. Setup finishes by itself once a screen lock it needed is set.
+  screen-lock session. Setup finishes by itself once a screen lock it needed is set. BioKey's main
+  screen keeps its state through rotation, folding and dark-mode switches.
 - Reviewed security activity is shown calmly; only something new makes the card urgent. Review
   says until when a face or fingerprint change stays new. Moving or adding a locked app into a
   profile that re-locks later, or taking it out of one, is recorded.

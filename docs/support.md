@@ -13,7 +13,8 @@ that).
 
 If BioKey locked something it shouldn't have, or didn't lock something it should, the diagnostic
 log helps: in BioKey's settings, open **View diagnostic log**, tap **Share** and confirm with your
-face or fingerprint (your screen lock if it can't be used). It lists the apps
+face or fingerprint (your screen lock if it can't be used). Shared from BioKey opened with your
+screen lock, it's recorded in its security activity. It lists the apps
 you've locked by package name, and nothing about apps you haven't. Read it before you send it.
 
 Bugs and feature requests can also go to

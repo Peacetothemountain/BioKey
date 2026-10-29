@@ -218,7 +218,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     // The keyguard just went away: whatever is on screen must be re-checked even if
                     // no window event arrives (e.g. a locked app was left open when the screen went off).
                     Intent.ACTION_USER_PRESENT -> {
-                        windowList()?.let { updateMasks(it, full = false) }
+                        // Not before setup: nothing on screen is looked at until then.
+                        if (::vault.isInitialized && vault.isSetupCompleted()) windowList()?.let { updateMasks(it, full = false) }
                         reevaluateForeground()
                         mainHandler.postDelayed(::reevaluateForeground, 250)
                     }
@@ -396,7 +397,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     private val revokeSelfProtectionAfterExitRunnable = Runnable { guarded("Self-protection exit check", ::revokeSelfProtectionAfterExit) }
     private val trailingSelfProtectionRunnable = Runnable { guarded("Self-protection check", ::checkSelfProtectionAgain) }
-    private val maskRecheckRunnable = Runnable { guarded("Mask check") { windowList()?.let { updateMasks(it, full = false) } } }
+    private val maskRecheckRunnable = Runnable {
+        guarded("Mask check") { if (::vault.isInitialized && vault.isSetupCompleted()) windowList()?.let { updateMasks(it, full = false) } }
+    }
 
     /** Runs a Handler task, where an exception would crash the service: it is logged instead. */
     private inline fun guarded(what: String, block: () -> Unit) {
@@ -945,6 +948,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
         reconcileScheduled = false
         reconcileDueAt = 0L
         if (!isRunning || !::vault.isInitialized) return
+        // Before setup (and the explanation it shows first), nothing on screen is looked at.
+        if (!vault.isSetupCompleted()) return
         try {
             reconcileNow()
             reconcileFailures = 0

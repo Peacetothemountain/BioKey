@@ -239,7 +239,7 @@ internal fun HomeDialogs(
             openedWithScreenLock = !review.ownerProven && review.heldUntil == null,
             onMarkReviewed = if (!review.ownerProven && review.heldUntil == null) {
                 {
-                    confirmOwner(activity, res.getString(R.string.home_confirm_mark_reviewed)) {
+                    confirmOwner(activity, res.getString(R.string.home_confirm_mark_reviewed), silencesRecords = true) {
                         overlays.showActivity = false
                         homeViewModel.markReviewed(shownUpTo)
                     }

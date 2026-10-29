@@ -181,7 +181,8 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   paused; an app's lock switched off; a locked app moved or added into a profile that's off or
   that re-locks later, or taken out of its profile so it's locked less; a profile switched off or
   deleted; a longer re-lock delay, for a
-  profile or the default; "Hide notification content" switched off; and, within a day of a face
+  profile or the default; "Hide notification content" switched off; the diagnostic log opened
+  for sharing; and, within a day of a face
   or fingerprint change, "Face or fingerprint only" switched off. These name the app or profile.
   (Restoring a backup, stopping the reminders, and switching off face or fingerprint only, the
   alerts or the diagnostic log can't be done with the screen lock at all on such a phone: they ask
