@@ -219,6 +219,7 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.core.ktx)
     // Installs the baseline profile (src/main/baseline-prof.txt) on installs that don't come from
     // Google Play, which installs it itself.

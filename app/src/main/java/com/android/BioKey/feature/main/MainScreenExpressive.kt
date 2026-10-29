@@ -1,84 +1,44 @@
 package com.android.BioKey.feature.main
 
-import android.content.Context
 import android.os.Handler
 import android.os.Looper
-import android.text.format.DateUtils
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Apps
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Fingerprint
-import androidx.compose.material.icons.filled.GppBad
-import androidx.compose.material.icons.filled.GppMaybe
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.NotificationsOff
-import androidx.compose.material.icons.filled.PauseCircle
-import androidx.compose.material.icons.filled.RemoveCircleOutline
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.VerifiedUser
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -86,7 +46,6 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -94,18 +53,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.layout
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
@@ -113,48 +64,28 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.core.content.edit
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.android.BioKey.BioKeyApplication
 import com.android.BioKey.R
 import com.android.BioKey.core.data.AppCategory
-import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.data.SecurityProfile
-import com.android.BioKey.core.data.openFor
 import com.android.BioKey.core.security.LockAllNow
 import com.android.BioKey.core.security.LockStateTracker
-import com.android.BioKey.core.security.ProtectDialogWindow
-import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
-import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.ForegroundRules
-import com.android.BioKey.feature.notification.ShieldAccessWatch
-import com.android.BioKey.ui.brand.BioKeyMarkSideways
-import com.android.BioKey.ui.brand.HeaderMatrixDotsExpressive
-import com.android.BioKey.ui.brand.KeyMark
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.GroupGap
 import com.android.BioKey.ui.theme.GroupInset
@@ -162,14 +93,13 @@ import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.Haptics
 import com.android.BioKey.ui.theme.MaxContentWidth
 import com.android.BioKey.ui.theme.SectionHeader
-import com.android.BioKey.ui.theme.springPress
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private const val FILTER_ALL = "filter:all"
+internal const val FILTER_ALL = "filter:all"
 
 /** The list's kinds of row, so a row scrolled away is reused for another of its kind. */
 private const val CONTENT_APP = "app"
@@ -190,12 +120,13 @@ fun MainScreenExpressive(
     onPauseRequested: () -> Unit,
     /** An app to show as home opens (the new-app offer); [onSearchRequestTaken] once it's in the search. */
     searchRequest: String? = null,
-    onSearchRequestTaken: () -> Unit = {}
+    onSearchRequestTaken: () -> Unit = {},
+    /** Home's state from outside the vault, and Review's. */
+    homeViewModel: HomeViewModel = viewModel()
 ) {
     val context = LocalContext.current
     val res = LocalResources.current
     val view = LocalView.current
-    val activity = LocalActivity.current
     val vault = remember { SecurityVault.getInstance(context) }
 
     val selectedApps by vault.selectedAppsFlow.collectAsStateWithLifecycle()
@@ -296,14 +227,7 @@ fun MainScreenExpressive(
             onSearchRequestTaken()
         }
     }
-    var optionsForPackage by rememberSaveable { mutableStateOf<String?>(null) }
-    var showAddApps by rememberSaveable { mutableStateOf(false) }
-    var showNewProfile by rememberSaveable { mutableStateOf(false) }
-    /** After creating a profile from an app's options, put that app in it. */
-    var newProfileForPackage by rememberSaveable { mutableStateOf<String?>(null) }
-    var showEditProfile by rememberSaveable { mutableStateOf(false) }
-    var showRelock by rememberSaveable { mutableStateOf(false) }
-    var showProtectionSheet by rememberSaveable { mutableStateOf(false) }
+    val overlays = rememberHomeOverlays()
 
     val currentProfile = profiles.firstOrNull { it.id == filter }
     LaunchedEffect(filter, currentProfile == null) {
@@ -312,8 +236,8 @@ fun MainScreenExpressive(
     // An app's options close if it's uninstalled; not while the list is still loading (after
     // the process was restarted, say), or the sheet the user had open would be lost.
     LaunchedEffect(isLoadingApps, installedApps) {
-        val pkg = optionsForPackage
-        if (!isLoadingApps && pkg != null && installedApps.none { it.packageName == pkg }) optionsForPackage = null
+        val pkg = overlays.optionsForPackage
+        if (!isLoadingApps && pkg != null && installedApps.none { it.packageName == pkg }) overlays.optionsForPackage = null
     }
     // Sheets, dialogs and the notification shade take the window's focus, while BioKey stays
     // resumed behind their scrim. Only once it has had focus: before, the header moves from its
@@ -326,7 +250,7 @@ fun MainScreenExpressive(
      * it has slid in (stopping as it starts would show them jump to a still frame), or a window
      * over BioKey's.
      */
-    val headerActive = !(settingsVisibility.currentState && settingsVisibility.isIdle) && !(showAddApps && currentProfile != null) &&
+    val headerActive = !(settingsVisibility.currentState && settingsVisibility.isIdle) && !(overlays.showAddApps && currentProfile != null) &&
         (windowFocused || !hadFocus)
 
     val profileByPackage = remember(profiles) {
@@ -399,60 +323,24 @@ fun MainScreenExpressive(
     val unlockedNowApps = remember(unlockedNow, installedApps, lockedApps, profiles) {
         installedApps.filter { isLocked(it.packageName) && isUnlockedNow(it.packageName) }
     }
-    var showUnlocked by rememberSaveable { mutableStateOf(false) }
 
     // What happened while the owner was away: failed unlocks, and protection switched off.
     // Seeing them here is what the notification was for, so it goes.
     val attempts by UnlockAttempts.attempts.collectAsStateWithLifecycle()
     val attemptsChosen by UnlockAttempts.chosen.collectAsStateWithLifecycle()
     val gaps by ProtectionGaps.gaps.collectAsStateWithLifecycle()
-    var showActivity by rememberSaveable { mutableStateOf(false) }
-    /** Review's state, worked out (off the main thread) before it opens, so it opens as it stays. */
-    var reviewState by remember { mutableStateOf<ReviewState?>(null) }
-    var opening by remember { mutableStateOf(false) }
-    fun openReview() {
-        if (opening) return
-        opening = true
-        scope.launch {
-            reviewState = withContext(Dispatchers.Default) {
-                ReviewState(ownerProven = SecurityEngine.ownerProven(context), heldUntil = UnlockAttempts.heldUntil(context))
-            }
-            showActivity = true
-            opening = false
-        }
-    }
+    fun openReview() = homeViewModel.openReview { overlays.showActivity = true }
     // Back after a rotation with Review open: work it out again.
-    LaunchedEffect(showActivity) { if (showActivity && reviewState == null) openReview() }
-    var hasStrongBiometric by remember { mutableStateOf(SecurityEngine.lastKnownEnrolledStrongBiometric() ?: false) }
-    var alertsMuted by remember { mutableStateOf(false) }
+    LaunchedEffect(overlays.showActivity) { if (overlays.showActivity) homeViewModel.restoreReview { overlays.showActivity = true } }
+    // Review's state goes with the screen, so it's worked out again when it comes back.
+    DisposableEffect(homeViewModel) { onDispose { homeViewModel.forgetReview() } }
+    val home by homeViewModel.state.collectAsStateWithLifecycle()
     val attemptsEnabled by UnlockAttempts.enabled.collectAsStateWithLifecycle()
     val biometricOnlyOn by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
     val seenUpTo by UnlockAttempts.seen.collectAsStateWithLifecycle()
-    // Read off the main thread; null until then, so the card doesn't flash in and out.
-    var lockSettingsDismissed by remember { mutableStateOf(lastLockSettingsDismissed) }
-    // Read again on every visit: an engine coming back clears it.
-    var remindersStopped by remember { mutableStateOf(false) }
-    // Seeded with what's already known, so the card doesn't pop in after the first frame.
-    var shieldWithoutAccess by remember { mutableStateOf(ShieldAccessWatch.lastWithoutAccess ?: false) }
-    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(lifecycle) {
-        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
-            withContext(Dispatchers.IO) {
-                lockSettingsDismissed = homePrefs(context).getBoolean(KEY_LOCK_SETTINGS_DISMISSED, false).also { lastLockSettingsDismissed = it }
-                remindersStopped = ProtectionAlerts.remindersStopped(context)
-                ShieldAccessWatch.check(context)
-                shieldWithoutAccess = ShieldAccessWatch.lastWithoutAccess ?: false
-            }
-        }
-    }
-    LifecycleResumeEffect(Unit) {
-        val job = scope.launch(Dispatchers.IO) {
-            hasStrongBiometric = UnlockAttempts.hasStrongBiometric(context)
-            alertsMuted = UnlockAttempts.channelMuted(context)
-            // Past their 7 days, gone from the disk too.
-            UnlockAttempts.prune(context)
-            ProtectionGaps.prune(context)
-        }
+    // Read again on every visit (an engine coming back clears stopped reminders, say), off the main thread.
+    LifecycleResumeEffect(homeViewModel) {
+        val job = homeViewModel.refresh()
         onPauseOrDispose { job.cancel() }
     }
     val labelByPackage = remember(installedApps) { installedApps.associate { it.packageName to it.label } }
@@ -551,7 +439,7 @@ fun MainScreenExpressive(
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
                 leading = { AppIcon(app) },
-                onClick = { optionsForPackage = app.packageName },
+                onClick = { overlays.optionsForPackage = app.packageName },
                 modifier = Modifier
                     .animateItem()
                     .padding(horizontal = GroupInset)
@@ -605,196 +493,38 @@ fun MainScreenExpressive(
             contentPadding = PaddingValues(start = sidePad, end = sidePad, bottom = 96.dp)
         ) {
             item(key = "header") {
-                // Where the header, its logo and its two labelled tiles are on screen: the
-                // constellation thins out round them, so no link cuts through the mark or a label.
-                var headerOrigin by remember { mutableStateOf(Offset.Zero) }
-                val quietZones = remember { mutableStateMapOf<Int, Rect>() }
-                Box(Modifier.onGloballyPositioned { headerOrigin = it.positionInRoot() }) {
-                    val shift = headerOrigin - Offset(sidePadPx.toFloat(), 0f)
-                    HeaderMatrixDotsExpressive(
-                        Modifier
-                            .matchParentSize()
-                            .horizontalBleed(sidePadPx),
-                        animated = headerActive,
-                        quiet = { quietZones.values.map { it.translate(-shift) } }
-                    )
-                    Column(Modifier.statusBarsPadding()) {
-                        MainHeader(
-                            status = look,
-                            animated = headerActive,
-                            onOpenStatus = { showProtectionSheet = true },
-                            onOpenSettings = { showSettings = true },
-                            onPlaced = { part, bounds -> quietZones[part] = bounds }
-                        )
-                    }
-                }
+                HomeHeader(
+                    look = look,
+                    animated = headerActive,
+                    sidePadPx = sidePadPx,
+                    onOpenStatus = { overlays.showProtectionSheet = true },
+                    onOpenSettings = { showSettings = true }
+                )
             }
 
-            if (!notifications.allowed) {
-                item(key = "alerts_off") {
-                    Box(Modifier.padding(horizontal = GroupInset).padding(bottom = 8.dp)) {
-                        GroupRow(
-                            index = 0,
-                            count = 1,
-                            title = stringResource(R.string.home_alerts_off_title),
-                            subtitle = stringResource(R.string.home_alerts_off_text),
-                            icon = Icons.Default.NotificationsOff,
-                            iconTint = MaterialTheme.colorScheme.onErrorContainer,
-                            iconContainer = MaterialTheme.colorScheme.errorContainer,
-                            onClick = notifications::requestOrOpenSettings
-                        )
-                    }
-                }
-            }
-
-            // Nothing locking right now: the most serious state gets the clearest card, with its one action.
-            if (look.action != null && vault.isSetupCompleted()) {
-                item(key = "not_protecting") {
-                    // A pause the owner chose isn't an emergency; off, not running or set up is.
-                    val paused = ProtectionEngine.isProtecting(mode) && !globalLockEnabled
-                    val quiet = mode == ProtectionEngine.Mode.OFF && remindersStopped
-                    ActionCard(
-                        icon = look.icon,
-                        title = look.title,
-                        subtitle = if (quiet) stringResource(R.string.home_reminders_off_body, look.body) else look.body,
-                        urgent = !paused,
-                        modifier = Modifier.animateItem()
-                    ) {
-                        if (paused) {
-                            FilledTonalButton(onClick = ::onProtectionAction) { Text(look.action) }
-                        } else {
-                            // Switched off in Accessibility (maybe on purpose): the owner can stop the
-                            // reminders until it's back on. Not offered for a crash or a missing permission.
-                            val cardText = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer)
-                            if (quiet) {
-                                // Only strengthens: no authentication.
-                                TextButton(
-                                    onClick = {
-                                        ProtectionAlerts.resumeReminders(context)
-                                        remindersStopped = false
-                                    },
-                                    colors = cardText
-                                ) { Text(stringResource(R.string.home_remind_me)) }
-                            } else if (mode == ProtectionEngine.Mode.OFF) {
-                                TextButton(
-                                    onClick = {
-                                        confirmOwner(activity, res.getString(R.string.home_confirm_stop_reminding)) {
-                                            ProtectionAlerts.stopReminders(context)
-                                            ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.REMINDERS_STOPPED)
-                                            remindersStopped = true
-                                            BioKeyMessages.show(res.getString(R.string.home_reminders_stopped), Icons.Default.NotificationsOff)
-                                        }
-                                    },
-                                    colors = cardText
-                                ) { Text(stringResource(R.string.home_stop_reminding)) }
-                            }
-                            UrgentButton(look.action, ::onProtectionAction)
-                        }
-                    }
-                }
-            }
-
-            // The shield is on but its access was taken away: notifications show in full. Calm: the
-            // owner may have meant it, and the record (if any) is the activity card's.
-            if (shieldWithoutAccess && vault.isSetupCompleted()) {
-                item(key = "shield_no_access") {
-                    ActionCard(
-                        icon = Icons.Default.NotificationsOff,
-                        title = stringResource(R.string.home_shield_no_access_title),
-                        subtitle = stringResource(R.string.home_shield_no_access_text),
-                        modifier = Modifier.animateItem()
-                    ) {
-                        // Revoked on purpose: switching the shield off ends it (and is recorded like any switch-off).
-                        TextButton(onClick = {
-                            // As the switch in Settings does: recorded from a screen-lock session, with Undo.
-                            switchShieldOff(context, vault, onUndo = { withoutAccess -> shieldWithoutAccess = withoutAccess })
-                            shieldWithoutAccess = false
-                        }) { Text(stringResource(R.string.home_shield_no_access_off)) }
-                        FilledTonalButton(onClick = {
-                            // The explanation first, as everywhere notification access is asked for.
-                            disclosures.request(Disclosure.NOTIFICATIONS) { IntentNavigationHelper.openNotificationListenerSettings(context) }
-                        }) { Text(stringResource(R.string.home_shield_no_access_action)) }
-                    }
-                }
-            }
-
-            // One of BioKey's alert channels silenced in Android's settings (all of its notifications
-            // off is the row above): say so. Only one card on the page is urgent at a time.
-            if (alertsMuted && notifications.allowed) {
-                item(key = "alerts_muted") {
-                    ActionCard(
-                        icon = Icons.Default.NotificationsOff,
-                        title = stringResource(R.string.home_alerts_muted_title),
-                        subtitle = stringResource(R.string.home_alerts_muted_text),
-                        urgent = look.action == null && !securityActivityUrgent(attempts, gaps, seenUpTo),
-                        modifier = Modifier.animateItem()
-                    ) {
-                        val open: () -> Unit = { IntentNavigationHelper.openChannelSettings(context, UnlockAttempts.mutedChannel(context)) }
-                        if (look.action == null && !securityActivityUrgent(attempts, gaps, seenUpTo)) UrgentButton(stringResource(R.string.common_turn_on), onClick = open)
-                        else FilledTonalButton(onClick = open) { Text(stringResource(R.string.common_turn_on)) }
-                    }
-                }
-            }
-
-            // Asked once, and only where it can help: a strong face or fingerprint is set up.
-            if (!attemptsChosen && vault.isSetupCompleted() && hasStrongBiometric) {
-                item(key = "attempts_intro") {
-                    AttemptsIntroCard(
-                        onNotNow = { UnlockAttempts.setEnabled(context, false) },
-                        onTurnOn = {
-                            UnlockAttempts.setEnabled(context, true)
-                            if (!notifications.allowed) notifications.request()
-                        },
-                        modifier = Modifier.animateItem()
-                    )
-                }
-            }
-
-            if (attempts.isNotEmpty() || gaps.isNotEmpty()) {
-                item(key = "activity") {
-                    // One urgent card on the page: not protecting outranks this.
-                    SecurityActivityCard(
-                        attempts, gaps, ::attemptLabel, onReview = ::openReview, modifier = Modifier.animateItem(),
-                        urgent = securityActivityUrgent(attempts, gaps, seenUpTo) && !(look.action != null && vault.isSetupCompleted() && !(ProtectionEngine.isProtecting(mode) && !globalLockEnabled))
-                    )
-                }
-            }
-
-            if (unlockedNowApps.isNotEmpty()) {
-                item(key = "unlocked_now") {
-                    UnlockedNowCard(
-                        apps = unlockedNowApps,
-                        timeoutOf = vault::getTimeoutMode,
-                        onLock = ::lockOne,
-                        onChoose = { showUnlocked = true },
-                        onLockAll = { lockAllNow(includeOwnApp = false) },
-                        modifier = Modifier.animateItem()
-                    )
-                }
-            }
-
-            // Calm cards after the urgent ones. With your PIN, someone could add their own fingerprint
-            // in Settings: lock it.
-            if (biometricOnlyOn && hasStrongBiometric && look.action == null && SETTINGS_PACKAGE !in lockedApps && lockSettingsDismissed == false) {
-                item(key = "lock_settings") {
-                    ActionCard(
-                        icon = Icons.Default.Lock,
-                        title = stringResource(R.string.settings_lock_settings_title),
-                        subtitle = stringResource(R.string.home_lock_settings_text),
-                        modifier = Modifier.animateItem()
-                    ) {
-                        TextButton(onClick = {
-                            lockSettingsDismissed = true
-                            lastLockSettingsDismissed = true
-                            scope.launch(Dispatchers.IO) { homePrefs(context).edit { putBoolean(KEY_LOCK_SETTINGS_DISMISSED, true) } }
-                        }) { Text(stringResource(R.string.common_not_now)) }
-                        FilledTonalButton(onClick = {
-                            val undo = vault.lockSettingsApp()
-                            BioKeyMessages.show(res.getString(R.string.settings_lock_settings_done), Icons.Default.Lock, actionLabel = res.getString(R.string.common_undo), onAction = undo)
-                        }) { Text(stringResource(R.string.new_app_lock)) }
-                    }
-                }
-            }
+            homeCards(
+                mode = mode,
+                look = look,
+                vault = vault,
+                globalLockEnabled = globalLockEnabled,
+                notifications = notifications,
+                disclosures = disclosures,
+                homeViewModel = homeViewModel,
+                home = home,
+                attempts = attempts,
+                gaps = gaps,
+                seenUpTo = seenUpTo,
+                attemptsChosen = attemptsChosen,
+                biometricOnlyOn = biometricOnlyOn,
+                lockedApps = lockedApps,
+                unlockedNowApps = unlockedNowApps,
+                attemptLabel = ::attemptLabel,
+                onProtectionAction = ::onProtectionAction,
+                onReview = ::openReview,
+                onLockOne = ::lockOne,
+                onChooseUnlocked = { overlays.showUnlocked = true },
+                onLockAll = { lockAllNow(includeOwnApp = false) }
+            )
 
             stickyHeader(key = "controls") {
                 val surface = MaterialTheme.colorScheme.surface
@@ -838,7 +568,7 @@ fun MainScreenExpressive(
                         item(key = "new_profile") {
                             FilterChip(
                                 selected = false,
-                                onClick = { newProfileForPackage = null; showNewProfile = true },
+                                onClick = { overlays.newProfileForPackage = null; overlays.showNewProfile = true },
                                 label = { Text(stringResource(R.string.profile_new)) },
                                 leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp)) },
                                 shape = CircleShape
@@ -869,9 +599,9 @@ fun MainScreenExpressive(
                                 }
                             }
                         },
-                        onEdit = { showEditProfile = true },
-                        onRelock = { showRelock = true },
-                        onAddApps = { showAddApps = true }
+                        onEdit = { overlays.showEditProfile = true },
+                        onRelock = { overlays.showRelock = true },
+                        onAddApps = { overlays.showAddApps = true }
                     )
                 }
             }
@@ -889,7 +619,7 @@ fun MainScreenExpressive(
                             else -> stringResource(R.string.home_no_apps)
                         },
                         actionLabel = if (currentProfile != null && searchQuery.isBlank()) stringResource(R.string.home_add_apps) else null,
-                        onAction = { showAddApps = true }
+                        onAction = { overlays.showAddApps = true }
                     )
                 }
                 currentProfile != null -> {
@@ -940,636 +670,31 @@ fun MainScreenExpressive(
 
     // ---- Sheets & dialogs ------------------------------------------------------------------
 
-    if (showProtectionSheet) {
-        ProtectionSheet(
-            look = look,
-            onAction = {
-                showProtectionSheet = false
-                onProtectionAction()
-            },
-            onPause = {
-                showProtectionSheet = false
-                onPauseRequested()
-            },
-            onLockAll = {
-                showProtectionSheet = false
-                lockAllNow(includeOwnApp = true)
-            },
-            onDismiss = { showProtectionSheet = false }
-        )
-    }
-
-    optionsForPackage?.let { pkg ->
-        val app = installedApps.firstOrNull { it.packageName == pkg }
-        if (app != null) {
-            AppOptionsSheet(
-                app = app,
-                isLocked = isOn(pkg),
-                isHomeScreen = isHomeScreen(pkg),
-                currentProfile = profileOf(pkg),
-                profiles = profiles,
-                defaultTimeout = defaultTimeout,
-                onLockedChange = { toggleLock(app, it) },
-                onMoveToProfile = { profileId ->
-                    val wasLocked = lockedInVault(pkg)
-                    val delayBefore = vault.getTimeoutMode(pkg).openFor
-                    vault.moveAppToProfile(pkg, profileId)
-                    when {
-                        // Into a profile that's off: no longer locked.
-                        wasLocked && !lockedInVault(pkg) ->
-                            ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.MOVED_UNLOCKED, app.label)
-                        // Into one that keeps it open longer.
-                        wasLocked && vault.getTimeoutMode(pkg).openFor > delayBefore ->
-                            ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.MOVED_LONGER_DELAY, app.label, vault.profileOf(pkg)?.name.orEmpty())
-                    }
-                },
-                onRemoveFromProfile = {
-                    val former = profileOf(pkg)
-                    val wasLocked = lockedInVault(pkg)
-                    val delayBefore = vault.getTimeoutMode(pkg).openFor
-                    vault.removeAppFromProfile(pkg)
-                    // Out of a strict profile, it follows the default delay: maybe a longer one.
-                    if (wasLocked && (!lockedInVault(pkg) || vault.getTimeoutMode(pkg).openFor > delayBefore)) {
-                        ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.TAKEN_OUT, app.label, former?.name.orEmpty())
-                    }
-                    optionsForPackage = null
-                    if (former != null) {
-                        BioKeyMessages.show(
-                            res.getString(R.string.home_removed_from_profile, app.label, former.name),
-                            Icons.Default.RemoveCircleOutline,
-                            actionLabel = res.getString(R.string.common_undo)
-                        ) {
-                            vault.moveAppToProfile(pkg, former.id, switchOn = false)
-                        }
-                    }
-                },
-                onNewProfile = {
-                    newProfileForPackage = pkg
-                    optionsForPackage = null
-                    showNewProfile = true
-                },
-                onDismiss = { optionsForPackage = null }
-            )
-        }
-    }
-
-    val review = reviewState
-    if (showActivity && review != null && (attempts.isNotEmpty() || gaps.isNotEmpty())) {
-        // Only what the dialog shows counts as seen, not something that arrives while it's open.
-        val shownUpTo = maxOf(attempts.maxOfOrNull { it.seq } ?: 0L, gaps.maxOfOrNull { it.seq } ?: 0L)
-        // Reviewed: the notification has done its job (merely opening BioKey doesn't count). Not when
-        // the owner isn't proven ([SecurityEngine.ownerProven]): someone who only knows the PIN, or
-        // whose face or fingerprint was only just added, mustn't be able to quiet it.
-        val openedAt = remember { shownUpTo }
-        LaunchedEffect(shownUpTo) {
-            // Something new while it's open: worked out again, so the note and buttons stay true
-            // (just worked out on opening, otherwise).
-            val now = if (shownUpTo == openedAt) review else withContext(Dispatchers.Default) {
-                ReviewState(ownerProven = SecurityEngine.ownerProven(context), heldUntil = UnlockAttempts.heldUntil(context))
-            }
-            if (now != review) reviewState = now
-            if (now.ownerProven) withContext(Dispatchers.Default) { UnlockAttempts.markSeen(context, shownUpTo) }
-        }
-        // The hold ends while it's open: worked out again then.
-        LaunchedEffect(review.heldUntil) {
-            val until = review.heldUntil ?: return@LaunchedEffect
-            delay((until - com.android.BioKey.core.security.TrustedClock.now()).coerceAtLeast(0L) + 1_000L)
-            reviewState = withContext(Dispatchers.Default) {
-                ReviewState(ownerProven = SecurityEngine.ownerProven(context), heldUntil = UnlockAttempts.heldUntil(context))
-            }
-        }
-        SecurityActivityDialog(
-            attempts = attempts,
-            gaps = gaps,
-            labelOf = ::attemptLabel,
-            heldUntil = review.heldUntil,
-            openedWithScreenLock = !review.ownerProven && review.heldUntil == null,
-            onMarkReviewed = if (!review.ownerProven && review.heldUntil == null) {
-                {
-                    confirmOwner(activity, res.getString(R.string.home_confirm_mark_reviewed)) {
-                        showActivity = false
-                        val app = context.applicationContext
-                        appScope.launch(Dispatchers.Default) { UnlockAttempts.markSeen(app, shownUpTo) }
-                    }
-                }
-            } else null,
-            onClear = {
-                // The record of who tried: a face or fingerprint to clear it, not just the screen lock.
-                confirmOwner(activity, res.getString(R.string.home_confirm_clear_activity), silencesRecords = true) {
-                    showActivity = false
-                    // The application's context: this, and its Undo, outlive the screen.
-                    val app = context.applicationContext
-                    appScope.launch {
-                        val (oldAttempts, oldGaps) = withContext(Dispatchers.Default) {
-                            UnlockAttempts.markSeen(app, shownUpTo)
-                            UnlockAttempts.clear(app, shownUpTo) to ProtectionGaps.clear(app, shownUpTo)
-                        }
-                        // Said only when something went.
-                        if (oldAttempts.isNotEmpty() || oldGaps.isNotEmpty()) {
-                            BioKeyMessages.show(app.getString(R.string.home_cleared), Icons.Default.Delete, actionLabel = app.getString(R.string.common_undo)) {
-                                UnlockAttempts.restore(app, oldAttempts)
-                                ProtectionGaps.restore(app, oldGaps)
-                            }
-                        }
-                    }
-                }
-            },
-            onDismiss = { showActivity = false; reviewState = null }
-        )
-    }
-
-    if (showUnlocked && unlockedNowApps.isNotEmpty()) {
-        UnlockedAppsDialog(
-            apps = unlockedNowApps,
-            timeoutOf = vault::getTimeoutMode,
-            onLock = ::lockOne,
-            onLockAll = {
-                showUnlocked = false
-                lockAllNow(includeOwnApp = false)
-            },
-            onDismiss = { showUnlocked = false }
-        )
-    }
-
-    if (showNewProfile) {
-        ProfileDetailsDialog(
-            existing = null,
-            onDismiss = { showNewProfile = false; newProfileForPackage = null },
-            onSave = { name, iconKey ->
-                val created = vault.createProfile(name, iconKey)
-                showNewProfile = false
-                filter = created.id
-                val forPkg = newProfileForPackage
-                newProfileForPackage = null
-                if (forPkg != null) {
-                    val wasLocked = lockedInVault(forPkg)
-                    val delayBefore = vault.getTimeoutMode(forPkg).openFor
-                    vault.moveAppToProfile(forPkg, created.id)
-                    // A new profile follows the default delay: maybe longer than the app had.
-                    if (wasLocked && vault.getTimeoutMode(forPkg).openFor > delayBefore) {
-                        ProtectionGaps.recordIfScreenLock(
-                            context, ProtectionGaps.Change.MOVED_LONGER_DELAY, labelByPackage[forPkg] ?: forPkg, created.name
-                        )
-                    }
-                } else {
-                    showAddApps = true
-                }
-            },
-            onDelete = null
-        )
-    }
-
-    if (showEditProfile && currentProfile != null) {
-        ProfileDetailsDialog(
-            existing = currentProfile,
-            onDismiss = { showEditProfile = false },
-            onSave = { name, iconKey ->
-                vault.updateProfileDetails(currentProfile.id, name = name, iconKey = iconKey)
-                showEditProfile = false
-            },
-            onDelete = {
-                val name = currentProfile.name
-                val deleted = vault.deleteProfile(currentProfile.id)
-                if (deleted != null) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.PROFILE_DELETED, name)
-                showEditProfile = false
-                filter = FILTER_ALL
-                if (deleted != null) {
-                    BioKeyMessages.show(res.getString(R.string.home_profile_deleted, name), Icons.Default.Delete, actionLabel = res.getString(R.string.common_undo)) {
-                        vault.restoreDeletedProfile(deleted)
-                    }
-                }
-            }
-        )
-    }
-
-    if (showRelock && currentProfile != null) {
-        RelockSheet(
-            title = stringResource(R.string.home_relock_title, currentProfile.name),
-            current = currentProfile.timeoutMode,
-            onSelect = { mode ->
-                val before = currentProfile.timeoutMode ?: defaultTimeout
-                if ((mode ?: defaultTimeout).openFor > before.openFor) {
-                    ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.PROFILE_DELAY_LONGER, currentProfile.name)
-                }
-                vault.setProfileTimeout(currentProfile.id, mode)
-                showRelock = false
-            },
-            onDismiss = { showRelock = false },
-            settingsDefault = defaultTimeout
-        )
-    }
-
-    if (showAddApps && currentProfile != null) {
-        AddAppsScreen(
-            profile = currentProfile,
-            installedApps = installedApps,
-            profiles = profiles,
-            profileOfApp = ::profileOf,
-            lockedApps = lockedApps,
-            homeScreens = homeScreens,
-            onAdd = { packages ->
-                val wereLocked = packages.filter(::lockedInVault)
-                val delaysBefore = wereLocked.associateWith { vault.getTimeoutMode(it).openFor }
-                vault.addAppsToProfile(currentProfile.id, packages)
-                // Into a profile that keeps them open longer.
-                val looser = wereLocked.filter { lockedInVault(it) && vault.getTimeoutMode(it).openFor > (delaysBefore[it] ?: 0L) }
-                looser.forEach { pkg ->
-                    ProtectionGaps.recordIfScreenLock(
-                        context, ProtectionGaps.Change.MOVED_LONGER_DELAY, labelByPackage[pkg] ?: pkg, currentProfile.name
-                    )
-                }
-                // Into a profile that's off: those that were locked aren't any more.
-                val unlocked = wereLocked.filterNot(::lockedInVault)
-                if (unlocked.isNotEmpty()) {
-                    if (unlocked.size == 1) {
-                        val label = labelByPackage[unlocked.single()] ?: unlocked.single()
-                        ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.ADDED_TO_OFF_PROFILE, label, currentProfile.name)
-                    } else {
-                        ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.ADDED_MANY_TO_OFF_PROFILE, unlocked.size.toString(), currentProfile.name)
-                    }
-                }
-                showAddApps = false
-            },
-            onDismiss = { showAddApps = false }
-        )
-    }
-}
-
-/**
- * Status and Settings as equal-width tiles at the edges, BioKey's mark centred between them,
- * moving unless [animated] is false (the header covered).
- */
-@Composable
-private fun MainHeader(
-    status: ProtectionLook,
-    animated: Boolean,
-    onOpenStatus: () -> Unit,
-    onOpenSettings: () -> Unit,
-    /** Where each part (0 status, 1 logo, 2 settings) is on screen. */
-    onPlaced: (part: Int, bounds: Rect) -> Unit = { _, _ -> }
-) {
-    val settings = stringResource(R.string.settings_title)
-    val labelStyle = headerLabelStyle(status.shortLabel, settings)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 12.dp, end = 12.dp, top = 28.dp, bottom = 24.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        HeaderTile(
-            modifier = Modifier.onGloballyPositioned { onPlaced(0, it.boundsInRoot()) },
-            icon = status.icon,
-            label = status.shortLabel,
-            labelStyle = labelStyle,
-            container = status.container,
-            content = status.content,
-            contentDescription = stringResource(R.string.home_status_description, status.title),
-            onClick = onOpenStatus
-        )
-        // Centred between the two equal-width tiles, with breathing room on both sides.
-        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-            // The mark alone, on its side (the fingerprint on the right, the key on the left), as
-            // large as the header holds; its print swirls while the header is uncovered.
-            BioKeyMarkSideways(
-                Modifier
-                    .height(104.dp)
-                    .aspectRatio(1f / KeyMark.ASPECT)
-                    .onGloballyPositioned { onPlaced(1, it.boundsInRoot()) },
-                animated = animated
-            )
-        }
-        HeaderTile(
-            modifier = Modifier.onGloballyPositioned { onPlaced(2, it.boundsInRoot()) },
-            icon = Icons.Default.Settings,
-            label = settings,
-            labelStyle = labelStyle,
-            container = MaterialTheme.colorScheme.surfaceContainerHigh,
-            content = MaterialTheme.colorScheme.onSurface,
-            contentDescription = settings,
-            onClick = onOpenSettings
-        )
-    }
-}
-
-/**
- * The header tiles' label style: labelLarge, made smaller only as far as both [labels] need to
- * fit a tile on one line (large text would otherwise break "Protected" mid-word), and the same
- * for both, so they never look mismatched.
- */
-@Composable
-private fun headerLabelStyle(vararg labels: String): TextStyle {
-    val base = MaterialTheme.typography.labelLarge
-    val measurer = rememberTextMeasurer()
-    val density = LocalDensity.current
-    val width = with(density) { (HeaderTileWidth - 8.dp).roundToPx() }
-    return remember(labels.toList(), base, density) {
-        var size = base.fontSize
-        while (size.value > 9f && labels.any { measurer.measure(it, base.copy(fontSize = size), maxLines = 1, softWrap = false).size.width > width }) {
-            size = (size.value - 0.5f).sp
-        }
-        base.copy(fontSize = size)
-    }
-}
-
-private val HeaderTileBaseWidth = 84.dp
-
-/** Wider with large text (up to 1.4×), so labels shrink less to fit. */
-private val HeaderTileWidth: Dp
-    @Composable get() = HeaderTileBaseWidth * LocalDensity.current.fontScale.coerceIn(1f, 1.4f)
-
-/** A circle around an icon, with its label underneath; the whole column is the touch target. */
-@Composable
-private fun HeaderTile(
-    icon: ImageVector,
-    label: String,
-    /** Shared by both tiles ([headerLabelStyle]), so their labels match. */
-    labelStyle: TextStyle,
-    container: Color,
-    content: Color,
-    contentDescription: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = modifier
-            .width(HeaderTileWidth)
-            .springPress()
-            .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick, role = Role.Button)
-            .semantics(mergeDescendants = true) { this.contentDescription = contentDescription }
-            .padding(vertical = 6.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(64.dp)
-                .background(container, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(32.dp))
-        }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            label,
-            style = labelStyle,
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            softWrap = false
-        )
-    }
-}
-
-/** How each protection state looks, in the header tile and its sheet. */
-private data class ProtectionLook(
-    val container: Color,
-    val content: Color,
-    val icon: ImageVector,
-    val shortLabel: String,
-    val title: String,
-    val body: String,
-    /** Primary action, or null when protecting normally (then the sheet offers Pause). */
-    val action: String?
-)
-
-@Composable
-private fun protectionLook(
-    mode: ProtectionEngine.Mode,
-    enabled: Boolean,
-    pausedUntil: Long,
-    lockedCount: Int,
-    /** Locked apps with a copy in another profile, which compatibility mode can't see. */
-    unwatchedCount: Int,
-    defaultTimeout: LockTimeoutMode
-): ProtectionLook {
-    val context = LocalContext.current
-    val colors = MaterialTheme.colorScheme
-    val apps = pluralStringResource(R.plurals.home_apps_locked, lockedCount, lockedCount)
-    return when {
-        // Locked apps open without a check here too: the same colours as off.
-        mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP -> ProtectionLook(
-            colors.errorContainer, colors.onErrorContainer, Icons.Default.GppMaybe, stringResource(R.string.home_setup_short),
-            stringResource(R.string.home_needs_compat_title),
-            stringResource(R.string.home_needs_compat_body),
-            stringResource(R.string.home_needs_compat_action)
-        )
-        mode == ProtectionEngine.Mode.OFF -> ProtectionLook(
-            colors.errorContainer, colors.onErrorContainer, Icons.Default.Warning, stringResource(R.string.home_off_short),
-            stringResource(R.string.alert_off_title), stringResource(R.string.home_off_body), stringResource(R.string.common_turn_on)
-        )
-        // Switched on, but not running (it crashed): saying "Protected" here would be the one lie that matters.
-        mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> ProtectionLook(
-            colors.errorContainer, colors.onErrorContainer, Icons.Default.Warning, stringResource(R.string.home_not_running_short),
-            stringResource(R.string.home_not_running_title),
-            stringResource(R.string.home_not_running_body),
-            stringResource(R.string.home_not_running_action)
-        )
-        !enabled -> ProtectionLook(
-            colors.tertiaryContainer, colors.onTertiaryContainer, Icons.Default.PauseCircle, stringResource(R.string.common_paused),
-            if (pausedUntil > System.currentTimeMillis()) {
-                stringResource(R.string.home_paused_until, android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil)))
-            } else stringResource(R.string.home_protection_paused),
-            stringResource(R.string.home_paused_body),
-            stringResource(R.string.home_resume_protection)
-        )
-        else -> ProtectionLook(
-            colors.primaryContainer, colors.onPrimaryContainer, Icons.Default.VerifiedUser, stringResource(R.string.home_protected),
-            stringResource(R.string.home_protected),
-            apps + " · " + stringResource(defaultTimeout.relockPhraseRes).lowercase() +
-                (if (mode == ProtectionEngine.Mode.COMPATIBILITY) "\n" + stringResource(R.string.home_protected_compat) else "") +
-                (if (unwatchedCount == 0) "" else "\n" + pluralStringResource(R.plurals.home_unwatched, unwatchedCount, unwatchedCount)),
-            null
-        )
-    }
-}
-
-/** Protection details and the one action that matters, opened from the header tile. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ProtectionSheet(
-    look: ProtectionLook,
-    onAction: () -> Unit,
-    onPause: () -> Unit,
-    onLockAll: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        ProtectDialogWindow()
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .rejectObscuredTouches()
-                .padding(horizontal = 28.dp)
-                .padding(bottom = 28.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(72.dp)
-                    .background(look.container, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(look.icon, contentDescription = null, tint = look.content, modifier = Modifier.size(36.dp))
-            }
-            Spacer(Modifier.height(16.dp))
-            Text(
-                look.title,
-                style = MaterialTheme.typography.headlineSmall,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.semantics { heading() }
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                look.body,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            Spacer(Modifier.height(24.dp))
-            if (look.action != null) {
-                Button(onClick = onAction, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text(look.action) }
-            } else {
-                // Before handing the phone over, say: every locked app asks again, without waiting
-                // for the screen to turn off.
-                Button(onClick = onLockAll, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
-                    Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.shortcut_lock_all_long))
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = onPause, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
-                    Icon(Icons.Default.PauseCircle, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.home_pause_protection))
-                }
-            }
-        }
-    }
-}
-
-/** Draws [px] wider on each side than it is laid out: over the list's side margins on wide screens. */
-private fun Modifier.horizontalBleed(px: Int): Modifier = if (px <= 0) this else layout { measurable, constraints ->
-    val width = constraints.maxWidth + 2 * px
-    val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
-    layout(constraints.maxWidth, placeable.height) { placeable.place(-px, 0) }
-}
-
-/** [description]: what screen readers say in place of a short [label] ("Finance profile, 2 apps" for "Finance · 2"). */
-@Composable
-private fun FilterChoice(label: String, icon: ImageVector, selected: Boolean, description: String? = null, onClick: () -> Unit) {
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        label = { Text(label) },
-        leadingIcon = { Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
-        shape = CircleShape,
-        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer),
-        modifier = if (description != null) Modifier.semantics { contentDescription = description } else Modifier
+    HomeDialogs(
+        overlays = overlays,
+        homeViewModel = homeViewModel,
+        vault = vault,
+        look = look,
+        installedApps = installedApps,
+        profiles = profiles,
+        currentProfile = currentProfile,
+        defaultTimeout = defaultTimeout,
+        lockedApps = lockedApps,
+        homeScreens = homeScreens,
+        unlockedNowApps = unlockedNowApps,
+        attempts = attempts,
+        gaps = gaps,
+        labelByPackage = labelByPackage,
+        profileOf = ::profileOf,
+        isOn = ::isOn,
+        isHomeScreen = ::isHomeScreen,
+        lockedInVault = ::lockedInVault,
+        attemptLabel = ::attemptLabel,
+        onToggleLock = ::toggleLock,
+        onLockOne = ::lockOne,
+        onLockAll = ::lockAllNow,
+        onProtectionAction = ::onProtectionAction,
+        onPauseRequested = onPauseRequested,
+        onFilterChange = { filter = it }
     )
 }
-
-/** Everything about a profile, at the top of its own page. */
-@Composable
-private fun ProfileCard(
-    profile: SecurityProfile,
-    appCount: Int,
-    defaultTimeout: LockTimeoutMode,
-    onEnabledChange: (Boolean) -> Unit,
-    onEdit: () -> Unit,
-    onRelock: () -> Unit,
-    onAddApps: () -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = GroupInset, vertical = 8.dp)
-    ) {
-        Column(Modifier.padding(20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                ProfileBadge(profile.iconKey, 56.dp)
-                Spacer(Modifier.width(16.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(profile.name, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        text = pluralStringResource(R.plurals.home_app_count, appCount, appCount) + " · " +
-                            if (profile.enabled) stringResource((profile.timeoutMode ?: defaultTimeout).relockPhraseRes).lowercase() else stringResource(R.string.home_off),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-                IconButton(onClick = onEdit) {
-                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.home_profile_edit_description, profile.name))
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            // The profile's own switch: off pauses every app in it; each keeps its own setting.
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .toggleable(value = profile.enabled, role = Role.Switch, onValueChange = onEnabledChange)
-                    .padding(horizontal = 4.dp, vertical = 8.dp)
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(stringResource(R.string.home_profile_lock_apps, profile.name), style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        text = stringResource(if (profile.enabled) R.string.home_profile_on_text else R.string.home_profile_off_text),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                Switch(checked = profile.enabled, onCheckedChange = null)
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onAddApps, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.home_add_apps))
-                }
-                FilledTonalButton(
-                    onClick = onRelock,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)
-                ) {
-                    Icon(Icons.Default.LockClock, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.home_relock))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyState(text: String, actionLabel: String?, onAction: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 32.dp, vertical = 40.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (actionLabel != null) {
-            Spacer(Modifier.height(16.dp))
-            FilledTonalButton(onClick = onAction) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(actionLabel)
-            }
-        }
-    }
-}
-
-
-/** The home screen's own small memory: cards the owner put away. */
-internal fun homePrefs(context: Context) = context.getSharedPreferences("biokey_home", Context.MODE_PRIVATE)
-internal const val KEY_LOCK_SETTINGS_DISMISSED = "lock_settings_dismissed"
-/** [KEY_LOCK_SETTINGS_DISMISSED] as last read in this process: home's first frame, before it reads again. */
-@Volatile internal var lastLockSettingsDismissed: Boolean? = null
-
-/** What Review opens with: whether the owner is proven, and until when a face or fingerprint change is held. */
-private data class ReviewState(val ownerProven: Boolean, val heldUntil: Long?)
