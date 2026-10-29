@@ -95,11 +95,14 @@ history lists them in the meantime.
 
 ### Someone knows my PIN. Can they open my locked apps?
 
-Not if you turn on **Face or fingerprint only** in BioKey's settings (it appears once a face or
-fingerprint is set up on your phone). Locked apps and BioKey then don't offer the PIN at all.
-After too many failed tries, Android pauses face and fingerprint for a while; if it locks them out
-for good, lock your phone and unlock it with your PIN to bring them back. With the option off,
-**Failed unlock alerts** and **Also note screen lock unlocks** at least show you when it happened.
+Turn on **Face or fingerprint only** in BioKey's settings (it appears once a face or fingerprint is
+set up on your phone): locked apps and BioKey then don't offer the PIN at all. Lock **Settings**
+too (BioKey offers): with your PIN, someone could otherwise add their own fingerprint there.
+Android can't be stopped from allowing that, but BioKey notices and tells you ("a face or
+fingerprint was added or removed"). After too many failed tries, Android pauses face and
+fingerprint for a while; if it locks them out for good, lock your phone and unlock it with your PIN
+to bring them back. With the option off, **Failed unlock alerts** and **Also note screen lock
+unlocks** at least show you when it happened.
 
 ### How do I lock everything at once?
 
@@ -113,13 +116,13 @@ paused, it resumes it.
 When you turn them on (BioKey asks once on its home screen, or Settings > Failed unlock alerts),
 BioKey notes each face or fingerprint that didn't match on a locked app. If yours then matches on
 the same unlock prompt, those misses were yours and the note goes. Misses followed by a later
-unlock (with your face, fingerprint or PIN) stay on the list, marked with how the app was opened,
-since someone may have tried and handed the phone back. Misses nobody followed with an unlock are
-also notified, the next time you unlock your phone and at least 2 minutes later, without naming
-the app. Only faces and fingerprints count: Android doesn't tell apps about a wrong PIN, pattern
+unlock stay on the list, marked with how the app was opened, since someone may have tried and
+handed the phone back. Misses no face or fingerprint followed (unanswered, or followed by the PIN)
+are also notified, the next time you unlock your phone and at least 2 minutes later, without
+naming the app; the notification stays until you open **Review**. Only faces and fingerprints count: Android doesn't tell apps about a wrong PIN, pattern
 or password. If you never use your PIN yourself, turn on **Also note screen lock unlocks** to see
-whenever someone opens a locked app with it. Notes are kept 7 days; clear them from **Review** on
-the home screen.
+whenever someone opens a locked app with it. Notes are kept until you've seen them, then 7 days;
+clear them from **Review** on the home screen (it asks for your face or fingerprint).
 
 ### BioKey says "App locking was off"
 

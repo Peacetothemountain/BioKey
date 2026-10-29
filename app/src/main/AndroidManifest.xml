@@ -78,6 +78,9 @@
             <action android:name="android.settings.APP_NOTIFICATION_SETTINGS" />
         </intent>
         <intent>
+            <action android:name="android.settings.CHANNEL_NOTIFICATION_SETTINGS" />
+        </intent>
+        <intent>
             <action android:name="android.settings.APPLICATION_DETAILS_SETTINGS" />
             <data android:scheme="package" />
         </intent>
@@ -203,6 +206,12 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+
+        <!-- While app locking is off, brings its alert back every ~15 minutes if swiped away. -->
+        <service
+            android:name=".core.security.ProtectionCheckJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <!-- The Lock button on "Lock <new app>?". Not exported: only BioKey's own notification sends it. -->
         <receiver

@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.security.ProtectionGaps
+import com.android.BioKey.core.security.TrustedClock
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.UnlockAttempts.Ending
 import org.junit.After
@@ -44,6 +45,9 @@ class UnlockAttemptsTest {
         UnlockAttempts.elapsed = { sinceBoot }
         UnlockAttempts.bootCount = { 3 }
         UnlockAttempts.hasStrongBiometric = { true }
+        TrustedClock.resetForTests()
+        TrustedClock.wall = { now }
+        TrustedClock.elapsed = { sinceBoot }
         UnlockAttempts.setEnabled(context, true)
         shadowOf(context as Application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
     }
@@ -51,6 +55,9 @@ class UnlockAttemptsTest {
     @After
     fun restore() {
         UnlockAttempts.clock = System::currentTimeMillis
+        TrustedClock.wall = System::currentTimeMillis
+        TrustedClock.elapsed = android.os.SystemClock::elapsedRealtime
+        TrustedClock.resetForTests()
         UnlockAttempts.resetForTests()
     }
 
@@ -230,9 +237,39 @@ class UnlockAttemptsTest {
     fun seenOnesAgeOut() {
         Prompt().miss()
         UnlockAttempts.markSeen(context)
-        now += 8L * 24 * 60 * 60_000L
+        pass(8L * 24 * 60 * 60_000L)
         UnlockAttempts.prune(context)
         assertTrue(kept.isEmpty())
+    }
+
+    @Test
+    fun aMutedChannelTellsNothingAndCountsNothingAsTold() {
+        UnlockAttempts.ensureChannel(context)
+        val nm = context.getSystemService(NotificationManager::class.java)
+        nm.getNotificationChannel(UnlockAttempts.CHANNEL_ID).importance.let { }
+        nm.createNotificationChannel(nm.getNotificationChannel(UnlockAttempts.CHANNEL_ID).apply { importance = NotificationManager.IMPORTANCE_NONE })
+        assertTrue(UnlockAttempts.alertsMuted(context))
+    }
+
+    @Test
+    fun swipedAwayItComesBackAtTheNextUnlock() {
+        Prompt().miss()
+        pass(UnlockAttempts.OWNER_RETRY_MS + 1_000L)
+        told()
+        assertEquals(1, notifications.allNotifications.size)
+        context.getSystemService(NotificationManager::class.java).cancelAll()
+        told()
+        assertEquals(1, notifications.allNotifications.size)
+    }
+
+    @Test
+    fun afterReviewItDoesntComeBack() {
+        Prompt().miss()
+        pass(UnlockAttempts.OWNER_RETRY_MS + 1_000L)
+        told()
+        UnlockAttempts.markSeen(context)
+        told()
+        assertTrue(notifications.allNotifications.isEmpty())
     }
 
     @Test

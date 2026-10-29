@@ -13,23 +13,26 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
   notification, not only locked apps' ones, as the privacy policy already did.
 - Settings pages BioKey opens go straight to the Settings app, so another app can't offer to open
   them instead and pose as Settings. Pages that set your screen lock never open anywhere else.
-- **Face or fingerprint only** (optional): locked apps and BioKey stop accepting your PIN, so
-  someone who knows it can't open them.
+- **Face or fingerprint only** (optional): locked apps and BioKey stop accepting your PIN. If
+  someone adds their own fingerprint in Android's settings, BioKey notices and tells you.
 - **Lock all now:** lock every app at once, without waiting for the screen to turn off, from the
   home screen, the status sheet, a new "Lock all" Quick Settings tile, or by long-pressing BioKey's
   icon. While protection is paused it resumes it; while nothing protects it says so.
 - **Unlocked now:** home shows which locked apps are unlocked right now and when each locks again
-  ("Locks again in 4 min"), with Lock and Lock all.
+  ("Re-locks in 4 min"), with Lock and Lock all.
 - **Failed unlock alerts** (optional; BioKey asks once): faces or fingerprints that didn't match on
   a locked app are listed on home, unless yours then matched on the same prompt. Misses nobody
   followed with an unlock are notified the next time you unlock your phone, without naming the
-  app. Optionally, also note locked apps opened with the screen lock. Kept 7 days.
+  app; swiped away, it comes back until you've reviewed it. Optionally, also note locked apps
+  opened with the screen lock. Kept 7 days after you've seen them.
 - **App locking was off:** if protection is switched off, or BioKey is force-stopped, home shows
   when, from and to, and you're told at your next unlock. Android stopping BioKey on its own
   doesn't count. While it's off, the alert comes back at every unlock.
-- Clearing security activity, or switching failed unlock alerts or the diagnostic log off, needs
-  your face or fingerprint: someone who only knows your PIN can't erase the record. Changing the
-  phone's date can't hide or delete it either.
+- Clearing security activity, switching failed unlock alerts or the diagnostic log off, deleting
+  the log, or restoring a backup that would, needs your face or fingerprint: someone who only knows
+  your PIN can't erase the record. Changing the phone's date can't hide or delete it either.
+- Security activity also records a face or fingerprint added or removed on the phone, and a pause
+  made from BioKey opened with the screen lock. Home warns if BioKey's alerts are muted.
 - When nothing is protecting your apps, home says so at the top, with the one thing to do.
 - Settings has the privacy policy and help (About).
 - **New apps:** an app you install that auto-sort doesn't lock gets a "Lock it?" notification;

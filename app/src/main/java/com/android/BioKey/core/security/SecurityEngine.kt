@@ -100,30 +100,62 @@ class SecurityEngine private constructor() {
     }
 
     /**
-     * A face or fingerprint, and nothing else, before something that removes protection or its
-     * record (clearing security activity, switching alerts off): someone who only knows the
-     * screen lock can't do it. With no strong biometric set up, [onConfirmed] runs at once:
-     * there's nothing stronger to ask for. Not tracked as an unlock attempt.
+     * A face or fingerprint before something that removes protection or its record (clearing
+     * security activity, switching alerts or the log off, restoring a backup that would): someone
+     * who only knows the screen lock can't do it. With no strong face or fingerprint set up, the
+     * screen lock is asked for instead (and the removal itself is recorded, [BiometricEnrollment]),
+     * never nothing. Misses here count as failed unlocks of BioKey; [onRefused] says why it didn't
+     * go through, unless the owner just cancelled.
      */
-    fun confirmWithBiometric(activity: Activity, title: String, onConfirmed: () -> Unit) {
-        if (!hasStrongBiometric(activity)) {
-            onConfirmed()
-            return
-        }
+    fun confirmWithBiometric(activity: Activity, title: String, onRefused: (String) -> Unit = {}, onConfirmed: () -> Unit) {
+        val app = activity.applicationContext
+        val strong = hasStrongBiometric(activity)
+        val brand = activity.getString(R.string.brand_name)
+        var record: Long? = null
         val cancel = CancellationSignal()
-        runCatching {
+        val callback = object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) = onConfirmed()
+
+            override fun onAuthenticationFailed() {
+                record = UnlockAttempts.onBiometricFailed(app, activity.packageName, brand, record) ?: record
+            }
+
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                if (errorCode == BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT || errorCode == ERROR_LOCKOUT_PERMANENT) {
+                    UnlockAttempts.onLockedOut(app, activity.packageName, brand, record)
+                }
+                if (!isUserCancel(errorCode)) onRefused(if (errorCode == ERROR_LOCKOUT_PERMANENT) LOCKOUT_PERMANENT_MESSAGE else errString.toString())
+            }
+        }
+        try {
             BiometricPrompt.Builder(activity)
                 .setTitle(title)
-                .setSubtitle("Use your face or fingerprint")
-                .setAllowedAuthenticators(BIOMETRIC_STRONG)
-                .setNegativeButton("Cancel", activity.mainExecutor) { _, _ -> }
+                .apply {
+                    if (strong) {
+                        setSubtitle(activity.getString(R.string.prompt_use_biometric))
+                        setAllowedAuthenticators(BIOMETRIC_STRONG)
+                        setNegativeButton(activity.getString(R.string.prompt_cancel), activity.mainExecutor) { _, _ ->
+                            callback.onAuthenticationError(ERROR_NEGATIVE_BUTTON, "")
+                        }
+                    } else {
+                        setSubtitle(activity.getString(R.string.prompt_verify))
+                        setAllowedAuthenticators(DEVICE_CREDENTIAL)
+                    }
+                }
                 .setConfirmationRequired(false)
                 .build()
-                .authenticate(cancel, activity.mainExecutor, object : BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) = onConfirmed()
-                })
+                .authenticate(cancel, activity.mainExecutor, callback)
+        } catch (e: Exception) {
+            onRefused(activity.getString(R.string.prompt_unavailable))
         }
     }
+
+    /**
+     * How BioKey itself was last opened: true with a face or fingerprint. A pause made after it
+     * was opened with the screen lock is recorded ([ProtectionGaps.Kind.PAUSED_WITH_SCREEN_LOCK]).
+     */
+    @Volatile var ownAppOpenedWithBiometric = false
+        private set
 
     /**
      * Shows the system prompt hosted by [activity], which must be resumed and on top: the system
@@ -152,6 +184,9 @@ class SecurityEngine private constructor() {
 
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                if (packageName == app.packageName) {
+                    ownAppOpenedWithBiometric = result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC
+                }
                 // Told even for a prompt already superseded (a fold restarted it): a match is a match.
                 // A face or fingerprint proves this prompt's misses were the owner's; the screen lock doesn't.
                 UnlockAttempts.onUnlocked(
@@ -188,13 +223,13 @@ class SecurityEngine private constructor() {
 
         try {
             BiometricPrompt.Builder(activity)
-                .setTitle(promptTitle ?: "Unlock $name")
-                .setSubtitle(if (faceOrFingerOnly) "Use your face or fingerprint" else "Verify it's you")
+                .setTitle(promptTitle ?: activity.getString(R.string.prompt_unlock, name))
+                .setSubtitle(activity.getString(if (faceOrFingerOnly) R.string.prompt_use_biometric else R.string.prompt_verify))
                 .apply {
                     if (faceOrFingerOnly) {
                         // No "Use PIN": someone who knows the screen lock can't use it here.
                         setAllowedAuthenticators(BIOMETRIC_STRONG)
-                        setNegativeButton("Cancel", activity.mainExecutor) { _, _ ->
+                        setNegativeButton(activity.getString(R.string.prompt_cancel), activity.mainExecutor) { _, _ ->
                             callback.onAuthenticationError(ERROR_NEGATIVE_BUTTON, "Cancel")
                         }
                     } else {

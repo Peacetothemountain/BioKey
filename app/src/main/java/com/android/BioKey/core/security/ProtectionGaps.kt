@@ -41,7 +41,16 @@ import org.json.JSONObject
  */
 object ProtectionGaps {
 
-    enum class Kind { SWITCHED_OFF, FORCE_STOPPED }
+    enum class Kind {
+        SWITCHED_OFF,
+        FORCE_STOPPED,
+        /** A strong face or fingerprint was added or removed ([BiometricEnrollment]); a moment, not a span. */
+        BIOMETRICS_CHANGED,
+        /** The phone has no strong face or fingerprint any more. */
+        BIOMETRICS_REMOVED,
+        /** Protection paused from BioKey opened with the screen lock, not a face or fingerprint. */
+        PAUSED_WITH_SCREEN_LOCK
+    }
 
     data class Gap(val from: Long, val to: Long, val kind: Kind, val seq: Long = 0L)
 
@@ -57,8 +66,8 @@ object ProtectionGaps {
     private const val KEY_STOPPED_AT = "stopped_at"
     private const val KEY_STOPPED_ELAPSED = "stopped_elapsed"
     private const val KEY_STOPPED_BOOT = "stopped_boot"
-    /** Process exits up to this time have been looked at. */
-    private const val KEY_EXITS_SEEN_UNTIL = "exits_seen_until"
+    /** The process exits already looked at, by their time: Android keeps the last few. */
+    private const val KEY_EXITS_SEEN = "exits_seen"
 
     private val _gaps = MutableStateFlow<List<Gap>>(emptyList())
     /** Newest first. */
@@ -109,11 +118,30 @@ object ProtectionGaps {
         synchronized(lock) { prefs = null }
     }
 
-    /** Seen ones past their time go; unseen ones stay, whatever the clock says. */
+    /**
+     * Seen ones past their time go, aged on [TrustedClock] (a changed date doesn't age them);
+     * unseen ones stay. Over the limit, seen ones go first: piling up new records can't push out
+     * one the owner hasn't seen.
+     */
     private fun List<Gap>.fresh(context: Context): List<Gap> {
-        val now = clock()
+        val now = TrustedClock.now()
         val seen = UnlockAttempts.seenSeq(context)
-        return filterNot { it.seq <= seen && now - it.to > UnlockAttempts.MAX_AGE_MS }.sortedByDescending { it.seq }.take(MAX_KEPT)
+        val kept = filterNot { it.seq <= seen && now - it.to > UnlockAttempts.MAX_AGE_MS }.sortedByDescending { it.seq }
+        val unseen = kept.filter { it.seq > seen }
+        return (unseen.take(UnlockAttempts.MAX_UNSEEN) + kept.filter { it.seq <= seen }.take((MAX_KEPT - unseen.size).coerceAtLeast(0)))
+            .sortedByDescending { it.seq }
+    }
+
+    /** Something that happened at one moment ([Kind.BIOMETRICS_CHANGED], a pause): kept and told like a gap. */
+    fun recordEvent(context: Context, kind: Kind) {
+        val p = load(context) ?: return
+        if (!SecurityVault.getInstance(context).isSetupCompleted()) return
+        val now = clock()
+        synchronized(lock) {
+            save(p, (listOf(Gap(now, now, kind, UnlockAttempts.nextSeq(context))) + _gaps.value).fresh(context))
+        }
+        DiagnosticLog.log("Security activity: ${kind.name.lowercase().replace('_', ' ')}")
+        UnlockAttempts.onActivity(context)
     }
 
     /** Drops what's seen and past its time; BioKey's home screen calls this as it shows them. */
@@ -139,12 +167,14 @@ object ProtectionGaps {
                 if (length >= MIN_GAP_MS) switchedOffFrom = now - length
             }
             // Force stops: told by Android afterwards, never at the time. The earliest one not yet
-            // counted starts the gap, unless the engine's own report of stopping came earlier.
-            val seenUntil = p.getLong(KEY_EXITS_SEEN_UNTIL, -1L)
+            // looked at starts the gap, unless the engine's own report of stopping came earlier.
+            // Looked-at exits are remembered one by one, not as "up to a time": a changed date
+            // can't make a new one look old.
+            val seenExits = p.getStringSet(KEY_EXITS_SEEN, null)
             val exits = exits(context)
             val update = updatedAt(context)
-            val forceStopAt = if (seenUntil < 0L) null else exits
-                .filter { (at, why) -> at > seenUntil && why == ApplicationExitInfo.REASON_USER_REQUESTED && kotlin.math.abs(at - update) > UPDATE_WINDOW_MS }
+            val forceStopAt = if (seenExits == null) null else exits
+                .filter { (at, why) -> at.toString() !in seenExits && why == ApplicationExitInfo.REASON_USER_REQUESTED && kotlin.math.abs(at - update) > UPDATE_WINDOW_MS }
                 .minOfOrNull { it.first }
             // Dated after "now": the clock was set back since. Still a stop, of a length that can't be
             // told, so it's kept whatever its length looks like.
@@ -162,7 +192,7 @@ object ProtectionGaps {
             }
             p.edit {
                 remove(KEY_STOPPED_AT).remove(KEY_STOPPED_ELAPSED).remove(KEY_STOPPED_BOOT)
-                putLong(KEY_EXITS_SEEN_UNTIL, maxOf(now, exits.maxOfOrNull { it.first } ?: 0L))
+                putStringSet(KEY_EXITS_SEEN, exits.mapTo(HashSet()) { it.first.toString() })
             }
         }
         // Told the next time the phone is unlocked, with any failed unlocks.

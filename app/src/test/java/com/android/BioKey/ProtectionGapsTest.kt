@@ -154,6 +154,22 @@ class ProtectionGapsTest {
     }
 
     @Test
+    fun settingTheClockBackBeforeAForceStopDoesntHideIt() {
+        // The engine came up at "now"; then the date was set back a day and BioKey force-stopped.
+        val stoppedAt = now - 24 * 60 * 60_000L
+        exits = listOf(stoppedAt to ApplicationExitInfo.REASON_USER_REQUESTED)
+        pass(5 * 60_000L)
+        ProtectionGaps.onEngineUp(context)
+        assertEquals(ProtectionGaps.Kind.FORCE_STOPPED, gaps.single().kind)
+    }
+
+    @Test
+    fun aMomentsEventIsRecorded() {
+        ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.PAUSED_WITH_SCREEN_LOCK)
+        assertEquals(ProtectionGaps.Kind.PAUSED_WITH_SCREEN_LOCK, gaps.single().kind)
+    }
+
+    @Test
     fun clearCanBeUndone() {
         ProtectionGaps.onEngineDown(context)
         pass(5 * 60_000L)

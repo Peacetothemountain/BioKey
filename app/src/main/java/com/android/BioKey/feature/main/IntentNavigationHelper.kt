@@ -109,6 +109,18 @@ object IntentNavigationHelper {
         )
     )
 
+    /** The security-activity notification channel's own page, else BioKey's notification settings. */
+    fun openSecurityActivityChannelSettings(context: Context) = launchFallbackCascade(
+        context,
+        listOf(
+            Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                .putExtra(Settings.EXTRA_CHANNEL_ID, com.android.BioKey.core.security.UnlockAttempts.CHANNEL_ID),
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+            appDetails(context)
+        )
+    )
+
     fun openAppDetailsSettings(context: Context) = launchFallbackCascade(context, listOf(appDetails(context)))
 
     /**

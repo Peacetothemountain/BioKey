@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.GppBad
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
@@ -220,6 +221,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                         "Paused until " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil))
                     !globalLockEnabled -> "Paused"
                     mode == ProtectionEngine.Mode.COMPATIBILITY -> "On · compatibility mode (works with Advanced Protection)"
+                    biometricOnly && strongBiometric -> "Locked apps need your face or fingerprint"
                     else -> "Locked apps need your face, fingerprint or screen lock"
                 },
                 checked = globalLockEnabled && protecting,
@@ -265,8 +267,14 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             // Either way, a face or fingerprint first: proof it works before relying on it, and no
             // switching it off for someone who only knows the PIN.
             onChange = { on ->
-                SecurityEngine.INSTANCE.confirmWithBiometric(activity, if (on) "Use only your face or fingerprint" else "Allow your screen lock again") {
+                confirmOwner(activity, if (on) "Use only your face or fingerprint" else "Allow your screen lock again") {
                     vault.setBiometricOnly(on)
+                    // Settings is where someone with the PIN would add their own fingerprint.
+                    if (on && SETTINGS_PACKAGE !in vault.selectedAppsFlow.value) {
+                        BioKeyMessages.show("Lock Settings too? It's where a fingerprint can be added", Icons.Default.Lock, actionLabel = "Lock") {
+                            vault.setAppLock(SETTINGS_PACKAGE, true)
+                        }
+                    }
                 }
             }
         ) else null,
@@ -310,22 +318,24 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                     }
                 }
                 // Switching them off deletes the record: not for someone who only knows the PIN.
-                if (on) apply() else SecurityEngine.INSTANCE.confirmWithBiometric(activity, "Turn off failed unlock alerts", ::apply)
+                if (on) apply() else confirmOwner(activity, "Turn off failed unlock alerts", ::apply)
             }
         ),
         // For an owner who never uses the PIN: anyone else who knows it shows up.
-        if (attemptAlerts) SettingItem(
+        SettingItem(
             icon = Icons.Default.Password,
             title = "Also note screen lock unlocks",
-            subtitle = "Part of failed unlock alerts: each locked app opened with your PIN instead of a face or fingerprint",
-            checked = screenLockUnlocks,
+            subtitle = if (attemptAlerts) "Each locked app opened with your PIN instead of a face or fingerprint"
+            else "Needs failed unlock alerts",
+            checked = screenLockUnlocks && attemptAlerts,
+            enabled = attemptAlerts,
             onChange = { on ->
                 if (on) UnlockAttempts.setScreenLockUnlocks(context, true)
-                else SecurityEngine.INSTANCE.confirmWithBiometric(activity, "Stop noting screen lock unlocks") {
+                else confirmOwner(activity, "Stop noting screen lock unlocks") {
                     UnlockAttempts.setScreenLockUnlocks(context, false)
                 }
             }
-        ) else null,
+        ),
         SettingItem(
             icon = Icons.Default.AddModerator,
             title = "Offer to lock new apps",
@@ -425,7 +435,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                     logEnabled = on
                 }
                 // Off deletes it, and with it a trace of who unlocked what.
-                if (on) apply() else SecurityEngine.INSTANCE.confirmWithBiometric(activity, "Turn off the diagnostic log", ::apply)
+                if (on) apply() else confirmOwner(activity, "Turn off the diagnostic log", ::apply)
             }
         ),
         SettingItem(
@@ -449,7 +459,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         SettingItem(
             icon = Icons.Default.Policy,
             title = "Privacy policy",
-            subtitle = "What BioKey sees, keeps, and never does",
+            subtitle = "What BioKey sees, keeps, and never does · opens in your browser",
             onClick = { openPage(PRIVACY_POLICY_URL) }
         ),
         SettingItem(
@@ -623,5 +633,6 @@ private fun PredictiveBackPage(onNavigateBack: () -> Unit, content: @Composable 
     }
 }
 
+private const val SETTINGS_PACKAGE = "com.android.settings"
 private const val PRIVACY_POLICY_URL = "https://peacetothemountain.github.io/BioKey/privacy/"
 private const val SUPPORT_URL = "https://peacetothemountain.github.io/BioKey/support/"

@@ -73,6 +73,15 @@ object ProtectionAlerts {
             .setContentIntent(open)
             .setOngoing(ongoing)
             .setAutoCancel(!ongoing)
+            // On the phone's lock screen, only that BioKey has something to say: whoever holds
+            // the locked phone isn't told protection is off.
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(
+                NotificationCompat.Builder(context, CHANNEL_ID)
+                    .setSmallIcon(R.drawable.ic_biokey_mark)
+                    .setContentTitle(context.getString(R.string.brand_name))
+                    .build()
+            )
         val notification = builder.build()
         try {
             manager.notify(id, notification)
@@ -90,6 +99,8 @@ object ProtectionAlerts {
         // Noted now, not after the grace: the process may not live that long. An engine back
         // within moments makes it no gap (ProtectionGaps' minimum).
         ProtectionGaps.onEngineDown(app)
+        // Reminders that outlive BioKey's process, until an engine runs again.
+        ProtectionCheckJob.schedule(app)
         main.removeCallbacksAndMessages(STOP_TOKEN)
         if (now) {
             postServiceStopped(app)
@@ -189,6 +200,7 @@ object ProtectionAlerts {
 
     fun serviceRestored(context: Context) {
         ProtectionGaps.onEngineUp(context)
+        ProtectionCheckJob.cancel(context)
         main.removeCallbacksAndMessages(STOP_TOKEN)
         main.removeCallbacksAndMessages(CONNECT_TOKEN)
         NotificationManagerCompat.from(context).cancel(ID_SERVICE_STOPPED)

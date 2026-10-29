@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import androidx.core.content.ContextCompat
 import com.android.BioKey.core.diagnostics.EngineTrace
+import com.android.BioKey.core.security.BiometricEnrollment
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.UnlockAttempts
@@ -44,8 +45,18 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
             // The phone was unlocked: whoever had it has likely handed it back, so this is when
             // failed unlocks and times app locking was off are told.
             Intent.ACTION_USER_PRESENT -> {
-                UnlockAttempts.onUserPresent(context)
-                ProtectionAlerts.remindIfOff(context)
+                // Off the main thread: right after a restart, this may be the first read of BioKey's storage.
+                val pending: PendingResult? = goAsync()
+                val app = context.applicationContext
+                Thread {
+                    try {
+                        UnlockAttempts.onUserPresent(app)
+                        ProtectionAlerts.remindIfOff(app)
+                        BiometricEnrollment.checkSoon(app)
+                    } finally {
+                        pending?.finish()
+                    }
+                }.start()
             }
         }
     }

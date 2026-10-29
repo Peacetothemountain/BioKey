@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.GppMaybe
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.RemoveModerator
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -41,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -85,7 +87,8 @@ internal fun ActionCard(
     actions: @Composable RowScope.() -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
-    val container = if (urgent) colors.errorContainer else colors.surfaceContainer
+    // Tinted towards the error colour rather than a full slab of it: urgent, without drowning the page.
+    val container = if (urgent) lerp(colors.surfaceContainer, colors.errorContainer, 0.7f) else colors.surfaceContainer
     val content = if (urgent) colors.onErrorContainer else colors.onSurface
     val secondary = if (urgent) colors.onErrorContainer else colors.onSurfaceVariant
     val iconContainer = if (urgent) colors.error else colors.secondaryContainer
@@ -144,12 +147,16 @@ internal fun AttemptsIntroCard(onNotNow: () -> Unit, onTurnOn: () -> Unit, modif
     ActionCard(
         icon = Icons.Default.GppMaybe,
         title = "Failed unlock alerts",
-        subtitle = "Get told when a face or fingerprint fails on a locked app and the app isn't opened. " +
-            "Kept on this phone for 7 days.",
+        subtitle = "Get told when a face or fingerprint fails on a locked app and only you can clear it. " +
+            "Kept on this phone until you've seen it, then 7 days.",
         modifier = modifier
     ) {
-        TextButton(onClick = onNotNow) { Text("Not now") }
-        FilledTonalButton(onClick = onTurnOn) { Text("Turn on") }
+        TextButton(onClick = onNotNow, modifier = Modifier.semantics { contentDescription = "Not now: no failed unlock alerts" }) {
+            Text("Not now")
+        }
+        FilledTonalButton(onClick = onTurnOn, modifier = Modifier.semantics { contentDescription = "Turn on failed unlock alerts" }) {
+            Text("Turn on")
+        }
     }
 }
 
@@ -177,7 +184,7 @@ internal fun SecurityActivityCard(
         },
         title = when {
             gaps.isEmpty() -> resources.getQuantityString(R.plurals.attempts_title, attempts.size, attempts.size)
-            attempts.isEmpty() -> if (gaps.size == 1) "App locking was off" else "App locking was off ${gaps.size} times"
+            attempts.isEmpty() && gaps.all { it.isOff } -> if (gaps.size == 1) "App locking was off" else "App locking was off ${gaps.size} times"
             else -> "Security activity"
         },
         subtitle = if (gapIsNewest) gapLine(context, newestGap!!) else newestAttempt?.let {
@@ -187,7 +194,11 @@ internal fun SecurityActivityCard(
         inline = true,
         modifier = modifier
     ) {
-        TextButton(onClick = onReview, colors = cardTextButtonColors(urgent)) { Text("Review") }
+        TextButton(
+            onClick = onReview,
+            colors = cardTextButtonColors(urgent),
+            modifier = Modifier.semantics { contentDescription = "Review security activity" }
+        ) { Text("Review") }
     }
 }
 
@@ -232,14 +243,19 @@ internal fun attemptTime(context: Context, at: Long): String {
     }
 }
 
-/** "3:02 – 3:10 PM · switched off": when app locking was off, and how. */
+/** Times app locking was off, as against changes that happened at one moment. */
+internal val ProtectionGaps.Gap.isOff get() = kind == ProtectionGaps.Kind.SWITCHED_OFF || kind == ProtectionGaps.Kind.FORCE_STOPPED
+
+/** "3:02 – 3:10 PM · switched off", or "3:04 PM · a face or fingerprint was added or removed". */
 internal fun gapLine(context: Context, gap: ProtectionGaps.Gap): String {
+    if (!gap.isOff) return attemptTime(context, gap.to) + " · " + when (gap.kind) {
+        ProtectionGaps.Kind.BIOMETRICS_CHANGED -> "a face or fingerprint was added or removed"
+        ProtectionGaps.Kind.BIOMETRICS_REMOVED -> "no face or fingerprint is set up any more"
+        else -> "paused from BioKey opened with the screen lock"
+    }
     val day = if (DateUtils.isToday(gap.to)) 0 else DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR
     val range = DateUtils.formatDateRange(context, gap.from, gap.to, DateUtils.FORMAT_SHOW_TIME or day)
-    return range + when (gap.kind) {
-        ProtectionGaps.Kind.SWITCHED_OFF -> " · switched off"
-        ProtectionGaps.Kind.FORCE_STOPPED -> " · BioKey was force-stopped"
-    }
+    return range + if (gap.kind == ProtectionGaps.Kind.SWITCHED_OFF) " · switched off" else " · BioKey was force-stopped"
 }
 
 /** When an unlocked app, off screen, locks again: "Re-locks in 4 min", or how it will. */
@@ -330,9 +346,24 @@ internal fun SecurityActivityDialog(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 ProtectDialogWindow()
-                if (gaps.isNotEmpty()) {
+                val changes = gaps.filterNot { it.isOff }
+                if (changes.isNotEmpty()) {
+                    SectionLabel("Changes")
+                    changes.forEach { change ->
+                        Text(gapLine(context, change), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = 4.dp))
+                    }
+                    Text(
+                        "Anyone who knows your screen lock can add their own face or fingerprint in Android's settings. " +
+                            "If you didn't, check them there.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = note
+                    )
+                    Spacer(Modifier.height(16.dp))
+                }
+                val offs = gaps.filter { it.isOff }
+                if (offs.isNotEmpty()) {
                     SectionLabel("App locking was off")
-                    gaps.forEach { gap ->
+                    offs.forEach { gap ->
                         Column(Modifier.padding(vertical = 4.dp).semantics(mergeDescendants = true) { }) {
                             Text(gapLine(context, gap), style = MaterialTheme.typography.titleSmall)
                             Text("Locked apps could be opened without a check", style = MaterialTheme.typography.bodyMedium, color = note)
@@ -378,6 +409,15 @@ internal fun SecurityActivityDialog(
 }
 
 /** On an urgent (error-coloured) card, a text button takes the card's own content colour. */
+/** The one thing to do on an urgent card: a filled button in the error colours. */
+@Composable
+internal fun UrgentButton(text: String, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError)
+    ) { Text(text) }
+}
+
 @Composable
 private fun cardTextButtonColors(urgent: Boolean) =
     if (urgent) ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer) else ButtonDefaults.textButtonColors()

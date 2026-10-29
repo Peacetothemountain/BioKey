@@ -61,10 +61,10 @@ import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalAutofillManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.semantics.error
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -82,6 +82,7 @@ import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.VaultBackup
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.BioKeyMessageHost
@@ -262,6 +263,12 @@ internal fun rememberBackupActions(): BackupActions {
                 TextButton(onClick = {
                     // Closed first, so a second tap can't restore twice.
                     step = null
+                    // Switching off face-or-fingerprint-only or the alerts by way of a backup needs
+                    // the same proof as switching them off in Settings.
+                    val weakens = vault.isBiometricOnly() && !current.state.optBoolean("biometricOnly", true) ||
+                        UnlockAttempts.enabled.value && !current.state.optBoolean("unlockAttemptAlerts", true) ||
+                        UnlockAttempts.screenLockUnlocks.value && !current.state.optBoolean("screenLockUnlocks", true)
+                    val restore = {
                     // Off the main thread (restoring sweeps notifications), and in the backup's
                     // scope, so leaving Settings meanwhile doesn't stop it halfway to its message.
                     pending.viewModelScope.launch {
@@ -281,6 +288,8 @@ internal fun rememberBackupActions(): BackupActions {
                             BioKeyMessages.show("That backup couldn't be restored", Icons.Default.ErrorOutline)
                         }
                     }
+                    }
+                    if (weakens) confirmOwner(activity, "Restore this backup") { restore() } else restore()
                 }) { Text("Restore") }
             },
             dismissButton = { TextButton(onClick = { step = null }) { Text("Cancel") } }
@@ -438,6 +447,7 @@ internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
     }
     val time = remember { SimpleDateFormat("MMM d, HH:mm:ss", Locale.getDefault()) }
     var confirmDelete by remember { mutableStateOf(false) }
+    val logActivity = LocalActivity.current
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         ProtectDialogWindow()
@@ -513,8 +523,9 @@ internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
             },
             confirmButton = {
                 TextButton(onClick = {
-                    DiagnosticLog.clear()
                     confirmDelete = false
+                    // It holds who unlocked what, and when: the owner's to delete.
+                    confirmOwner(logActivity, "Delete the diagnostic log") { DiagnosticLog.clear() }
                 }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } }

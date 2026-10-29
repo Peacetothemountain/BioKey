@@ -399,9 +399,12 @@ fun MainScreenExpressive(
     val gaps by ProtectionGaps.gaps.collectAsStateWithLifecycle()
     var showActivity by rememberSaveable { mutableStateOf(false) }
     var hasStrongBiometric by remember { mutableStateOf(false) }
+    var alertsMuted by remember { mutableStateOf(false) }
+    val attemptsEnabled by UnlockAttempts.enabled.collectAsStateWithLifecycle()
     LifecycleResumeEffect(Unit) {
         val job = scope.launch(Dispatchers.IO) {
             hasStrongBiometric = UnlockAttempts.hasStrongBiometric(context)
+            alertsMuted = UnlockAttempts.alertsMuted(context)
             // Past their 7 days, gone from the disk too.
             UnlockAttempts.prune(context)
             ProtectionGaps.prune(context)
@@ -596,14 +599,32 @@ fun MainScreenExpressive(
             // Nothing locking right now: the most serious state gets the clearest card, with its one action.
             if (look.action != null && vault.isSetupCompleted()) {
                 item(key = "not_protecting") {
+                    // A pause the owner chose isn't an emergency; off, not running or set up is.
+                    val paused = ProtectionEngine.isProtecting(mode) && !globalLockEnabled
                     ActionCard(
-                        icon = Icons.Default.Warning,
+                        icon = look.icon,
                         title = look.title,
                         subtitle = look.body,
+                        urgent = !paused,
+                        modifier = Modifier.animateItem()
+                    ) {
+                        if (paused) FilledTonalButton(onClick = ::onProtectionAction) { Text(look.action) }
+                        else UrgentButton(look.action, ::onProtectionAction)
+                    }
+                }
+            }
+
+            // Security alerts can be silenced in Android's settings without BioKey: say so.
+            if (alertsMuted && (attemptsEnabled || gaps.isNotEmpty())) {
+                item(key = "alerts_muted") {
+                    ActionCard(
+                        icon = Icons.Default.NotificationsOff,
+                        title = "Security alerts are silenced",
+                        subtitle = "BioKey's security activity notifications are off in Android's settings, so you won't be told of failed unlocks",
                         urgent = true,
                         modifier = Modifier.animateItem()
                     ) {
-                        FilledTonalButton(onClick = ::onProtectionAction) { Text(look.action) }
+                        UrgentButton("Turn on") { IntentNavigationHelper.openSecurityActivityChannelSettings(context) }
                     }
                 }
             }
@@ -835,8 +856,7 @@ fun MainScreenExpressive(
             labelOf = ::attemptLabel,
             onClear = {
                 // The record of who tried: a face or fingerprint to clear it, not just the screen lock.
-                val host = activity
-                if (host != null) SecurityEngine.INSTANCE.confirmWithBiometric(host, "Clear security activity") {
+                confirmOwner(activity, "Clear security activity") {
                     val oldAttempts = UnlockAttempts.clear(context)
                     val oldGaps = ProtectionGaps.clear(context)
                     showActivity = false

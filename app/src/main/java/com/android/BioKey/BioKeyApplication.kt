@@ -13,20 +13,21 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.android.BioKey.core.data.AppClassifier
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.security.BiometricEnrollment
+import com.android.BioKey.core.security.NewAppSuggestions
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
-import com.android.BioKey.core.security.SecurityVault
-import com.android.BioKey.core.security.NewAppSuggestions
 import com.android.BioKey.core.security.ProtectionGaps
+import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.ScreenReceiver
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 
 class BioKeyApplication : Application() {
 
@@ -91,6 +92,7 @@ class BioKeyApplication : Application() {
                 UnlockAttempts.load(app)
                 NewAppSuggestions.load(app)
                 ProtectionGaps.load(app)
+                BiometricEnrollment.checkSoon(app)
                 // An engine that connected before the first unlock couldn't say so then.
                 if (ProtectionEngine.isProtecting(app)) ProtectionGaps.onEngineUp(app)
                 ProtectionEngine.refresh(app)

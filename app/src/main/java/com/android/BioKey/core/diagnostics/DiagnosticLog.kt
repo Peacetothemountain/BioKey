@@ -3,6 +3,7 @@ package com.android.BioKey.core.diagnostics
 import android.content.Context
 import android.os.Build
 import androidx.core.content.edit
+import com.android.BioKey.core.security.TrustedClock
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -158,7 +159,8 @@ object DiagnosticLog {
     }
 
     /** Entries logged before this are older than [MAX_AGE_MS]. */
-    private fun cutoff(): Long = System.currentTimeMillis() - MAX_AGE_MS
+    /** Aged on [TrustedClock]: changing the phone's date doesn't empty the log. */
+    private fun cutoff(): Long = TrustedClock.now() - MAX_AGE_MS
 
     /**
      * Forgets entries older than [MAX_AGE_MS] and copies the rest, with the number ([logged]) of

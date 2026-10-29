@@ -38,10 +38,12 @@ import org.json.JSONObject
  *   at all, on a phone with a face or fingerprint set up, is noted too, for owners who never use
  *   the PIN themselves.
  * - **When it tells.** Misses nobody followed with a face or fingerprint (unanswered, or answered
- *   with the screen lock), and times app locking was off ([ProtectionGaps]), are notified the next
+ *   with the screen lock), and other security activity ([ProtectionGaps]), are notified the next
  *   time the phone is unlocked after them (whoever tried has likely handed it back by then), never
  *   within [OWNER_RETRY_MS] of a miss. The notification never names the app and isn't shown on
- *   the phone's lock screen at all. It stays until the owner opens Review in BioKey.
+ *   the phone's lock screen at all. A tap doesn't dismiss it; swiped away, it comes back quietly at
+ *   the next unlock; it goes when the owner opens Review in BioKey. If BioKey's notifications are
+ *   off or muted, nothing counts as told, and home says the alerts are muted.
  * - **Clocks.** Every record carries a sequence number, and the time since the phone started:
  *   what's been seen, what happened before the last unlock and how long ago a miss was are judged
  *   on those, so changing the phone's date can neither hide a record nor delete it early. A record
@@ -87,6 +89,8 @@ object UnlockAttempts {
     private const val SAME_ATTEMPT_MS = 60_000L
     const val MAX_AGE_MS = 7 * 24 * 60 * 60_000L
     const val MAX_KEPT = 50
+    /** Unseen records are never pushed out by seen ones; this only bounds the storage. */
+    const val MAX_UNSEEN = 500
 
     private const val PREFS = "biokey_unlock_attempts"
     private const val KEY_ENABLED = "enabled"
@@ -102,6 +106,8 @@ object UnlockAttempts {
     private const val KEY_NOTIFIED_SEQ = "notified_seq"
     /** The last sequence number handed out when the phone was last unlocked. */
     private const val KEY_PRESENT_SEQ = "present_seq"
+    /** Show again, quietly, what was told but not reviewed, if its notification is gone. */
+    private const val KEY_REPOST = "repost"
     const val CHANNEL_ID = "biokey_security_activity"
     private const val NOTIFICATION_ID = 1101
 
@@ -126,8 +132,12 @@ object UnlockAttempts {
     internal var clock: () -> Long = System::currentTimeMillis
     @VisibleForTesting
     internal var elapsed: () -> Long = SystemClock::elapsedRealtime
+    /** The phone's restart count: read once, it can't change while the process lives. */
+    @Volatile private var cachedBoot: Int? = null
     @VisibleForTesting
-    internal var bootCount: (Context) -> Int = { Settings.Global.getInt(it.contentResolver, Settings.Global.BOOT_COUNT, 0) }
+    internal var bootCount: (Context) -> Int = { context ->
+        cachedBoot ?: Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, 0).also { cachedBoot = it }
+    }
     /** Whether a strong face or fingerprint is set up; tests set their own. */
     @VisibleForTesting
     internal var hasStrongBiometric: (Context) -> Boolean = SecurityEngine::hasStrongBiometric
@@ -174,11 +184,28 @@ object UnlockAttempts {
 
     internal fun seenSeq(context: Context): Long = load(context)?.getLong(KEY_SEEN_SEQ, 0L) ?: 0L
 
-    /** Seen ones past their time go; unseen ones stay, whatever the clock says. */
+    /**
+     * Seen ones past their time go, aged on [TrustedClock] (a changed date doesn't age them);
+     * unseen ones stay. Over the limit, seen ones go first: piling up new records can't push out
+     * one the owner hasn't seen.
+     */
     private fun List<Attempt>.fresh(p: SharedPreferences): List<Attempt> {
-        val now = clock()
+        val now = TrustedClock.now()
         val seen = p.getLong(KEY_SEEN_SEQ, 0L)
-        return filterNot { it.seq <= seen && now - it.lastAt > MAX_AGE_MS }.sortedByDescending { it.seq }.take(MAX_KEPT)
+        val kept = filterNot { it.seq <= seen && now - it.lastAt > MAX_AGE_MS }.sortedByDescending { it.seq }
+        val unseen = kept.filter { it.seq > seen }
+        return (unseen.take(MAX_UNSEEN) + kept.filter { it.seq <= seen }.take((MAX_KEPT - unseen.size).coerceAtLeast(0)))
+            .sortedByDescending { it.seq }
+    }
+
+    /**
+     * The owner won't hear of security activity: BioKey's notifications, or its security-activity
+     * channel, are switched off. BioKey's home screen says so.
+     */
+    fun alertsMuted(context: Context): Boolean {
+        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return true
+        val channel = context.getSystemService(NotificationManager::class.java).getNotificationChannel(CHANNEL_ID) ?: return false
+        return channel.importance == NotificationManager.IMPORTANCE_NONE
     }
 
     /** Drops what's seen and past its time; BioKey's home screen calls this as it shows them. */
@@ -274,10 +301,13 @@ object UnlockAttempts {
         scheduleNotification(context.applicationContext, 0L)
     }
 
-    /** The phone was just unlocked: whoever tried has likely handed it back. */
+    /**
+     * The phone was just unlocked: whoever tried has likely handed it back. What was already told
+     * but not yet reviewed comes back (quietly) if its notification was swiped away.
+     */
     fun onUserPresent(context: Context) {
         val p = load(context) ?: return
-        p.edit { putLong(KEY_PRESENT_SEQ, p.getLong(KEY_SEQ, 0L)) }
+        p.edit { putLong(KEY_PRESENT_SEQ, p.getLong(KEY_SEQ, 0L)).putBoolean(KEY_REPOST, true) }
         scheduleNotification(context.applicationContext, 0L)
     }
 
@@ -382,19 +412,29 @@ object UnlockAttempts {
         val p = load(app) ?: return
         val since = elapsed()
         val boot = bootCount(app)
+        val seen = p.getLong(KEY_SEEN_SEQ, 0L)
         val notified = p.getLong(KEY_NOTIFIED_SEQ, 0L)
         val presentSeq = p.getLong(KEY_PRESENT_SEQ, 0L)
+        val repost = p.getBoolean(KEY_REPOST, false)
         fun retrying(a: Attempt) = a.boot == boot && since - a.lastElapsed < OWNER_RETRY_MS
-        val pendingAttempts = if (_enabled.value) _attempts.value.filter { it.notifiable && it.seq > notified } else emptyList()
-        val retry = pendingAttempts.filter(::retrying)
+        val notifiable = if (_enabled.value) _attempts.value.filter { it.notifiable && it.seq > seen } else emptyList()
+        val retry = notifiable.filter { it.seq > notified && retrying(it) }
         if (retry.isNotEmpty()) scheduleNotification(app, OWNER_RETRY_MS - retry.minOf { since - it.lastElapsed } + 50L)
-        val attempts = pendingAttempts.filter { !retrying(it) && it.seq <= presentSeq }
-        val gaps = ProtectionGaps.gaps.value.filter { it.seq > notified && it.seq <= presentSeq }
-        if (attempts.isEmpty() && gaps.isEmpty()) return
+        // Ready to tell: not held back, and the phone unlocked since.
+        val attempts = notifiable.filter { !(it.seq > notified && retrying(it)) && it.seq <= presentSeq }
+        val gaps = ProtectionGaps.gaps.value.filter { it.seq > seen && it.seq <= presentSeq }
+        val fresh = attempts.any { it.seq > notified } || gaps.any { it.seq > notified }
         val manager = NotificationManagerCompat.from(app)
-        if (!manager.areNotificationsEnabled()) return
+        val showing = runCatching { app.getSystemService(NotificationManager::class.java).activeNotifications.any { it.id == NOTIFICATION_ID } }
+            .getOrDefault(false)
+        if (repost) p.edit { putBoolean(KEY_REPOST, false) }
+        // Something new; or, at an unlock, the unreviewed one again if it was swiped away.
+        if (!fresh && !(repost && !showing && (attempts.isNotEmpty() || gaps.isNotEmpty()))) return
+        if (attempts.isEmpty() && gaps.isEmpty()) return
+        if (alertsMuted(app)) return
         ensureChannel(app)
         val res = app.resources
+        // Everything not yet reviewed, not just what's new: a later miss doesn't hide an earlier gap.
         val title = when {
             gaps.isEmpty() -> res.getQuantityString(R.plurals.attempts_title, attempts.size, attempts.size)
             attempts.isEmpty() -> res.getString(R.string.gaps_title)
@@ -413,7 +453,8 @@ object UnlockAttempts {
             Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        // Which app is never said, and nothing at all shows on the phone's lock screen.
+        // Which app is never said, and nothing at all shows on the phone's lock screen. It stays
+        // (a tap opens BioKey without dismissing it) until the owner opens Review.
         val notification = NotificationCompat.Builder(app, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_biokey_mark)
             .setContentTitle(title)
@@ -422,12 +463,14 @@ object UnlockAttempts {
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .setContentIntent(open)
-            .setAutoCancel(true)
+            .setAutoCancel(false)
+            .setSilent(!fresh)
             .build()
         try {
             manager.notify(NOTIFICATION_ID, notification)
             // Up to the oldest still held back, so a held-back miss is never skipped.
-            val upTo = (retry.minOfOrNull { it.seq - 1 } ?: Long.MAX_VALUE).coerceAtMost(maxOf(attempts.maxOfOrNull { it.seq } ?: 0L, gaps.maxOfOrNull { it.seq } ?: 0L))
+            val newest = maxOf(attempts.maxOfOrNull { it.seq } ?: 0L, gaps.maxOfOrNull { it.seq } ?: 0L)
+            val upTo = (retry.minOfOrNull { it.seq - 1 } ?: Long.MAX_VALUE).coerceAtMost(newest)
             if (upTo > notified) p.edit { putLong(KEY_NOTIFIED_SEQ, upTo) }
         } catch (_: SecurityException) {
             // POST_NOTIFICATIONS revoked between the check and notify.

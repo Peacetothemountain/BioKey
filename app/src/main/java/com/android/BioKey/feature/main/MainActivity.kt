@@ -33,9 +33,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.android.BioKey.R
+import com.android.BioKey.core.security.BiometricEnrollment
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.ProtectionEngine
+import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.WindowProtection
@@ -154,6 +156,11 @@ class MainActivity : ComponentActivity() {
                     PauseProtectionDialog(
                         onPause = { duration ->
                             pauseRequested = false
+                            // BioKey was opened with the screen lock, on a phone with a face or
+                            // fingerprint: maybe not the owner. Recorded, and told at the next unlock.
+                            if (!engine.ownAppOpenedWithBiometric && SecurityEngine.hasStrongBiometric(this@MainActivity)) {
+                                ProtectionGaps.recordEvent(this@MainActivity, ProtectionGaps.Kind.PAUSED_WITH_SCREEN_LOCK)
+                            }
                             vault.pauseProtection(duration)
                             BioKeyMessages.show("Protection paused", Icons.Default.PauseCircle)
                         },
@@ -178,6 +185,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refreshPermissions()
+        BiometricEnrollment.checkSoon(this)
 
         if (!vault.isSetupCompleted()) return
 
