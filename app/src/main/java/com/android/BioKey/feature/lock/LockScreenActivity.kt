@@ -56,6 +56,12 @@ class LockScreenActivity : ComponentActivity() {
          * back, rather than the cover only being brought to the front.
          */
         const val EXTRA_REPROMPT = "extra_reprompt"
+        /**
+         * Started as the phone locked (the screen off, a screensaver), for an app left on screen:
+         * the cover waits behind the keyguard whatever it sees as it starts (a screensaver keeps
+         * the screen on over the keyguard), so the phone's unlock uncovers the cover, not the app.
+         */
+        const val EXTRA_BEHIND_KEYGUARD = "extra_behind_keyguard"
         /** How long a cover in a window waits to be given the whole display before failing closed. */
         private const val FULLSCREEN_WAIT_MS = 1_500L
         /**
@@ -202,7 +208,7 @@ class LockScreenActivity : ComponentActivity() {
             finishSilently()
             return
         }
-        showOverKeyguard(coversAppOverKeyguard())
+        showOverKeyguard(!intent.getBooleanExtra(EXTRA_BEHIND_KEYGUARD, false) && coversAppOverKeyguard())
 
         cover = LockCoverView(this).apply {
             onUnlock = ::showPrompt
@@ -308,7 +314,7 @@ class LockScreenActivity : ComponentActivity() {
         super.onNewIntent(intent)
         // Already leaving: if the app is still in front, the engine's shield brings a new lock.
         if (isFinishing) return
-        showOverKeyguard(coversAppOverKeyguard())
+        showOverKeyguard(!intent.getBooleanExtra(EXTRA_BEHIND_KEYGUARD, false) && coversAppOverKeyguard())
         val newPkg = intent.getStringExtra(EXTRA_LOCKED_PACKAGE).orEmpty()
         val newSelfProt = intent.getBooleanExtra(EXTRA_SELF_PROTECTION, false)
         if (newPkg == lockedPackage && newSelfProt == isSelfProtection) {

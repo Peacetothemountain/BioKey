@@ -144,6 +144,23 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     /** The app most recently brought to the front by a window event. */
     private var foregroundPackage: String? = null
+        set(value) {
+            if (value != null && value !in screensavers) appBeforeScreensaver = value
+            field = value
+        }
+    /** The app in front before a screensaver (or the phone's dream overlay) came over it. */
+    private var appBeforeScreensaver: String? = null
+    /** The screensavers' packages ([Settings.Secure] "screensaver_components"), and SystemUI's dream overlay and hub. */
+    @Volatile private var screensavers: Set<String> = setOf("com.android.systemui")
+
+    private fun readScreensavers() {
+        val chosen = runCatching { Settings.Secure.getString(contentResolver, "screensaver_components") }.getOrNull()
+        screensavers = chosen.orEmpty().split(',').mapNotNull { ComponentName.unflattenFromString(it.trim())?.packageName }.toSet() +
+            "com.android.systemui"
+    }
+
+    /** The app on screen as the phone locked: under a screensaver, the one it came over. */
+    private fun appLeftOnScreen(): String? = foregroundPackage?.takeIf { it !in screensavers } ?: appBeforeScreensaver
 
     /**
      * Accessibility window id -> owning package, learned from window events. Google Password
@@ -194,14 +211,22 @@ class BioKeyAccessibilityService : AccessibilityService() {
                         // A locked app left on screen: its lock screen goes up now, behind the
                         // keyguard, once every session has ended with the screen (ScreenReceiver,
                         // on this thread too), so unlocking the phone uncovers the cover, not the app.
-                        foregroundPackage?.let { left -> mainHandler.post { coverLeftOnScreen(left) } }
+                        appLeftOnScreen()?.let { left -> mainHandler.post { coverLeftOnScreen(left) } }
                         watchLauncher(false)
                         foregroundPackage = null
+                        appBeforeScreensaver = null
                         expectedLaunch = null
                         recentUnlock = null
                         rules.reset()
                         isConfirmingDeviceCredential = false
                         maskControl.arm()
+                    }
+                    // A screensaver (a charging phone's hub, say) comes over the keyguard with the
+                    // screen on: as at screen-off, sessions end (ScreenReceiver) and the app it came
+                    // over gets its lock screen behind it now.
+                    Intent.ACTION_DREAMING_STARTED -> {
+                        readScreensavers()
+                        appLeftOnScreen()?.let { left -> mainHandler.post { coverLeftOnScreen(left) } }
                     }
                     // Sessions ended with the screen, and it may come back on without a keyguard (it
                     // timed out moments ago): whatever is on screen is checked again.
@@ -294,10 +319,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
             IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_OFF)
                 addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_DREAMING_STARTED)
             },
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
         registerForUnlocks(deviceStateReceiver)
+        readScreensavers()
         LockStateTracker.addLockAllListener(onLockAll)
         LockStateTracker.addLockAbandonedListener(onLockAbandoned)
         LockStateTracker.addAppUnlockListener(onAppUnlocked)
@@ -1257,8 +1284,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * [pkg] was in front as the screen went off and is locked now: its lock screen starts behind
-     * the keyguard (no shield: that would show over it). Without this, the keyguard's exit
+     * [pkg] was in front as the screen went off (or a screensaver came over it) and is locked now:
+     * its lock screen starts behind the keyguard (no shield: that would show over it). Without this, the keyguard's exit
      * animation shows the app for a moment before the phone-unlocked broadcast covers it.
      */
     private fun coverLeftOnScreen(pkg: String) {
@@ -1266,7 +1293,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (!isRunning || isLauncher(pkg) || !vault.isProtectionActive() || !needsCover(pkg)) return
         DiagnosticLog.log("Covered $pkg (on screen as the phone locked)")
         LockStateTracker.setRegularLockPending(pkg)
-        launchLockScreen(pkg, isSelfProtection = false)
+        launchLockScreen(pkg, isSelfProtection = false, behindKeyguard = true)
     }
 
     /** Covers [target] and starts its lock screen, on [displayId] when known (the display its window is on). */
@@ -1494,10 +1521,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
         isSelfProtection: Boolean,
         displayId: Int? = null,
         reprompt: Boolean = false,
-        force: Boolean = false
+        force: Boolean = false,
+        behindKeyguard: Boolean = false
     ) {
         if (!force && !reprompt && isLockScreenOnItsWay(targetPkg, displayId)) return
-        if (LockLauncher.launch(this, targetPkg, isSelfProtection, displayId, reprompt)) {
+        if (LockLauncher.launch(this, targetPkg, isSelfProtection, displayId, reprompt, behindKeyguard)) {
             lastLaunch = Triple(targetPkg, displayId ?: Display.DEFAULT_DISPLAY, SystemClock.uptimeMillis())
         } else {
             lastLaunch = null
