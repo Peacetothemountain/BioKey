@@ -86,6 +86,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -583,17 +584,18 @@ fun MainScreenExpressive(
             contentPadding = PaddingValues(start = sidePad, end = sidePad, bottom = 96.dp)
         ) {
             item(key = "header") {
-                // Where the header and its logo are on screen: the constellation thins out round
-                // the logo, so no link cuts through the name.
+                // Where the header, its logo and its two labelled tiles are on screen: the
+                // constellation thins out round them, so no link cuts through the mark or a label.
                 var headerOrigin by remember { mutableStateOf(Offset.Zero) }
-                var logoBounds by remember { mutableStateOf<Rect?>(null) }
+                val quietZones = remember { mutableStateMapOf<Int, Rect>() }
                 Box(Modifier.onGloballyPositioned { headerOrigin = it.positionInRoot() }) {
+                    val shift = headerOrigin - Offset(sidePadPx.toFloat(), 0f)
                     HeaderMatrixDotsExpressive(
                         Modifier
                             .matchParentSize()
                             .horizontalBleed(sidePadPx),
                         animated = headerActive,
-                        quiet = logoBounds?.translate(-(headerOrigin - Offset(sidePadPx.toFloat(), 0f)))
+                        quiet = quietZones.values.map { it.translate(-shift) }
                     )
                     Column(Modifier.statusBarsPadding()) {
                         MainHeader(
@@ -601,7 +603,7 @@ fun MainScreenExpressive(
                             animated = headerActive,
                             onOpenStatus = { showProtectionSheet = true },
                             onOpenSettings = { showSettings = true },
-                            onLogoPlaced = { logoBounds = it }
+                            onPlaced = { part, bounds -> quietZones[part] = bounds }
                         )
                     }
                 }
@@ -1098,7 +1100,8 @@ private fun MainHeader(
     animated: Boolean,
     onOpenStatus: () -> Unit,
     onOpenSettings: () -> Unit,
-    onLogoPlaced: (Rect) -> Unit = {}
+    /** Where each part (0 status, 1 logo, 2 settings) is on screen. */
+    onPlaced: (part: Int, bounds: Rect) -> Unit = { _, _ -> }
 ) {
     val settings = stringResource(R.string.settings_title)
     val labelStyle = headerLabelStyle(status.shortLabel, settings)
@@ -1109,6 +1112,7 @@ private fun MainHeader(
         verticalAlignment = Alignment.CenterVertically
     ) {
         HeaderTile(
+            modifier = Modifier.onGloballyPositioned { onPlaced(0, it.boundsInRoot()) },
             icon = status.icon,
             label = status.shortLabel,
             labelStyle = labelStyle,
@@ -1125,11 +1129,12 @@ private fun MainHeader(
                 Modifier
                     .height(104.dp)
                     .aspectRatio(1f / KeyMark.ASPECT)
-                    .onGloballyPositioned { onLogoPlaced(it.boundsInRoot()) },
+                    .onGloballyPositioned { onPlaced(1, it.boundsInRoot()) },
                 animated = animated
             )
         }
         HeaderTile(
+            modifier = Modifier.onGloballyPositioned { onPlaced(2, it.boundsInRoot()) },
             icon = Icons.Default.Settings,
             label = settings,
             labelStyle = labelStyle,
@@ -1177,11 +1182,12 @@ private fun HeaderTile(
     container: Color,
     content: Color,
     contentDescription: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
+        modifier = modifier
             .width(HeaderTileWidth)
             .springPress()
             .clip(RoundedCornerShape(18.dp))

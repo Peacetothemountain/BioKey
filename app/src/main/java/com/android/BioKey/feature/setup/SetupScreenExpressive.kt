@@ -78,7 +78,7 @@ import com.android.BioKey.ui.theme.springPress
 fun SetupScreenExpressive(
     isAuthenticating: Boolean = false,
     authError: String? = null,
-    needsScreenLock: Boolean = authError?.startsWith("Set a screen lock") == true,
+    needsScreenLock: Boolean = false,
     onSetupComplete: () -> Unit
 ) {
     val context = LocalContext.current

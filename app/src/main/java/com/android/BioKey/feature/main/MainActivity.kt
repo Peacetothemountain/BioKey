@@ -333,7 +333,7 @@ class MainActivity : ComponentActivity() {
             onError = { code, message ->
                 if (code == SecurityEngine.ERROR_LOCKOUT_PERMANENT) {
                     isPermanentLockout = true
-                    lockMessage = SecurityEngine.LOCKOUT_PERMANENT_MESSAGE
+                    lockMessage = getString(R.string.prompt_lockout_permanent)
                 } else {
                     isPermanentLockout = false
                     lockMessage = when {

@@ -38,9 +38,6 @@ class SecurityEngine private constructor() {
         /** The prompt's Cancel, when it has one (face or fingerprint only): Android's code 13. */
         const val ERROR_NEGATIVE_BUTTON = 13
 
-        /** What every lock tells the user after [ERROR_LOCKOUT_PERMANENT]. */
-        const val LOCKOUT_PERMANENT_MESSAGE =
-            "Too many attempts. Lock your phone with the power button, then unlock it with your PIN, pattern or password to use biometrics again."
 
         fun isUserCancel(code: Int) = code == ERROR_USER_CANCELED || code == ERROR_CANCELED ||
             code == ERROR_NEGATIVE_BUTTON
@@ -170,7 +167,7 @@ class SecurityEngine private constructor() {
                 if (errorCode == BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT || errorCode == ERROR_LOCKOUT_PERMANENT) {
                     UnlockAttempts.onLockedOut(app, activity.packageName, brand, record)
                 }
-                if (!isUserCancel(errorCode)) onRefused(if (errorCode == ERROR_LOCKOUT_PERMANENT) LOCKOUT_PERMANENT_MESSAGE else errString.toString())
+                if (!isUserCancel(errorCode)) onRefused(if (errorCode == ERROR_LOCKOUT_PERMANENT) activity.getString(R.string.prompt_lockout_permanent) else errString.toString())
             }
         }
         try {

@@ -473,8 +473,8 @@ class LockScreenActivity : ComponentActivity() {
                 isPermanentLockout = code == SecurityEngine.ERROR_LOCKOUT_PERMANENT
                 val text = when {
                     SecurityEngine.isUserCancel(code) -> null
-                    isPermanentLockout -> SecurityEngine.LOCKOUT_PERMANENT_MESSAGE
-                    code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL -> "Set a screen lock in Settings to unlock apps."
+                    isPermanentLockout -> getString(R.string.prompt_lockout_permanent)
+                    code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL -> getString(R.string.lock_needs_screen_lock)
                     else -> message.toString()
                 }
                 cover.setStatus(text, isPermanentLockout)

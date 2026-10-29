@@ -137,7 +137,8 @@ internal fun countFor(w: Float, h: Float): Int = (TUNED_COUNT * (w * h) / TUNED_
 fun HeaderMatrixDotsExpressive(
     modifier: Modifier = Modifier,
     animated: Boolean = true,
-    quiet: Rect? = null
+    /** Where the field thins out: the logo, and the labelled controls, so no link cuts through them. */
+    quiet: List<Rect> = emptyList()
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val tertiary = MaterialTheme.colorScheme.tertiary
@@ -252,13 +253,16 @@ private fun depthFade(y: Float, h: Float): Float {
 private fun edgeFade(x: Float, y: Float, w: Float, fade: Float): Float =
     smooth(minOf(x, w - x, y) / fade)
 
-/** [QUIET_ALPHA] inside [quiet], easing back to 1 over [feather] round it; 1 with no quiet zone. */
-private fun quietFade(x: Float, y: Float, quiet: Rect?, feather: Float): Float {
-    if (quiet == null) return 1f
-    val dx = maxOf(quiet.left - x, 0f, x - quiet.right)
-    val dy = maxOf(quiet.top - y, 0f, y - quiet.bottom)
-    val outside = kotlin.math.sqrt(dx * dx + dy * dy)
-    return QUIET_ALPHA + (1f - QUIET_ALPHA) * smooth(outside / feather)
+/** [QUIET_ALPHA] inside any of [quiet], easing back to 1 over [feather] round each; 1 with none. */
+private fun quietFade(x: Float, y: Float, quiet: List<Rect>, feather: Float): Float {
+    var fade = 1f
+    for (zone in quiet) {
+        val dx = maxOf(zone.left - x, 0f, x - zone.right)
+        val dy = maxOf(zone.top - y, 0f, y - zone.bottom)
+        val outside = kotlin.math.sqrt(dx * dx + dy * dy)
+        fade = minOf(fade, QUIET_ALPHA + (1f - QUIET_ALPHA) * smooth(outside / feather))
+    }
+    return fade
 }
 
 /** Smoothstep of [t], clamped to 0..1: eases in and out of a fade. */

@@ -6,6 +6,7 @@ import android.os.SystemClock
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -171,7 +172,9 @@ internal fun MessageBar(data: SnackbarData) {
         shadowElevation = 6.dp,
         modifier = Modifier
             .padding(horizontal = 16.dp, vertical = 12.dp)
+            // The list's width (up to a readable maximum), so it covers whole rows, not part of one.
             .widthIn(max = 560.dp)
+            .fillMaxWidth()
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -187,7 +190,7 @@ internal fun MessageBar(data: SnackbarData) {
                 text = visuals.message,
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier
-                    .weight(1f, fill = false)
+                    .weight(1f)
                     .padding(vertical = 14.dp)
             )
             visuals.actionLabel?.let { label ->

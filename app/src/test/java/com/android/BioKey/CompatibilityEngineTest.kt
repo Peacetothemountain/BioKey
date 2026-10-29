@@ -665,14 +665,14 @@ class CompatibilityEngineTest {
         // The prompt ends in a lockout: the held cover, all the owner sees, says so, and keeps
         // saying it when something tries to take it down.
         InstantShieldOverlay.onPrompt(bank, showing = true)
-        InstantShieldOverlay.onPrompt(bank, showing = false, message = SecurityEngine.LOCKOUT_PERMANENT_MESSAGE, permanentLockout = true)
-        assertTrue(coverTexts().toString(), SecurityEngine.LOCKOUT_PERMANENT_MESSAGE in coverTexts())
+        InstantShieldOverlay.onPrompt(bank, showing = false, message = context.getString(com.android.BioKey.R.string.prompt_lockout_permanent), permanentLockout = true)
+        assertTrue(coverTexts().toString(), context.getString(com.android.BioKey.R.string.prompt_lockout_permanent) in coverTexts())
         shield().hide()
         assertTrue(shield().isShowing)
-        assertTrue(coverTexts().toString(), SecurityEngine.LOCKOUT_PERMANENT_MESSAGE in coverTexts())
+        assertTrue(coverTexts().toString(), context.getString(com.android.BioKey.R.string.prompt_lockout_permanent) in coverTexts())
         // The next prompt clears it.
         InstantShieldOverlay.onPrompt(bank, showing = true)
-        assertFalse(coverTexts().toString(), SecurityEngine.LOCKOUT_PERMANENT_MESSAGE in coverTexts())
+        assertFalse(coverTexts().toString(), context.getString(com.android.BioKey.R.string.prompt_lockout_permanent) in coverTexts())
     }
 
     @Test

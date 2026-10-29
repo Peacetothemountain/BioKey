@@ -143,7 +143,13 @@ class DesignScreenshotTest {
         RuntimeEnvironment.setQualifiers("w412dp-h2400dp")
         shoot("settings_full") { SettingsScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onNavigateBack = {}, onPauseRequested = {}) }
     }
-    @Test fun message() = shoot("message") {
+    @Test fun message() {
+        // As after switching Chase's lock off: the list agrees with the message.
+        SecurityVault.getInstance(context).setAppLock("com.example.chase", false)
+        shootMessage()
+    }
+
+    private fun shootMessage() = shoot("message") {
         androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
             MainScreenExpressive(mode = com.android.BioKey.core.security.ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {})
             val data = object : androidx.compose.material3.SnackbarData {
@@ -219,6 +225,14 @@ class DesignScreenshotTest {
     @Test fun mainSwitchedOff() {
         SecurityVault.getInstance(context).setSetupCompletedSync(true)
         shoot("main_switched_off") { MainScreenExpressive(mode = ProtectionEngine.Mode.OFF, onPauseRequested = {}) }
+    }
+
+    /** Switched off, at 200% text: the card's two buttons wrap instead of squeezing. */
+    @Test fun mainSwitchedOffLargeText() {
+        SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        RuntimeEnvironment.setFontScale(2f)
+        shoot("main_switched_off_large_text") { MainScreenExpressive(mode = ProtectionEngine.Mode.OFF, onPauseRequested = {}) }
+        RuntimeEnvironment.setFontScale(1f)
     }
 
     /** Face or fingerprint only on, Settings not locked: the calm suggestion, with Not now. */

@@ -17,6 +17,8 @@
     <string name="prompt_verify">Verify it\'s you</string>
     <string name="prompt_use_biometric">Use your face or fingerprint</string>
     <string name="prompt_cancel">Cancel</string>
+    <string name="prompt_lockout_permanent">Too many attempts. Lock your phone with the power button, then unlock it with your PIN, pattern or password to use biometrics again.</string>
+    <string name="lock_needs_screen_lock">Set a screen lock in Settings to unlock apps.</string>
     <string name="prompt_biometric_unavailable">Your face or fingerprint can\'t be used right now. Try again later. If it\'s broken for good, or \"Use for apps\" is off, removing it (or switching that on) in Android\'s settings brings back your screen lock here.</string>
     <string name="prompt_unavailable">Authentication isn\'t available right now</string>
 
@@ -517,9 +519,8 @@
     <string name="settings_log_summary">BioKey\'s lock decisions about your locked apps, kept 3 days on this phone, to trace a problem</string>
     <string name="settings_confirm_log_off">Turn off the diagnostic log</string>
     <string name="settings_view_log_title">View diagnostic log</string>
-    <!-- Both forms read "entries", as before. -->
     <plurals name="settings_view_log_entries">
-        <item quantity="one">%1$d entries from the last 3 days · share it when reporting a problem</item>
+        <item quantity="one">%1$d entry from the last 3 days · share it when reporting a problem</item>
         <item quantity="other">%1$d entries from the last 3 days · share it when reporting a problem</item>
     </plurals>
 
