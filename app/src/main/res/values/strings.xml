@@ -1,14 +1,13 @@
 <resources>
-    <string name="app_name">Bio Key</string>
-    <string name="accessibility_service_label">Bio Key App Lock Service</string>
+    <string name="app_name">BioKey</string>
+    <string name="accessibility_service_label">BioKey App Lock Service</string>
     <string name="accessibility_service_summary">Locks the apps you choose behind your fingerprint, face, or screen lock</string>
     <!-- No word of self-protection: the Play build doesn't have it. Builds that do describe it in
          the in-app disclosure (Disclosure.ACCESSIBILITY) before the service is switched on. -->
-    <string name="accessibility_service_description">Bio Key uses this service to see which app is on screen, so it can cover apps you\'ve chosen to lock until you authenticate. When you tap something on the home screen, in its search or in Recents, it reads its label, so a locked app is covered before it opens. While Recents is open and a locked app is unlocked, it reads the app names on the Recents cards, so closing that app there locks it again. It reads the title of each new window, to tell Google Password Manager\'s screens from sign-in sheets over other apps. It can press Home or Back for you to leave a locked app you didn\'t unlock, lock the screen when you ask after too many failed attempts, and open a locked app\'s picture-in-picture window full screen so it can be covered.\n\nBio Key does not read what you type, does not record the screen, and has no internet access. Nothing it observes leaves your device, unless you share Bio Key\'s diagnostic log.</string>
-    <!-- BioKey's name in its own screens. The system-facing names stay "Bio Key": self-protection recognises BioKey's Settings pages by them. -->
+    <string name="accessibility_service_description">BioKey uses this service to see which app is on screen, so it can cover apps you\'ve chosen to lock until you authenticate. When you tap something on the home screen, in its search or in Recents, it reads its label, so a locked app is covered before it opens. While Recents is open and a locked app is unlocked, it reads the app names on the Recents cards, so closing that app there locks it again. It reads the title of each new window, to tell Google Password Manager\'s screens from sign-in sheets over other apps. It can press Home or Back for you to leave a locked app you didn\'t unlock, lock the screen when you ask after too many failed attempts, and open a locked app\'s picture-in-picture window full screen so it can be covered.\n\nBioKey does not read what you type, does not record the screen, and has no internet access. Nothing it observes leaves your device, unless you share BioKey\'s diagnostic log.</string>
     <string name="brand_name">BioKey</string>
     <string name="tile_label">@string/brand_name</string>
-    <string name="notification_shield_label">Bio Key notification shield</string>
+    <string name="notification_shield_label">BioKey notification shield</string>
     <string name="shortcut_lock_all_short">Lock all now</string>
     <string name="shortcut_lock_all_long">Lock all apps now</string>
 
@@ -109,7 +108,7 @@
     <string name="disclosure_notifications_used">Hiding their content until you unlock the app, then putting them back</string>
     <string name="disclosure_notifications_turning_off">You can turn this off at any time in Android settings. To bring hidden notifications back, switch off “Hide notification content” in BioKey\'s settings first: revoking notification access instead can leave them hidden for up to a day.</string>
     <string name="disclosure_keeps_log">A log of its own lock decisions about your locked apps, pauses, and security activity as it\'s recorded, on this phone for 3 days, at most 500 entries (after a restart with no network time, the last 500 until it\'s back). You can turn it off in Settings</string>
-    <string name="disclosure_keeps_security_activity">Security activity: times app locking was off, faces or fingerprints added or removed, notification access switched off while Hide notification content was on (and whether BioKey had it), changes made from BioKey opened with your screen lock, or within a day of a face or fingerprint change (naming the app or profile changed), the times a face or fingerprint couldn\'t be used so the screen lock was allowed, and, if you turn them on, failed unlocks. Each until you\'ve seen it (a face or fingerprint change, at least a day), then 7 days; at most 50 failed unlocks and 20 other records once seen</string>
+    <string name="disclosure_keeps_security_activity">Security activity: times app locking was off, faces or fingerprints added or removed, notification access switched off while Hide notification content was on (and whether BioKey had it), changes made from BioKey opened with your screen lock, or within a day of a face or fingerprint change (naming the app or profile changed), reminders stopped meanwhile, the times a face or fingerprint couldn\'t be used so the screen lock was allowed, and, if you turn them on, failed unlocks. Each until you\'ve seen it (a face or fingerprint change, at least a day), then 7 days; at most 50 failed unlocks and 20 other records once seen</string>
     <string name="disclosure_never_leaves_phone">Nothing BioKey sees leaves this phone unless you share its diagnostic log or save a backup: it has no internet access.</string>
     <string name="disclosure_never_reads">BioKey never reads what you type, your messages, or the content of the apps you use.</string>
     <string name="disclosure_section_reads">What BioKey reads</string>
@@ -161,6 +160,7 @@
     <string name="diagnostics_delete_text">Everything recorded so far is deleted. New entries are still kept while the log is on.</string>
     <!-- Title of the face or fingerprint prompt before the log is deleted. -->
     <string name="diagnostics_delete_prompt">Delete the diagnostic log</string>
+    <string name="diagnostics_share_prompt">Share the diagnostic log</string>
     <string name="diagnostics_share_subject">BioKey diagnostic log</string>
     <string name="diagnostics_share_chooser">Share diagnostic log</string>
     <string name="diagnostics_share_failed">Couldn\'t open sharing</string>
@@ -236,7 +236,7 @@
     <string name="home_reminders_stopped">No more reminders until app locking is back on</string>
     <string name="home_alerts_muted_title">Security alerts are silenced</string>
     <string name="home_alerts_muted_text">Some of BioKey\'s alerts are off in Android\'s settings, so you may not hear of failed unlocks, changes, or app locking going off</string>
-    <string name="home_lock_settings_text">Anyone who knows your screen lock could add their own fingerprint there. Locked, it asks for your face or fingerprint (your screen lock if they can\'t be used).</string>
+    <string name="home_lock_settings_text">Anyone who knows your screen lock could add their own fingerprint there. Once it\'s locked, opening Android Settings asks for your face or fingerprint (your screen lock if they can\'t be used).</string>
 
     <!-- Home: security activity. -->
     <string name="home_confirm_mark_reviewed">Mark as reviewed</string>
@@ -394,9 +394,9 @@
     <string name="home_shield_no_access_action">Allow access</string>
     <string name="home_shield_no_access_off">Turn off</string>
     <string name="home_shield_turned_off">Hide notification content is off</string>
-    <string name="activity_held_until">A face or fingerprint was added or removed. Until %1$s nothing proves it\'s you here: nothing can be marked seen, cleared, switched off or restored, and other changes are recorded.</string>
+    <string name="activity_held_until">A face or fingerprint was added or removed. Until then nothing proves it\'s you here: nothing can be marked seen or cleared, records and alerts can\'t be switched off, backups can\'t be restored, and other changes are recorded.</string>
     <string name="activity_held_headline">Held until %1$s</string>
-    <string name="held_refused">Not until %1$s: a face or fingerprint was just added or removed, so BioKey\'s records can\'t be cleared or silenced, and backups can\'t be restored, yet.</string>
+    <string name="held_refused">Not until %1$s: a face or fingerprint was added or removed, so BioKey\'s records can\'t be cleared or silenced, and backups can\'t be restored, yet.</string>
     <string name="change_biometric_only_off">Face or fingerprint only switched off</string>
     <string name="change_reminders_stopped">Reminders that app locking is off stopped</string>
     <string name="activity_open_security_settings">Open security settings</string>
@@ -574,7 +574,7 @@
     <string name="settings_self_protection_unavailable_compat">Not available in compatibility mode</string>
     <string name="settings_shortcut_warning_title">An accessibility shortcut can switch BioKey off</string>
     <!-- %1$s: the accessibility service's name, as Android's Accessibility settings list it. -->
-    <string name="settings_shortcut_warning_summary">It switches BioKey off without asking for anything. Remove it in Accessibility > %1$s > shortcut · tap to open</string>
+    <string name="settings_shortcut_warning_summary">Remove it in Accessibility > %1$s > shortcut, or anyone can switch BioKey off without your face, fingerprint or screen lock · tap to open</string>
 
     <!-- Settings: Profiles. -->
     <string name="settings_auto_sort_title">Auto-sort into profiles</string>

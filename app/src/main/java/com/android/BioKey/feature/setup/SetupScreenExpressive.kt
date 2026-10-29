@@ -34,6 +34,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -113,6 +114,8 @@ fun SetupScreenExpressive(
     val ready = a11yActive || (compatibilityMode && usageAccess && overlay)
 
     // Advance by itself once BioKey can see apps; don't loop if the user cancels the prompt.
+    // Back from setting a screen lock: the automatic confirm may run again.
+    LaunchedEffect(needsScreenLock) { if (!needsScreenLock) hasAutoPrompted = false }
     LifecycleResumeEffect(Unit) {
         a11yActive = BioKeyAccessibilityService.isServiceEnabled(context)
         compatibilityMode = !a11yActive && AdvancedProtection.blocksBioKey(context)

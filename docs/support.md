@@ -20,8 +20,8 @@ Bugs and feature requests can also go to
 report them privately by email, not in a public issue
 ([security policy](https://github.com/Peacetothemountain/BioKey/blob/main/SECURITY.md)).
 
-In Android's Settings, BioKey appears as **Bio Key**, its accessibility service as **Bio Key App
-Lock Service**, and its notification access as **Bio Key notification shield**.
+In Android's Settings, BioKey's accessibility service is **BioKey App Lock Service**, and its
+notification access **BioKey notification shield**.
 
 ## Setting up
 
@@ -30,9 +30,9 @@ Lock Service**, and its notification access as **Bio Key notification shield**.
 This only happens when BioKey was installed from a file instead of Google Play. Android 13 and
 later block accessibility and notification access for apps installed that way until you allow it:
 
-1. Try to turn on **Bio Key App Lock Service** once in Settings > Accessibility, and close the
+1. Try to turn on **BioKey App Lock Service** once in Settings > Accessibility, and close the
    "Restricted setting" message.
-2. Open Settings > Apps > **Bio Key**, tap ⋮ (top right), then **Allow restricted settings**, and
+2. Open Settings > Apps > **BioKey**, tap ⋮ (top right), then **Allow restricted settings**, and
    confirm with your screen lock. The ⋮ item only appears after step 1.
 3. Go back to Settings > Accessibility and turn the service on.
 
@@ -41,7 +41,7 @@ BioKey's setup shows this step when it applies. Installing from
 
 ### Where is the accessibility switch?
 
-Settings > Accessibility, then **Bio Key App Lock Service**. On some phones it's under
+Settings > Accessibility, then **BioKey App Lock Service**. On some phones it's under
 **Downloaded apps** or **Installed apps**. BioKey's setup and its main screen open the right page
 for you.
 
@@ -71,14 +71,14 @@ Both permissions are needed: if either is turned off, BioKey stops locking and s
 
 They're optional, but without them BioKey can't tell you if app locking stops, and the
 notification shield can't show its "hidden notifications" entries. BioKey's setup asks for
-them; you can also allow them in Settings > Apps > **Bio Key** > Notifications.
+them; you can also allow them in Settings > Apps > **BioKey** > Notifications.
 
 ## Notifications
 
 ### How do I hide a locked app's notifications?
 
 Turn on **Hide notification content** in BioKey's settings, and allow notification access for
-**Bio Key notification shield** when Android asks. A locked app's notifications are then replaced
+**BioKey notification shield** when Android asks. A locked app's notifications are then replaced
 by one "N hidden notifications" entry until you unlock the app. Tapping it asks you to unlock, then
 opens the notification. Calls, alarms, media and navigation always show.
 
@@ -192,7 +192,7 @@ Open BioKey; its main screen says what's wrong, and BioKey sends an alert when p
 (if notifications are allowed). Common causes:
 
 - **"App lock is off":** the accessibility service is switched off. Turn it back on in Settings >
-  Accessibility > **Bio Key App Lock Service**.
+  Accessibility > **BioKey App Lock Service**.
 - **"App lock isn't running":** the accessibility service is switched on, but Android has stopped
   it. Turn it off and on again in Settings > Accessibility.
 - **"Advanced Protection is on", or an alert that compatibility mode lost a permission:** usage

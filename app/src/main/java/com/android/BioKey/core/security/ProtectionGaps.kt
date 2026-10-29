@@ -61,7 +61,7 @@ object ProtectionGaps {
         SHIELD_ACCESS_REVOKED,
         /**
          * Protection weakened (paused, an app's lock off, a profile off or deleted, the notification
-         * shield off, a backup restored) from BioKey opened with the screen lock, not a face or
+         * shield off) from BioKey opened with the screen lock, not a face or
          * fingerprint, on a phone that has one: maybe someone who knows the PIN. [Gap.detail] says what.
          */
         CHANGED_WITH_SCREEN_LOCK

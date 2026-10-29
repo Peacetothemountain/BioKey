@@ -44,6 +44,7 @@ class HomeViewModelTest {
 
     @After
     fun restore() {
+        com.android.BioKey.core.security.SecurityEngine.INSTANCE.ownAppOpenedWithBiometric = false
         com.android.BioKey.core.security.SecurityEngine.enrolledForProof = { com.android.BioKey.core.security.SecurityEngine.hasEnrolledStrongBiometric(it) }
         UnlockAttempts.hasStrongBiometric = com.android.BioKey.core.security.SecurityEngine::hasEnrolledStrongBiometric
     }
@@ -58,7 +59,7 @@ class HomeViewModelTest {
         engine.INSTANCE.ownAppOpenedWithBiometric = true
         assertTrue(engine.ownerProven(app))
         com.android.BioKey.core.security.LockStateTracker.lockOwnApp()
-        assertTrue(!engine.ownerProven(app))
+        org.junit.Assert.assertFalse(engine.ownerProven(app))
     }
 
     @Test

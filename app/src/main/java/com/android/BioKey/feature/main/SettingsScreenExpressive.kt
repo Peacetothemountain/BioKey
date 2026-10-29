@@ -476,7 +476,7 @@ fun SettingsScreenExpressive(
         )
     )
 
-    val backupActions = rememberBackupActions(onTurnOnShield = ::turnShieldOn)
+    val backupActions = rememberBackupActions()
     val backup = listOf(
         SettingItem(
             icon = Icons.Default.Save,

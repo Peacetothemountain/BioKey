@@ -65,6 +65,11 @@ object BiometricEnrollment {
         worker.submit {}.get()
     }
 
+    /** Looks now, on the calling thread (never the main one: the Keystore is slow), and records what changed. */
+    fun checkNow(context: Context) {
+        runCatching { check(context.applicationContext) }
+    }
+
     /** Looks off the main thread (the Keystore is slow), and records what changed. */
     fun checkSoon(context: Context) {
         val app = context.applicationContext

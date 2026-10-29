@@ -137,10 +137,7 @@ internal class PendingBackup : ViewModel() {
  * announced first ([LockStateTracker.beginOwnPicker]) so the session survives that one trip.
  */
 @Composable
-internal fun rememberBackupActions(
-    /** Turns the notification shield on (with its explanation), from the restore's message. */
-    onTurnOnShield: () -> Unit = {}
-): BackupActions {
+internal fun rememberBackupActions(): BackupActions {
     val context = LocalContext.current
     val res = LocalResources.current
     val scope = rememberCoroutineScope()
@@ -298,10 +295,7 @@ internal fun rememberBackupActions(
                             // The shield waits for its explanation on this phone: say so, or the owner
                             // would think locked apps' notifications are hidden.
                             if (current.state.optBoolean("notificationShield", false) && !vault.isNotificationShieldEnabled()) {
-                                BioKeyMessages.show(
-                                    res.getString(R.string.backup_restored_turn_on_shield), Icons.Default.CheckCircle,
-                                    actionLabel = res.getString(R.string.common_turn_on), onAction = onTurnOnShield
-                                )
+                                BioKeyMessages.show(res.getString(R.string.backup_restored_turn_on_shield), Icons.Default.CheckCircle)
                             } else {
                                 BioKeyMessages.show(res.getString(R.string.backup_restored), Icons.Default.CheckCircle)
                             }
@@ -489,7 +483,10 @@ internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
                             IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.common_close)) }
                         },
                         actions = {
-                            IconButton(onClick = { share(context) }, enabled = entries.isNotEmpty()) {
+                            IconButton(onClick = {
+                                // It names locked apps and their unlocks: the owner's to send, not only the screen lock's.
+                                confirmOwner(logActivity, res.getString(R.string.diagnostics_share_prompt)) { share(context) }
+                            }, enabled = entries.isNotEmpty()) {
                                 Icon(Icons.Default.Share, contentDescription = stringResource(R.string.diagnostics_share))
                             }
                             IconButton(onClick = { confirmDelete = true }, enabled = entries.isNotEmpty()) {

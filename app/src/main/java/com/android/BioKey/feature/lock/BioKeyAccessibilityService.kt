@@ -514,6 +514,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
     }
 
     private fun handleEvent(event: AccessibilityEvent) {
+        // Switched on in Android's settings before BioKey's setup (and the explanation it shows
+        // first): nothing it sees is looked at until then.
+        if (!SecurityVault.getInstance(this).isSetupCompleted()) return
         try {
             val type = event.eventType
             val eventPkg = event.packageName?.toString()

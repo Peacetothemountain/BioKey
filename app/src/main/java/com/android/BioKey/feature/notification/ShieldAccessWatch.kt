@@ -47,10 +47,11 @@ object ShieldAccessWatch {
     fun switchOffSoon(context: Context): Future<Long?> {
         val app = context.applicationContext
         return worker.submit<Long?> {
-            // Switched off here, on the one thread every look runs on: no look can come between
-            // the switch-off and this one, and take the record it ends.
-            SecurityVault.getInstance(app).setNotificationShield(false)
-            runCatching { check(app) }.getOrNull()
+            // A look queued before this one may already have ended it: then it's the one that did.
+            val ended = runCatching { check(app) }
+                .onFailure { DiagnosticLog.log("Notification access check failed: ${it.javaClass.simpleName}") }
+                .getOrNull()
+            ended ?: endedBySwitchOff.also { endedBySwitchOff = null }
         }
     }
 
@@ -64,6 +65,8 @@ object ShieldAccessWatch {
         worker.execute {
             runCatching {
                 synchronized(this) {
+                    // On again here, after the switch-off's own look: in order whatever was queued.
+                    SecurityVault.getInstance(app).setNotificationShield(true)
                     val seq = ended.get()
                     if (seq != null && !hasAccess(app)) {
                         ProtectionGaps.reopenEvent(app, seq)
@@ -71,7 +74,7 @@ object ShieldAccessWatch {
                     }
                     check(app)
                 }
-            }
+            }.onFailure { DiagnosticLog.log("Undoing hiding off failed: ${it.javaClass.simpleName}") }
             val withoutAccess = lastWithoutAccess ?: false
             ContextCompat.getMainExecutor(app).execute { onDone(withoutAccess) }
         }
@@ -95,6 +98,9 @@ object ShieldAccessWatch {
     }
 
     /** Looks at the shield and its access, records what changed; returns the record it ended by hiding being off, if any. */
+    /** The record the last switch-off ended, until its Undo (or a switch-on) takes it. On [worker] only. */
+    private var endedBySwitchOff: Long? = null
+
     @Synchronized
     fun check(context: Context): Long? {
         val app = context.applicationContext
@@ -105,8 +111,9 @@ object ShieldAccessWatch {
         lastWithoutAccess = shieldOn && !access
         val had = p.getBoolean(KEY_HAD_ACCESS, false)
         val open = p.getLong(KEY_OPEN_RECORD, 0L).takeIf { it > 0L }
+        if (shieldOn) endedBySwitchOff = null
         when {
-            // Access back (or first had): an open record ends.
+            // Access back (or first had): an open record ends. Hiding on: nothing left for an Undo.
             shieldOn && access -> if (!had || open != null) {
                 open?.let { ProtectionGaps.endEvent(app, it) }
                 p.edit { putBoolean(KEY_HAD_ACCESS, true).remove(KEY_OPEN_RECORD) }
@@ -122,6 +129,8 @@ object ShieldAccessWatch {
             !shieldOn -> if (had || open != null) {
                 open?.let { ProtectionGaps.endEvent(app, it) }
                 p.edit { putBoolean(KEY_HAD_ACCESS, false).remove(KEY_OPEN_RECORD) }
+                // For the switch-off's Undo, if a look queued before its own got here first.
+                endedBySwitchOff = open
                 return open
             }
         }

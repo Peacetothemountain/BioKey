@@ -211,7 +211,7 @@ private fun HeaderTile(
             .width(HeaderTileWidth)
             .springPress()
             .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick, role = if (selected != null) Role.Tab else Role.Button)
+            .clickable(onClick = onClick, role = Role.Button)
             .semantics(mergeDescendants = true) {
                 this.contentDescription = contentDescription
                 if (selected != null) this.selected = selected

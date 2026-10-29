@@ -36,7 +36,7 @@ settings.
 ### Accessibility service
 
 BioKey works in one of two ways. The default uses Android's Accessibility API, through a service
-called "Bio Key App Lock Service". BioKey is not an accessibility tool, and says so to Android.
+called "BioKey App Lock Service". BioKey is not an accessibility tool, and says so to Android.
 
 **What it reads:**
 
@@ -97,7 +97,7 @@ sees, receives or stores your fingerprint, your face, or your PIN, pattern or pa
 tells it only whether authentication succeeded, whether it was a face or fingerprint or the
 screen lock, and when a face or fingerprint didn't match (not whose it was). BioKey accepts only
 strong (Class 3) biometrics or your screen lock; with "Face or fingerprint only" on, biometrics
-alone. Failed unlock alerts, if you turn them on, use those mismatches (see below). Android doesn't
+alone (your screen lock if they can't be used, which is recorded). Failed unlock alerts, if you turn them on, use those mismatches (see below). Android doesn't
 tell apps about a wrong PIN, pattern or password.
 
 To notice a face or fingerprint being added or removed in Android's settings, BioKey keeps one
