@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
@@ -83,12 +84,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.android.BioKey.BuildConfig
 import com.android.BioKey.R
 import com.android.BioKey.core.data.openFor
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.NewAppSuggestions
+import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityEngine
@@ -123,7 +126,9 @@ private class SettingItem(
     /** Something the user should fix: drawn in the error colours. */
     val warning: Boolean = false,
     /** What a tappable row shows at its end: where it goes. */
-    val goes: Goes = Goes.ON
+    val goes: Goes = Goes.ON,
+    /** An action row's button label ([Goes.NOWHERE]): the row does what it says. */
+    val action: String? = null
 )
 
 /** Where tapping a row takes you: on (a chevron), out of BioKey (open-in-new), or nowhere (an action). */
@@ -161,11 +166,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     val screenLockUnlocks by UnlockAttempts.screenLockUnlocks.collectAsStateWithLifecycle()
     val biometricOnly by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
     val lockedApps by vault.lockedAppsFlow.collectAsStateWithLifecycle()
-    var strongBiometric by remember { mutableStateOf(SecurityEngine.hasStrongBiometric(context)) }
-    LifecycleResumeEffect(Unit) {
-        strongBiometric = SecurityEngine.hasStrongBiometric(context)
-        onPauseOrDispose { }
-    }
+    var strongBiometric by remember { mutableStateOf(false) }
     val newAppOffers by NewAppSuggestions.enabled.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
         // Usually loaded already, as BioKey started.
@@ -175,9 +176,9 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         }
     }
 
-    var notifListenerActive by remember { mutableStateOf(BioKeyNotificationShieldService.isNotificationAccessGranted(context)) }
+    var notifListenerActive by remember { mutableStateOf(false) }
     /** An accessibility shortcut switches BioKey's service off without passing any screen self-protection guards. */
-    var shortcutAssigned by remember { mutableStateOf((SecurityVault.selfProtectionAvailable && SelfProtectionDetector.isShortcutAssigned(context))) }
+    var shortcutAssigned by remember { mutableStateOf(false) }
     var showRelockSheet by remember { mutableStateOf(false) }
     val activity = LocalActivity.current as ComponentActivity
     val notificationAccessTrip = remember(activity) { ViewModelProvider(activity)[NotificationAccessTrip::class.java] }
@@ -185,16 +186,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     val notifications = rememberNotificationPermission()
     val protecting = ProtectionEngine.isProtecting(mode)
 
-    // Both were read just now, as Settings opened: read again on every later resume, back from
-    // the system pages that change them, not on the one that follows straight away.
-    val readOnOpen = remember { booleanArrayOf(true) }
-    LifecycleResumeEffect(Unit) {
-        if (readOnOpen[0]) {
-            readOnOpen[0] = false
-        } else {
-            notifListenerActive = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
-            shortcutAssigned = (SecurityVault.selfProtectionAvailable && SelfProtectionDetector.isShortcutAssigned(context))
-        }
+    fun afterNotificationAccessTrip() {
         if (notificationAccessTrip.awaiting) {
             notificationAccessTrip.awaiting = false
             if (!notifListenerActive) {
@@ -210,7 +202,20 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 notifications.request()
             }
         }
-        onPauseOrDispose { }
+    }
+
+    // Read on every visit (back from the system pages that change them), off the main thread:
+    // each is a call into Android's services.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            withContext(Dispatchers.IO) {
+                strongBiometric = SecurityEngine.hasStrongBiometric(context)
+                notifListenerActive = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
+                shortcutAssigned = SecurityVault.selfProtectionAvailable && SelfProtectionDetector.isShortcutAssigned(context)
+            }
+            afterNotificationAccessTrip()
+        }
     }
 
     /** Sends the user to whatever lets BioKey watch apps, after the matching disclosure. */
@@ -280,7 +285,8 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                     val undo = vault.lockSettingsApp()
                     BioKeyMessages.show(res.getString(R.string.settings_lock_settings_done), Icons.Default.Lock, actionLabel = res.getString(R.string.common_undo), onAction = undo)
                 },
-                goes = Goes.NOWHERE
+                goes = Goes.NOWHERE,
+                action = stringResource(R.string.settings_lock_action)
             ) else null
         ))
         add(
@@ -309,9 +315,25 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 title = stringResource(R.string.alerts_channel_name),
                 subtitle = if (notifications.allowed) stringResource(R.string.settings_alerts_on)
                 else stringResource(R.string.settings_alerts_off),
-                onClick = if (notifications.allowed) null else notifications::requestOrOpenSettings
+                onClick = if (notifications.allowed) {
+                    { IntentNavigationHelper.openChannelSettings(context, ProtectionAlerts.CHANNEL_ID); Unit }
+                } else notifications::requestOrOpenSettings,
+                goes = Goes.OUT
             )
         )
+    }
+    // Always the explanation first, even with notification access already granted some other way.
+    // Saved only on Agree: "Not now" leaves it off.
+    fun turnShieldOn() {
+        disclosures.request(Disclosure.NOTIFICATIONS) {
+            vault.setNotificationShield(true)
+            if (!notifListenerActive) {
+                notificationAccessTrip.awaiting = true
+                IntentNavigationHelper.openNotificationListenerSettings(context)
+            } else {
+                notifications.request()
+            }
+        }
     }
     val serviceLabel = stringResource(R.string.accessibility_service_label)
     val privacy = listOfNotNull(
@@ -321,31 +343,33 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             subtitle = when {
                 !notificationShieldEnabled -> stringResource(R.string.settings_hide_notifications_off)
                 !notifListenerActive -> stringResource(R.string.settings_hide_notifications_needs_access)
-                notificationShieldEnabled && !notifications.allowed ->
-                    stringResource(R.string.settings_hide_notifications_no_stand_in)
-                notificationShieldEnabled -> stringResource(R.string.settings_hide_notifications_on)
-                else -> stringResource(R.string.settings_hide_notifications_full)
+                !notifications.allowed -> stringResource(R.string.settings_hide_notifications_no_stand_in)
+                else -> stringResource(R.string.settings_hide_notifications_on)
             },
-            checked = notificationShieldEnabled && notifListenerActive,
+            // The setting itself: on but without access, it can still be switched off here.
+            checked = notificationShieldEnabled,
             onChange = { on ->
                 if (!on) {
                     vault.setNotificationShield(false)
-                    ProtectionGaps.recordIfScreenLock(context, "Hide notification content switched off")
+                    ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.SHIELD_OFF)
                 } else {
-                    // Always the explanation first, even with notification access already granted some
-                    // other way. Saved only on Agree: "Not now" leaves it off.
-                    disclosures.request(Disclosure.NOTIFICATIONS) {
-                        vault.setNotificationShield(true)
-                        if (!notifListenerActive) {
-                            notificationAccessTrip.awaiting = true
-                            IntentNavigationHelper.openNotificationListenerSettings(context)
-                        } else {
-                            notifications.request()
-                        }
-                    }
+                    turnShieldOn()
                 }
             }
         ),
+        if (notificationShieldEnabled && !notifListenerActive) SettingItem(
+            icon = Icons.Default.Warning,
+            title = stringResource(R.string.home_shield_no_access_title),
+            subtitle = stringResource(R.string.settings_shield_allow_access),
+            warning = true,
+            goes = Goes.OUT,
+            onClick = {
+                disclosures.request(Disclosure.NOTIFICATIONS) {
+                    notificationAccessTrip.awaiting = true
+                    IntentNavigationHelper.openNotificationListenerSettings(context)
+                }
+            }
+        ) else null,
         SettingItem(
             icon = Icons.Default.GppBad,
             title = stringResource(R.string.settings_failed_alerts_title),
@@ -438,7 +462,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         )
     )
 
-    val backupActions = rememberBackupActions()
+    val backupActions = rememberBackupActions(onTurnOnShield = ::turnShieldOn)
     val backup = listOf(
         SettingItem(
             icon = Icons.Default.Save,
@@ -574,7 +598,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             onSelect = { mode ->
                 if (mode != null) {
                     if (mode.openFor > defaultTimeout.openFor) {
-                        ProtectionGaps.recordIfScreenLock(context, "Default re-lock delay made longer: ${mode.shortLabel.lowercase()}")
+                        ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.DEFAULT_DELAY_LONGER, mode.name)
                     }
                     vault.setTimeoutMode(mode)
                 }
@@ -618,7 +642,9 @@ private fun SettingsSection(title: String, items: List<SettingItem>, footer: Str
                 iconTint = if (item.warning) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
                 iconContainer = if (item.warning) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
                 onClick = item.onClick,
-                trailing = if (item.onClick == null || item.goes == Goes.NOWHERE) null else {
+                trailing = if (item.action != null && item.onClick != null) {
+                    { FilledTonalButton(onClick = item.onClick) { Text(item.action) } }
+                } else if (item.onClick == null || item.goes == Goes.NOWHERE) null else {
                     {
                         Icon(
                             if (item.goes == Goes.OUT) Icons.AutoMirrored.Filled.OpenInNew else Icons.AutoMirrored.Filled.KeyboardArrowRight,

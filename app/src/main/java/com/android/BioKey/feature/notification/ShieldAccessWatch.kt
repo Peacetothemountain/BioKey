@@ -18,6 +18,8 @@ object ShieldAccessWatch {
     private const val PREFS = "biokey_shield_access"
     /** The shield had its access, last time this looked: losing it now is news. */
     private const val KEY_HAD_ACCESS = "had_access"
+    /** The record of the access going, until it's back: then it says from when to when. */
+    private const val KEY_OPEN_RECORD = "open_record"
 
     @VisibleForTesting
     internal var hasAccess: (Context) -> Boolean = BioKeyNotificationShieldService::isNotificationAccessGranted
@@ -26,6 +28,15 @@ object ShieldAccessWatch {
     fun shieldWithoutAccess(context: Context): Boolean =
         SecurityVault.getInstance(context).isNotificationShieldEnabled() && !hasAccess(context)
 
+    private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-shield-access").apply { isDaemon = true } }
+
+    /** [check], off the calling thread. */
+    fun checkSoon(context: Context) {
+        val app = context.applicationContext
+        worker.execute { runCatching { check(app) } }
+    }
+
+    @Synchronized
     fun check(context: Context) {
         val app = context.applicationContext
         val p = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -33,13 +44,19 @@ object ShieldAccessWatch {
         val access = hasAccess(app)
         val had = p.getBoolean(KEY_HAD_ACCESS, false)
         when {
-            shieldOn && access -> if (!had) p.edit { putBoolean(KEY_HAD_ACCESS, true) }
+            shieldOn && access -> if (!had) {
+                p.getLong(KEY_OPEN_RECORD, 0L).takeIf { it > 0L }?.let { ProtectionGaps.endEvent(app, it) }
+                p.edit { putBoolean(KEY_HAD_ACCESS, true).remove(KEY_OPEN_RECORD) }
+            }
             shieldOn && had -> {
-                p.edit { putBoolean(KEY_HAD_ACCESS, false) }
-                ProtectionGaps.recordEvent(app, ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED)
+                val seq = ProtectionGaps.recordEvent(app, ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED)
+                p.edit {
+                    putBoolean(KEY_HAD_ACCESS, false)
+                    if (seq != null) putLong(KEY_OPEN_RECORD, seq)
+                }
             }
             // Switched off in BioKey: the owner's choice, nothing to tell.
-            !shieldOn && had -> p.edit { putBoolean(KEY_HAD_ACCESS, false) }
+            !shieldOn -> if (had || p.contains(KEY_OPEN_RECORD)) p.edit { putBoolean(KEY_HAD_ACCESS, false).remove(KEY_OPEN_RECORD) }
         }
     }
 }

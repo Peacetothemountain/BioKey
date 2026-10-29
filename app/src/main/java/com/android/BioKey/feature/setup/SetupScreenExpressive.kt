@@ -33,13 +33,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -207,7 +213,18 @@ fun SetupScreenExpressive(
             .fillMaxSize()
             .rejectObscuredTouches()
     ) {
-        HeaderMatrixDotsExpressive(Modifier.fillMaxWidth().height(360.dp).align(Alignment.TopCenter))
+        // The constellation thins out round the logo, the title and the line under it: no link
+        // crosses the first words a new owner reads.
+        var fieldOrigin by remember { mutableStateOf(Offset.Zero) }
+        val quietZones = remember { mutableStateMapOf<Int, Rect>() }
+        HeaderMatrixDotsExpressive(
+            Modifier
+                .fillMaxWidth()
+                .height(360.dp)
+                .align(Alignment.TopCenter)
+                .onGloballyPositioned { fieldOrigin = it.positionInRoot() },
+            quiet = quietZones.values.map { it.translate(-fieldOrigin) }
+        )
 
         Column(
             modifier = Modifier
@@ -220,16 +237,20 @@ fun SetupScreenExpressive(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(Modifier.height(48.dp))
-            BioKeyLogo(Modifier.size(104.dp, 118.dp))
+            BioKeyLogo(Modifier.size(104.dp, 118.dp).onGloballyPositioned { quietZones[0] = it.boundsInRoot() })
             Spacer(Modifier.height(28.dp))
-            Text(stringResource(R.string.setup_title), style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
+            Text(
+                stringResource(R.string.setup_title),
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.semantics { heading() }.onGloballyPositioned { quietZones[1] = it.boundsInRoot() }
+            )
             Spacer(Modifier.height(8.dp))
             Text(
                 stringResource(R.string.setup_subtitle),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 32.dp)
+                modifier = Modifier.padding(horizontal = 32.dp).onGloballyPositioned { quietZones[2] = it.boundsInRoot() }
             )
             Spacer(Modifier.height(28.dp))
             Group(count = steps.size) { i ->

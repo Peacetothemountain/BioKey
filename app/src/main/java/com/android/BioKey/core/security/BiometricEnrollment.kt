@@ -55,14 +55,25 @@ object BiometricEnrollment {
         keyState = ::checkKey
     }
 
+    /** Off in tests that call [check] themselves, so BioKey's own start-up look can't run alongside. */
+    @VisibleForTesting
+    @Volatile internal var backgroundChecks = true
+
+    /** Waits for any look already queued ([checkSoon]) to finish. */
+    @VisibleForTesting
+    internal fun awaitBackgroundForTests() {
+        worker.submit {}.get()
+    }
+
     /** Looks off the main thread (the Keystore is slow), and records what changed. */
     fun checkSoon(context: Context) {
         val app = context.applicationContext
-        worker.execute { runCatching { check(app) } }
+        worker.execute { if (backgroundChecks) runCatching { check(app) } }
     }
 
     /** What changed since last time, recorded in security activity. */
     @VisibleForTesting
+    @Synchronized
     internal fun check(context: Context): Change {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val has = hasBiometric(context)

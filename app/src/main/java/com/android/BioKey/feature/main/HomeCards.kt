@@ -288,18 +288,46 @@ internal fun gapLine(context: Context, gap: ProtectionGaps.Gap): String {
         return when (gap.kind) {
             ProtectionGaps.Kind.BIOMETRICS_CHANGED -> context.getString(R.string.card_gap_biometrics_changed, time)
             ProtectionGaps.Kind.BIOMETRICS_REMOVED -> context.getString(R.string.card_gap_biometrics_removed, time)
-            ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED -> context.getString(R.string.card_gap_shield_access_revoked, time)
-            // The detail is the stored record of what changed, as it was written.
-            else -> context.getString(
-                R.string.card_gap_changed_with_screen_lock,
-                time,
-                gap.detail.ifEmpty { context.getString(R.string.card_gap_protection_changed) }.replaceFirstChar { it.lowercase() }
-            )
+            ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED ->
+                if (gap.to - gap.from < 60_000L) context.getString(R.string.card_gap_shield_access_revoked, time)
+                else context.getString(R.string.card_gap_shield_access_revoked_range, timeRange(context, gap))
+            else -> {
+                val change = ProtectionGaps.Change.decode(gap.detail)
+                // Older records hold their words as written; newer ones a code, worded here.
+                val what = when {
+                    change != null -> changeText(context, change.first, change.second)
+                    gap.detail.isNotEmpty() -> gap.detail
+                    else -> context.getString(R.string.card_gap_protection_changed)
+                }
+                context.getString(
+                    if (change?.first?.fromScreenLock == false) R.string.card_gap_event else R.string.card_gap_changed_with_screen_lock,
+                    time, what
+                )
+            }
         }
     }
+    if (gap.unknownStart) return context.getString(R.string.card_gap_force_stopped_unknown, attemptTime(context, gap.to))
+    return context.getString(if (gap.kind == ProtectionGaps.Kind.SWITCHED_OFF) R.string.card_gap_switched_off else R.string.card_gap_force_stopped, timeRange(context, gap))
+}
+
+/** "3:02 – 3:10 PM", with the date when it isn't today. */
+private fun timeRange(context: Context, gap: ProtectionGaps.Gap): String {
     val day = if (DateUtils.isToday(gap.to)) 0 else DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR
-    val range = DateUtils.formatDateRange(context, gap.from, gap.to, DateUtils.FORMAT_SHOW_TIME or day)
-    return context.getString(if (gap.kind == ProtectionGaps.Kind.SWITCHED_OFF) R.string.card_gap_switched_off else R.string.card_gap_force_stopped, range)
+    return DateUtils.formatDateRange(context, gap.from, gap.to, DateUtils.FORMAT_SHOW_TIME or day)
+}
+
+/** A stored change ([ProtectionGaps.Change]) in words: its arguments are names, a count or a delay. */
+private fun changeText(context: Context, change: ProtectionGaps.Change, args: List<String>): String {
+    val shown: Array<Any> = when (change) {
+        ProtectionGaps.Change.DEFAULT_DELAY_LONGER ->
+            arrayOf(context.getString(LockTimeoutMode.fromName(args.firstOrNull()).shortLabelRes))
+        ProtectionGaps.Change.ADDED_MANY_TO_OFF_PROFILE -> {
+            val count = args.getOrNull(0)?.toIntOrNull() ?: 0
+            return context.resources.getQuantityString(change.plural, count, count, args.getOrNull(1).orEmpty())
+        }
+        else -> args.toTypedArray()
+    }
+    return context.getString(change.text, *shown)
 }
 
 /** When an unlocked app, off screen, locks again: "Re-locks in 4 min", or how it will. */
@@ -477,7 +505,7 @@ internal fun SecurityActivityDialog(
             }
         },
         confirmButton = {
-            Row {
+            FlowRow(horizontalArrangement = Arrangement.End) {
                 if (onMarkReviewed != null) TextButton(onClick = onMarkReviewed) { Text(stringResource(R.string.card_mark_reviewed)) }
                 TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) }
             }

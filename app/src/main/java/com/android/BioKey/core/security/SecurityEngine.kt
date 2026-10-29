@@ -153,6 +153,9 @@ class SecurityEngine private constructor() {
                     biometric = result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC,
                     ownMisses = ownMisses
                 )
+                if (result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC) {
+                    ownAppOpenedWithBiometric = true
+                }
                 onConfirmed()
             }
 
@@ -229,7 +232,7 @@ class SecurityEngine private constructor() {
         // sensor fault, an update pending): the screen lock is allowed so the owner isn't locked out,
         // and that's recorded.
         if (!faceOrFingerOnly && SecurityVault.getInstance(activity).isBiometricOnly() && hasEnrolledStrongBiometric(activity)) {
-            ProtectionGaps.recordOncePerProcess(activity, "Face or fingerprint unavailable, so the screen lock was allowed")
+            ProtectionGaps.recordOncePerProcess(activity, ProtectionGaps.Change.BIOMETRIC_UNAVAILABLE)
         }
 
         val callback = object : BiometricPrompt.AuthenticationCallback() {
@@ -293,7 +296,7 @@ class SecurityEngine private constructor() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed starting BiometricPrompt: ${e.javaClass.simpleName}")
             if (active === attempt) active = null
-            onError(ERROR_HW_UNAVAILABLE, "Authentication unavailable")
+            onError(ERROR_HW_UNAVAILABLE, activity.getString(R.string.prompt_unavailable))
         }
     }
 }

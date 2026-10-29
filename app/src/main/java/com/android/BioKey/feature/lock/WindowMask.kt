@@ -216,7 +216,7 @@ internal class WindowMask(
 
     private fun buildView(context: Context): View = FrameLayout(context).apply {
         isClickable = true
-        contentDescription = "Locked app"
+        contentDescription = context.getString(R.string.shield_public_title)
         WindowProtection.hideFromNonToolAccessibilityServices(this)
         addView(ImageView(context).apply {
             setImageResource(R.drawable.ic_lock_key)

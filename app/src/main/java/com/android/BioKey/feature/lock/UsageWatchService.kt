@@ -1386,14 +1386,13 @@ class UsageWatchService : Service() {
 
     private fun buildNotification(): Notification {
         val nm = getSystemService(NotificationManager::class.java)
-        if (nm.getNotificationChannel(CHANNEL_ID) == null) {
-            nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Compatibility mode", NotificationManager.IMPORTANCE_MIN).apply {
-                    description = "Shown while BioKey locks apps without the accessibility service"
-                    setShowBadge(false)
-                }
-            )
-        }
+        // Created, or its name and description updated (Android keeps the owner's importance).
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_ID, getString(R.string.compat_channel_name), NotificationManager.IMPORTANCE_MIN).apply {
+                description = getString(R.string.compat_channel_description)
+                setShowBadge(false)
+            }
+        )
         val open = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
@@ -1401,8 +1400,8 @@ class UsageWatchService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_biokey_mark)
-            .setContentTitle("BioKey is protecting your apps")
-            .setContentText("Compatibility mode: works with Advanced Protection")
+            .setContentTitle(getString(R.string.compat_notification_title))
+            .setContentText(getString(R.string.compat_notification_text))
             .setContentIntent(open)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)

@@ -235,6 +235,14 @@ class DesignScreenshotTest {
         RuntimeEnvironment.setFontScale(1f)
     }
 
+    /** Advanced Protection's card at 200%: its long button wraps instead of being clipped. */
+    @Test fun mainOffLargeText() {
+        SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        RuntimeEnvironment.setFontScale(2f)
+        shoot("main_off_large_text") { MainScreenExpressive(mode = ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP, onPauseRequested = {}) }
+        RuntimeEnvironment.setFontScale(1f)
+    }
+
     /** Face or fingerprint only on, Settings not locked: the calm suggestion, with Not now. */
     @Test fun mainLockSettings() {
         SecurityVault.getInstance(context).setSetupCompletedSync(true)

@@ -4,11 +4,15 @@ import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Build
 import android.os.SystemClock
 import android.os.UserManager
 import android.provider.Settings
+import androidx.annotation.PluralsRes
+import androidx.annotation.StringRes
 import androidx.annotation.VisibleForTesting
 import androidx.core.content.edit
+import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -63,6 +67,44 @@ object ProtectionGaps {
         CHANGED_WITH_SCREEN_LOCK
     }
 
+    /**
+     * What a [Kind.CHANGED_WITH_SCREEN_LOCK] record says changed. Stored as a code and its arguments
+     * (an app's or profile's name, a delay), and worded only when shown, in the reader's language.
+     */
+    enum class Change(@StringRes val text: Int, val fromScreenLock: Boolean = true, @PluralsRes val plural: Int = 0) {
+        PAUSED(R.string.change_paused),
+        LOCK_OFF(R.string.change_lock_off),
+        PROFILE_OFF(R.string.change_profile_off),
+        MOVED_UNLOCKED(R.string.change_moved_unlocked),
+        MOVED_LONGER_DELAY(R.string.change_moved_longer_delay),
+        TAKEN_OUT(R.string.change_taken_out),
+        ADDED_TO_OFF_PROFILE(R.string.change_added_to_off_profile),
+        /** Arguments: how many, and the profile; worded with [plural]. */
+        ADDED_MANY_TO_OFF_PROFILE(0, plural = R.plurals.change_added_many_to_off_profile),
+        PROFILE_DELETED(R.string.change_profile_deleted),
+        PROFILE_DELAY_LONGER(R.string.change_profile_delay_longer),
+        /** Argument: the [com.android.BioKey.core.data.LockTimeoutMode] name. */
+        DEFAULT_DELAY_LONGER(R.string.change_default_delay_longer),
+        SHIELD_OFF(R.string.change_shield_off),
+        /** Not a change from a session: the sensor couldn't be used, so the screen lock was allowed. */
+        BIOMETRIC_UNAVAILABLE(R.string.change_biometric_unavailable, fromScreenLock = false);
+
+        fun encode(vararg args: String) = (listOf(CODE_MARK + name) + args).joinToString(SEPARATOR)
+
+        companion object {
+            private const val CODE_MARK = "#"
+            private const val SEPARATOR = "\u001F"
+
+            /** A stored detail's code and arguments; null for a record written as plain text (older ones). */
+            fun decode(detail: String): Pair<Change, List<String>>? {
+                if (!detail.startsWith(CODE_MARK)) return null
+                val parts = detail.removePrefix(CODE_MARK).split(SEPARATOR)
+                val change = entries.find { it.name == parts.first() } ?: return null
+                return change to parts.drop(1)
+            }
+        }
+    }
+
     data class Gap(
         val from: Long,
         val to: Long,
@@ -72,7 +114,9 @@ object ProtectionGaps {
         /** [to] on the clock since boot, which boot, and whether [to] is on the network's time: for ageing. */
         val toElapsed: Long = 0L,
         val boot: Int = -1,
-        val net: Boolean = true
+        val net: Boolean = true,
+        /** A force stop whose start can't be told (the phone's clock was set back since): [from] is only "by". */
+        val unknownStart: Boolean = false
     )
 
     /** Shorter than this, a stop is an engine restarting or handing over, not a person. */
@@ -108,6 +152,9 @@ object ProtectionGaps {
     internal var bootCount: (Context) -> Int = { context ->
         cachedBoot ?: Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, 0).also { cachedBoot = it }
     }
+    @VisibleForTesting
+    internal var sdk: () -> Int = { Build.VERSION.SDK_INT }
+
     /** The phone's own (user-set) clock, which Android's exit records use. */
     @VisibleForTesting
     internal var wallNow: () -> Long = System::currentTimeMillis
@@ -145,17 +192,22 @@ object ProtectionGaps {
 
     @VisibleForTesting
     internal fun resetForTests() {
-        synchronized(lock) { prefs = null }
+        synchronized(lock) {
+            prefs = null
+            _gaps.value = emptyList()
+        }
+        recordedOnce.clear()
     }
 
     /**
-     * Seen ones past their time go, aged on [TrustedClock] (a changed date doesn't age them);
+     * Seen ones past their time go, aged on clocks a changed date doesn't move ([UnlockAttempts.Ageing]);
      * unseen ones stay. Over the limit, seen ones go first: piling up new records can't push out
      * one the owner hasn't seen.
      */
     private fun List<Gap>.fresh(context: Context): List<Gap> {
         val seen = UnlockAttempts.seenSeq(context)
-        val age = UnlockAttempts.Ageing(bootCount(context))
+        // On this object's own clocks, the ones its records were stamped with.
+        val age = UnlockAttempts.Ageing(bootCount(context), elapsed())
         val kept = filterNot { it.seq <= seen && age.past(it.to, it.net, it.toElapsed, it.boot) }.sortedByDescending { it.seq }
         val unseen = kept.filter { it.seq > seen }
         return (unseen.take(UnlockAttempts.MAX_UNSEEN) + kept.filter { it.seq <= seen }.take((MAX_KEPT - unseen.size).coerceAtLeast(0)))
@@ -163,15 +215,28 @@ object ProtectionGaps {
     }
 
     /** Something that happened at one moment ([Kind.BIOMETRICS_CHANGED], a pause): kept and told like a gap. */
-    fun recordEvent(context: Context, kind: Kind, detail: String = "") {
-        val p = load(context) ?: return
-        if (!SecurityVault.getInstance(context).isSetupCompleted()) return
+    fun recordEvent(context: Context, kind: Kind, detail: String = ""): Long? {
+        val p = load(context) ?: return null
+        if (!SecurityVault.getInstance(context).isSetupCompleted()) return null
         val now = clock()
+        val seq = UnlockAttempts.nextSeq(context)
         synchronized(lock) {
-            save(p, (listOf(Gap(now, now, kind, UnlockAttempts.nextSeq(context), detail).stamped(context)) + _gaps.value).fresh(context))
+            save(p, (listOf(Gap(now, now, kind, seq, detail).stamped(context)) + _gaps.value).fresh(context))
         }
         DiagnosticLog.log("Security activity: ${kind.name.lowercase().replace('_', ' ')}")
         UnlockAttempts.onActivity(context)
+        return seq
+    }
+
+    /** The state record [seq] began ([recordEvent]) is over: it ends now, and says from when to when. */
+    fun endEvent(context: Context, seq: Long) {
+        val p = load(context) ?: return
+        val now = clock()
+        synchronized(lock) {
+            val list = _gaps.value
+            if (list.none { it.seq == seq }) return
+            save(p, list.map { if (it.seq == seq) it.copy(to = now).stamped(context) else it })
+        }
     }
 
     /** Drops what's seen and past its time; BioKey's home screen calls this as it shows them. */
@@ -204,7 +269,11 @@ object ProtectionGaps {
             val exits = exits(context)
             val update = updatedAt(context)
             val forceStopAt = if (seenExits == null) null else exits
-                .filter { (at, why) -> at.toString() !in seenExits && why == ApplicationExitInfo.REASON_USER_REQUESTED && kotlin.math.abs(at - update) > UPDATE_WINDOW_MS }
+                .filter { (at, why) ->
+                    at.toString() !in seenExits && why == ApplicationExitInfo.REASON_USER_REQUESTED &&
+                        // Android 14+ gives an update its own reason; before, it looks like a force stop.
+                        (sdk() >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE || kotlin.math.abs(at - update) > UPDATE_WINDOW_MS)
+                }
                 .minOfOrNull { it.first }
             // Dated after "now": the clock was set back since. Still a stop, of a length that can't be
             // told, so it's kept whatever its length looks like.
@@ -214,10 +283,12 @@ object ProtectionGaps {
             // or now, the earliest result kept: the phone's clock moved before the stop, after it, or
             // both, can only lengthen the gap, never shorten it.
             val offsets = listOfNotNull(now - wallNow(), if (p.contains(KEY_CLOCK_OFFSET)) p.getLong(KEY_CLOCK_OFFSET, 0L) else null)
-            val forceStop = forceStopAt?.let { at -> offsets.minOf { at + it } }?.coerceAtMost(now)
+            val converted = forceStopAt?.let { at -> offsets.minOf { at + it } }
+            val forceStop = converted?.coerceAtMost(now)
             when {
                 forceStop != null && (switchedOffFrom == null || forceStop < switchedOffFrom) && (clockMoved || now - forceStop >= MIN_GAP_MS) ->
-                    found += Gap(forceStop, now, Kind.FORCE_STOPPED)
+                    // Converted to "now" or later: the clock was set back, and when it stopped can't be told.
+                    found += Gap(forceStop, now, Kind.FORCE_STOPPED, unknownStart = clockMoved && converted >= now - MIN_GAP_MS)
                 switchedOffFrom != null -> found += Gap(switchedOffFrom, now, Kind.SWITCHED_OFF)
             }
             if (setUp && found.isNotEmpty()) {
@@ -240,16 +311,16 @@ object ProtectionGaps {
      * fingerprint: recorded ([Kind.CHANGED_WITH_SCREEN_LOCK]) and told at the next unlock. Done after
      * opening BioKey with a face or fingerprint, or on a phone without one, it's the owner's own.
      */
-    fun recordIfScreenLock(context: Context, what: String) {
+    fun recordIfScreenLock(context: Context, change: Change, vararg args: String) {
         if (SecurityEngine.ownerProven(context)) return
-        recordEvent(context, Kind.CHANGED_WITH_SCREEN_LOCK, what)
+        recordEvent(context, Kind.CHANGED_WITH_SCREEN_LOCK, change.encode(*args))
     }
 
     private val recordedOnce = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
 
-    /** [what], recorded at most once per run of BioKey's process (a state, not each prompt it affects). */
-    fun recordOncePerProcess(context: Context, what: String) {
-        if (recordedOnce.add(what)) recordEvent(context, Kind.CHANGED_WITH_SCREEN_LOCK, what)
+    /** [change], recorded at most once per run of BioKey's process (a state, not each prompt it affects). */
+    fun recordOncePerProcess(context: Context, change: Change) {
+        if (recordedOnce.add(change.name)) recordEvent(context, Kind.CHANGED_WITH_SCREEN_LOCK, change.encode())
     }
 
     /**
@@ -308,7 +379,7 @@ object ProtectionGaps {
                 list.forEach {
                     put(
                         JSONObject().put("f", it.from).put("t", it.to).put("k", it.kind.name).put("q", it.seq).put("d", it.detail)
-                            .put("r", it.toElapsed).put("b", it.boot).put("w", it.net)
+                            .put("r", it.toElapsed).put("b", it.boot).put("w", it.net).put("u", it.unknownStart)
                     )
                 }
             }.toString())
@@ -322,7 +393,7 @@ object ProtectionGaps {
             array.getJSONObject(i).let {
                 Gap(
                     it.getLong("f"), it.getLong("t"), runCatching { Kind.valueOf(it.getString("k")) }.getOrDefault(Kind.SWITCHED_OFF),
-                    it.optLong("q"), it.optString("d"), it.optLong("r"), it.optInt("b", -1), it.optBoolean("w", true)
+                    it.optLong("q"), it.optString("d"), it.optLong("r"), it.optInt("b", -1), it.optBoolean("w", true), it.optBoolean("u")
                 )
             }
         }

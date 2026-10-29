@@ -90,6 +90,8 @@ object UnlockAttempts {
     /** Misses on one app this close together, from no known prompt, are one attempt. */
     private const val SAME_ATTEMPT_MS = 60_000L
     const val MAX_AGE_MS = 7 * 24 * 60 * 60_000L
+    /** How long a face or fingerprint added stays new, whatever Review says ([markSeen]). */
+    const val BIOMETRIC_HOLD_MS = 24 * 60 * 60_000L
 
     /**
      * Whether a seen record is older than [MAX_AGE_MS], on a clock nobody can set: the clock since
@@ -97,13 +99,12 @@ object UnlockAttempts {
      * Otherwise (taken on the phone's clock, and the phone has restarted since) it isn't aged at
      * all, only pushed out by the limits: a date set ahead mustn't be enough to delete it.
      */
-    internal class Ageing(private val boot: Int) {
+    internal class Ageing(private val boot: Int, private val since: Long = elapsed(), private val maxAge: Long = MAX_AGE_MS) {
         private val now = TrustedClock.now()
         private val onNet = TrustedClock.onNetworkTime()
-        private val since = elapsed()
 
         fun past(at: Long, net: Boolean, atElapsed: Long, atBoot: Int): Boolean =
-            (atBoot == boot && since - atElapsed > MAX_AGE_MS) || (net && onNet && now - at > MAX_AGE_MS)
+            (atBoot == boot && since - atElapsed > maxAge) || (net && onNet && now - at > maxAge)
     }
     const val MAX_KEPT = 50
     /** Unseen records are never pushed out by seen ones; this only bounds the storage. */
@@ -349,11 +350,21 @@ object UnlockAttempts {
             // Up to the newest record actually there (and shown), not a number handed out a moment
             // ago to one another thread hasn't stored yet.
             val newest = maxOf(_attempts.value.maxOfOrNull { it.seq } ?: 0L, ProtectionGaps.gaps.value.maxOfOrNull { it.seq } ?: 0L)
-            val seen = minOf(newest, upTo)
+            // A face or fingerprint added in the last day isn't counted as seen yet, nor anything
+            // after it: whoever added one could open BioKey with it and review the record away.
+            val age = Ageing(bootCount(context), elapsed(), BIOMETRIC_HOLD_MS)
+            val held = ProtectionGaps.gaps.value
+                .filter { it.kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED && it.seq > p.getLong(KEY_SEEN_SEQ, 0L) }
+                .filter { (it.boot == bootCount(context) || it.net) && !age.past(it.to, it.net, it.toElapsed, it.boot) }
+                .minOfOrNull { it.seq }
+            val seen = minOf(newest, upTo, if (held != null) held - 1 else Long.MAX_VALUE)
             if (seen > p.getLong(KEY_SEEN_SEQ, 0L)) p.edit { putLong(KEY_SEEN_SEQ, seen) }
             if (seen > p.getLong(KEY_NOTIFIED_SEQ, 0L)) p.edit { putLong(KEY_NOTIFIED_SEQ, seen) }
         }
-        NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+        // Still something new (held back, or newer than what was shown): the alert stays.
+        if (seenSeq(context) >= maxOf(_attempts.value.maxOfOrNull { it.seq } ?: 0L, ProtectionGaps.gaps.value.maxOfOrNull { it.seq } ?: 0L)) {
+            NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+        }
     }
 
     /** Removes everything kept; returns it, for Undo. */

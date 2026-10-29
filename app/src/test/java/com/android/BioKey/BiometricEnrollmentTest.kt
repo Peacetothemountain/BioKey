@@ -27,6 +27,8 @@ class BiometricEnrollmentTest {
 
     @Before
     fun reset() {
+        BiometricEnrollment.backgroundChecks = false
+        BiometricEnrollment.awaitBackgroundForTests()
         listOf("biokey_biometric_enrollment", "biokey_protection_gaps", "biokey_unlock_attempts").forEach {
             context.getSharedPreferences(it, Context.MODE_PRIVATE).edit().clear().commit()
         }
@@ -41,7 +43,10 @@ class BiometricEnrollmentTest {
     }
 
     @After
-    fun restore() = BiometricEnrollment.resetForTests()
+    fun restore() {
+        BiometricEnrollment.resetForTests()
+        BiometricEnrollment.backgroundChecks = true
+    }
 
     private val events get() = ProtectionGaps.gaps.value.map { it.kind }
 

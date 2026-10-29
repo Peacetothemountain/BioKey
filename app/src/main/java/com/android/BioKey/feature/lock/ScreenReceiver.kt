@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import androidx.core.content.ContextCompat
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.security.BiometricEnrollment
 import com.android.BioKey.core.security.LockStateTracker
@@ -55,6 +56,9 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
                         ProtectionAlerts.remindIfOff(app)
                         BiometricEnrollment.checkSoon(app)
                         ShieldAccessWatch.check(app)
+                    } catch (e: Exception) {
+                        // Each is looked at again at the next unlock; the process carries on.
+                        DiagnosticLog.log("Unlock checks failed: ${e.javaClass.simpleName}")
                     } finally {
                         pending?.finish()
                     }

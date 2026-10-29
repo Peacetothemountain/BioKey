@@ -58,6 +58,8 @@ private const val EDGE_FADE = 56f
 /** How bright the field is inside the quiet zone, and over how far round it that eases off. */
 private const val QUIET_ALPHA = 0.18f
 private const val QUIET_FEATHER = 40f
+/** How far round a quiet zone it's fully quiet, so a link ends short of a tile's rim, not on it. */
+private const val QUIET_MARGIN = 10f
 /** Dots for the header the field was tuned on (a phone's, 1080 x 450 tuned pixels), and the limits. */
 private const val TUNED_COUNT = 30
 private const val TUNED_AREA = 1080f * 450f
@@ -186,9 +188,10 @@ fun HeaderMatrixDotsExpressive(
         field.n = countFor(w / unit, h / unit)
         val edgeFade = EDGE_FADE * unit
         val quietFeather = QUIET_FEATHER * unit
+        val quietZones = quiet.map { it.inflate(QUIET_MARGIN * unit) }
         // How visible a point is: fading toward the bottom, before the edges, and round the logo.
         fun visibility(px: Float, py: Float): Float =
-            depthFade(py, h) * edgeFade(px, py, w, edgeFade) * quietFade(px, py, quiet, quietFeather)
+            depthFade(py, h) * edgeFade(px, py, w, edgeFade) * quietFade(px, py, quietZones, quietFeather)
         val dt = if (field.lastNanos == 0L) 0f else ((now - field.lastNanos) / 1e9f).coerceIn(0f, MAX_STEP_SECONDS)
         field.lastNanos = now
         val t = (now - field.startNanos) / 1e9f

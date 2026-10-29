@@ -460,12 +460,12 @@ class SecurityVault private constructor(private val context: Context) {
     fun autoSortAppsIntoProfiles(apps: List<Pair<String, AppCategory>>) {
         if (!_autoSortProfilesFlow.value || apps.isEmpty()) return
         // Usually nothing is new: find that out without taking the lock or saving anything.
-        if (autoSortPlacements(apps, _profilesFlow.value).isEmpty()) return
+        if (autoSortPlacements(apps, _profilesFlow.value, _selectedAppsFlow.value).isEmpty()) return
         mutate { selected, profiles ->
             // Decided again under the lock, so a change made meanwhile (an app just taken out of
             // its profile, auto-sort just turned off) wins.
             if (!_autoSortProfilesFlow.value) return@mutate
-            for ((profileId, pkgs) in autoSortPlacements(apps, profiles)) {
+            for ((profileId, pkgs) in autoSortPlacements(apps, profiles, selected)) {
                 selected += pkgs
                 profiles.update(profileId) { it.copy(packages = it.packages + pkgs) }
             }
@@ -473,8 +473,13 @@ class SecurityVault private constructor(private val context: Context) {
     }
 
     /** Which built-in profile (by id) each of [apps] that auto-sort may place goes in, given [profiles]. */
-    private fun autoSortPlacements(apps: List<Pair<String, AppCategory>>, profiles: List<SecurityProfile>): Map<String, Set<String>> {
+    private fun autoSortPlacements(
+        apps: List<Pair<String, AppCategory>>,
+        profiles: List<SecurityProfile>,
+        selected: Set<String>
+    ): Map<String, Set<String>> {
         val profileIds = profiles.mapTo(HashSet()) { it.id }
+        val offIds = profiles.filterNot { it.enabled }.mapTo(HashSet()) { it.id }
         val assigned = profiles.flatMapTo(HashSet()) { it.packages }
         val excluded = autoSortExcluded
         val placements = HashMap<String, MutableSet<String>>()
@@ -483,6 +488,8 @@ class SecurityVault private constructor(private val context: Context) {
             val aliases = PasswordManager.aliasesOf(pkg)
             if (aliases.any { it in assigned || it in excluded }) continue
             val target = AppClassifier.presetProfileFor(category)?.takeIf { it in profileIds } ?: continue
+            // Locked by the owner on its own: filing it into a profile that's off would unlock it.
+            if (target in offIds && aliases.any { it in selected }) continue
             placements.getOrPut(target) { HashSet() } += aliases
             assigned += aliases
         }

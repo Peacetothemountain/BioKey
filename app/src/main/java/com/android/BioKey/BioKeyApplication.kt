@@ -95,6 +95,9 @@ class BioKeyApplication : Application() {
                 ProtectionGaps.load(app)
                 BiometricEnrollment.checkSoon(app)
                 ShieldAccessWatch.check(app)
+                // Channel names and descriptions as this version words them, before any is posted.
+                ProtectionAlerts.ensureChannels(app)
+                if (UnlockAttempts.enabled.value) UnlockAttempts.ensureChannel(app)
                 // An engine that connected before the first unlock couldn't say so then.
                 if (ProtectionEngine.isProtecting(app)) ProtectionGaps.onEngineUp(app)
                 ProtectionEngine.refresh(app)

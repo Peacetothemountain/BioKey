@@ -206,7 +206,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         val app = applicationContext
-        Thread { runCatching { ShieldAccessWatch.check(app) } }.start()
+        ShieldAccessWatch.checkSoon(app)
         activeService = this
         connected = true
         // Nothing seen while unbound is known: the stand-ins are posted afresh, the next lock-all sweeps.
@@ -276,7 +276,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     override fun onListenerDisconnected() {
         // Access taken away is the likeliest reason: recorded if so ([ShieldAccessWatch]).
         val app = applicationContext
-        Thread { runCatching { ShieldAccessWatch.check(app) } }.start()
+        ShieldAccessWatch.checkSoon(app)
         connected = false
         activeService = null
         standInCounts.clear()
@@ -597,15 +597,15 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         val label = AppInfoCache.quickLabel(this, lockedPackage)
         val publicVersion = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_biokey_mark)
-            .setContentTitle("Locked app")
-            .setContentText("Notification hidden by BioKey")
+            .setContentTitle(getString(R.string.shield_public_title))
+            .setContentText(getString(R.string.shield_public_text))
             .build()
-        val text = if (count == 1) "1 hidden notification" else "$count hidden notifications"
+        val text = resources.getQuantityString(R.plurals.shield_stand_in_text, count, count)
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_biokey_mark)
             .setContentTitle(label)
-            .setContentText("$text · tap to unlock")
+            .setContentText(text)
             .setNumber(count)
             .setContentIntent(contentIntent)
             .setAutoCancel(false)
@@ -626,14 +626,13 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     private fun ensureChannel() {
         if (channelReady) return
         val nm = getSystemService(NotificationManager::class.java)
-        if (nm.getNotificationChannel(CHANNEL_ID) == null) {
-            nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Hidden notifications", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Stand-ins for notifications from locked apps"
-                    lockscreenVisibility = Notification.VISIBILITY_PRIVATE
-                }
-            )
-        }
+        // Created, or its name and description updated (Android keeps the owner's importance).
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_ID, getString(R.string.shield_channel_name), NotificationManager.IMPORTANCE_LOW).apply {
+                description = getString(R.string.shield_channel_description)
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+            }
+        )
         channelReady = true
     }
 }

@@ -66,7 +66,6 @@ class InstantShieldOverlay(
         private const val TIMEOUT_MS = 700L
         private const val MAX_ATTEMPTS = 4
         /** What a held cover ([holdWhile]) says while its lock screen has nothing else to say. */
-        private const val HELD_TEXT = "Still on screen (in picture-in-picture, say). Unlock it to carry on."
 
         @SuppressLint("StaticFieldLeak")
         @Volatile
@@ -128,7 +127,7 @@ class InstantShieldOverlay(
     private var isHeld = false
     /**
      * What the last prompt for this cover's target left on its lock screen (the message, and
-     * whether it is a lockout), for a held cover to say instead of [HELD_TEXT] ([onPrompt]).
+     * whether it is a lockout), for a held cover to say instead of the "still on screen" text ([onPrompt]).
      */
     private var heldStatus: Pair<String, Boolean>? = null
     /** The window has been added (a view only counts as attached after its first traversal). */
@@ -413,7 +412,7 @@ class InstantShieldOverlay(
         DiagnosticLog.log("Lock screen for $pkg didn't appear; kept it covered")
         // No longer waiting for a lock screen: the engine hides the cover when the app leaves.
         LockStateTracker.clearRegularLockPending(pkg)
-        cover.setStatus("The lock screen didn't open. Tap Unlock to try again.", permanentLockout = false)
+        cover.setStatus(cover.context.getString(R.string.cover_prompt_failed), permanentLockout = false)
         cover.setActionsVisible(true)
         goHome()
     }
@@ -439,9 +438,9 @@ class InstantShieldOverlay(
         cover.setActionsVisible(!prompting)
     }
 
-    /** A held cover says what the last prompt left on its lock screen, or else [HELD_TEXT]. */
+    /** A held cover says what the last prompt left on its lock screen, or else the "still on screen" text. */
     private fun showHeldStatus() {
-        val (message, lockout) = heldStatus ?: (HELD_TEXT to false)
+        val (message, lockout) = heldStatus ?: (cover.context.getString(R.string.cover_held) to false)
         cover.setStatus(message, lockout)
     }
 

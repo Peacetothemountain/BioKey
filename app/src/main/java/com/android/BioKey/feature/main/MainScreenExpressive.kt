@@ -474,7 +474,7 @@ fun MainScreenExpressive(
     fun toggleLock(app: AppItem, locked: Boolean) {
         Haptics.toggle(view, locked)
         vault.setAppLock(app.packageName, locked)
-        if (!locked) ProtectionGaps.recordIfScreenLock(context, "${app.label}'s lock switched off")
+        if (!locked) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.LOCK_OFF, app.label)
         if (!locked) {
             // "Unlocked" is kept for an app open right now: this is its lock taken off.
             BioKeyMessages.show(res.getString(R.string.home_lock_removed, app.label), Icons.Default.LockOpen, actionLabel = res.getString(R.string.common_undo)) {
@@ -501,9 +501,8 @@ fun MainScreenExpressive(
                 title = app.label,
                 subtitle = buildString {
                     val locked = isLocked(app.packageName)
-                    // A locked app says how it re-locks; "App" (no category known) says nothing, so it goes.
-                    // "App" (no category known) says nothing, so it isn't shown.
-                    val name = profile?.name ?: app.category.label.takeIf { app.category != AppCategory.GENERAL }
+                    // Its profile, or else its kind; "App" (no category known) says nothing, so it isn't shown.
+                    val name = profile?.name ?: if (app.category != AppCategory.GENERAL) stringResource(app.category.label) else null
                     if (name != null) append(name)
                     if (profile != null && !profile.enabled) append(" · " + stringResource(R.string.home_off))
                     // The default is said once, in the section header; a row says only a delay of its own.
@@ -686,6 +685,12 @@ fun MainScreenExpressive(
                         subtitle = stringResource(R.string.home_shield_no_access_text),
                         modifier = Modifier.animateItem()
                     ) {
+                        // Revoked on purpose: switching the shield off ends it (and is recorded like any switch-off).
+                        TextButton(onClick = {
+                            vault.setNotificationShield(false)
+                            shieldWithoutAccess = false
+                            ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.SHIELD_OFF)
+                        }) { Text(stringResource(R.string.home_shield_no_access_off)) }
                         FilledTonalButton(onClick = {
                             // The explanation first, as everywhere notification access is asked for.
                             disclosures.request(Disclosure.NOTIFICATIONS) { IntentNavigationHelper.openNotificationListenerSettings(context) }
@@ -832,7 +837,7 @@ fun MainScreenExpressive(
                         onEnabledChange = { on ->
                             Haptics.toggle(view, on)
                             vault.setProfileEnabled(currentProfile.id, on)
-                            if (!on) ProtectionGaps.recordIfScreenLock(context, "${currentProfile.name} profile switched off")
+                            if (!on) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.PROFILE_OFF, currentProfile.name)
                             if (!on) {
                                 val id = currentProfile.id
                                 BioKeyMessages.show(
@@ -894,7 +899,8 @@ fun MainScreenExpressive(
                     }
                     if (unlockedShown.isNotEmpty()) {
                         item(key = "h_unlocked", contentType = CONTENT_HEADER) { SectionHeader(stringResource(if (lockedShown.isEmpty()) R.string.home_choose_apps else R.string.common_not_locked)) }
-                        appGroup(unlockedShown, showProfile = false)
+                        // With their profile: one that's off is why they aren't locked.
+                        appGroup(unlockedShown, showProfile = true)
                     }
                 }
             }
@@ -946,15 +952,22 @@ fun MainScreenExpressive(
                 onLockedChange = { toggleLock(app, it) },
                 onMoveToProfile = { profileId ->
                     val wasLocked = lockedInVault(pkg)
+                    val delayBefore = vault.getTimeoutMode(pkg).openFor
                     vault.moveAppToProfile(pkg, profileId)
-                    // Into a profile that's off: no longer locked.
-                    if (wasLocked && !lockedInVault(pkg)) ProtectionGaps.recordIfScreenLock(context, "${app.label} moved where it isn't locked")
+                    when {
+                        // Into a profile that's off: no longer locked.
+                        wasLocked && !lockedInVault(pkg) ->
+                            ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.MOVED_UNLOCKED, app.label)
+                        // Into one that keeps it open longer.
+                        wasLocked && vault.getTimeoutMode(pkg).openFor > delayBefore ->
+                            ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.MOVED_LONGER_DELAY, app.label, vault.profileOf(pkg)?.name.orEmpty())
+                    }
                 },
                 onRemoveFromProfile = {
                     val former = profileOf(pkg)
                     val wasLocked = lockedInVault(pkg)
                     vault.removeAppFromProfile(pkg)
-                    if (wasLocked && !lockedInVault(pkg)) ProtectionGaps.recordIfScreenLock(context, "${app.label} taken out of ${former?.name ?: "its profile"}, unlocking it")
+                    if (wasLocked && !lockedInVault(pkg)) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.TAKEN_OUT, app.label, former?.name.orEmpty())
                     optionsForPackage = null
                     if (former != null) {
                         BioKeyMessages.show(
@@ -981,10 +994,12 @@ fun MainScreenExpressive(
         // BioKey was opened with the screen lock on a phone with a face or fingerprint: someone who
         // only knows the PIN mustn't be able to quiet it.
         var ownerProven by remember { mutableStateOf<Boolean?>(null) }
-        LaunchedEffect(Unit) {
+        // Only what the dialog shows counts as seen, not something that arrives while it's open.
+        val shownUpTo = maxOf(attempts.maxOfOrNull { it.seq } ?: 0L, gaps.maxOfOrNull { it.seq } ?: 0L)
+        LaunchedEffect(shownUpTo) {
             val proven = withContext(Dispatchers.Default) { SecurityEngine.ownerProven(context) }
             ownerProven = proven
-            if (proven) UnlockAttempts.markSeen(context)
+            if (proven) UnlockAttempts.markSeen(context, shownUpTo)
         }
         SecurityActivityDialog(
             attempts = attempts,
@@ -993,7 +1008,7 @@ fun MainScreenExpressive(
             onMarkReviewed = if (ownerProven == false) {
                 {
                     confirmOwner(activity, res.getString(R.string.home_confirm_mark_reviewed)) {
-                        UnlockAttempts.markSeen(context)
+                        UnlockAttempts.markSeen(context, shownUpTo)
                         showActivity = false
                     }
                 }
@@ -1002,7 +1017,7 @@ fun MainScreenExpressive(
                 // The record of who tried: a face or fingerprint to clear it, not just the screen lock.
                 confirmOwner(activity, res.getString(R.string.home_confirm_clear_activity)) {
                     // Proven just now: what stays (a face or fingerprint change) counts as reviewed.
-                    UnlockAttempts.markSeen(context)
+                    UnlockAttempts.markSeen(context, shownUpTo)
                     val oldAttempts = UnlockAttempts.clear(context)
                     val oldGaps = ProtectionGaps.clear(context)
                     showActivity = false
@@ -1056,7 +1071,7 @@ fun MainScreenExpressive(
             onDelete = {
                 val name = currentProfile.name
                 val deleted = vault.deleteProfile(currentProfile.id)
-                if (deleted != null) ProtectionGaps.recordIfScreenLock(context, "$name profile deleted")
+                if (deleted != null) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.PROFILE_DELETED, name)
                 showEditProfile = false
                 filter = FILTER_ALL
                 if (deleted != null) {
@@ -1075,7 +1090,7 @@ fun MainScreenExpressive(
             onSelect = { mode ->
                 val before = currentProfile.timeoutMode ?: defaultTimeout
                 if ((mode ?: defaultTimeout).openFor > before.openFor) {
-                    ProtectionGaps.recordIfScreenLock(context, "${currentProfile.name} re-lock delay made longer")
+                    ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.PROFILE_DELAY_LONGER, currentProfile.name)
                 }
                 vault.setProfileTimeout(currentProfile.id, mode)
                 showRelock = false
@@ -1099,11 +1114,12 @@ fun MainScreenExpressive(
                 // Into a profile that's off: those that were locked aren't any more.
                 val unlocked = wereLocked.filterNot(::lockedInVault)
                 if (unlocked.isNotEmpty()) {
-                    ProtectionGaps.recordIfScreenLock(
-                        context,
-                        if (unlocked.size == 1) "${labelByPackage[unlocked.single()] ?: unlocked.single()} added to ${currentProfile.name}, which is off"
-                        else "${unlocked.size} locked apps added to ${currentProfile.name}, which is off"
-                    )
+                    if (unlocked.size == 1) {
+                        val label = labelByPackage[unlocked.single()] ?: unlocked.single()
+                        ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.ADDED_TO_OFF_PROFILE, label, currentProfile.name)
+                    } else {
+                        ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.ADDED_MANY_TO_OFF_PROFILE, unlocked.size.toString(), currentProfile.name)
+                    }
                 }
                 showAddApps = false
             },

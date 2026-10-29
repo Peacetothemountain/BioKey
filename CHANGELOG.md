@@ -54,7 +54,15 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
   and the home header's constellation keeps clear of the tiles' labels.
 - Notification access switched off while Hide notification content is on is recorded and told,
   and home says notifications aren't hidden until it's back.
-- All of BioKey's screen text is in Android's string resources, ready for translation.
+- BioKey's text, its notifications and the records of changes are worded from Android's string
+  resources, ready for translation (records store what changed, not a sentence).
+- A face or fingerprint added stays new for a day, whatever Review says. A force stop whose start
+  can't be told says so. On Android 14 and later a force stop right after an update is recorded.
+  Notification access switched off under the shield is recorded from and to.
+- Settings: Hide notification content can always be switched off; Protection alerts opens its
+  own settings; Lock Android Settings has a Lock button. The lock screen scrolls instead of running
+  under the status bar in landscape. Setup's constellation keeps clear of its title.
+- Auto-sort never files an app you locked into a profile that's off.
 - The permission explanations link to the privacy policy, and say what BioKey keeps.
 - When nothing is protecting your apps, home says so at the top, with the one thing to do.
 - Settings has the privacy policy and help (About).

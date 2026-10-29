@@ -118,19 +118,7 @@ internal val PROFILE_ICONS: List<ProfileIcon> = listOf(
 internal fun profileIcon(key: String): ImageVector =
     PROFILE_ICONS.firstOrNull { it.key == key }?.vector ?: Icons.Default.Shield
 
-/** In English, as security records store it; on screen, [shortLabelRes]. */
-internal val LockTimeoutMode.shortLabel: String
-    get() = when (this) {
-        LockTimeoutMode.IMMEDIATE -> "Immediately"
-        LockTimeoutMode.ON_SCREEN_OFF -> "When screen turns off"
-        // A number never parts from its unit at a line break.
-        LockTimeoutMode.GRACE_30_SECONDS -> "After 30${Typography.nbsp}seconds"
-        LockTimeoutMode.GRACE_1_MINUTE -> "After 1${Typography.nbsp}minute"
-        LockTimeoutMode.GRACE_5_MINUTES -> "After 5${Typography.nbsp}minutes"
-        LockTimeoutMode.GRACE_15_MINUTES -> "After 15${Typography.nbsp}minutes"
-    }
-
-/** [shortLabel], from the app's strings. */
+/** A delay's short name ("After 5 minutes"), from the app's strings. */
 @get:StringRes
 internal val LockTimeoutMode.shortLabelRes: Int
     get() = when (this) {
@@ -625,7 +613,7 @@ internal fun AddAppsScreen(
                             index = i,
                             count = candidates.size,
                             title = app.label,
-                            subtitle = if (app.packageName in lockedApps) stringResource(R.string.profile_locked) else app.category.label,
+                            subtitle = if (app.packageName in lockedApps) stringResource(R.string.profile_locked) else stringResource(app.category.label),
                             leading = { AppIcon(app) },
                             interaction = Modifier.toggleable(value = checked, role = Role.Checkbox) {
                                 selected = if (it) selected + app.packageName else selected - app.packageName

@@ -249,6 +249,26 @@ class UnlockAttemptsTest {
     }
 
     @Test
+    fun aFaceOrFingerprintAddedStaysNewForADay() {
+        // Whoever added one could open BioKey with it and review the record away: not for a day.
+        com.android.BioKey.core.security.SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        ProtectionGaps.clock = { now }
+        ProtectionGaps.elapsed = { sinceBoot }
+        ProtectionGaps.bootCount = { 3 }
+        try {
+            val seq = ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.BIOMETRICS_CHANGED)!!
+            UnlockAttempts.markSeen(context)
+            assertTrue(UnlockAttempts.seenSeq(context) < seq)
+            pass(25L * 60 * 60_000L)
+            UnlockAttempts.markSeen(context)
+            assertTrue(UnlockAttempts.seenSeq(context) >= seq)
+        } finally {
+            ProtectionGaps.clock = TrustedClock::now
+            ProtectionGaps.elapsed = android.os.SystemClock::elapsedRealtime
+        }
+    }
+
+    @Test
     fun aMutedChannelTellsNothingAndCountsNothingAsTold() {
         UnlockAttempts.ensureChannel(context)
         val nm = context.getSystemService(NotificationManager::class.java)

@@ -33,6 +33,17 @@ class LockSettingsAppTest {
     }
 
     @Test
+    fun autoSortDoesntFileALockedAppIntoAProfileThatsOff() {
+        // Locked on its own; Social switched off: filing Signal there would unlock it.
+        vault.setAppLock("org.thoughtcrime.securesms", true)
+        vault.setProfileEnabled(SecurityProfile.PRESET_SOCIAL, false)
+        vault.setAutoSortProfilesEnabled(true)
+        vault.autoSortAppsIntoProfiles(listOf("org.thoughtcrime.securesms" to com.android.BioKey.core.data.AppCategory.SOCIAL))
+        assertTrue("org.thoughtcrime.securesms" in vault.getLockedPackages())
+        assertEquals(null, vault.profileOf("org.thoughtcrime.securesms"))
+    }
+
+    @Test
     fun itLocksAndUndoesPlainly() {
         assertFalse(vault.isSettingsAppLocked())
         val undo = vault.lockSettingsApp()

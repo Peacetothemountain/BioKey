@@ -3,12 +3,13 @@ package com.android.BioKey.core.security
 import android.Manifest
 import android.app.AppOpsManager
 import android.content.Context
-import androidx.annotation.VisibleForTesting
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Process
 import android.provider.Settings
 import android.util.Log
+import androidx.annotation.VisibleForTesting
+import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.lock.UsageWatchService
@@ -68,11 +69,19 @@ object ProtectionEngine {
 
     fun compatibilityPermissionsGranted(context: Context): Boolean = hasUsageAccess(context) && canDrawOverlays(context)
 
-    /** What compatibility mode lacks, in the user's words ("usage access"), or null if nothing. */
-    fun missingCompatibilityPermissions(context: Context): String? = listOfNotNull(
-        "usage access".takeUnless { hasUsageAccess(context) },
-        "display over other apps".takeUnless { canDrawOverlays(context) }
-    ).takeIf { it.isNotEmpty() }?.joinToString(" and ")
+    /** What compatibility mode lacks, in the user's words and language ("usage access"), or null if nothing. */
+    fun missingCompatibilityPermissions(context: Context): String? {
+        val usage = hasUsageAccess(context)
+        val overlay = canDrawOverlays(context)
+        return when {
+            !usage && !overlay -> context.getString(
+                R.string.permission_both, context.getString(R.string.permission_usage_access), context.getString(R.string.permission_overlay)
+            )
+            !usage -> context.getString(R.string.permission_usage_access)
+            !overlay -> context.getString(R.string.permission_overlay)
+            else -> null
+        }
+    }
 
     /** Compatibility mode is the engine to run: BioKey is set up, accessibility is off, its permissions are granted. */
     fun shouldRunCompatibility(context: Context): Boolean =

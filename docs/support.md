@@ -147,7 +147,8 @@ afterwards (switched on, but not running), the reminders come back on their own.
 
 ### BioKey offered to lock an app I just installed
 
-Auto-sort locks the banking, social and work apps it recognises. Anything else you install gets a
+Auto-sort locks the banking, social and work apps it recognises (an app you locked yourself isn't
+moved into a profile that's switched off, which would unlock it). Anything else you install gets a
 notification with a **Lock** button. Turn it off in Settings > Offer to lock new apps.
 
 ## Backup and restore

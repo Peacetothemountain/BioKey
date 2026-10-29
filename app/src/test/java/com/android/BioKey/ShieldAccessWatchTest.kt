@@ -57,6 +57,25 @@ class ShieldAccessWatchTest {
     }
 
     @Test
+    fun accessBackEndsTheRecordWithItsTime() {
+        var now = 1_800_000_000_000L
+        ProtectionGaps.clock = { now }
+        try {
+            vault.setNotificationShield(true)
+            ShieldAccessWatch.check(context)
+            access = false
+            ShieldAccessWatch.check(context)
+            now += 10 * 60_000L
+            access = true
+            ShieldAccessWatch.check(context)
+            val record = ProtectionGaps.gaps.value.single { it.kind == ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED }
+            assertEquals(10 * 60_000L, record.to - record.from)
+        } finally {
+            ProtectionGaps.clock = com.android.BioKey.core.security.TrustedClock::now
+        }
+    }
+
+    @Test
     fun theShieldSwitchedOffInBioKeyIsntRecorded() {
         vault.setNotificationShield(true)
         ShieldAccessWatch.check(context)

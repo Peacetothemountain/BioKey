@@ -159,7 +159,7 @@ class MainActivity : ComponentActivity() {
                             pauseRequested = false
                             // BioKey was opened with the screen lock, on a phone with a face or
                             // fingerprint: maybe not the owner. Recorded, and told at the next unlock.
-                            ProtectionGaps.recordIfScreenLock(this@MainActivity, "Protection paused")
+                            ProtectionGaps.recordIfScreenLock(this@MainActivity, ProtectionGaps.Change.PAUSED)
                             vault.pauseProtection(duration)
                             BioKeyMessages.show(getString(R.string.home_protection_paused), Icons.Default.PauseCircle)
                         },

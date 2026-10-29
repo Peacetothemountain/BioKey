@@ -136,7 +136,10 @@ internal class PendingBackup : ViewModel() {
  * announced first ([LockStateTracker.beginOwnPicker]) so the session survives that one trip.
  */
 @Composable
-internal fun rememberBackupActions(): BackupActions {
+internal fun rememberBackupActions(
+    /** Turns the notification shield on (with its explanation), from the restore's message. */
+    onTurnOnShield: () -> Unit = {}
+): BackupActions {
     val context = LocalContext.current
     val res = LocalResources.current
     val scope = rememberCoroutineScope()
@@ -288,7 +291,10 @@ internal fun rememberBackupActions(): BackupActions {
                             // The shield waits for its explanation on this phone: say so, or the owner
                             // would think locked apps' notifications are hidden.
                             if (current.state.optBoolean("notificationShield", false) && !vault.isNotificationShieldEnabled()) {
-                                BioKeyMessages.show(res.getString(R.string.backup_restored_turn_on_shield), Icons.Default.CheckCircle)
+                                BioKeyMessages.show(
+                                    res.getString(R.string.backup_restored_turn_on_shield), Icons.Default.CheckCircle,
+                                    actionLabel = res.getString(R.string.common_turn_on), onAction = onTurnOnShield
+                                )
                             } else {
                                 BioKeyMessages.show(res.getString(R.string.backup_restored), Icons.Default.CheckCircle)
                             }

@@ -47,6 +47,7 @@ class ProtectionGapsTest {
 
     @After
     fun restore() {
+        ProtectionGaps.sdk = { android.os.Build.VERSION.SDK_INT }
         ProtectionGaps.clock = System::currentTimeMillis
         ProtectionGaps.resetForTests()
     }
@@ -127,6 +128,8 @@ class ProtectionGapsTest {
 
     @Test
     fun theStopThatComesWithAnUpdateIsNoGap() {
+        // Before Android 14, an update's stop is recorded the same way as a force stop.
+        ProtectionGaps.sdk = { 33 }
         pass(60_000L)
         val updated = now
         ProtectionGaps.updatedAt = { updated }
@@ -134,6 +137,40 @@ class ProtectionGapsTest {
         pass(5 * 60_000L)
         ProtectionGaps.onEngineUp(context)
         assertTrue(gaps.isEmpty())
+    }
+
+    @Test
+    fun onAndroid14AForceStopRightAfterAnUpdateStillCounts() {
+        // Android 14+ tells an update apart: a force stop just after one is still a force stop.
+        ProtectionGaps.sdk = { 34 }
+        pass(60_000L)
+        val updated = now
+        ProtectionGaps.updatedAt = { updated }
+        exits = listOf(updated + 2_000L to ApplicationExitInfo.REASON_USER_REQUESTED)
+        pass(5 * 60_000L)
+        ProtectionGaps.onEngineUp(context)
+        assertEquals(ProtectionGaps.Kind.FORCE_STOPPED, gaps.single().kind)
+    }
+
+    @Test
+    fun aForceStopWhoseStartCantBeToldSaysSo() {
+        // Stopped; the clock then set back an hour, and BioKey's clock now rests on the phone's.
+        var wall = now
+        ProtectionGaps.wallNow = { wall }
+        exits = listOf(now to ApplicationExitInfo.REASON_USER_REQUESTED)
+        context.getSharedPreferences("biokey_protection_gaps", Context.MODE_PRIVATE).edit().remove("clock_offset").commit()
+        wall = now - 60 * 60_000L
+        now -= 30 * 60_000L
+        ProtectionGaps.onEngineUp(context)
+        assertTrue(gaps.single().unknownStart)
+    }
+
+    @Test
+    fun aChangeIsStoredAsACodeAndItsNames() {
+        val detail = ProtectionGaps.Change.LOCK_OFF.encode("WhatsApp")
+        assertEquals(ProtectionGaps.Change.LOCK_OFF to listOf("WhatsApp"), ProtectionGaps.Change.decode(detail))
+        // Older records, written as words, aren't codes.
+        assertEquals(null, ProtectionGaps.Change.decode("WhatsApp's lock switched off"))
     }
 
     @Test

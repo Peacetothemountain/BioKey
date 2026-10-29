@@ -330,8 +330,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         lockoutMode = permanentLockout
         status.text = message
         status.isVisible = !message.isNullOrBlank()
-        primaryButton.text = if (permanentLockout) "Lock screen" else unlockLabel()
-        primaryButton.contentDescription = if (permanentLockout) null else "Unlock"
+        primaryButton.text = if (permanentLockout) context.getString(R.string.lock_screen_lock_phone) else unlockLabel()
+        primaryButton.contentDescription = if (permanentLockout) null else context.getString(R.string.lock_screen_unlock)
         // After a lockout the button locks the phone, which only the accessibility service can
         // do: in compatibility mode, Cancel is the way out (the message names the power button).
         primaryButton.isVisible = !permanentLockout || BioKeyAccessibilityService.isRunning
