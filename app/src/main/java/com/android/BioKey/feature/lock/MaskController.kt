@@ -17,7 +17,7 @@ import com.android.BioKey.core.security.SecurityVault
 /**
  * The patches ([WindowMask]) over locked apps' windows where a full-screen cover can't stay:
  * picture-in-picture, windows beside the lock screen (split screen, freeform), other displays.
- * Decides which windows need one and puts them up; anything else (whose a window is, covering an
+ * Decides which windows need one and puts them up; anything else (which app a window is, covering an
  * app the usual way when a patch can't go up) is the accessibility service's ([Host]).
  */
 internal class MaskController(
@@ -26,7 +26,9 @@ internal class MaskController(
     private val vault: SecurityVault,
     private val shield: InstantShieldOverlay,
     private val handler: Handler,
-    private val host: Host
+    private val host: Host,
+    /** The patches themselves, told where taps on them go: [WindowMask], or a test's stand-in. */
+    patchesFor: (onTapped: (WindowMask.Target) -> Unit) -> Patches = { onTapped -> WindowMask(context, onTapped) }
 ) {
     /** What the controller asks of the accessibility service. */
     interface Host {
@@ -50,7 +52,7 @@ internal class MaskController(
         fun describe(t: Throwable): String
     }
 
-    private val masks = WindowMask(context, ::onMaskTapped)
+    private val masks: Patches = patchesFor(::onMaskTapped)
 
     /** Apps whose every window on screen has a [WindowMask] patch: covered already. */
     var maskedApps: Set<String> = emptySet()

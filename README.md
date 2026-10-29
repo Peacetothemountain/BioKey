@@ -304,7 +304,8 @@ It writes `app/src/release/generated/baselineProfiles/` (the baseline and startu
 
 ```
 app/src/main/java/com/android/BioKey/
-core               FeatureLinks (the engines and main screen, installed as BioKey starts)
+core               FeatureLinks (the engines, main screen and service names, installed as
+                   BioKey starts)
 core/data          LockTimeoutMode, SecurityProfile, AppClassifier, PasswordManager
 core/security      SecurityVault (settings, locked apps, profiles), LockStateTracker (sessions),
                    SecurityEngine (BiometricPrompt), ProtectionEngine (which engine runs),

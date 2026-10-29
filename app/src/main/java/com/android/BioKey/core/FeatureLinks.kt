@@ -1,6 +1,7 @@
 package com.android.BioKey.core
 
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 
@@ -21,8 +22,8 @@ interface Engines {
 }
 
 /**
- * What core/ needs of the features, without depending on them: the engines, and BioKey's main
- * screen to open from an alert. Installed first thing as BioKey starts (BioKeyApplication), before
+ * What core/ and ui/ need of the features, without depending on them: the engines, BioKey's main
+ * screen to open from an alert, and the services' names for Android's settings pages. Installed first thing as BioKey starts (BioKeyApplication), before
  * anything here can ask.
  */
 object FeatureLinks {
@@ -31,17 +32,31 @@ object FeatureLinks {
 
     @Volatile private var installedEngines: Engines? = null
     @Volatile private var mainScreen: Class<out Activity>? = null
+    @Volatile private var accessibilityService: Class<*>? = null
+    @Volatile private var notificationListener: Class<*>? = null
 
-    fun install(engines: Engines, mainScreen: Class<out Activity>) {
+    fun install(engines: Engines, mainScreen: Class<out Activity>, accessibilityService: Class<*>, notificationListener: Class<*>) {
         installedEngines = engines
         this.mainScreen = mainScreen
+        this.accessibilityService = accessibilityService
+        this.notificationListener = notificationListener
     }
 
+    /** BioKey's accessibility service, as Android's settings name it. */
+    fun accessibilityServiceName(context: Context): String =
+        ComponentName(context, checkNotNull(accessibilityService) { NOT_INSTALLED }).flattenToString()
+
+    /** BioKey's notification listener (the notification shield), as Android's settings name it. */
+    fun notificationListenerName(context: Context): String =
+        ComponentName(context, checkNotNull(notificationListener) { NOT_INSTALLED }).flattenToString()
+
+    private const val NOT_INSTALLED = "FeatureLinks.install wasn't called (BioKeyApplication.onCreate)"
+
     val engines: Engines
-        get() = checkNotNull(installedEngines) { "FeatureLinks.install wasn't called (BioKeyApplication.onCreate)" }
+        get() = checkNotNull(installedEngines) { NOT_INSTALLED }
 
     /** BioKey's main screen, opened from an alert: a new task, or the one already open brought forward. */
     fun openMainScreen(context: Context): Intent =
-        Intent(context, checkNotNull(mainScreen) { "FeatureLinks.install wasn't called (BioKeyApplication.onCreate)" })
+        Intent(context, checkNotNull(mainScreen) { NOT_INSTALLED })
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
 }

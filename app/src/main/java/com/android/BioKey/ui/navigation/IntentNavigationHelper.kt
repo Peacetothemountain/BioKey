@@ -3,7 +3,6 @@ package com.android.BioKey.ui.navigation
 import android.app.Activity
 import android.app.admin.DevicePolicyManager
 import android.content.ActivityNotFoundException
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,10 +13,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.core.net.toUri
 import com.android.BioKey.R
+import com.android.BioKey.core.FeatureLinks
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionEngine
-import com.android.BioKey.feature.lock.BioKeyAccessibilityService
-import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 import com.android.BioKey.ui.theme.BioKeyMessages
 
 /** Settings page for one accessibility service (Android 13+); not exposed as an SDK constant. */
@@ -93,7 +91,7 @@ object IntentNavigationHelper {
     fun accessibilitySettingsIntent(context: Context): Intent {
         val details = Intent(ACCESSIBILITY_DETAILS_SETTINGS).putExtra(
             Intent.EXTRA_COMPONENT_NAME,
-            ComponentName(context, BioKeyAccessibilityService::class.java).flattenToString()
+            FeatureLinks.accessibilityServiceName(context)
         )
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             context.packageManager.resolveActivity(details, PackageManager.MATCH_SYSTEM_ONLY) != null
@@ -110,7 +108,7 @@ object IntentNavigationHelper {
         listOf(
             Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).putExtra(
                 Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
-                ComponentName(context, BioKeyNotificationShieldService::class.java).flattenToString()
+                FeatureLinks.notificationListenerName(context)
             ),
             Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS),
             appDetails(context)
