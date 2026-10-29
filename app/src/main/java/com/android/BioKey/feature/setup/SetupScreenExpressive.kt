@@ -342,7 +342,7 @@ fun SetupScreenExpressive(
                 .springPress(enabled = !isAuthenticating)
         ) {
             Icon(
-                if (ready) Icons.Default.Fingerprint else Icons.AutoMirrored.Filled.OpenInNew,
+                if (ready && !needsScreenLock) Icons.Default.Fingerprint else Icons.AutoMirrored.Filled.OpenInNew,
                 contentDescription = null,
                 modifier = Modifier.size(20.dp)
             )

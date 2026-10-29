@@ -89,11 +89,11 @@ class SecurityEngine private constructor() {
          * opened with a face or fingerprint, or the phone has none set up (then the screen lock is
          * all there is). Otherwise it may be someone who only knows the PIN.
          */
-        fun ownerProven(context: Context): Boolean =
+        fun ownerProven(context: Context, openedWithBiometric: Boolean = INSTANCE.ownAppOpenedWithBiometric): Boolean =
             // Within a day of a face or fingerprint added or removed, nothing proves the owner: the
             // new one may be whoever made the change, and with all of them removed, the screen lock
             // is all anyone needs ([UnlockAttempts.holding]).
-            !UnlockAttempts.holding(context) && (!enrolledForProof(context) || INSTANCE.ownAppOpenedWithBiometric)
+            !UnlockAttempts.holding(context) && (!enrolledForProof(context) || openedWithBiometric)
 
         /**
          * "Face or fingerprint only" is on and can be honoured: then prompts don't offer the screen
@@ -221,7 +221,7 @@ class SecurityEngine private constructor() {
      * was opened with the screen lock is recorded ([ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK]).
      */
     @Volatile var ownAppOpenedWithBiometric = false
-        private set
+        @androidx.annotation.VisibleForTesting internal set
 
     /** BioKey locked itself: whatever it was opened with no longer proves anything ([ownerProven]). */
     fun forgetOwnProof() {

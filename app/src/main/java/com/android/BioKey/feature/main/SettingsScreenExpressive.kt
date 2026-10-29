@@ -550,7 +550,7 @@ fun SettingsScreenExpressive(
                 // Opaque to touches: taps on empty space must not reach the home screen underneath.
                 .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
                 .rejectObscuredTouches()
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
+                .then(if (asPane) Modifier else Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)),
             topBar = {
                 // Beside home (a pane), it closes, and its title sits level with home's header.
                 val navigationIcon: @Composable () -> Unit = {

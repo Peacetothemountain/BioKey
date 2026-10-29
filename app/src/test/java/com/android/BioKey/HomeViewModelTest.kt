@@ -51,6 +51,17 @@ class HomeViewModelTest {
     private fun idle() = shadowOf(Looper.getMainLooper()).idle()
 
     @Test
+    fun bioKeyLockingItselfForgetsHowItWasOpened() {
+        // Opened with a fingerprint, on a phone that has one: the owner is proven, until BioKey locks.
+        val engine = com.android.BioKey.core.security.SecurityEngine
+        engine.enrolledForProof = { true }
+        engine.INSTANCE.ownAppOpenedWithBiometric = true
+        assertTrue(engine.ownerProven(app))
+        com.android.BioKey.core.security.LockStateTracker.lockOwnApp()
+        assertTrue(!engine.ownerProven(app))
+    }
+
+    @Test
     fun aSecondTapWhileReviewIsWorkedOutOpensItOnce() {
         var opened = 0
         vm.openReview { opened++ }

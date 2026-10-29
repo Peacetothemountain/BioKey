@@ -17,7 +17,6 @@ import com.android.BioKey.ui.theme.BioKeyMessages
 internal fun switchShieldOff(context: Context, vault: SecurityVault, onUndo: (withoutAccess: Boolean) -> Unit = {}) {
     // The application's context: the message and its Undo may outlive the screen.
     val app = context.applicationContext
-    vault.setNotificationShield(false)
     ProtectionGaps.recordIfScreenLock(app, ProtectionGaps.Change.SHIELD_OFF)
     // What this switch-off ended, carried to its own Undo and no other.
     val ended = ShieldAccessWatch.switchOffSoon(app)

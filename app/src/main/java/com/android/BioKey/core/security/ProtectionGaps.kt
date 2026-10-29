@@ -334,9 +334,11 @@ object ProtectionGaps {
      */
     fun recordIfScreenLock(context: Context, change: Change, vararg args: String): java.util.concurrent.Future<Long?> {
         val app = context.applicationContext
+        // How BioKey was opened, as it is now: by the time the job runs it may have locked itself.
+        val openedWithBiometric = SecurityEngine.INSTANCE.ownAppOpenedWithBiometric
         return recorder.submit<Long?> {
             when {
-                SecurityEngine.ownerProven(app) -> null
+                SecurityEngine.ownerProven(app, openedWithBiometric) -> null
                 UnlockAttempts.holding(app) -> recordEvent(app, Kind.CHANGED_WITH_SCREEN_LOCK, change.encodeDuringHold(*args))
                 else -> recordEvent(app, Kind.CHANGED_WITH_SCREEN_LOCK, change.encode(*args))
             }

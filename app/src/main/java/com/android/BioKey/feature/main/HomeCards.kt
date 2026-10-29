@@ -37,6 +37,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -462,7 +463,7 @@ internal fun SecurityActivityDialog(
                 // At most one note before the records: why they stay new.
                 val heading = when {
                     // The hold explains everything at once: why they stay new, why nothing clears.
-                    heldUntil != null -> stringResource(R.string.activity_held_until)
+                    heldUntil != null -> stringResource(R.string.activity_held_until, attemptTime(context, heldUntil))
                     openedWithScreenLock -> stringResource(R.string.card_activity_screen_lock_note)
                     else -> null
                 }
@@ -543,7 +544,7 @@ internal fun SecurityActivityDialog(
                 }
                 if (gaps.any { it.isBiometricChange || it.kind == ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK }) {
                     // What to do about them: look over the faces, fingerprints and screen lock.
-                    FilledTonalButton(
+                    OutlinedButton(
                         onClick = { IntentNavigationHelper.openSecuritySettings(context) },
                         modifier = Modifier.padding(top = 4.dp)
                     ) {
@@ -558,7 +559,7 @@ internal fun SecurityActivityDialog(
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
                 TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) }
                 // What this visit is for, when it's opened with the screen lock.
-                if (onMarkReviewed != null && heldUntil == null) FilledTonalButton(onClick = onMarkReviewed) { Text(stringResource(R.string.card_mark_reviewed)) }
+                if (onMarkReviewed != null && heldUntil == null) Button(onClick = onMarkReviewed) { Text(stringResource(R.string.card_mark_reviewed)) }
             }
         },
         // Destructive: in the error colour, and behind a face or fingerprint (and Undo). Not offered

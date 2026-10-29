@@ -236,7 +236,7 @@
     <string name="home_reminders_stopped">No more reminders until app locking is back on</string>
     <string name="home_alerts_muted_title">Security alerts are silenced</string>
     <string name="home_alerts_muted_text">Some of BioKey\'s alerts are off in Android\'s settings, so you may not hear of failed unlocks, changes, or app locking going off</string>
-    <string name="home_lock_settings_text">Anyone who knows your screen lock could add their own fingerprint there. Once it\'s locked, opening Android Settings, BioKey\'s own switch included, asks for your face or fingerprint.</string>
+    <string name="home_lock_settings_text">Anyone who knows your screen lock could add their own fingerprint there. Locked, it asks for your face or fingerprint (your screen lock if they can\'t be used).</string>
 
     <!-- Home: security activity. -->
     <string name="home_confirm_mark_reviewed">Mark as reviewed</string>
@@ -348,7 +348,7 @@
     <string name="card_gap_changed_during_hold">%1$s · %2$s (within a day of a face or fingerprint change)</string>
     <string name="card_gap_event">%1$s · %2$s</string>
     <string name="card_gap_force_stopped_unknown">BioKey was force-stopped, for a time that can\'t be told (the clock was set back), until %1$s</string>
-    <string name="card_gap_shield_access_revoked_range">%1$s · notification access was off while Hide notification content was on</string>
+    <string name="card_gap_shield_access_revoked_range">%1$s · Notification access was off while Hide notification content was on</string>
     <!-- What a record of a change says ([ProtectionGaps.Change]). -->
     <string name="change_paused">Protection paused</string>
     <string name="change_lock_off">%1$s\'s lock switched off</string>
@@ -366,7 +366,7 @@
     <string name="change_default_delay_longer">Default re-lock delay made longer: %1$s</string>
     <string name="change_shield_off">Hide notification content switched off</string>
     <string name="change_biometric_unavailable">Face or fingerprint couldn\'t be used, so the screen lock was allowed</string>
-    <string name="card_gap_switched_off">%1$s · switched off</string>
+    <string name="card_gap_switched_off">%1$s · Switched off</string>
     <string name="card_gap_force_stopped">%1$s · BioKey was force-stopped</string>
 
     <!-- When an unlocked app, off screen, locks again. -->
@@ -386,7 +386,7 @@
     <string name="card_activity_changes">Changes</string>
     <string name="card_change_biometrics_changed_hint">If you didn\'t, check your faces and fingerprints in Android\'s settings</string>
     <string name="card_change_biometrics_removed_hint">Your screen lock opens locked apps again</string>
-    <string name="card_gap_shield_access_revoked">%1$s · notification access switched off while Hide notification content was on</string>
+    <string name="card_gap_shield_access_revoked">%1$s · Notification access switched off while Hide notification content was on</string>
     <string name="card_change_shield_access_hint">Locked apps\' notifications show in full until it\'s back on</string>
     <string name="shield_access_notification_text">Notification access was switched off, so locked apps\' notifications show in full. Open BioKey to turn it back on.</string>
     <string name="home_shield_no_access_title">Notifications aren\'t hidden</string>
@@ -394,7 +394,7 @@
     <string name="home_shield_no_access_action">Allow access</string>
     <string name="home_shield_no_access_off">Turn off</string>
     <string name="home_shield_turned_off">Hide notification content is off</string>
-    <string name="activity_held_until">A face or fingerprint was just added or removed. Until then nothing proves it\'s you here: nothing can be marked seen or cleared, records and alerts can\'t be switched off, backups can\'t be restored, and other changes are recorded, so whoever made the change can\'t hide it.</string>
+    <string name="activity_held_until">A face or fingerprint was added or removed. Until %1$s nothing proves it\'s you here: nothing can be marked seen, cleared, switched off or restored, and other changes are recorded.</string>
     <string name="activity_held_headline">Held until %1$s</string>
     <string name="held_refused">Not until %1$s: a face or fingerprint was just added or removed, so BioKey\'s records can\'t be cleared or silenced, and backups can\'t be restored, yet.</string>
     <string name="change_biometric_only_off">Face or fingerprint only switched off</string>
@@ -574,7 +574,7 @@
     <string name="settings_self_protection_unavailable_compat">Not available in compatibility mode</string>
     <string name="settings_shortcut_warning_title">An accessibility shortcut can switch BioKey off</string>
     <!-- %1$s: the accessibility service's name, as Android's Accessibility settings list it. -->
-    <string name="settings_shortcut_warning_summary">Without authentication. Remove it in Accessibility > %1$s > shortcut · tap to open</string>
+    <string name="settings_shortcut_warning_summary">It switches BioKey off without asking for anything. Remove it in Accessibility > %1$s > shortcut · tap to open</string>
 
     <!-- Settings: Profiles. -->
     <string name="settings_auto_sort_title">Auto-sort into profiles</string>

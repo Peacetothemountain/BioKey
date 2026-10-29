@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.annotation.VisibleForTesting
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
 import java.util.concurrent.Future
@@ -45,7 +46,12 @@ object ShieldAccessWatch {
      */
     fun switchOffSoon(context: Context): Future<Long?> {
         val app = context.applicationContext
-        return worker.submit<Long?> { runCatching { check(app) }.getOrNull() }
+        return worker.submit<Long?> {
+            // Switched off here, on the one thread every look runs on: no look can come between
+            // the switch-off and this one, and take the record it ends.
+            SecurityVault.getInstance(app).setNotificationShield(false)
+            runCatching { check(app) }.getOrNull()
+        }
     }
 
     /**
@@ -83,7 +89,9 @@ object ShieldAccessWatch {
      */
     fun checkSoon(context: Context): Future<*> {
         val app = context.applicationContext
-        return worker.submit { runCatching { check(app) } }
+        return worker.submit {
+            runCatching { check(app) }.onFailure { DiagnosticLog.log("Notification access check failed: ${it.javaClass.simpleName}") }
+        }
     }
 
     /** Looks at the shield and its access, records what changed; returns the record it ended by hiding being off, if any. */

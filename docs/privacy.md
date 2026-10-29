@@ -27,7 +27,8 @@ It applies to BioKey 1.0 and later, as published on Google Play
   settings, a short log of its own lock decisions, the times app locking was off, faces or
   fingerprints added or removed, notification access switched off while Hide notification content
   was on, a face or fingerprint that couldn't be used under "Face or fingerprint only", changes
-  made from BioKey opened with the screen lock, and, if you turn them on, failed unlock alerts) stays in its private storage, unless you choose to save a
+  made from BioKey opened with the screen lock or within a day of a face or fingerprint change,
+  reminders stopped meanwhile, and, if you turn them on, failed unlock alerts) stays in its private storage, unless you choose to save a
   backup file or share the log yourself.
 
 ## What BioKey can see, and why

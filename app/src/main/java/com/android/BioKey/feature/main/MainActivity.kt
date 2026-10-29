@@ -186,6 +186,12 @@ class MainActivity : ComponentActivity() {
         refreshPermissions()
         BiometricEnrollment.checkSoon(this)
 
+        // Back from setting a screen lock during setup: that step's done, and setup can finish.
+        if (setupNeedsScreenLock && getSystemService(android.app.KeyguardManager::class.java)?.isDeviceSecure == true) {
+            setupNeedsScreenLock = false
+            setupAuthError = null
+        }
+
         if (!vault.isSetupCompleted()) return
 
         // Back from another app's lock screen brought up over BioKey: only within that trip's lease,

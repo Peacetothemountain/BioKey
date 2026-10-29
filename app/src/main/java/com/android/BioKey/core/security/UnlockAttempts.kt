@@ -577,7 +577,7 @@ object UnlockAttempts {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         // Which app is never said, and nothing at all shows on the phone's lock screen. It stays
-        // (a tap opens BioKey without dismissing it) until the owner opens Review.
+        // (a tap opens BioKey without dismissing it) until everything in it has been reviewed ([markSeen]).
         val notification = NotificationCompat.Builder(app, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_biokey_mark)
             .setContentTitle(title)

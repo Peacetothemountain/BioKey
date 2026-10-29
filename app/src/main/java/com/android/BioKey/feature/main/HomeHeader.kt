@@ -1,6 +1,7 @@
 package com.android.BioKey.feature.main
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -220,7 +221,8 @@ private fun HeaderTile(
         Box(
             modifier = Modifier
                 .size(64.dp.scaledWithText())
-                .background(container, CircleShape),
+                .background(container, CircleShape)
+                .then(if (selected == true) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape) else Modifier),
             contentAlignment = Alignment.Center
         ) {
             Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(32.dp.scaledWithText()))
