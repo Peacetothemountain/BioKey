@@ -294,10 +294,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
             IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_OFF)
                 addAction(Intent.ACTION_SCREEN_ON)
-                addAction(Intent.ACTION_USER_PRESENT)
             },
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
+        registerForUnlocks(deviceStateReceiver)
         LockStateTracker.addLockAllListener(onLockAll)
         LockStateTracker.addLockAbandonedListener(onLockAbandoned)
         LockStateTracker.addAppUnlockListener(onAppUnlocked)
@@ -661,6 +661,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         // A tap on anything else (a folder named like the app, another app) ends the wait for one.
         expectedLaunch = null
         if (!vault.isProtectionActive() || shield.isShowing || LockScreenActivity.isLockScreenResumed) return
+        // The launcher is in front: a trip to a helper app has ended, whether or not a pass over
+        // the screen has said so yet. Its app, tapped in Recents to go back, is covered at the tap.
+        event.packageName?.toString()?.let { LockStateTracker.onForegroundChanged(it, vault::getTimeoutMode) }
         val spoken = buildList {
             event.contentDescription?.let(::add)
             addAll(event.text)

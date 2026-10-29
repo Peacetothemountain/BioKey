@@ -16,7 +16,8 @@ import com.android.BioKey.feature.notification.ShieldAccessWatch
 /**
  * Ends every unlock session the moment the display turns off or a screensaver starts, so a
  * phone that's picked up again always starts locked. Registered dynamically and not exported,
- * so other apps can't spoof these broadcasts.
+ * so other apps can't spoof these broadcasts; the phone being unlocked, which SystemUI sends, see
+ * [registerForUnlocks].
  */
 class ScreenReceiver private constructor() : BroadcastReceiver() {
 
@@ -25,11 +26,11 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
             val receiver = ScreenReceiver()
             val filter = IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_OFF)
-                addAction(Intent.ACTION_USER_PRESENT)
                 addAction(Intent.ACTION_DREAMING_STARTED)
                 addAction(Intent.ACTION_SHUTDOWN)
             }
             ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+            context.registerForUnlocks(receiver)
             return receiver
         }
     }
@@ -69,4 +70,14 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
             }
         }
     }
+}
+
+/**
+ * Registers [receiver] for the phone being unlocked (ACTION_USER_PRESENT). The keyguard sends it,
+ * and on a phone the keyguard is SystemUI: an app of its own, not the system, so a receiver that
+ * isn't exported never hears it. It's a protected broadcast, which only the system and SystemUI
+ * may send: exporting the receiver for it alone lets no other app in.
+ */
+internal fun Context.registerForUnlocks(receiver: BroadcastReceiver) {
+    ContextCompat.registerReceiver(this, receiver, IntentFilter(Intent.ACTION_USER_PRESENT), ContextCompat.RECEIVER_EXPORTED)
 }

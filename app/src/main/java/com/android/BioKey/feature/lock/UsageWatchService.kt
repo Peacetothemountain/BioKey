@@ -437,13 +437,13 @@ class UsageWatchService : Service() {
             IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_OFF)
                 addAction(Intent.ACTION_SCREEN_ON)
-                addAction(Intent.ACTION_USER_PRESENT)
                 addAction(Intent.ACTION_DREAMING_STARTED)
                 addAction(Intent.ACTION_DREAMING_STOPPED)
                 addAction(Intent.ACTION_TIME_CHANGED)
             },
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
+        registerForUnlocks(screenReceiver)
         LockStateTracker.addLockAllListener(onLockAll)
         LockStateTracker.addLockAbandonedListener(onLockAbandoned)
         runCatching {
