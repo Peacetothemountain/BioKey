@@ -151,8 +151,8 @@ see "Locking stopped" below to keep BioKey running. Clear it from **Review**.
 If BioKey's storage was cleared in Android's settings (Apps > BioKey > Storage), every lock and
 record went with it. Android also switches BioKey's accessibility service off and, from Android
 13, takes back its notification permission, so nothing is locked and BioKey can't tell you until
-you open it: its setup screen then says when (on Android 12, an alert also comes after the phone's
-next restart). Once set up again, it's recorded. For a day after, as after a face or fingerprint change, records can't be cleared and
+you open it: its setup screen then says when (on Android 12, an alert also comes once BioKey next
+runs). Once set up again, it's recorded. For a day after, as after a face or fingerprint change, records can't be cleared and
 the alerts can't be switched off: whoever cleared it may have added their own fingerprint first.
 (BioKey tells from Android's record of its last run, which a clearing keeps; an uninstall removes it,
 but then BioKey's icon is gone too.)

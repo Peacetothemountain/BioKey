@@ -31,7 +31,8 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
   Android's settings (every lock and record with it; Android also switches its accessibility
   service off and, from Android 13, takes back its notification permission) is said on BioKey's
   setup screen when it's next opened, then recorded once it's set up. On Android 12 it's also told
-  after the phone's next restart, and every so often until set up. Neither a changed clock nor an
+  once BioKey next runs, and every so often until set up (from Android 13, once notifications are
+  allowed again). Neither a changed clock nor an
   update since hides a clearing, and changes made in the day after say it was a reset. Like a face or fingerprint change,
   the reset then holds records, alerts, the log and backups for a day.
 - Home's header says "Apps locked", not "Protected", while locked apps' notifications show in full

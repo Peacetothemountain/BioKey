@@ -299,10 +299,11 @@ internal fun protectionLook(
         notificationsShowing -> ProtectionLook(
             colors.errorContainer, colors.onErrorContainer, Icons.Default.GppMaybe, stringResource(R.string.home_apps_locked_short),
             stringResource(R.string.home_notifications_showing_title),
+            // Most serious first: what shows now, apps not covered, then how it's running.
             apps + SEPARATOR + stringResource(defaultTimeout.relockPhraseRes).lowercase() + "\n" +
                 stringResource(R.string.home_notifications_showing_body) +
-                (if (mode == ProtectionEngine.Mode.COMPATIBILITY) "\n" + stringResource(R.string.home_protected_compat) else "") +
-                (if (unwatchedCount == 0) "" else "\n" + pluralStringResource(R.plurals.home_unwatched, unwatchedCount, unwatchedCount)),
+                (if (unwatchedCount == 0) "" else "\n" + pluralStringResource(R.plurals.home_unwatched, unwatchedCount, unwatchedCount)) +
+                (if (mode == ProtectionEngine.Mode.COMPATIBILITY) "\n" + stringResource(R.string.home_protected_compat) else ""),
             null,
             fix = stringResource(R.string.home_shield_no_access_action)
         )

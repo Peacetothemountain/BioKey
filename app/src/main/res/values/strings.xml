@@ -409,7 +409,6 @@
     <string name="home_shield_no_access_title">Notifications aren\'t hidden</string>
     <string name="home_shield_no_access_text">Hide notification content is on, but BioKey\'s notification access is off, so locked apps\' notifications show in full.</string>
     <string name="home_shield_no_access_action">Allow access</string>
-    <string name="home_shield_no_access_off">Turn off</string>
     <string name="home_shield_turn_off_hiding">Turn off hiding</string>
     <string name="home_shield_turned_off">Hide notification content is off</string>
     <string name="activity_held_intro">Until then nothing proves it\'s you here, so:</string>

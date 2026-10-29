@@ -223,8 +223,16 @@ object ProtectionGaps {
     @VisibleForTesting
     internal var storageFromBefore: (Context) -> Boolean = { context ->
         val started = System.currentTimeMillis() - (SystemClock.elapsedRealtime() - android.os.Process.getStartElapsedRealtime())
-        runCatching { context.dataDir.walkTopDown().any { it.isFile && it.lastModified() < started - STORAGE_AGE_SLACK_MS } }.getOrDefault(true)
+        // Unreadable: taken as from before, so a failure can miss a clearing but never claim one.
+        runCatching { hasFileOlderThan(context.dataDir, started - STORAGE_AGE_SLACK_MS) }.getOrDefault(true)
     }
+
+    /** Any file under [dir] (links not followed) last written before [time], on the phone's clock. */
+    @VisibleForTesting
+    internal fun hasFileOlderThan(dir: java.io.File, time: Long): Boolean =
+        dir.walkTopDown()
+            .onEnter { it == dir || !java.nio.file.Files.isSymbolicLink(it.toPath()) }
+            .any { it.isFile && !java.nio.file.Files.isSymbolicLink(it.toPath()) && it.lastModified() < time }
     /** Files a little older than this process (written as it started) are still its own. */
     private const val STORAGE_AGE_SLACK_MS = 10_000L
 
@@ -385,18 +393,21 @@ object ProtectionGaps {
     }
 
     /**
-     * Once per storage, as BioKey's process starts. Android remembering BioKey running since its
-     * last install or update, on storage that's never been looked at, means the storage was cleared
-     * (Settings > Apps > BioKey > Clear storage): every lock and record went with it. A fresh
-     * install has no such record (an uninstall takes Android's with it); an update keeps the
-     * storage, and exits from before it, or the update's own, don't count. When it was cleared
-     * can't be told, only that it was after BioKey last ran: that's the time kept. Said on the setup
-     * screen, and as an alert where Android still allows one ([ProtectionAlerts.remindIfStorageCleared]:
-     * a clearing also switches the accessibility service off and, from Android 13, takes back the
-     * notification permission, as seen on Android 17, while keeping its exit record, "stop … due to
-     * clear data"), until BioKey is set up again; then
-     * recorded ([Kind.DATA_CLEARED]), which starts a day's hold like a face or fingerprint change:
-     * a clearing also forgets which faces and fingerprints were there.
+     * Once per storage, as BioKey's process starts: was it cleared (Settings > Apps > BioKey >
+     * Clear storage), taking every lock and record with it? Yes when BioKey isn't set up, nothing in
+     * its storage is older than this process ([storageFromBefore]: an update keeps the old files,
+     * a clearing leaves none), and Android remembers BioKey running before (any exit but an
+     * update's own; a fresh install has none, as an uninstall takes Android's record with it).
+     * Ages, not the update's time, so neither a clock set back nor an update after the clearing
+     * hides one. When it was cleared can't be told, only that it was after BioKey last ran: that's
+     * the time kept, or "can't be told" if that's dated after now (the clock was set back since).
+     *
+     * Said on the setup screen, and as an alert where Android still allows one
+     * ([ProtectionAlerts.remindIfStorageCleared]): a clearing also switches the accessibility
+     * service off and, from Android 13, takes back the notification permission (seen on Android
+     * 17, which keeps the exit record, "stop … due to clear data"). Once set up again, recorded
+     * ([Kind.DATA_CLEARED]), which starts a day's hold like a face or fingerprint change: a
+     * clearing also forgets which faces and fingerprints were there.
      */
     // REASON_PACKAGE_UPDATED is only read on Android 14+, where it exists ([sdk]).
     @SuppressLint("InlinedApi")
@@ -434,6 +445,10 @@ object ProtectionGaps {
             if (NotificationManagerCompat.from(app).areNotificationsEnabled()) ProtectionCheckJob.schedule(app)
         }
     }
+
+    /** Cleared ([cleared]) and not set up again: what the setup note and the alert are for. */
+    fun awaitingSetupAfterClear(context: Context): Boolean =
+        clearedAt(context) != null && !SecurityVault.getInstance(context).isSetupCompleted()
 
     /** When, as [cleared] has it, its storage read first. */
     fun clearedAt(context: Context): Long? {

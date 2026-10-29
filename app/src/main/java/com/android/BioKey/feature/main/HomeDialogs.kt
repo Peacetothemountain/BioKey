@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material3.Button
@@ -62,6 +64,7 @@ import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.BioKeyMessages
+import com.android.BioKey.ui.theme.scaledWithText
 
 /**
  * Which of home's sheets and dialogs is open. Each is kept as it was on its own: across a rotation
@@ -460,7 +463,18 @@ internal fun ProtectionSheetContent(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    lines.drop(1).forEach { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    lines.drop(1).forEachIndexed { i, line ->
+                        // With something to put right, the first is it: in the error colour, as its button is.
+                        if (i == 0 && look.fix != null) {
+                            Row {
+                                Icon(
+                                    Icons.Default.NotificationsOff, contentDescription = null, tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(top = 1.dp, end = 8.dp).size(18.dp.scaledWithText())
+                                )
+                                Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                            }
+                        } else Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }

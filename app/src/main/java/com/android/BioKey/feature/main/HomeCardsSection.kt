@@ -143,7 +143,7 @@ internal fun LazyListScope.homeCards(
                 TextButton(onClick = {
                     // As the switch in Settings does: recorded from a screen-lock session, with Undo.
                     homeViewModel.switchShieldOff(vault)
-                }) { Text(stringResource(R.string.home_shield_no_access_off)) }
+                }) { Text(stringResource(R.string.home_shield_turn_off_hiding)) }
                 // The explanation first, as everywhere notification access is asked for.
                 val allow: () -> Unit = {
                     disclosures.request(Disclosure.NOTIFICATIONS) { IntentNavigationHelper.openNotificationListenerSettings(context) }

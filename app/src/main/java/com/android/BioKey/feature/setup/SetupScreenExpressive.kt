@@ -66,7 +66,6 @@ import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
-import com.android.BioKey.feature.main.ActivityCallout
 import com.android.BioKey.feature.main.Disclosure
 import com.android.BioKey.feature.main.IntentNavigationHelper
 import com.android.BioKey.feature.main.attemptTime
@@ -74,6 +73,7 @@ import com.android.BioKey.feature.main.rememberDisclosureGate
 import com.android.BioKey.feature.main.rememberNotificationPermission
 import com.android.BioKey.ui.brand.BioKeyLogo
 import com.android.BioKey.ui.brand.HeaderMatrixDotsExpressive
+import com.android.BioKey.ui.theme.Callout
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow
@@ -205,8 +205,12 @@ fun SetupScreenExpressive(
             add(
                 Step(
                     Icons.Default.Notifications, stringResource(R.string.setup_notifications_title),
-                    // A clearing took the permission back with everything else: say why it matters now.
-                    stringResource(if (cleared != null) R.string.setup_notifications_text_reset else R.string.setup_notifications_text),
+                    // A clearing took the permission back (Android 13+, where it's one) with everything
+                    // else: why it matters now, until it's allowed again.
+                    stringResource(
+                        if (cleared != null && !notifications.allowed && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) R.string.setup_notifications_text_reset
+                        else R.string.setup_notifications_text
+                    ),
                     done = notifications.allowed,
                     optional = true,
                     // Android's own question from 13 on; before that, only its settings page.
@@ -276,11 +280,11 @@ fun SetupScreenExpressive(
             if (cleared != null) {
                 Spacer(Modifier.height(20.dp))
                 // Why BioKey is being set up again: Review's callout, lined up with the steps below.
-                ActivityCallout(
+                Callout(
                     if (cleared.known) stringResource(R.string.setup_storage_cleared, attemptTime(context, cleared.after))
                     else stringResource(R.string.setup_storage_cleared_unknown),
                     headline = stringResource(R.string.storage_cleared_notification_title),
-                    held = true,
+                    warning = true,
                     modifier = Modifier.padding(horizontal = GroupInset)
                 )
             }

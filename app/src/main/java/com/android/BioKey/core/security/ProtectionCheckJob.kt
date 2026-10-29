@@ -44,7 +44,7 @@ class ProtectionCheckJob : JobService() {
             try {
                 when {
                     // Storage cleared and not set up again: said until it is, engine or not.
-                    ProtectionGaps.clearedAt(this) != null && !SecurityVault.getInstance(this).isSetupCompleted() ->
+                    ProtectionGaps.awaitingSetupAfterClear(this) ->
                         ProtectionAlerts.remindIfStorageCleared(this)
                     ProtectionEngine.isProtecting(this) -> cancel(this)
                     else -> ProtectionAlerts.remindIfOff(this)

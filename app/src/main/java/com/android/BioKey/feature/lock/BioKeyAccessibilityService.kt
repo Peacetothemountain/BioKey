@@ -85,7 +85,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
         private const val LAUNCH_REPEAT_MS = 300L
 
         /** A window that couldn't be read isn't asked again for this long ([packageOf]). */
-        private const val UNREADABLE_RECHECK_MS = 1_000L
 
         /** How many unreadable windows are remembered as some app's ([attributedWindows]). */
         private const val MAX_ATTRIBUTED_WINDOWS = 16
@@ -383,7 +382,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
      * would, remembering the answer: a debug build must decide as a release build does).
      */
     private fun traceRootPackage(w: AccessibilityWindowInfo): String? =
-        windowPackages[w.id] ?: if (w.id in attributedWindows || w.id in unreadableAt) null else windowPackage(w)
+        windowPackages[w.id] ?: if (w.id in attributedWindows || reader.wasUnreadable(w.id)) null else windowPackage(w)
 
     // -------------------------------------------------------------------------------------------
     // Event handling
@@ -509,13 +508,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || !::vault.isInitialized) return
         EngineTrace.event(event)
-        handlingEvent = true
-        try {
-            handleEvent(event)
-        } finally {
-            handlingEvent = false
-            eventWindows = null
-        }
+        reader.duringEvent { handleEvent(event) }
     }
 
     private fun handleEvent(event: AccessibilityEvent) {
@@ -840,11 +833,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun isOwnScreenInFront(front: String?): Boolean =
         foregroundPackage == packageName && (front == null || front == packageName || front == SessionRules.UNIDENTIFIED_APP)
 
-    /** The window the user is using: the active one, else a focused one. */
-    private fun frontWindow(list: List<AccessibilityWindowInfo>): AccessibilityWindowInfo? {
-        val apps = list.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
-        return apps.firstOrNull { it.isActive } ?: apps.firstOrNull { it.isFocused }
-    }
+    private fun frontWindow(list: List<AccessibilityWindowInfo>) = WindowReader.frontWindow(list)
 
     /** Whether the window the user is using ([frontWindow]) is [pkg]'s. */
     private fun isInFront(pkg: String): Boolean = mayBe(pkg, windowList()?.let(::frontWindow)?.let(::packageOf))
@@ -893,65 +882,26 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun isCoverableByVisibility(pkg: String) =
         pkg != packageName && pkg != PasswordManager.CREDENTIAL_MANAGER && pkg != PasswordManager.GMS
 
-    /**
-     * Every window on every display, the phone's own screen first (each display's top first); null
-     * if they can't be read. Read once per event ([eventWindows]): handling one asks for them up to
-     * four times, and nothing changes on screen in between, as the next event says.
-     */
-    /**
-     * Before setup (and the explanation it shows first), no window is looked at, whatever asks:
-     * every look goes through [windowList] or [activeRoot], which both check this (the Recents
-     * watcher and the self-protection detector are handed them too).
-     */
-    private fun setUp() = ::vault.isInitialized && vault.isSetupCompleted()
-
-    /** The active window's root node, under the same rule as [windowList]. */
-    internal fun activeRoot(): AccessibilityNodeInfo? = if (setUp()) rootInActiveWindow else null
-
-    internal fun windowList(): List<AccessibilityWindowInfo>? {
-        if (!setUp()) return null
-        if (handlingEvent) eventWindows?.let { return it }
-        val list: List<AccessibilityWindowInfo>? = try {
-            val byDisplay = windowsOnAllDisplays
-            buildList<AccessibilityWindowInfo> {
-                byDisplay[Display.DEFAULT_DISPLAY]?.let { addAll(it) }
-                byDisplay.forEach { display, windows -> if (display != Display.DEFAULT_DISPLAY) addAll(windows) }
-            }
-        } catch (_: Exception) {
-            null
-        }
-        if (handlingEvent) eventWindows = list
-        if (list != null && EngineTrace.enabled) EngineTrace.windows(list, ::traceRootPackage)
-        return list
+    /** Every look at the screen: see [WindowReader]. */
+    private val reader by lazy {
+        WindowReader(
+            readWindows = { windowsOnAllDisplays },
+            readActiveRoot = { rootInActiveWindow },
+            setUp = { ::vault.isInitialized && vault.isSetupCompleted() },
+            known = { id -> windowPackages[id] ?: attributedWindows[id] },
+            learn = { id, pkg -> windowPackages[id] = pkg },
+            onRead = { if (EngineTrace.enabled) EngineTrace.windows(it, ::traceRootPackage) }
+        )
     }
 
-    /** While [onAccessibilityEvent] runs: [windowList] as read for that event. */
-    private var handlingEvent = false
-    private var eventWindows: List<AccessibilityWindowInfo>? = null
+    /** The active window's root node; null before setup ([WindowReader]). */
+    internal fun activeRoot(): AccessibilityNodeInfo? = reader.activeRoot()
 
-    /**
-     * Whose window [w] is: learned from its events, attributed, or read from the window itself (an
-     * IPC into its app). A window that can't be read (BioKey's own, a banking app's) isn't asked
-     * again for [UNREADABLE_RECHECK_MS]: every visibility pass would ask it, all the while a lock
-     * screen is up. Asked again after that, as one still being made can become readable.
-     */
-    private fun packageOf(w: AccessibilityWindowInfo): String? {
-        windowPackages[w.id]?.let { return it }
-        attributedWindows[w.id]?.let { return it }
-        val now = SystemClock.uptimeMillis()
-        unreadableAt[w.id]?.let { if (now - it < UNREADABLE_RECHECK_MS) return null }
-        val pkg = windowPackage(w)
-        if (pkg == null) {
-            unreadableAt[w.id] = now
-        } else {
-            unreadableAt.remove(w.id)
-            windowPackages[w.id] = pkg
-        }
-        return pkg
-    }
+    /** Every window on every display; null before setup ([WindowReader]). */
+    internal fun windowList(): List<AccessibilityWindowInfo>? = reader.windowList()
 
-    /** Windows that couldn't be read, and when that was last found ([packageOf]). */
-    private val unreadableAt = HashMap<Int, Long>()
+    /** Whose window [w] is ([WindowReader.packageOf]). */
+    private fun packageOf(w: AccessibilityWindowInfo): String? = reader.packageOf(w)
 
     /**
      * Brings sessions in line with what is actually on screen. See the class comment. A pass that
@@ -1010,7 +960,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (visible.isEmpty()) return
         windowPackages.keys.retainAll(liveIds)
         windowTypes.keys.retainAll(liveIds)
-        unreadableAt.keys.retainAll(liveIds)
+        reader.forgetAllBut(liveIds)
 
         updateMasks(windowList, full = true)
 
@@ -1067,11 +1017,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** Fallback when a window appeared without a state event: ask the window itself (an IPC). */
-    private fun windowPackage(window: AccessibilityWindowInfo): String? {
-        val root = try { window.root } catch (_: Exception) { null } ?: return null
-        return root.packageName?.toString().also { root.release() }
-    }
+    private fun windowPackage(window: AccessibilityWindowInfo) = WindowReader.windowPackage(window)
 
     /** See [ForegroundRules.isHopTarget]; keyboards and unreadable windows also leave a hop running. */
     private fun isHopTarget(pkg: String): Boolean =

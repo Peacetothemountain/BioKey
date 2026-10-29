@@ -251,8 +251,7 @@ object ProtectionAlerts {
      */
     fun remindIfStorageCleared(context: Context) {
         val app = context.applicationContext
-        if (SecurityVault.getInstance(app).isSetupCompleted()) return
-        ProtectionGaps.load(app)
+        if (!ProtectionGaps.awaitingSetupAfterClear(app)) return
         val cleared = ProtectionGaps.cleared.value ?: return
         val manager = NotificationManagerCompat.from(app)
         if (!manager.areNotificationsEnabled()) return

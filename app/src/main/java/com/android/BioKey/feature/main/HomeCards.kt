@@ -77,6 +77,7 @@ import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.UnlockAttempts
+import com.android.BioKey.ui.theme.Callout
 import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.scaledWithText
 import kotlinx.coroutines.delay
@@ -478,7 +479,7 @@ internal fun SecurityActivityDialog(
                 // At most one note before the records: why they stay new.
                 if (heldUntil != null) {
                     // The hold explains everything at once: why they stay new, why nothing clears.
-                    ActivityCallout(
+                    Callout(
                         stringResource(R.string.activity_held_intro),
                         headline = stringResource(
                             if (heldByReset) R.string.activity_held_headline_reset else R.string.activity_held_headline_cause,
@@ -486,11 +487,11 @@ internal fun SecurityActivityDialog(
                         ),
                         items = stringArrayResource(R.array.activity_held_refused).toList(),
                         footer = stringResource(R.string.activity_held_footer),
-                        held = true,
+                        warning = true,
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
                 } else if (openedWithScreenLock) {
-                    ActivityCallout(stringResource(R.string.card_activity_screen_lock_note), held = false, modifier = Modifier.padding(bottom = 16.dp))
+                    Callout(stringResource(R.string.card_activity_screen_lock_note), warning = false, modifier = Modifier.padding(bottom = 16.dp))
                 }
                 val changes = gaps.filterNot { it.isOff }
                 if (changes.isNotEmpty()) {
@@ -613,49 +614,6 @@ internal fun UrgentButton(text: String, onClick: () -> Unit, modifier: Modifier 
         modifier = modifier,
         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError)
     ) { Text(text, textAlign = TextAlign.Center) }
-}
-
-
-/**
- * Review's note above the records, as a tonal callout: tinted towards the error colours while a
- * face or fingerprint change is [held] (as an urgent card is), else the calm secondary ones.
- */
-@Composable
-internal fun ActivityCallout(
-    text: String,
-    held: Boolean,
-    modifier: Modifier = Modifier,
-    headline: String? = null,
-    /** A list after [text], each item's wrapped lines hanging after its bullet. */
-    items: List<String> = emptyList(),
-    footer: String? = null
-) {
-    val colors = MaterialTheme.colorScheme
-    val dark = colors.surface.luminance() < 0.5f
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = if (held) lerp(colors.surfaceContainerHighest, colors.errorContainer, if (dark) 0.45f else 0.7f) else colors.secondaryContainer,
-        contentColor = if (held) colors.onErrorContainer else colors.onSecondaryContainer,
-        // One stop for a screen reader: the note is read whole, its list in order.
-        modifier = modifier.fillMaxWidth().semantics(mergeDescendants = true) { }
-    ) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Icon(Icons.Default.GppMaybe, contentDescription = null, modifier = Modifier.padding(top = 1.dp).size(20.dp.scaledWithText()))
-            Spacer(Modifier.width(12.dp))
-            Column {
-                if (headline != null) Text(headline, style = MaterialTheme.typography.titleSmall)
-                Text(text, style = MaterialTheme.typography.bodyMedium)
-                items.forEach { item ->
-                    Row(Modifier.padding(start = 4.dp, top = 2.dp)) {
-                        Text("•", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.clearAndSetSemantics { })
-                        Spacer(Modifier.width(8.dp))
-                        Text(item, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-                if (footer != null) Text(footer, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 2.dp))
-            }
-        }
-    }
 }
 
 /** Records under a section label: 8dp apart, 4dp in from the label above and what follows. */
