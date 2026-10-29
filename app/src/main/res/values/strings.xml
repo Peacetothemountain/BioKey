@@ -233,7 +233,7 @@
     <string name="home_reminders_stopped">No more reminders until app locking is back on</string>
     <string name="home_alerts_muted_title">Security alerts are silenced</string>
     <string name="home_alerts_muted_text">Some of BioKey\'s alerts are off in Android\'s settings, so you may not hear of failed unlocks, changes, or app locking going off</string>
-    <string name="home_lock_settings_text">Anyone with your PIN could add their own fingerprint there.</string>
+    <string name="home_lock_settings_text">Anyone who knows your screen lock could add their own fingerprint there.</string>
 
     <!-- Home: security activity. -->
     <string name="home_confirm_mark_reviewed">Mark as reviewed</string>
@@ -334,8 +334,8 @@
     <string name="card_see_apps">See apps</string>
 
     <!-- When a failed unlock or a change happened: "Yesterday, 2:14 PM", "Oct 27, 2:14 PM". -->
-    <string name="card_time_yesterday">Yesterday, %1$s</string>
-    <string name="card_time_date">%1$s, %2$s</string>
+    <string name="card_time_yesterday">Yesterday, %1$s</string>
+    <string name="card_time_date">%1$s, %2$s</string>
 
     <!-- One time app locking was off, or one change: when · what. -->
     <string name="card_gap_biometrics_changed">%1$s · a face or fingerprint was added or removed</string>
@@ -389,9 +389,11 @@
     <string name="home_shield_no_access_text">Hide notification content is on, but BioKey\'s notification access is off, so locked apps\' notifications show in full.</string>
     <string name="home_shield_no_access_action">Allow access</string>
     <string name="home_shield_no_access_off">Turn off</string>
-    <string name="home_confirm_shield_off">Show locked apps\' notifications in full</string>
     <string name="home_shield_turned_off">Hide notification content is off</string>
-    <string name="activity_held_until">A face or fingerprint added or removed stays new, and its alert keeps coming back, until %1$s: whoever made the change can\'t hide it from you.</string>
+    <string name="activity_held_until">A face or fingerprint was added or removed. Until %1$s, a face or fingerprint doesn\'t count as you here, nothing can be cleared, and the change stays new with its alert coming back: whoever made it can\'t hide it from you. Review again after that.</string>
+    <string name="held_refused">Not until %1$s: a face or fingerprint was just added or removed, so BioKey\'s records can\'t be cleared or silenced yet.</string>
+    <string name="home_reviewed_held">Reviewed. The face or fingerprint change stays new until %1$s.</string>
+    <string name="change_biometric_only_off">Face or fingerprint only switched off</string>
     <string name="app_label_unknown">This app</string>
     <string name="profile_default_name">New profile</string>
     <!-- Outside BioKey's screens: stand-ins, the compatibility notification, the cover. -->
@@ -428,7 +430,7 @@
     <string name="card_failed_unlocks">Failed unlocks</string>
     <!-- When · what happened. -->
     <string name="card_attempt_detail">%1$s · %2$s</string>
-    <string name="card_attempts_note">Faces or fingerprints that didn\'t match. Misses your own face or fingerprint then fixed, on the same prompt, were you and aren\'t listed. Android doesn\'t tell apps about a wrong PIN.</string>
+    <string name="card_attempts_note">Faces or fingerprints that didn\'t match. Misses your own face or fingerprint then fixed, on the same prompt, were you and aren\'t listed. Android doesn\'t tell apps about a wrong PIN, pattern or password.</string>
     <string name="card_mark_reviewed">Mark reviewed</string>
     <string name="card_clear">Clear</string>
 
@@ -523,11 +525,11 @@
     <string name="settings_lock_apps_any">Locked apps need your face, fingerprint or screen lock</string>
     <string name="settings_biometric_only_title">Face or fingerprint only</string>
     <string name="settings_biometric_only_none_set_up">On, but no face or fingerprint is set up: your screen lock works meanwhile</string>
-    <string name="settings_biometric_only_summary">Locked apps and BioKey won\'t take your PIN, so someone who knows it can\'t open them</string>
+    <string name="settings_biometric_only_summary">Locked apps and BioKey won\'t take your screen lock, so someone who knows it can\'t open them</string>
     <string name="settings_confirm_biometric_only_on">Use only your face or fingerprint</string>
     <string name="settings_confirm_biometric_only_off">Allow your screen lock again</string>
     <string name="settings_lock_settings_title">Lock Android Settings too</string>
-    <string name="settings_lock_settings_summary">With your PIN, someone could add their own fingerprint there · tap to lock it</string>
+    <string name="settings_lock_settings_summary">Anyone who knows your screen lock could add their own fingerprint there</string>
     <string name="settings_lock_settings_done">Android Settings locked</string>
     <string name="settings_relock_title">Default re-lock delay</string>
     <!-- %1$s: the delay's short label. -->
@@ -552,7 +554,7 @@
     <string name="settings_failed_alerts_deleted">Failed unlocks deleted</string>
     <string name="settings_confirm_failed_alerts_off">Turn off failed unlock alerts</string>
     <string name="settings_screen_lock_unlocks_title">Also note screen lock unlocks</string>
-    <string name="settings_screen_lock_unlocks_summary">Each locked app opened with your PIN instead of a face or fingerprint</string>
+    <string name="settings_screen_lock_unlocks_summary">Each locked app opened with your screen lock instead of a face or fingerprint</string>
     <string name="settings_screen_lock_unlocks_needs_alerts">Needs failed unlock alerts</string>
     <string name="settings_confirm_screen_lock_unlocks_off">Stop noting screen lock unlocks</string>
     <string name="settings_self_protection_title">Protect BioKey\'s settings</string>

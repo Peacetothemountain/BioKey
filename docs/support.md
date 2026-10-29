@@ -130,7 +130,9 @@ naming the app; the notification stays until you open **Review** in BioKey opene
 or fingerprint (opened with the PIN, tap **Mark reviewed** there and use your face or fingerprint).
 A face or fingerprint added or removed stays new for a day either way, and its alert comes back
 at each unlock until then: whoever made the change can't hide it from you. Review says until when;
-meanwhile **Clear** isn't offered, and once the day is up your review takes effect by itself. Only faces and fingerprints count: Android doesn't tell apps about a wrong PIN, pattern
+meanwhile a face or fingerprint doesn't count as you in BioKey, and nothing that clears or silences
+its records can be done (Clear, turning the alerts or the log off, Stop reminding). After the day,
+open Review again. Only faces and fingerprints count: Android doesn't tell apps about a wrong PIN, pattern
 or password. If you never use your PIN yourself, turn on **Also note screen lock unlocks** to see
 (listed on the home screen, not notified) whenever someone opens a locked app with it. Notes are kept until you've seen them, then 7 days;
 clear them from **Review** on the home screen (it asks for your face or fingerprint).

@@ -119,8 +119,6 @@ object UnlockAttempts {
     /** The last sequence number handed out ([nextSeq]), for these records and [ProtectionGaps]'. */
     private const val KEY_SEQ = "seq"
     /** Records up to this sequence number have been seen in BioKey (Review): kept until they age. */
-    /** The newest record the owner has reviewed, whether or not a hold has let it count yet. */
-    private const val KEY_REVIEWED_SEQ = "reviewed_seq"
     private const val KEY_SEEN_SEQ = "seen_seq"
     /** Records up to this sequence number have been notified. */
     private const val KEY_NOTIFIED_SEQ = "notified_seq"
@@ -342,7 +340,6 @@ object UnlockAttempts {
      */
     fun onUserPresent(context: Context) {
         val p = load(context) ?: return
-        applyPendingReview(context)
         p.edit { putLong(KEY_PRESENT_SEQ, p.getLong(KEY_SEQ, 0L)).putBoolean(KEY_REPOST, true) }
         scheduleNotification(context.applicationContext, 0L)
     }
@@ -354,10 +351,6 @@ object UnlockAttempts {
     fun markSeen(context: Context, upTo: Long = Long.MAX_VALUE) {
         val p = load(context) ?: return
         synchronized(lock) {
-            // Kept, so a review held back by a face or fingerprint change takes effect by itself
-            // once the hold ends ([applyPendingReview]), not only at the next Review.
-            val wanted = minOf(upTo, maxOf(_attempts.value.maxOfOrNull { it.seq } ?: 0L, ProtectionGaps.gaps.value.maxOfOrNull { it.seq } ?: 0L))
-            if (wanted > p.getLong(KEY_REVIEWED_SEQ, 0L)) p.edit { putLong(KEY_REVIEWED_SEQ, wanted) }
             // Up to the newest record actually there (and shown), not a number handed out a moment
             // ago to one another thread hasn't stored yet.
             val newest = maxOf(_attempts.value.maxOfOrNull { it.seq } ?: 0L, ProtectionGaps.gaps.value.maxOfOrNull { it.seq } ?: 0L)
@@ -372,12 +365,12 @@ object UnlockAttempts {
         cancelIfAllSeen(context)
     }
 
-    /** A review a hold kept back ([markSeen]) applies once the hold has ended. */
-    private fun applyPendingReview(context: Context) {
-        val p = load(context) ?: return
-        val wanted = p.getLong(KEY_REVIEWED_SEQ, 0L)
-        if (wanted > p.getLong(KEY_SEEN_SEQ, 0L)) markSeen(context, wanted)
-    }
+    /**
+     * A face or fingerprint was added or removed less than a day ago ([BIOMETRIC_HOLD_MS]) and isn't
+     * reviewed yet: until then, a face or fingerprint doesn't prove the owner ([SecurityEngine.ownerProven]),
+     * and nothing that erases or silences the record can be done.
+     */
+    fun holding(context: Context): Boolean = load(context) != null && heldBiometricChange(context, seenSeq(context)) != null
 
     /**
      * What Review > Clear may remove: up to [upTo], and nothing at all while a face or fingerprint

@@ -153,17 +153,13 @@ class ProtectionGapsTest {
     }
 
     @Test
-    fun anUndoneChangeIsTakenBack() {
-        ProtectionGaps.recorder = java.util.concurrent.Executor { it.run() }
-        try {
-            // Recorded only for a screen-lock session on a phone with a face or fingerprint: here,
-            // straight through recordEvent, as recordIfScreenLock would.
-            ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, ProtectionGaps.Change.SHIELD_OFF.encode())
-            ProtectionGaps.retract(context, ProtectionGaps.Change.SHIELD_OFF)
-            assertTrue(gaps.isEmpty())
-        } finally {
-            ProtectionGaps.recorder = java.util.concurrent.Executors.newSingleThreadExecutor()
-        }
+    fun anUndoneChangeTakesBackItsOwnRecordAndNoOther() {
+        // Two of the same kind: Undo of the first takes back the first only.
+        val first = ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, ProtectionGaps.Change.SHIELD_OFF.encode())
+        val second = ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, ProtectionGaps.Change.SHIELD_OFF.encode())
+        ProtectionGaps.retract(context, java.util.concurrent.CompletableFuture.completedFuture(first))
+        ProtectionGaps.recorder.submit {}.get()
+        assertEquals(listOf(second), gaps.map { it.seq })
     }
 
     @Test

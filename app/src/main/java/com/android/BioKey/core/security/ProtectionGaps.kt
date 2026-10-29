@@ -86,6 +86,7 @@ object ProtectionGaps {
         /** Argument: the [com.android.BioKey.core.data.LockTimeoutMode] name. */
         DEFAULT_DELAY_LONGER(R.string.change_default_delay_longer),
         SHIELD_OFF(R.string.change_shield_off),
+        BIOMETRIC_ONLY_OFF(R.string.change_biometric_only_off),
         /** Not a change from a session: the sensor couldn't be used, so the screen lock was allowed. */
         BIOMETRIC_UNAVAILABLE(R.string.change_biometric_unavailable, fromScreenLock = false);
 
@@ -317,33 +318,40 @@ object ProtectionGaps {
      * fingerprint: recorded ([Kind.CHANGED_WITH_SCREEN_LOCK]) and told at the next unlock. Done after
      * opening BioKey with a face or fingerprint, or on a phone without one, it's the owner's own.
      */
-    fun recordIfScreenLock(context: Context, change: Change, vararg args: String) {
+    fun recordIfScreenLock(context: Context, change: Change, vararg args: String): java.util.concurrent.Future<Long?> {
         val app = context.applicationContext
-        recorder.execute {
-            if (!SecurityEngine.ownerProven(app)) recordEvent(app, Kind.CHANGED_WITH_SCREEN_LOCK, change.encode(*args))
+        return recorder.submit<Long?> {
+            if (SecurityEngine.ownerProven(app)) null else recordEvent(app, Kind.CHANGED_WITH_SCREEN_LOCK, change.encode(*args))
         }
     }
 
     /**
-     * Undo of [change] moments after it ([recordIfScreenLock]): its record goes too, if it's still
-     * the newest one, so an undone change doesn't read as a real one. In order with the recording.
+     * Undo of a change moments after it: the record [recorded] for it ([recordIfScreenLock]) goes
+     * too, so an undone change doesn't read as a real one. That record and no other; in order with
+     * the recording.
      */
-    fun retract(context: Context, change: Change) {
+    fun retract(context: Context, recorded: java.util.concurrent.Future<Long?>) {
         val app = context.applicationContext
         recorder.execute {
+            val seq = runCatching { recorded.get() }.getOrNull() ?: return@execute
             val p = load(app) ?: return@execute
-            synchronized(lock) {
-                val newest = _gaps.value.maxByOrNull { it.seq } ?: return@execute
-                if (newest.kind == Kind.CHANGED_WITH_SCREEN_LOCK && Change.decode(newest.detail)?.first == change &&
-                    clock() - newest.to < 60_000L
-                ) save(p, _gaps.value - newest)
-            }
+            synchronized(lock) { _gaps.value.firstOrNull { it.seq == seq }?.let { save(p, _gaps.value - it) } }
+        }
+    }
+
+    /** The state record [seq] ended ([endEvent]) goes on: its switch-off was undone. */
+    fun reopenEvent(context: Context, seq: Long) {
+        val p = load(context) ?: return
+        synchronized(lock) {
+            val list = _gaps.value
+            if (list.none { it.seq == seq }) return
+            save(p, list.map { if (it.seq == seq) it.copy(to = it.from) else it })
         }
     }
 
     /** Where screen-lock changes are recorded: in order, off the main thread. */
     @VisibleForTesting
-    internal var recorder: java.util.concurrent.Executor =
+    internal var recorder: java.util.concurrent.ExecutorService =
         java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-records").apply { isDaemon = true } }
 
     private val recordedOnce = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())

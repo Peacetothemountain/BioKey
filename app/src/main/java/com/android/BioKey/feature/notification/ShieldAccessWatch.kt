@@ -20,6 +20,8 @@ object ShieldAccessWatch {
     private const val KEY_HAD_ACCESS = "had_access"
     /** The record of the access going, until it's back: then it says from when to when. */
     private const val KEY_OPEN_RECORD = "open_record"
+    /** The record a switch-off of hiding last ended, for its Undo. */
+    private const val KEY_ENDED_BY_SWITCH_OFF = "ended_by_switch_off"
 
     @VisibleForTesting
     internal var hasAccess: (Context) -> Boolean = BioKeyNotificationShieldService::isNotificationAccessGranted
@@ -36,6 +38,26 @@ object ShieldAccessWatch {
         private set
 
     private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-shield-access").apply { isDaemon = true } }
+
+    /**
+     * Hiding switched back on (Undo) still without access: the record the switch-off ended goes on,
+     * as if it had never been switched off. In order with [checkSoon].
+     */
+    fun undoSwitchOffSoon(context: Context) {
+        val app = context.applicationContext
+        worker.execute {
+            runCatching {
+                synchronized(this) {
+                    val p = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    val ended = p.getLong(KEY_ENDED_BY_SWITCH_OFF, 0L)
+                    if (ended > 0L && !hasAccess(app)) {
+                        ProtectionGaps.reopenEvent(app, ended)
+                        p.edit { putLong(KEY_OPEN_RECORD, ended).remove(KEY_ENDED_BY_SWITCH_OFF) }
+                    }
+                }
+            }
+        }
+    }
 
     /** [check], off the calling thread. */
     fun checkSoon(context: Context) {
@@ -67,8 +89,13 @@ object ShieldAccessWatch {
             // Switched off in BioKey: the owner's choice, nothing to tell.
             !shieldOn -> if (had || p.contains(KEY_OPEN_RECORD)) {
                 // An open record ends here: from when access went to when hiding was switched off.
-                p.getLong(KEY_OPEN_RECORD, 0L).takeIf { it > 0L }?.let { ProtectionGaps.endEvent(app, it) }
-                p.edit { putBoolean(KEY_HAD_ACCESS, false).remove(KEY_OPEN_RECORD) }
+                // Remembered, in case that switch-off is undone ([undoSwitchOffSoon]).
+                val open = p.getLong(KEY_OPEN_RECORD, 0L).takeIf { it > 0L }
+                open?.let { ProtectionGaps.endEvent(app, it) }
+                p.edit {
+                    putBoolean(KEY_HAD_ACCESS, false).remove(KEY_OPEN_RECORD)
+                    if (open != null) putLong(KEY_ENDED_BY_SWITCH_OFF, open) else remove(KEY_ENDED_BY_SWITCH_OFF)
+                }
             }
         }
     }

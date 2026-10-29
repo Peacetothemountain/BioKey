@@ -274,6 +274,8 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                 onChange = { on ->
                     confirmOwner(activity, res.getString(if (on) R.string.settings_confirm_biometric_only_on else R.string.settings_confirm_biometric_only_off)) {
                         vault.setBiometricOnly(on)
+                        // Within a day of a face or fingerprint change, the new one doesn't prove the owner: recorded then.
+                        if (!on) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.BIOMETRIC_ONLY_OFF)
                         // Home asks about locking Android's Settings again, even if put away before.
                         if (on) homePrefs(context).edit { remove(KEY_LOCK_SETTINGS_DISMISSED) }
                     }
@@ -353,10 +355,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             checked = notificationShieldEnabled,
             onChange = { on ->
                 if (!on) {
-                    vault.setNotificationShield(false)
-                    ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.SHIELD_OFF)
-                    // An open record of the access going ends now, not at the next look.
-                    ShieldAccessWatch.checkSoon(context)
+                    switchShieldOff(context, vault)
                 } else {
                     turnShieldOn()
                 }
@@ -392,7 +391,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                     }
                 }
                 // Switching them off deletes the record: not for someone who only knows the PIN.
-                if (on) apply() else confirmOwner(activity, res.getString(R.string.settings_confirm_failed_alerts_off), ::apply)
+                if (on) apply() else confirmOwner(activity, res.getString(R.string.settings_confirm_failed_alerts_off), silencesRecords = true, action = ::apply)
             }
         ),
         // For an owner who never uses the PIN: anyone else who knows it shows up.
@@ -405,7 +404,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             enabled = attemptAlerts,
             onChange = { on ->
                 if (on) UnlockAttempts.setScreenLockUnlocks(context, true)
-                else confirmOwner(activity, res.getString(R.string.settings_confirm_screen_lock_unlocks_off)) {
+                else confirmOwner(activity, res.getString(R.string.settings_confirm_screen_lock_unlocks_off), silencesRecords = true) {
                     UnlockAttempts.setScreenLockUnlocks(context, false)
                 }
             }
@@ -499,7 +498,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                     logEnabled = on
                 }
                 // Off deletes it, and with it a trace of who unlocked what.
-                if (on) apply() else confirmOwner(activity, res.getString(R.string.settings_confirm_log_off), ::apply)
+                if (on) apply() else confirmOwner(activity, res.getString(R.string.settings_confirm_log_off), silencesRecords = true, action = ::apply)
             }
         ),
         SettingItem(

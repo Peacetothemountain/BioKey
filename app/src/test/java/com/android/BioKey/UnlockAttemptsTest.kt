@@ -297,15 +297,29 @@ class UnlockAttemptsTest {
     }
 
     @Test
-    fun aReviewHeldBackTakesEffectOnceTheDayIsUp() {
+    fun aReviewDuringTheHoldDoesntQuietItLater() {
+        // Whoever made the change may be the one reviewing: after the day, it still needs a review.
         try {
             val seq = biometricChange()
             UnlockAttempts.markSeen(context)
-            assertTrue(UnlockAttempts.seenSeq(context) < seq)
             pass(25L * 60 * 60_000L)
-            // No new Review: the next unlock applies the one already made.
             UnlockAttempts.onUserPresent(context)
+            assertTrue(UnlockAttempts.seenSeq(context) < seq)
+            UnlockAttempts.markSeen(context)
             assertTrue(UnlockAttempts.seenSeq(context) >= seq)
+        } finally {
+            restoreGapClocks()
+        }
+    }
+
+    @Test
+    fun duringTheHoldItsHolding() {
+        try {
+            assertFalse(UnlockAttempts.holding(context))
+            biometricChange()
+            assertTrue(UnlockAttempts.holding(context))
+            pass(25L * 60 * 60_000L)
+            assertFalse(UnlockAttempts.holding(context))
         } finally {
             restoreGapClocks()
         }

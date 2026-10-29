@@ -161,8 +161,10 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   (or none is set up); otherwise Review offers "Mark reviewed", which asks for one. A face or
   fingerprint added or removed stays new for a day whatever Review says (if its age can't be told
   after a restart, until the phone has been on for a day), so whoever made the change can't use it
-  to quiet the alert; meanwhile nothing in Review can be cleared, and a review you made takes effect
-  by itself once the day is up.
+  to quiet the alert. Meanwhile a face or fingerprint doesn't count as you in BioKey (changes are
+  recorded as if made with the screen lock), and nothing that clears or silences BioKey's records
+  can be done: clearing them, turning the alerts or the diagnostic log off, deleting the log, or
+  stopping the reminders. After the day, review them again.
   Turning the alerts off deletes them; a restored backup that turns them off leaves them in place.
   Clearing them, or turning the alerts off, asks for your face or fingerprint where one is set up.
 - **Times app locking was off, and other changes:** when BioKey's protection was switched off or
@@ -193,8 +195,11 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   BioKey's own lock decisions about the apps you've locked, such as which locked app it covered or
   unlocked and why, naming them by package name (for example `com.example.bank`). It never names
   apps you haven't locked: going from a locked app to one of them is logged only as going to "a
-  helper app" or "another app". It also notes how long app locking was off and, when failed
-  unlock alerts are on, failed unlocks of locked apps (which app, not whose face or finger). It keeps at most 500 entries from the
+  helper app" or "another app". It also notes each kind of security activity as it's recorded
+  (how long app locking was off, a face or fingerprint added or removed, a change from a
+  screen-lock session), pauses and how long they last, and, when failed unlock alerts are on,
+  failed unlocks of locked apps and locked apps opened with the screen lock (which app, not whose
+  face or finger). It keeps at most 500 entries from the
   last 3 days, measured like failed unlocks: on the time since the phone started, and across a
   restart on the network's time. After a restart with no network time, older entries aren't
   deleted for their age, only to stay within 500. You can view and

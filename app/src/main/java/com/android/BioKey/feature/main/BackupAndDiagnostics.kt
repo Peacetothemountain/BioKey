@@ -540,7 +540,7 @@ internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
                 TextButton(onClick = {
                     confirmDelete = false
                     // It holds who unlocked what, and when: the owner's to delete.
-                    confirmOwner(logActivity, res.getString(R.string.diagnostics_delete_prompt)) { DiagnosticLog.clear() }
+                    confirmOwner(logActivity, res.getString(R.string.diagnostics_delete_prompt), silencesRecords = true) { DiagnosticLog.clear() }
                 }) { Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.prompt_cancel)) } }

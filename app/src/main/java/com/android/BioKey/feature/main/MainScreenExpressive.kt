@@ -407,6 +407,18 @@ fun MainScreenExpressive(
     val attemptsChosen by UnlockAttempts.chosen.collectAsStateWithLifecycle()
     val gaps by ProtectionGaps.gaps.collectAsStateWithLifecycle()
     var showActivity by rememberSaveable { mutableStateOf(false) }
+    /** Review's state, worked out (off the main thread) before it opens, so it opens as it stays. */
+    var reviewState by remember { mutableStateOf<ReviewState?>(null) }
+    fun openReview() {
+        scope.launch {
+            reviewState = withContext(Dispatchers.Default) {
+                ReviewState(ownerProven = SecurityEngine.ownerProven(context), heldUntil = UnlockAttempts.heldUntil(context))
+            }
+            showActivity = true
+        }
+    }
+    // Back after a rotation with Review open: work it out again.
+    LaunchedEffect(showActivity) { if (showActivity && reviewState == null) openReview() }
     var hasStrongBiometric by remember { mutableStateOf(SecurityEngine.lastKnownEnrolledStrongBiometric() ?: false) }
     var alertsMuted by remember { mutableStateOf(false) }
     val attemptsEnabled by UnlockAttempts.enabled.collectAsStateWithLifecycle()
@@ -425,7 +437,7 @@ fun MainScreenExpressive(
                 lockSettingsDismissed = homePrefs(context).getBoolean(KEY_LOCK_SETTINGS_DISMISSED, false)
                 remindersStopped = ProtectionAlerts.remindersStopped(context)
                 ShieldAccessWatch.check(context)
-                shieldWithoutAccess = ShieldAccessWatch.shieldWithoutAccess(context)
+                shieldWithoutAccess = ShieldAccessWatch.lastWithoutAccess ?: false
             }
         }
     }
@@ -662,7 +674,7 @@ fun MainScreenExpressive(
                             } else if (mode == ProtectionEngine.Mode.OFF) {
                                 TextButton(
                                     onClick = {
-                                        confirmOwner(activity, res.getString(R.string.home_confirm_stop_reminding)) {
+                                        confirmOwner(activity, res.getString(R.string.home_confirm_stop_reminding), silencesRecords = true) {
                                             ProtectionAlerts.stopReminders(context)
                                             remindersStopped = true
                                             BioKeyMessages.show(res.getString(R.string.home_reminders_stopped), Icons.Default.NotificationsOff)
@@ -689,23 +701,9 @@ fun MainScreenExpressive(
                     ) {
                         // Revoked on purpose: switching the shield off ends it (and is recorded like any switch-off).
                         TextButton(onClick = {
-                            // Shows locked apps' notifications in full: the owner's to do, like
-                            // switching it off in Settings.
-                            confirmOwner(activity, res.getString(R.string.home_confirm_shield_off)) {
-                                vault.setNotificationShield(false)
-                                shieldWithoutAccess = false
-                                ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.SHIELD_OFF)
-                                // The open record of the access going ends now, not at the next look.
-                                ShieldAccessWatch.checkSoon(context)
-                                BioKeyMessages.show(
-                                    res.getString(R.string.home_shield_turned_off), Icons.Default.NotificationsOff,
-                                    actionLabel = res.getString(R.string.common_undo)
-                                ) {
-                                    vault.setNotificationShield(true)
-                                    shieldWithoutAccess = true
-                                    ProtectionGaps.retract(context, ProtectionGaps.Change.SHIELD_OFF)
-                                }
-                            }
+                            // As the switch in Settings does: recorded from a screen-lock session, with Undo.
+                            switchShieldOff(context, vault)
+                            shieldWithoutAccess = false
                         }) { Text(stringResource(R.string.home_shield_no_access_off)) }
                         FilledTonalButton(onClick = {
                             // The explanation first, as everywhere notification access is asked for.
@@ -751,7 +749,7 @@ fun MainScreenExpressive(
                 item(key = "activity") {
                     // One urgent card on the page: not protecting outranks this.
                     SecurityActivityCard(
-                        attempts, gaps, ::attemptLabel, onReview = { showActivity = true }, modifier = Modifier.animateItem(),
+                        attempts, gaps, ::attemptLabel, onReview = ::openReview, modifier = Modifier.animateItem(),
                         urgent = securityActivityUrgent(attempts, gaps, seenUpTo) && !(look.action != null && vault.isSetupCompleted() && !(ProtectionEngine.isProtecting(mode) && !globalLockEnabled))
                     )
                 }
@@ -1009,48 +1007,56 @@ fun MainScreenExpressive(
         }
     }
 
-    if (showActivity && (attempts.isNotEmpty() || gaps.isNotEmpty())) {
-        // Reviewed: the notification has done its job (merely opening BioKey doesn't count). Not when
-        // BioKey was opened with the screen lock on a phone with a face or fingerprint: someone who
-        // only knows the PIN mustn't be able to quiet it.
-        var ownerProven by remember { mutableStateOf<Boolean?>(null) }
+    val review = reviewState
+    if (showActivity && review != null && (attempts.isNotEmpty() || gaps.isNotEmpty())) {
         // Only what the dialog shows counts as seen, not something that arrives while it's open.
         val shownUpTo = maxOf(attempts.maxOfOrNull { it.seq } ?: 0L, gaps.maxOfOrNull { it.seq } ?: 0L)
-        var heldUntil by remember { mutableStateOf<Long?>(null) }
+        // Reviewed: the notification has done its job (merely opening BioKey doesn't count). Not when
+        // the owner isn't proven ([SecurityEngine.ownerProven]): someone who only knows the PIN, or
+        // whose face or fingerprint was only just added, mustn't be able to quiet it.
         LaunchedEffect(shownUpTo) {
-            val proven = withContext(Dispatchers.Default) { SecurityEngine.ownerProven(context) }
-            ownerProven = proven
-            if (proven) withContext(Dispatchers.Default) { UnlockAttempts.markSeen(context, shownUpTo) }
-            heldUntil = withContext(Dispatchers.Default) { UnlockAttempts.heldUntil(context) }
+            if (review.ownerProven) withContext(Dispatchers.Default) { UnlockAttempts.markSeen(context, shownUpTo) }
         }
         SecurityActivityDialog(
             attempts = attempts,
             gaps = gaps,
             labelOf = ::attemptLabel,
-            heldUntil = heldUntil,
-            onMarkReviewed = if (ownerProven == false) {
+            heldUntil = review.heldUntil,
+            openedWithScreenLock = !review.ownerProven && review.heldUntil == null,
+            onMarkReviewed = if (!review.ownerProven) {
                 {
                     confirmOwner(activity, res.getString(R.string.home_confirm_mark_reviewed)) {
-                        UnlockAttempts.markSeen(context, shownUpTo)
                         showActivity = false
+                        scope.launch {
+                            withContext(Dispatchers.Default) { UnlockAttempts.markSeen(context, shownUpTo) }
+                            // A face or fingerprint change stays new however it's reviewed: say so.
+                            review.heldUntil?.let { until ->
+                                BioKeyMessages.show(res.getString(R.string.home_reviewed_held, attemptTime(context, until)), Icons.Default.GppMaybe)
+                            }
+                        }
                     }
                 }
             } else null,
             onClear = {
                 // The record of who tried: a face or fingerprint to clear it, not just the screen lock.
-                confirmOwner(activity, res.getString(R.string.home_confirm_clear_activity)) {
-                    // Proven just now: what stays (a face or fingerprint change) counts as reviewed.
-                    UnlockAttempts.markSeen(context, shownUpTo)
-                    val oldAttempts = UnlockAttempts.clear(context, shownUpTo)
-                    val oldGaps = ProtectionGaps.clear(context, shownUpTo)
+                confirmOwner(activity, res.getString(R.string.home_confirm_clear_activity), silencesRecords = true) {
                     showActivity = false
-                    BioKeyMessages.show(res.getString(R.string.home_cleared), Icons.Default.Delete, actionLabel = res.getString(R.string.common_undo)) {
-                        UnlockAttempts.restore(context, oldAttempts)
-                        ProtectionGaps.restore(context, oldGaps)
+                    scope.launch {
+                        val (oldAttempts, oldGaps) = withContext(Dispatchers.Default) {
+                            UnlockAttempts.markSeen(context, shownUpTo)
+                            UnlockAttempts.clear(context, shownUpTo) to ProtectionGaps.clear(context, shownUpTo)
+                        }
+                        // Said only when something went.
+                        if (oldAttempts.isNotEmpty() || oldGaps.isNotEmpty()) {
+                            BioKeyMessages.show(res.getString(R.string.home_cleared), Icons.Default.Delete, actionLabel = res.getString(R.string.common_undo)) {
+                                UnlockAttempts.restore(context, oldAttempts)
+                                ProtectionGaps.restore(context, oldGaps)
+                            }
+                        }
                     }
                 }
             },
-            onDismiss = { showActivity = false }
+            onDismiss = { showActivity = false; reviewState = null }
         )
     }
 
@@ -1544,3 +1550,25 @@ private fun EmptyState(text: String, actionLabel: String?, onAction: () -> Unit)
 /** The home screen's own small memory: cards the owner put away. */
 internal fun homePrefs(context: Context) = context.getSharedPreferences("biokey_home", Context.MODE_PRIVATE)
 internal const val KEY_LOCK_SETTINGS_DISMISSED = "lock_settings_dismissed"
+
+/** What Review opens with: whether the owner is proven, and until when a face or fingerprint change is held. */
+private data class ReviewState(val ownerProven: Boolean, val heldUntil: Long?)
+
+/**
+ * Hiding switched off, from home or Settings alike: recorded from a screen-lock session, and the
+ * record of its access going (if open) ends now. Undo puts both back as they were.
+ */
+internal fun switchShieldOff(context: Context, vault: SecurityVault) {
+    val res = context.resources
+    vault.setNotificationShield(false)
+    val recorded = ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.SHIELD_OFF)
+    ShieldAccessWatch.checkSoon(context)
+    BioKeyMessages.show(
+        res.getString(R.string.home_shield_turned_off), Icons.Default.NotificationsOff,
+        actionLabel = res.getString(R.string.common_undo)
+    ) {
+        vault.setNotificationShield(true)
+        ProtectionGaps.retract(context, recorded)
+        ShieldAccessWatch.undoSwitchOffSoon(context)
+    }
+}

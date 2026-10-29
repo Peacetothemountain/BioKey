@@ -76,10 +76,13 @@ object DiagnosticLog {
     fun init(context: Context) {
         val f = File(context.filesDir, FILE_NAME)
         io.execute {
-            boot = Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, 0)
-            // Logged before this was known (this process's start): they're from this boot.
+            val count = Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, 0)
+            // Set and patched under the entries' lock, which log() stamps under: no entry logged
+            // meanwhile can miss both.
             synchronized(entries) {
-                for (i in entries.indices) if (entries[i].boot == -1 && entries[i].elapsed > 0L) entries[i] = entries[i].copy(boot = boot)
+                boot = count
+                // Logged before this was known (this process's start): they're from this boot.
+                for (i in entries.indices) if (entries[i].boot == -1 && entries[i].elapsed > 0L) entries[i] = entries[i].copy(boot = count)
             }
             enabled = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, true)
             val saved = runCatching {
@@ -109,11 +112,12 @@ object DiagnosticLog {
         EngineTrace.record("o.log", text)
         if (!enabled) return
         // Stamped on the clocks it's aged on, which a changed date doesn't move.
-        val entry = Entry(
-            TrustedClock.now(), text.replace('\n', ' '),
-            SystemClock.elapsedRealtime(), boot, TrustedClock.onNetworkTime()
-        )
+        val at = TrustedClock.now()
+        val net = TrustedClock.onNetworkTime()
+        val since = SystemClock.elapsedRealtime()
+        val entry: Entry
         synchronized(entries) {
+            entry = Entry(at, text.replace('\n', ' '), since, boot, net)
             entries.addLast(entry)
             while (entries.size > MAX_ENTRIES) entries.removeFirst()
             val number = ++logged

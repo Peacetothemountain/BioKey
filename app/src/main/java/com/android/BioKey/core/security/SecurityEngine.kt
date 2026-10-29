@@ -53,11 +53,7 @@ class SecurityEngine private constructor() {
         fun lastKnownStrongBiometric(): Boolean? = lastStrongStatus?.let { it == BiometricManager.BIOMETRIC_SUCCESS }
 
         /** [hasEnrolledStrongBiometric] as last asked, without asking; null if never asked in this process. */
-        @SuppressLint("InlinedApi")
-        fun lastKnownEnrolledStrongBiometric(): Boolean? = lastStrongStatus?.let {
-            it == BiometricManager.BIOMETRIC_SUCCESS || it == BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE ||
-                it == BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED || it == BiometricManager.BIOMETRIC_ERROR_NOT_ENABLED_FOR_APPS
-        }
+        fun lastKnownEnrolledStrongBiometric(): Boolean? = lastStrongStatus?.let(::isEnrolled)
 
         /**
          * A strong (Class 3) face or fingerprint can be used right now: what prompts and "Face or
@@ -72,13 +68,16 @@ class SecurityEngine private constructor() {
          * their removal.
          */
         @SuppressLint("InlinedApi")
-        fun hasEnrolledStrongBiometric(context: Context): Boolean = strongStatus(context).let {
-            it == BiometricManager.BIOMETRIC_SUCCESS || it == BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE ||
-                it == BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED ||
-                // Android 15+: "Use for apps" switched off in Android's settings. Still set up: that
-                // switch mustn't be a way round BioKey's records and gates.
-                it == BiometricManager.BIOMETRIC_ERROR_NOT_ENABLED_FOR_APPS
-        }
+        fun hasEnrolledStrongBiometric(context: Context): Boolean = isEnrolled(strongStatus(context))
+
+        /**
+         * Set up, usable or not: a sensor fault, an update pending, or (Android 15+) "Use for apps"
+         * switched off in Android's settings, which mustn't be a way round BioKey's records and gates.
+         */
+        @SuppressLint("InlinedApi")
+        private fun isEnrolled(status: Int?): Boolean =
+            status == BiometricManager.BIOMETRIC_SUCCESS || status == BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE ||
+                status == BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED || status == BiometricManager.BIOMETRIC_ERROR_NOT_ENABLED_FOR_APPS
 
         /**
          * What's done in BioKey now is the owner's own doing, as far as BioKey can tell: it was
@@ -86,7 +85,10 @@ class SecurityEngine private constructor() {
          * all there is). Otherwise it may be someone who only knows the PIN.
          */
         fun ownerProven(context: Context): Boolean =
-            INSTANCE.ownAppOpenedWithBiometric || !hasEnrolledStrongBiometric(context)
+            !hasEnrolledStrongBiometric(context) ||
+                // Within a day of a face or fingerprint added or removed, the new one may be whoever
+                // made the change: it doesn't count ([UnlockAttempts.holding]).
+                (INSTANCE.ownAppOpenedWithBiometric && !UnlockAttempts.holding(context))
 
         /**
          * "Face or fingerprint only" is on and can be honoured: then prompts don't offer the screen

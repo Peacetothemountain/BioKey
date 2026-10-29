@@ -117,10 +117,10 @@ internal fun ActionCard(
     ) {
         Column(Modifier.padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = if (sideBySide) 16.dp else 8.dp)) {
             Row(verticalAlignment = if (sideBySide) Alignment.CenterVertically else Alignment.Top) {
-                Box(Modifier.size(40.dp).background(iconContainer, CircleShape), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(CARD_ICON_SIZE).background(iconContainer, CircleShape), contentAlignment = Alignment.Center) {
                     Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(22.dp))
                 }
-                Spacer(Modifier.width(16.dp))
+                Spacer(Modifier.width(CARD_ICON_GAP))
                 Column(Modifier.weight(1f).padding(end = 4.dp)) {
                     // Urgent ones are announced as they appear, not only when reached.
                     Text(
@@ -143,7 +143,7 @@ internal fun ActionCard(
                 CompositionLocalProvider(LocalContentColor provides content) {
                     // Wrapping, so two buttons at large text go on two lines instead of squeezing.
                     FlowRow(
-                        Modifier.fillMaxWidth().padding(start = 56.dp, top = 8.dp),
+                        Modifier.fillMaxWidth().padding(start = CARD_ICON_SIZE + CARD_ICON_GAP, top = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                         itemVerticalAlignment = Alignment.CenterVertically,
                         content = actions
@@ -266,13 +266,15 @@ internal fun UnlockedNowCard(
 
 /** "2:14 PM" today, "Yesterday, 2:14 PM", else "Oct 27, 2:14 PM". */
 internal fun attemptTime(context: Context, at: Long): String {
-    val time = DateUtils.formatDateTime(context, at, DateUtils.FORMAT_SHOW_TIME)
+    // "Oct 30" and "3:02 PM" each stay on one line.
+    fun unbroken(text: String) = text.replace(' ', ' ')
+    val time = unbroken(DateUtils.formatDateTime(context, at, DateUtils.FORMAT_SHOW_TIME))
     return when {
         DateUtils.isToday(at) -> time
         DateUtils.isToday(at + DateUtils.DAY_IN_MILLIS) -> context.getString(R.string.card_time_yesterday, time)
         else -> context.getString(
             R.string.card_time_date,
-            DateUtils.formatDateTime(context, at, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR),
+            unbroken(DateUtils.formatDateTime(context, at, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR)),
             time
         )
     }
@@ -315,7 +317,9 @@ internal fun gapLine(context: Context, gap: ProtectionGaps.Gap): String {
 /** "3:02 – 3:10 PM", with the date when it isn't today. */
 private fun timeRange(context: Context, gap: ProtectionGaps.Gap): String {
     val day = if (DateUtils.isToday(gap.to)) 0 else DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR
+    // The dash binds both ways: a range never breaks around it.
     return DateUtils.formatDateRange(context, gap.from, gap.to, DateUtils.FORMAT_SHOW_TIME or day)
+        .replace(Regex("\\s([\u2013-])\\s"), "\u00A0$1\u00A0")
 }
 
 /** A stored change ([ProtectionGaps.Change]) in words: its arguments are names, a count or a delay. */
@@ -424,22 +428,30 @@ internal fun SecurityActivityDialog(
     /** BioKey was opened with the screen lock: reviewing takes a face or fingerprint, here. */
     onMarkReviewed: (() -> Unit)? = null,
     /** A face or fingerprint change stays new until then ([UnlockAttempts.heldUntil]), whatever Review does. */
-    heldUntil: Long? = null
+    heldUntil: Long? = null,
+    /** Opened with the screen lock (no hold): reviewing takes a face or fingerprint. */
+    openedWithScreenLock: Boolean = onMarkReviewed != null && heldUntil == null
 ) {
     val context = LocalContext.current
     val note = MaterialTheme.colorScheme.onSurfaceVariant
     val anyNew = securityActivityUrgent(attempts, gaps, UnlockAttempts.seen.collectAsStateWithLifecycle().value)
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(if (anyNew) Icons.Default.GppBad else Icons.Default.GppMaybe, contentDescription = null) },
+        icon = {
+            Icon(
+                if (anyNew) Icons.Default.GppBad else Icons.Default.GppMaybe, contentDescription = null,
+                tint = if (anyNew) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary
+            )
+        },
         title = { Text(stringResource(R.string.activity_title)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 ProtectDialogWindow()
                 // At most one note before the records: why they stay new.
                 val heading = when {
-                    onMarkReviewed != null -> stringResource(R.string.card_activity_screen_lock_note)
+                    // The hold explains everything at once: why they stay new, why nothing clears.
                     heldUntil != null -> stringResource(R.string.activity_held_until, attemptTime(context, heldUntil))
+                    openedWithScreenLock -> stringResource(R.string.card_activity_screen_lock_note)
                     else -> null
                 }
                 if (heading != null) {
@@ -547,3 +559,6 @@ private fun SectionLabel(text: String) {
     )
 }
 
+/** An action card's icon, and the gap after it: wrapped actions line up with the text after both. */
+private val CARD_ICON_SIZE = 40.dp
+private val CARD_ICON_GAP = 16.dp
