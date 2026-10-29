@@ -26,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -160,7 +161,7 @@ class MainActivity : ComponentActivity() {
                             // fingerprint: maybe not the owner. Recorded, and told at the next unlock.
                             ProtectionGaps.recordIfScreenLock(this@MainActivity, "Protection paused")
                             vault.pauseProtection(duration)
-                            BioKeyMessages.show("Protection paused", Icons.Default.PauseCircle)
+                            BioKeyMessages.show(getString(R.string.home_protection_paused), Icons.Default.PauseCircle)
                         },
                         onDismiss = { pauseRequested = false }
                     )
@@ -268,7 +269,8 @@ class MainActivity : ComponentActivity() {
         if (!isAuthenticated) return
         LockStateTracker.lockOwnApp()
         isAuthenticated = false
-        lockMessage = "Locked after ${LockStateTracker.OWN_APP_IDLE_MS / 60_000} minutes without activity"
+        val minutes = (LockStateTracker.OWN_APP_IDLE_MS / 60_000).toInt()
+        lockMessage = resources.getQuantityString(R.plurals.activity_locked_idle, minutes, minutes)
     }
 
     /** Starts or stops compatibility mode as needed, then records which engine protects apps. */
@@ -288,7 +290,7 @@ class MainActivity : ComponentActivity() {
             activity = this,
             appName = getString(R.string.brand_name),
             packageName = packageName,
-            promptTitle = "Confirm identity to finish setup",
+            promptTitle = getString(R.string.activity_setup_prompt_title),
             onSuccess = {
                 isSetupAuthenticating = false
                 setupAuthError = null
@@ -307,8 +309,8 @@ class MainActivity : ComponentActivity() {
                 val noScreenLock = code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL || code == SecurityEngine.ERROR_NO_BIOMETRICS
                 setupNeedsScreenLock = noScreenLock
                 setupAuthError = when {
-                    SecurityEngine.isUserCancel(code) -> "Biometric confirmation was cancelled. Tap to retry."
-                    noScreenLock -> "Set a screen lock (PIN, pattern, or password) in system settings first."
+                    SecurityEngine.isUserCancel(code) -> getString(R.string.activity_setup_cancelled)
+                    noScreenLock -> getString(R.string.activity_setup_needs_screen_lock)
                     else -> message.toString()
                 }
             }
@@ -337,7 +339,7 @@ class MainActivity : ComponentActivity() {
                     lockMessage = when {
                         SecurityEngine.isUserCancel(code) -> null
                         code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL || code == SecurityEngine.ERROR_NO_BIOMETRICS ->
-                            "Set a screen lock (PIN, pattern, or password) in system settings to use BioKey."
+                            getString(R.string.activity_needs_screen_lock)
                         else -> message.toString()
                     }
                 }
@@ -351,15 +353,15 @@ class MainActivity : ComponentActivity() {
 @Composable
 internal fun PauseProtectionDialog(onPause: (Long?) -> Unit, onDismiss: () -> Unit) {
     val options = listOf(
-        Triple(Icons.Default.Timer, "For 15 minutes", 15 * 60_000L),
-        Triple(Icons.Default.Schedule, "For 1 hour", 60 * 60_000L),
-        Triple(Icons.Default.PauseCircle, "Until I turn it back on", null)
+        Triple(Icons.Default.Timer, stringResource(R.string.activity_pause_15_minutes), 15 * 60_000L),
+        Triple(Icons.Default.Schedule, stringResource(R.string.activity_pause_1_hour), 60 * 60_000L),
+        Triple(Icons.Default.PauseCircle, stringResource(R.string.activity_pause_until_resumed), null)
     )
     ModalBottomSheet(onDismissRequest = onDismiss) {
         ProtectDialogWindow()
         Column(Modifier.fillMaxWidth().padding(bottom = 28.dp)) {
             Text(
-                "Pause protection",
+                stringResource(R.string.home_pause_protection),
                 style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier
                     .padding(horizontal = 28.dp)
@@ -367,7 +369,7 @@ internal fun PauseProtectionDialog(onPause: (Long?) -> Unit, onDismiss: () -> Un
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                "Locked apps open without a check while paused. Timed pauses resume by themselves.",
+                stringResource(R.string.activity_pause_text),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 28.dp)

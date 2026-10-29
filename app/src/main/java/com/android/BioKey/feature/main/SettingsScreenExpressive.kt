@@ -66,7 +66,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.paneTitle
@@ -137,6 +139,7 @@ internal class NotificationAccessTrip : ViewModel() {
 @Composable
 fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> Unit, onPauseRequested: () -> Unit) {
     val context = LocalContext.current
+    val res = LocalResources.current
     val view = LocalView.current
     val vault = remember { SecurityVault.getInstance(context) }
 
@@ -189,7 +192,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             if (!notifListenerActive) {
                 // The action may run after a rotation, once this screen and its activity are gone.
                 val appContext = context.applicationContext
-                BioKeyMessages.show("Notification access is still off", Icons.Default.NotificationsOff, actionLabel = "Open settings") {
+                BioKeyMessages.show(res.getString(R.string.settings_notification_access_still_off), Icons.Default.NotificationsOff, actionLabel = res.getString(R.string.settings_open_settings)) {
                     notificationAccessTrip.awaiting = true
                     IntentNavigationHelper.openNotificationListenerSettings(if (activity.isDestroyed) appContext else activity)
                 }
@@ -216,18 +219,18 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         add(
             SettingItem(
                 icon = Icons.Default.Shield,
-                title = "Lock apps",
+                title = stringResource(R.string.settings_lock_apps_title),
                 subtitle = when {
-                    mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP -> "Advanced Protection is on · tap to set up compatibility mode"
+                    mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP -> stringResource(R.string.settings_lock_apps_needs_compat_setup)
                     mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING ->
-                        "Not running · BioKey's accessibility service is on but stopped: turn it off and on again"
-                    !protecting -> "Off · turn on BioKey in Accessibility settings"
+                        stringResource(R.string.settings_lock_apps_not_running)
+                    !protecting -> stringResource(R.string.settings_lock_apps_off)
                     !globalLockEnabled && pausedUntil > System.currentTimeMillis() ->
-                        "Paused until " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil))
-                    !globalLockEnabled -> "Paused"
-                    mode == ProtectionEngine.Mode.COMPATIBILITY -> "On · compatibility mode (works with Advanced Protection)"
-                    biometricOnly && strongBiometric -> "Locked apps need your face or fingerprint"
-                    else -> "Locked apps need your face, fingerprint or screen lock"
+                        stringResource(R.string.home_paused_until, android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil)))
+                    !globalLockEnabled -> stringResource(R.string.common_paused)
+                    mode == ProtectionEngine.Mode.COMPATIBILITY -> stringResource(R.string.settings_lock_apps_compat)
+                    biometricOnly && strongBiometric -> stringResource(R.string.settings_lock_apps_biometric_only)
+                    else -> stringResource(R.string.settings_lock_apps_any)
                 },
                 checked = globalLockEnabled && protecting,
                 onChange = { on ->
@@ -246,14 +249,14 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             // Only where a strong face or fingerprint is set up: without one, nothing could unlock.
             if (strongBiometric || biometricOnly) SettingItem(
                 icon = Icons.Default.Fingerprint,
-                title = "Face or fingerprint only",
-                subtitle = if (biometricOnly && !strongBiometric) "On, but no face or fingerprint is set up: your screen lock works meanwhile"
-                else "Locked apps and BioKey won't take your PIN, so someone who knows it can't open them",
+                title = stringResource(R.string.settings_biometric_only_title),
+                subtitle = if (biometricOnly && !strongBiometric) stringResource(R.string.settings_biometric_only_none_set_up)
+                else stringResource(R.string.settings_biometric_only_summary),
                 checked = biometricOnly,
                 // Either way, a face or fingerprint first: proof it works before relying on it, and no
                 // switching it off for someone who only knows the PIN.
                 onChange = { on ->
-                    confirmOwner(activity, if (on) "Use only your face or fingerprint" else "Allow your screen lock again") {
+                    confirmOwner(activity, res.getString(if (on) R.string.settings_confirm_biometric_only_on else R.string.settings_confirm_biometric_only_off)) {
                         vault.setBiometricOnly(on)
                         // Home asks about locking Android's Settings again, even if put away before.
                         if (on) homePrefs(context).edit { remove(KEY_LOCK_SETTINGS_DISMISSED) }
@@ -263,27 +266,27 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
             // A suggestion, the same as home's card: where face or fingerprint only is on.
             if (biometricOnly && strongBiometric && SETTINGS_PACKAGE !in lockedApps) SettingItem(
                 icon = Icons.Default.Lock,
-                title = "Lock Android Settings too",
-                subtitle = "With your PIN, someone could add their own fingerprint there · tap to lock it",
+                title = stringResource(R.string.settings_lock_settings_title),
+                subtitle = stringResource(R.string.settings_lock_settings_summary),
                 onClick = {
                     val undo = vault.lockSettingsApp()
-                    BioKeyMessages.show("Android Settings locked", Icons.Default.Lock, actionLabel = "Undo", onAction = undo)
+                    BioKeyMessages.show(res.getString(R.string.settings_lock_settings_done), Icons.Default.Lock, actionLabel = res.getString(R.string.common_undo), onAction = undo)
                 }
             ) else null
         ))
         add(
             SettingItem(
                 icon = Icons.Default.LockClock,
-                title = "Default re-lock delay",
-                subtitle = "${defaultTimeout.shortLabel} · unless a profile has its own",
+                title = stringResource(R.string.settings_relock_title),
+                subtitle = stringResource(R.string.settings_relock_summary, stringResource(defaultTimeout.shortLabelRes)),
                 onClick = { showRelockSheet = true }
             )
         )
         add(
             SettingItem(
                 icon = Icons.Default.AddModerator,
-                title = "Offer to lock new apps",
-                subtitle = "After you install an app that auto-sort doesn't lock",
+                title = stringResource(R.string.settings_new_apps_title),
+                subtitle = stringResource(R.string.settings_new_apps_summary),
                 checked = newAppOffers,
                 onChange = { on ->
                     NewAppSuggestions.setEnabled(context, on)
@@ -294,9 +297,9 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         add(
             SettingItem(
                 icon = if (notifications.allowed) Icons.Default.Notifications else Icons.Default.NotificationsOff,
-                title = "Protection alerts",
-                subtitle = if (notifications.allowed) "Tells you if app locking stops, and afterwards when it was off"
-                else "Off: BioKey can't tell you if app locking stops · tap to allow notifications",
+                title = stringResource(R.string.alerts_channel_name),
+                subtitle = if (notifications.allowed) stringResource(R.string.settings_alerts_on)
+                else stringResource(R.string.settings_alerts_off),
                 onClick = if (notifications.allowed) null else notifications::requestOrOpenSettings
             )
         )
@@ -305,14 +308,14 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     val privacy = listOfNotNull(
         SettingItem(
             icon = Icons.Default.NotificationsOff,
-            title = "Hide notification content",
+            title = stringResource(R.string.settings_hide_notifications_title),
             subtitle = when {
-                !notificationShieldEnabled -> "Locked apps' notifications show only that something arrived, until you unlock the app"
-                !notifListenerActive -> "On, but needs notification access · tap to grant"
+                !notificationShieldEnabled -> stringResource(R.string.settings_hide_notifications_off)
+                !notifListenerActive -> stringResource(R.string.settings_hide_notifications_needs_access)
                 notificationShieldEnabled && !notifications.allowed ->
-                    "Locked apps' notifications are hidden, with no stand-in until you allow BioKey's notifications"
-                notificationShieldEnabled -> "Locked apps' notifications only say that something arrived"
-                else -> "Notifications from locked apps show in full"
+                    stringResource(R.string.settings_hide_notifications_no_stand_in)
+                notificationShieldEnabled -> stringResource(R.string.settings_hide_notifications_on)
+                else -> stringResource(R.string.settings_hide_notifications_full)
             },
             checked = notificationShieldEnabled && notifListenerActive,
             onChange = { on ->
@@ -336,35 +339,35 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         ),
         SettingItem(
             icon = Icons.Default.GppBad,
-            title = "Failed unlock alerts",
-            subtitle = "When a face or fingerprint fails on a locked app. Kept until you've seen them, then 7 days; off deletes them",
+            title = stringResource(R.string.settings_failed_alerts_title),
+            subtitle = stringResource(R.string.settings_failed_alerts_summary),
             checked = attemptAlerts,
             onChange = { on ->
                 fun apply() {
                     val removed = UnlockAttempts.setEnabled(context, on)
                     if (on && !notifications.allowed) notifications.request()
                     if (removed.isNotEmpty()) {
-                        BioKeyMessages.show("Failed unlocks deleted", Icons.Default.Delete, actionLabel = "Undo") {
+                        BioKeyMessages.show(res.getString(R.string.settings_failed_alerts_deleted), Icons.Default.Delete, actionLabel = res.getString(R.string.common_undo)) {
                             UnlockAttempts.setEnabled(context, true)
                             UnlockAttempts.restore(context, removed)
                         }
                     }
                 }
                 // Switching them off deletes the record: not for someone who only knows the PIN.
-                if (on) apply() else confirmOwner(activity, "Turn off failed unlock alerts", ::apply)
+                if (on) apply() else confirmOwner(activity, res.getString(R.string.settings_confirm_failed_alerts_off), ::apply)
             }
         ),
         // For an owner who never uses the PIN: anyone else who knows it shows up.
         SettingItem(
             icon = Icons.Default.Password,
-            title = "Also note screen lock unlocks",
-            subtitle = if (attemptAlerts) "Each locked app opened with your PIN instead of a face or fingerprint"
-            else "Needs failed unlock alerts",
+            title = stringResource(R.string.settings_screen_lock_unlocks_title),
+            subtitle = if (attemptAlerts) stringResource(R.string.settings_screen_lock_unlocks_summary)
+            else stringResource(R.string.settings_screen_lock_unlocks_needs_alerts),
             checked = screenLockUnlocks && attemptAlerts,
             enabled = attemptAlerts,
             onChange = { on ->
                 if (on) UnlockAttempts.setScreenLockUnlocks(context, true)
-                else confirmOwner(activity, "Stop noting screen lock unlocks") {
+                else confirmOwner(activity, res.getString(R.string.settings_confirm_screen_lock_unlocks_off)) {
                     UnlockAttempts.setScreenLockUnlocks(context, false)
                 }
             }
@@ -372,17 +375,17 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         // Not in the Play build (see SecurityVault.selfProtectionAvailable).
         if (SecurityVault.selfProtectionAvailable) SettingItem(
             icon = Icons.Default.AdminPanelSettings,
-            title = "Protect BioKey's settings",
+            title = stringResource(R.string.settings_self_protection_title),
             subtitle = when {
                 mode == ProtectionEngine.Mode.ACCESSIBILITY ->
-                    "Optional. Ask for your authentication before BioKey can be switched off, force-stopped or uninstalled"
+                    stringResource(R.string.settings_self_protection_optional)
                 mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING && selfProtectionEnabled ->
-                    "On · works once the Accessibility service runs again"
-                mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> "Optional. Needs the Accessibility service, which isn't running"
-                mode == ProtectionEngine.Mode.OFF && selfProtectionEnabled -> "On · works once the Accessibility service is on"
-                mode == ProtectionEngine.Mode.OFF -> "Optional. Needs the Accessibility service, which is off"
-                selfProtectionEnabled -> "On, but inactive in compatibility mode · tap to turn off"
-                else -> "Not available in compatibility mode"
+                    stringResource(R.string.settings_self_protection_on_not_running)
+                mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> stringResource(R.string.settings_self_protection_needs_running)
+                mode == ProtectionEngine.Mode.OFF && selfProtectionEnabled -> stringResource(R.string.settings_self_protection_on_service_off)
+                mode == ProtectionEngine.Mode.OFF -> stringResource(R.string.settings_self_protection_needs_service)
+                selfProtectionEnabled -> stringResource(R.string.settings_self_protection_inactive_compat)
+                else -> stringResource(R.string.settings_self_protection_unavailable_compat)
             },
             // Shows what's saved, so it's never on without the user seeing it. In compatibility
             // mode it can only be turned off; turning it on needs the Accessibility service.
@@ -409,8 +412,8 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
         if (selfProtectionEnabled && mode == ProtectionEngine.Mode.ACCESSIBILITY && shortcutAssigned) {
             SettingItem(
                 icon = Icons.Default.Warning,
-                title = "An accessibility shortcut can switch BioKey off",
-                subtitle = "Without authentication. Remove it in Accessibility > $serviceLabel > shortcut · tap to open",
+                title = stringResource(R.string.settings_shortcut_warning_title),
+                subtitle = stringResource(R.string.settings_shortcut_warning_summary, serviceLabel),
                 warning = true,
                 onClick = { IntentNavigationHelper.openAccessibilitySettings(context) }
             )
@@ -419,8 +422,8 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     val profiles = listOf(
         SettingItem(
             icon = Icons.Default.AutoAwesome,
-            title = "Auto-sort into profiles",
-            subtitle = "Puts recognised banking, social and work apps into matching profiles, which locks them",
+            title = stringResource(R.string.settings_auto_sort_title),
+            subtitle = stringResource(R.string.settings_auto_sort_summary),
             checked = autoSortProfiles,
             onChange = vault::setAutoSortProfilesEnabled
         )
@@ -430,14 +433,14 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     val backup = listOf(
         SettingItem(
             icon = Icons.Default.Save,
-            title = "Back up settings",
-            subtitle = "Your locked apps, profiles and settings, in a file sealed with a password",
+            title = stringResource(R.string.backup_title),
+            subtitle = stringResource(R.string.settings_back_up_summary),
             onClick = backupActions.backUp
         ),
         SettingItem(
             icon = Icons.Default.Restore,
-            title = "Restore from a backup",
-            subtitle = "After a new phone or a reinstall: replaces your locked apps, profiles and settings",
+            title = stringResource(R.string.backup_restore_title),
+            subtitle = stringResource(R.string.settings_restore_summary),
             onClick = backupActions.restore
         )
     )
@@ -449,8 +452,8 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     val diagnostics = listOf(
         SettingItem(
             icon = Icons.Default.BugReport,
-            title = "Diagnostic log",
-            subtitle = "BioKey's lock decisions about your locked apps, kept 3 days on this phone, to trace a problem",
+            title = stringResource(R.string.diagnostics_title),
+            subtitle = stringResource(R.string.settings_log_summary),
             checked = logEnabled,
             onChange = { on ->
                 fun apply() {
@@ -458,13 +461,14 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                     logEnabled = on
                 }
                 // Off deletes it, and with it a trace of who unlocked what.
-                if (on) apply() else confirmOwner(activity, "Turn off the diagnostic log", ::apply)
+                if (on) apply() else confirmOwner(activity, res.getString(R.string.settings_confirm_log_off), ::apply)
             }
         ),
         SettingItem(
             icon = Icons.Default.Description,
-            title = "View diagnostic log",
-            subtitle = if (logCount == 0) "Nothing recorded yet" else "$logCount entries from the last 3 days · share it when reporting a problem",
+            title = stringResource(R.string.settings_view_log_title),
+            subtitle = if (logCount == 0) stringResource(R.string.diagnostics_empty)
+            else pluralStringResource(R.plurals.settings_view_log_entries, logCount, logCount),
             onClick = { showLog = true }
         )
     )
@@ -474,35 +478,36 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
     val about = listOf(
         SettingItem(
             icon = Icons.Default.Policy,
-            title = "Privacy policy",
-            subtitle = "What BioKey sees, keeps, and never does · opens in your browser",
+            title = stringResource(R.string.settings_privacy_policy_title),
+            subtitle = stringResource(R.string.settings_privacy_policy_summary),
             onClick = { openPage(IntentNavigationHelper.PRIVACY_POLICY_URL) }
         ),
         SettingItem(
             icon = Icons.AutoMirrored.Filled.HelpOutline,
-            title = "Help and support",
-            subtitle = "Answers to common questions, and how to reach NB Designs · version ${BuildConfig.VERSION_NAME}",
+            title = stringResource(R.string.settings_help_title),
+            subtitle = stringResource(R.string.settings_help_summary, BuildConfig.VERSION_NAME),
             onClick = { openPage(IntentNavigationHelper.SUPPORT_URL) }
         )
     )
 
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
+    val settingsTitle = stringResource(R.string.settings_title)
     PredictiveBackPage(onNavigateBack) {
         Scaffold(
             modifier = Modifier
                 .fillMaxSize()
                 // Screen readers announce it as it slides in over the home screen.
-                .semantics { paneTitle = "Settings" }
+                .semantics { paneTitle = settingsTitle }
                 // Opaque to touches: taps on empty space must not reach the home screen underneath.
                 .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
                 .rejectObscuredTouches()
                 .nestedScroll(scrollBehavior.nestedScrollConnection),
             topBar = {
                 LargeTopAppBar(
-                    title = { Text("Settings") },
+                    title = { Text(settingsTitle) },
                     navigationIcon = {
                         IconButton(onClick = onNavigateBack, modifier = Modifier.springPress()) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.settings_back))
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -522,26 +527,24 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
                     .widthIn(max = MaxContentWidth),
                 contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = 32.dp + navBottom)
             ) {
-                item { SettingsSection("App lock", appLock) { Haptics.toggle(view, it) } }
+                item { SettingsSection(stringResource(R.string.settings_section_app_lock), appLock) { Haptics.toggle(view, it) } }
                 item {
                     SettingsSection(
-                        "Privacy & protection",
+                        stringResource(R.string.settings_section_privacy),
                         privacy,
                         // Snoozed notifications can only be brought back while BioKey still has access.
                         footer = if (notifListenerActive) {
-                            "To bring hidden notifications back, switch off “Hide notification content” here. " +
-                                "Revoking notification access instead can leave them hidden for up to a day."
+                            stringResource(R.string.settings_hide_notifications_footer)
                         } else null
                     ) { Haptics.toggle(view, it) }
                 }
-                item { SettingsSection("Profiles", profiles) { Haptics.toggle(view, it) } }
-                item { SettingsSection("Backup", backup) { Haptics.toggle(view, it) } }
-                item { SettingsSection("Diagnostics", diagnostics) { Haptics.toggle(view, it) } }
-                item { SettingsSection("About", about) { Haptics.toggle(view, it) } }
+                item { SettingsSection(stringResource(R.string.settings_section_profiles), profiles) { Haptics.toggle(view, it) } }
+                item { SettingsSection(stringResource(R.string.settings_section_backup), backup) { Haptics.toggle(view, it) } }
+                item { SettingsSection(stringResource(R.string.settings_section_diagnostics), diagnostics) { Haptics.toggle(view, it) } }
+                item { SettingsSection(stringResource(R.string.settings_section_about), about) { Haptics.toggle(view, it) } }
                 item {
                     Text(
-                        text = "BioKey has no internet access. Nothing it sees leaves this phone, unless you share the " +
-                            "diagnostic log or save a backup.",
+                        text = stringResource(R.string.settings_footer_no_internet),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 32.dp, vertical = 24.dp)
@@ -555,7 +558,7 @@ fun SettingsScreenExpressive(mode: ProtectionEngine.Mode, onNavigateBack: () -> 
 
     if (showRelockSheet) {
         RelockSheet(
-            title = "Default re-lock delay",
+            title = stringResource(R.string.settings_relock_title),
             current = defaultTimeout,
             onSelect = { mode ->
                 if (mode != null) {

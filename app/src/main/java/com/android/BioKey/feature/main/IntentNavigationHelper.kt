@@ -13,6 +13,7 @@ import android.provider.Settings
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.core.net.toUri
+import com.android.BioKey.R
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
@@ -46,7 +47,7 @@ object IntentNavigationHelper {
         // Nothing opened and BioKey is still in front: take back the leave pass and the settings
         // pre-authorisation, which would otherwise stay usable by anyone for 2 minutes.
         LockStateTracker.onOwnAppResumed()
-        BioKeyMessages.show("Couldn't open that settings page on this phone", Icons.Default.ErrorOutline)
+        BioKeyMessages.show(context.getString(R.string.nav_settings_page_failed), Icons.Default.ErrorOutline)
         return false
     }
 
@@ -133,7 +134,7 @@ object IntentNavigationHelper {
         val intent = Intent(Intent.ACTION_VIEW, url.toUri()).apply { if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
         runCatching { context.startActivity(intent) }.onFailure {
             LockStateTracker.onOwnAppResumed()
-            BioKeyMessages.show("No browser to open $url", Icons.Default.ErrorOutline)
+            BioKeyMessages.show(context.getString(R.string.nav_no_browser, url), Icons.Default.ErrorOutline)
         }
     }
 

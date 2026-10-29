@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.liveRegion
@@ -36,6 +37,7 @@ import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.android.BioKey.R
 import com.android.BioKey.core.security.rejectObscuredTouches
 import com.android.BioKey.ui.brand.BioKeyLogo
 import com.android.BioKey.ui.theme.springPress
@@ -62,12 +64,13 @@ fun BioKeyLockScreen(
     canLockPhone: Boolean = true,
     onLockDeviceClicked: () -> Unit = {}
 ) {
+    val lockedTitle = stringResource(R.string.lock_screen_locked)
     Box(
         modifier = Modifier
             .fillMaxSize()
             .rejectObscuredTouches()
             // Announced as it appears; the logo already says "BioKey" when moving through it.
-            .semantics { paneTitle = "BioKey is locked" }
+            .semantics { paneTitle = lockedTitle }
             .background(coverWash())
     ) {
 
@@ -89,7 +92,7 @@ fun BioKeyLockScreen(
             // Said in words too, not only by the mark (screen readers hear the pane title).
             Spacer(Modifier.height(16.dp))
             Text(
-                "BioKey is locked",
+                lockedTitle,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.clearAndSetSemantics { }
@@ -131,11 +134,11 @@ fun BioKeyLockScreen(
                         Icon(Icons.Default.Fingerprint, contentDescription = null, modifier = Modifier.size(22.dp))
                         Spacer(Modifier.width(10.dp))
                     }
-                    Text(if (isPermanentLockout) "Lock screen" else "Unlock", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(if (isPermanentLockout) R.string.lock_screen_lock_phone else R.string.lock_screen_unlock), style = MaterialTheme.typography.titleMedium)
                 }
             }
             TextButton(onClick = onCancelClicked, modifier = Modifier.heightIn(min = 48.dp)) {
-                Text("Cancel", style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.prompt_cancel), style = MaterialTheme.typography.titleSmall)
             }
         }
     }

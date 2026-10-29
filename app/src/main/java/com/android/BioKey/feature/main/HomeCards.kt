@@ -1,6 +1,7 @@
 package com.android.BioKey.feature.main
 
 import android.content.Context
+import android.content.res.Resources
 import android.text.format.DateUtils
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -56,6 +57,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -153,16 +156,17 @@ internal fun ActionCard(
 internal fun AttemptsIntroCard(onNotNow: () -> Unit, onTurnOn: () -> Unit, modifier: Modifier = Modifier) {
     ActionCard(
         icon = Icons.Default.GppMaybe,
-        title = "Failed unlock alerts",
-        subtitle = "Get told when a face or fingerprint fails on a locked app and only you can clear it. " +
-            "Kept on this phone until you've seen it, then 7 days.",
+        title = stringResource(R.string.settings_failed_alerts_title),
+        subtitle = stringResource(R.string.card_attempts_intro_text),
         modifier = modifier
     ) {
-        TextButton(onClick = onNotNow, modifier = Modifier.semantics { contentDescription = "Not now: no failed unlock alerts" }) {
-            Text("Not now")
+        val notNowDescription = stringResource(R.string.card_attempts_intro_not_now_description)
+        TextButton(onClick = onNotNow, modifier = Modifier.semantics { contentDescription = notNowDescription }) {
+            Text(stringResource(R.string.common_not_now))
         }
-        FilledTonalButton(onClick = onTurnOn, modifier = Modifier.semantics { contentDescription = "Turn on failed unlock alerts" }) {
-            Text("Turn on")
+        val turnOnDescription = stringResource(R.string.card_attempts_intro_turn_on_description)
+        FilledTonalButton(onClick = onTurnOn, modifier = Modifier.semantics { contentDescription = turnOnDescription }) {
+            Text(stringResource(R.string.common_turn_on))
         }
     }
 }
@@ -198,21 +202,23 @@ internal fun SecurityActivityCard(
         },
         title = when {
             gaps.isEmpty() -> resources.getQuantityString(R.plurals.attempts_title, attempts.size, attempts.size)
-            attempts.isEmpty() && gaps.all { it.isOff } -> if (gaps.size == 1) "App locking was off" else "App locking was off ${gaps.size} times"
-            else -> "Security activity"
+            attempts.isEmpty() && gaps.all { it.isOff } -> pluralStringResource(R.plurals.card_gaps_off_title, gaps.size, gaps.size)
+            else -> stringResource(R.string.activity_title)
         },
         subtitle = if (gapIsNewest) gapLine(context, newestGap!!) else newestAttempt?.let {
-            "${labelOf(it)} · ${attemptTime(context, it.at)} · ${UnlockAttempts.describe(context, it)}"
+            stringResource(R.string.card_attempt_line, labelOf(it), attemptTime(context, it.at), UnlockAttempts.describe(context, it))
         }.orEmpty(),
         urgent = urgent,
         inline = true,
         modifier = modifier
     ) {
+        val review = stringResource(R.string.card_review)
+        val reviewDescription = stringResource(R.string.card_review_description)
         // On an urgent card, the one thing to do is the card's strongest button, as on the others.
         if (urgent) {
-            UrgentButton("Review", onReview, Modifier.semantics { contentDescription = "Review security activity" })
+            UrgentButton(review, onReview, Modifier.semantics { contentDescription = reviewDescription })
         } else {
-            TextButton(onClick = onReview, modifier = Modifier.semantics { contentDescription = "Review security activity" }) { Text("Review") }
+            TextButton(onClick = onReview, modifier = Modifier.semantics { contentDescription = reviewDescription }) { Text(review) }
         }
     }
 }
@@ -235,19 +241,21 @@ internal fun UnlockedNowCard(
     val single = apps.size == 1
     ActionCard(
         icon = Icons.Default.LockOpen,
-        title = if (single) "${first.label} is unlocked" else "${apps.size} apps unlocked",
+        title = if (single) stringResource(R.string.card_app_unlocked, first.label)
+            else pluralStringResource(R.plurals.card_apps_unlocked, apps.size, apps.size),
         subtitle = if (single) rememberSessionPhrase(first.packageName, timeoutOf(first.packageName)) else apps.joinToString(", ") { it.label },
         inline = single,
         modifier = modifier
     ) {
         if (single) {
+            val lockDescription = stringResource(R.string.home_lock_app_description, first.label)
             FilledTonalButton(
                 onClick = { onLock(first) },
-                modifier = Modifier.semantics { contentDescription = "Lock ${first.label}" }
-            ) { Text("Lock") }
+                modifier = Modifier.semantics { contentDescription = lockDescription }
+            ) { Text(stringResource(R.string.new_app_lock)) }
         } else {
-            TextButton(onClick = onChoose) { Text("See apps") }
-            FilledTonalButton(onClick = onLockAll) { Text("Lock all") }
+            TextButton(onClick = onChoose) { Text(stringResource(R.string.card_see_apps)) }
+            FilledTonalButton(onClick = onLockAll) { Text(stringResource(R.string.lock_all_tile_label)) }
         }
     }
 }
@@ -257,8 +265,12 @@ internal fun attemptTime(context: Context, at: Long): String {
     val time = DateUtils.formatDateTime(context, at, DateUtils.FORMAT_SHOW_TIME)
     return when {
         DateUtils.isToday(at) -> time
-        DateUtils.isToday(at + DateUtils.DAY_IN_MILLIS) -> "Yesterday, $time"
-        else -> DateUtils.formatDateTime(context, at, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR) + ", $time"
+        DateUtils.isToday(at + DateUtils.DAY_IN_MILLIS) -> context.getString(R.string.card_time_yesterday, time)
+        else -> context.getString(
+            R.string.card_time_date,
+            DateUtils.formatDateTime(context, at, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR),
+            time
+        )
     }
 }
 
@@ -269,22 +281,39 @@ internal val ProtectionGaps.Gap.isBiometricChange get() = kind == ProtectionGaps
 
 /** "3:02 – 3:10 PM · switched off", or "3:04 PM · a face or fingerprint was added or removed". */
 internal fun gapLine(context: Context, gap: ProtectionGaps.Gap): String {
-    if (!gap.isOff) return attemptTime(context, gap.to) + " · " + when (gap.kind) {
-        ProtectionGaps.Kind.BIOMETRICS_CHANGED -> "a face or fingerprint was added or removed"
-        ProtectionGaps.Kind.BIOMETRICS_REMOVED -> "no face or fingerprint is set up any more"
-        else -> gap.detail.ifEmpty { "Protection changed" }.replaceFirstChar { it.lowercase() } + ", from BioKey opened with the screen lock"
+    if (!gap.isOff) {
+        val time = attemptTime(context, gap.to)
+        return when (gap.kind) {
+            ProtectionGaps.Kind.BIOMETRICS_CHANGED -> context.getString(R.string.card_gap_biometrics_changed, time)
+            ProtectionGaps.Kind.BIOMETRICS_REMOVED -> context.getString(R.string.card_gap_biometrics_removed, time)
+            // The detail is the stored record of what changed, as it was written.
+            else -> context.getString(
+                R.string.card_gap_changed_with_screen_lock,
+                time,
+                gap.detail.ifEmpty { context.getString(R.string.card_gap_protection_changed) }.replaceFirstChar { it.lowercase() }
+            )
+        }
     }
     val day = if (DateUtils.isToday(gap.to)) 0 else DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR
     val range = DateUtils.formatDateRange(context, gap.from, gap.to, DateUtils.FORMAT_SHOW_TIME or day)
-    return range + if (gap.kind == ProtectionGaps.Kind.SWITCHED_OFF) " · switched off" else " · BioKey was force-stopped"
+    return context.getString(if (gap.kind == ProtectionGaps.Kind.SWITCHED_OFF) R.string.card_gap_switched_off else R.string.card_gap_force_stopped, range)
 }
 
 /** When an unlocked app, off screen, locks again: "Re-locks in 4 min", or how it will. */
-internal fun sessionPhrase(mode: LockTimeoutMode, remainingMs: Long?): String = when {
-    mode == LockTimeoutMode.ON_SCREEN_OFF -> "Stays unlocked until the screen turns off"
-    remainingMs == null -> "Re-locks " + mode.shortLabel.replaceFirstChar { it.lowercase() }.removePrefix("after ") + " after you leave it"
-    remainingMs < 60_000L -> "Re-locks in less than a minute"
-    else -> "Re-locks in ${(remainingMs + 59_999L) / 60_000L} min"
+internal fun sessionPhrase(res: Resources, mode: LockTimeoutMode, remainingMs: Long?): String = when {
+    mode == LockTimeoutMode.ON_SCREEN_OFF -> res.getString(R.string.profile_relock_screen_off_explanation)
+    remainingMs == null -> res.getString(
+        when (mode) {
+            LockTimeoutMode.IMMEDIATE -> R.string.card_session_immediately
+            LockTimeoutMode.ON_SCREEN_OFF -> R.string.profile_relock_screen_off_explanation
+            LockTimeoutMode.GRACE_30_SECONDS -> R.string.card_session_30_seconds
+            LockTimeoutMode.GRACE_1_MINUTE -> R.string.card_session_1_minute
+            LockTimeoutMode.GRACE_5_MINUTES -> R.string.card_session_5_minutes
+            LockTimeoutMode.GRACE_15_MINUTES -> R.string.card_session_15_minutes
+        }
+    )
+    remainingMs < 60_000L -> res.getString(R.string.card_session_less_than_minute)
+    else -> ((remainingMs + 59_999L) / 60_000L).toInt().let { res.getQuantityString(R.plurals.card_session_minutes, it, it) }
 }
 
 /**
@@ -293,13 +322,14 @@ internal fun sessionPhrase(mode: LockTimeoutMode, remainingMs: Long?): String = 
  */
 @Composable
 internal fun rememberSessionPhrase(pkg: String, mode: LockTimeoutMode): String {
-    var phrase by remember(pkg, mode) { mutableStateOf(sessionPhrase(mode, null)) }
+    val res = LocalResources.current
+    var phrase by remember(pkg, mode, res) { mutableStateOf(sessionPhrase(res, mode, null)) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(pkg, mode, lifecycle) {
+    LaunchedEffect(pkg, mode, lifecycle, res) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 val remaining = LockStateTracker.awayRemainingMs(pkg, mode)
-                phrase = sessionPhrase(mode, remaining)
+                phrase = sessionPhrase(res, mode, remaining)
                 val toNextMinute = remaining?.let { it % 60_000L }?.takeIf { it > 0L } ?: 60_000L
                 delay(toNextMinute + 50L)
             }
@@ -320,7 +350,7 @@ internal fun UnlockedAppsDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Default.LockOpen, contentDescription = null) },
-        title = { Text("Unlocked now") },
+        title = { Text(stringResource(R.string.home_unlocked_now)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 ProtectDialogWindow()
@@ -336,16 +366,17 @@ internal fun UnlockedAppsDialog(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                        val lockDescription = stringResource(R.string.home_lock_app_description, app.label)
                         TextButton(
                             onClick = { onLock(app) },
-                            modifier = Modifier.semantics { contentDescription = "Lock ${app.label}" }
-                        ) { Text("Lock") }
+                            modifier = Modifier.semantics { contentDescription = lockDescription }
+                        ) { Text(stringResource(R.string.new_app_lock)) }
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onLockAll) { Text("Lock all") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+        confirmButton = { TextButton(onClick = onLockAll) { Text(stringResource(R.string.lock_all_tile_label)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) } }
     )
 }
 
@@ -365,14 +396,13 @@ internal fun SecurityActivityDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Default.GppBad, contentDescription = null) },
-        title = { Text("Security activity") },
+        title = { Text(stringResource(R.string.activity_title)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 ProtectDialogWindow()
                 if (onMarkReviewed != null) {
                     Text(
-                        "BioKey was opened with your screen lock, so these stay new, and the alert comes back, until " +
-                            "you mark them reviewed with your face or fingerprint.",
+                        stringResource(R.string.card_activity_screen_lock_note),
                         style = MaterialTheme.typography.bodyMedium,
                         color = note,
                         modifier = Modifier.padding(bottom = 16.dp)
@@ -380,16 +410,18 @@ internal fun SecurityActivityDialog(
                 }
                 val changes = gaps.filterNot { it.isOff }
                 if (changes.isNotEmpty()) {
-                    SectionLabel("Changes")
+                    SectionLabel(stringResource(R.string.card_activity_changes))
                     changes.forEach { change ->
                         Column(Modifier.padding(vertical = 4.dp).semantics(mergeDescendants = true) { }) {
                             Text(gapLine(context, change), style = MaterialTheme.typography.titleSmall)
                             Text(
-                                when (change.kind) {
-                                    ProtectionGaps.Kind.BIOMETRICS_CHANGED -> "If you didn't, check your faces and fingerprints in Android's settings"
-                                    ProtectionGaps.Kind.BIOMETRICS_REMOVED -> "Your screen lock opens locked apps again"
-                                    else -> "If it wasn't you, someone knows your screen lock"
-                                },
+                                stringResource(
+                                    when (change.kind) {
+                                        ProtectionGaps.Kind.BIOMETRICS_CHANGED -> R.string.card_change_biometrics_changed_hint
+                                        ProtectionGaps.Kind.BIOMETRICS_REMOVED -> R.string.card_change_biometrics_removed_hint
+                                        else -> R.string.card_change_screen_lock_hint
+                                    }
+                                ),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = note
                             )
@@ -397,8 +429,7 @@ internal fun SecurityActivityDialog(
                     }
                     if (changes.any { it.kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED }) {
                         Text(
-                            "Anyone who knows your screen lock can add their own face or fingerprint in Android's settings. " +
-                                "These can't be cleared here: they go 7 days after you've seen them.",
+                            stringResource(R.string.card_change_biometrics_note),
                             style = MaterialTheme.typography.bodySmall,
                             color = note
                         )
@@ -407,36 +438,34 @@ internal fun SecurityActivityDialog(
                 }
                 val offs = gaps.filter { it.isOff }
                 if (offs.isNotEmpty()) {
-                    SectionLabel("App locking was off")
+                    SectionLabel(stringResource(R.string.gaps_title))
                     offs.forEach { gap ->
                         Column(Modifier.padding(vertical = 4.dp).semantics(mergeDescendants = true) { }) {
                             Text(gapLine(context, gap), style = MaterialTheme.typography.titleSmall)
-                            Text("Locked apps could be opened without a check", style = MaterialTheme.typography.bodyMedium, color = note)
+                            Text(stringResource(R.string.card_gap_hint), style = MaterialTheme.typography.bodyMedium, color = note)
                         }
                     }
                     Text(
-                        "Switched off in Android's settings, or BioKey force-stopped. Android stopping BioKey on its own " +
-                            "isn't listed, but some phone makers' battery savers force-stop apps just as a person would.",
+                        stringResource(R.string.card_gaps_note),
                         style = MaterialTheme.typography.bodySmall,
                         color = note
                     )
                     Spacer(Modifier.height(16.dp))
                 }
                 if (attempts.isNotEmpty()) {
-                    SectionLabel("Failed unlocks")
+                    SectionLabel(stringResource(R.string.card_failed_unlocks))
                     attempts.forEach { attempt ->
                         Column(Modifier.padding(vertical = 4.dp).semantics(mergeDescendants = true) { }) {
                             Text(labelOf(attempt), style = MaterialTheme.typography.titleSmall)
                             Text(
-                                attemptTime(context, attempt.at) + " · " + UnlockAttempts.describe(context, attempt),
+                                stringResource(R.string.card_attempt_detail, attemptTime(context, attempt.at), UnlockAttempts.describe(context, attempt)),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = note
                             )
                         }
                     }
                     Text(
-                        "Faces or fingerprints that didn't match. Misses your own face or fingerprint then fixed, on the same " +
-                            "prompt, were you and aren't listed. Android doesn't tell apps about a wrong PIN.",
+                        stringResource(R.string.card_attempts_note),
                         style = MaterialTheme.typography.bodySmall,
                         color = note
                     )
@@ -445,8 +474,8 @@ internal fun SecurityActivityDialog(
         },
         confirmButton = {
             Row {
-                if (onMarkReviewed != null) TextButton(onClick = onMarkReviewed) { Text("Mark reviewed") }
-                TextButton(onClick = onDismiss) { Text("Close") }
+                if (onMarkReviewed != null) TextButton(onClick = onMarkReviewed) { Text(stringResource(R.string.card_mark_reviewed)) }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) }
             }
         },
         // Destructive: in the error colour, and behind a face or fingerprint (and Undo). Not offered
@@ -454,7 +483,7 @@ internal fun SecurityActivityDialog(
         dismissButton = if (attempts.isNotEmpty() || gaps.any { !it.isBiometricChange }) {
             {
                 TextButton(onClick = onClear, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
-                    Text("Clear")
+                    Text(stringResource(R.string.card_clear))
                 }
             }
         } else null

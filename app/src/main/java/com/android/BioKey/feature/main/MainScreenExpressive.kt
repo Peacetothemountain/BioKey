@@ -110,6 +110,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -171,9 +173,6 @@ private const val FILTER_ALL = "filter:all"
 private const val CONTENT_APP = "app"
 private const val CONTENT_HEADER = "header"
 
-/** Shown wherever a home-screen app's lock switch can't be turned on. */
-internal const val HOME_SCREEN_NOTE = "Home screens can't be locked"
-
 /**
  * BioKey's home. From the top: the logo over its constellation, a card saying whether
  * protection is on (with the one action that matters), then the apps. Search and profile chips
@@ -192,6 +191,7 @@ fun MainScreenExpressive(
     onSearchRequestTaken: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val res = LocalResources.current
     val view = LocalView.current
     val activity = LocalActivity.current
     val vault = remember { SecurityVault.getInstance(context) }
@@ -462,7 +462,7 @@ fun MainScreenExpressive(
     fun lockOne(app: AppItem) {
         Haptics.confirm(view)
         LockStateTracker.lockPackage(app.packageName, "locked from BioKey")
-        BioKeyMessages.show("${app.label} locked", Icons.Default.Lock)
+        BioKeyMessages.show(res.getString(R.string.home_app_locked, app.label), Icons.Default.Lock)
     }
 
     /** The app's own switch; it stays in its profile either way. */
@@ -472,7 +472,7 @@ fun MainScreenExpressive(
         if (!locked) ProtectionGaps.recordIfScreenLock(context, "${app.label}'s lock switched off")
         if (!locked) {
             // "Unlocked" is kept for an app open right now: this is its lock taken off.
-            BioKeyMessages.show("Lock removed from ${app.label}", Icons.Default.LockOpen, actionLabel = "Undo") {
+            BioKeyMessages.show(res.getString(R.string.home_lock_removed, app.label), Icons.Default.LockOpen, actionLabel = res.getString(R.string.common_undo)) {
                 vault.setAppLock(app.packageName, true)
             }
         }
@@ -500,19 +500,23 @@ fun MainScreenExpressive(
                     // "App" (no category known) says nothing, so it isn't shown.
                     val name = profile?.name ?: app.category.label.takeIf { app.category != AppCategory.GENERAL }
                     if (name != null) append(name)
-                    if (profile != null && !profile.enabled) append(" · off")
+                    if (profile != null && !profile.enabled) append(" · " + stringResource(R.string.home_off))
                     // The default is said once, in the section header; a row says only a delay of its own.
                     val delay = vault.getTimeoutMode(app.packageName)
                     if (locked && !homeScreen && delay != defaultTimeout) {
-                        val relock = delay.relockPhrase
+                        val relock = stringResource(delay.relockPhraseRes)
                         append(if (name != null) " · " + relock.replaceFirstChar { it.lowercase() } else relock)
                     }
-                    if (isUnlockedNow(app.packageName) && locked) append(if (isEmpty()) "Unlocked now" else " · unlocked now")
-                    if (app.isWorkProfile) append(" · Work")
+                    if (isUnlockedNow(app.packageName) && locked) append(if (isEmpty()) stringResource(R.string.home_unlocked_now) else " · " + stringResource(R.string.home_unlocked_now_lower))
+                    if (app.isWorkProfile) append(" · " + stringResource(R.string.home_row_work))
                     if (homeScreen) {
-                        append(" · $HOME_SCREEN_NOTE")
+                        append(" · " + stringResource(R.string.home_screen_note))
                     } else if (unwatched) {
-                        append(if (app.isWorkProfile) " · Not protected in compatibility mode" else " · Work copy not protected in compatibility mode")
+                        append(
+                            " · " + stringResource(
+                                if (app.isWorkProfile) R.string.home_row_not_protected_compat else R.string.home_row_work_copy_not_protected_compat
+                            )
+                        )
                     }
                 },
                 subtitleColor = when {
@@ -535,11 +539,12 @@ fun MainScreenExpressive(
                 // be turned off. While its profile is off it shows off and can't be changed (the
                 // subtitle says why); its own choice comes back with the profile.
                 val profileOff = profile?.enabled == false
+                val lockDescription = stringResource(R.string.home_lock_app_description, app.label)
                 Switch(
                     checked = isLocked(app.packageName),
                     onCheckedChange = { toggleLock(app, it) },
                     enabled = !profileOff && (!homeScreen || isOn(app.packageName)),
-                    modifier = Modifier.semantics { contentDescription = "Lock ${app.label}" }
+                    modifier = Modifier.semantics { contentDescription = lockDescription }
                 )
             }
         }
@@ -608,8 +613,8 @@ fun MainScreenExpressive(
                         GroupRow(
                             index = 0,
                             count = 1,
-                            title = "Alerts are off",
-                            subtitle = "BioKey can't tell you if app locking stops, or stand in for hidden notifications · tap to allow",
+                            title = stringResource(R.string.home_alerts_off_title),
+                            subtitle = stringResource(R.string.home_alerts_off_text),
                             icon = Icons.Default.NotificationsOff,
                             iconTint = MaterialTheme.colorScheme.onErrorContainer,
                             iconContainer = MaterialTheme.colorScheme.errorContainer,
@@ -628,7 +633,7 @@ fun MainScreenExpressive(
                     ActionCard(
                         icon = look.icon,
                         title = look.title,
-                        subtitle = if (quiet) look.body + " Reminders are off until it's back on." else look.body,
+                        subtitle = if (quiet) stringResource(R.string.home_reminders_off_body, look.body) else look.body,
                         urgent = !paused,
                         modifier = Modifier.animateItem()
                     ) {
@@ -646,18 +651,18 @@ fun MainScreenExpressive(
                                         remindersStopped = false
                                     },
                                     colors = cardText
-                                ) { Text("Remind me") }
+                                ) { Text(stringResource(R.string.home_remind_me)) }
                             } else if (mode == ProtectionEngine.Mode.OFF) {
                                 TextButton(
                                     onClick = {
-                                        confirmOwner(activity, "Stop reminding me") {
+                                        confirmOwner(activity, res.getString(R.string.home_confirm_stop_reminding)) {
                                             ProtectionAlerts.stopReminders(context)
                                             remindersStopped = true
-                                            BioKeyMessages.show("No more reminders until app locking is back on", Icons.Default.NotificationsOff)
+                                            BioKeyMessages.show(res.getString(R.string.home_reminders_stopped), Icons.Default.NotificationsOff)
                                         }
                                     },
                                     colors = cardText
-                                ) { Text("Stop reminding") }
+                                ) { Text(stringResource(R.string.home_stop_reminding)) }
                             }
                             UrgentButton(look.action, ::onProtectionAction)
                         }
@@ -671,15 +676,14 @@ fun MainScreenExpressive(
                 item(key = "alerts_muted") {
                     ActionCard(
                         icon = Icons.Default.NotificationsOff,
-                        title = "Security alerts are silenced",
-                        subtitle = "Some of BioKey's alerts are off in Android's settings, so you may not hear of failed unlocks, " +
-                            "changes, or app locking going off",
+                        title = stringResource(R.string.home_alerts_muted_title),
+                        subtitle = stringResource(R.string.home_alerts_muted_text),
                         urgent = look.action == null && !securityActivityUrgent(attempts, gaps),
                         modifier = Modifier.animateItem()
                     ) {
                         val open: () -> Unit = { IntentNavigationHelper.openChannelSettings(context, UnlockAttempts.mutedChannel(context)) }
-                        if (look.action == null && !securityActivityUrgent(attempts, gaps)) UrgentButton("Turn on", onClick = open)
-                        else FilledTonalButton(onClick = open) { Text("Turn on") }
+                        if (look.action == null && !securityActivityUrgent(attempts, gaps)) UrgentButton(stringResource(R.string.common_turn_on), onClick = open)
+                        else FilledTonalButton(onClick = open) { Text(stringResource(R.string.common_turn_on)) }
                     }
                 }
             }
@@ -727,18 +731,18 @@ fun MainScreenExpressive(
                 item(key = "lock_settings") {
                     ActionCard(
                         icon = Icons.Default.Lock,
-                        title = "Lock Android Settings too",
-                        subtitle = "Anyone with your PIN could add their own fingerprint there.",
+                        title = stringResource(R.string.settings_lock_settings_title),
+                        subtitle = stringResource(R.string.home_lock_settings_text),
                         modifier = Modifier.animateItem()
                     ) {
                         TextButton(onClick = {
                             lockSettingsDismissed = true
                             scope.launch(Dispatchers.IO) { homePrefs(context).edit { putBoolean(KEY_LOCK_SETTINGS_DISMISSED, true) } }
-                        }) { Text("Not now") }
+                        }) { Text(stringResource(R.string.common_not_now)) }
                         FilledTonalButton(onClick = {
                             val undo = vault.lockSettingsApp()
-                            BioKeyMessages.show("Android Settings locked", Icons.Default.Lock, actionLabel = "Undo", onAction = undo)
-                        }) { Text("Lock") }
+                            BioKeyMessages.show(res.getString(R.string.settings_lock_settings_done), Icons.Default.Lock, actionLabel = res.getString(R.string.common_undo), onAction = undo)
+                        }) { Text(stringResource(R.string.new_app_lock)) }
                     }
                 }
             }
@@ -762,21 +766,21 @@ fun MainScreenExpressive(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         item(key = FILTER_ALL) {
-                            FilterChoice("All apps", Icons.Default.Apps, filter == FILTER_ALL) { filter = FILTER_ALL }
+                            FilterChoice(stringResource(R.string.home_filter_all), Icons.Default.Apps, filter == FILTER_ALL) { filter = FILTER_ALL }
                         }
                         items(profiles, key = { it.id }) { profile ->
                             val apps = appCountByProfile[profile.id] ?: 0
                             FilterChoice(
                                 // An empty profile says just its name: "· 0" is noise.
                                 label = profile.name + when {
-                                    !profile.enabled -> " · off"
+                                    !profile.enabled -> " · " + stringResource(R.string.home_off)
                                     apps == 0 -> ""
                                     else -> " · $apps"
                                 },
-                                description = "${profile.name} profile, " + when {
-                                    !profile.enabled -> "off"
-                                    apps == 1 -> "1 app"
-                                    else -> "$apps apps"
+                                description = if (!profile.enabled) {
+                                    stringResource(R.string.home_profile_chip_off_description, profile.name)
+                                } else {
+                                    pluralStringResource(R.plurals.home_profile_chip_description, apps, profile.name, apps)
                                 },
                                 icon = profileIcon(profile.iconKey),
                                 selected = filter == profile.id
@@ -786,7 +790,7 @@ fun MainScreenExpressive(
                             FilterChip(
                                 selected = false,
                                 onClick = { newProfileForPackage = null; showNewProfile = true },
-                                label = { Text("New profile") },
+                                label = { Text(stringResource(R.string.profile_new)) },
                                 leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp)) },
                                 shape = CircleShape
                             )
@@ -807,7 +811,11 @@ fun MainScreenExpressive(
                             if (!on) ProtectionGaps.recordIfScreenLock(context, "${currentProfile.name} profile switched off")
                             if (!on) {
                                 val id = currentProfile.id
-                                BioKeyMessages.show("${currentProfile.name} off · its apps aren't locked", Icons.Default.LockOpen, actionLabel = "Undo") {
+                                BioKeyMessages.show(
+                                    res.getString(R.string.home_profile_switched_off, currentProfile.name),
+                                    Icons.Default.LockOpen,
+                                    actionLabel = res.getString(R.string.common_undo)
+                                ) {
                                     vault.setProfileEnabled(id, true)
                                 }
                             }
@@ -826,17 +834,17 @@ fun MainScreenExpressive(
                 matching.isEmpty() -> item(key = "empty") {
                     EmptyState(
                         text = when {
-                            appsFailed -> "Couldn't list your apps. Close BioKey and open it again to retry."
-                            searchQuery.isNotBlank() -> "No apps match “${searchQuery.trim()}”"
-                            currentProfile != null -> "No apps in ${currentProfile.name} yet"
-                            else -> "No apps found"
+                            appsFailed -> stringResource(R.string.home_apps_failed)
+                            searchQuery.isNotBlank() -> stringResource(R.string.home_no_match, searchQuery.trim())
+                            currentProfile != null -> stringResource(R.string.home_profile_empty, currentProfile.name)
+                            else -> stringResource(R.string.home_no_apps)
                         },
-                        actionLabel = if (currentProfile != null && searchQuery.isBlank()) "Add apps" else null,
+                        actionLabel = if (currentProfile != null && searchQuery.isBlank()) stringResource(R.string.home_add_apps) else null,
                         onAction = { showAddApps = true }
                     )
                 }
                 currentProfile != null -> {
-                    item(key = "h_profile", contentType = CONTENT_HEADER) { SectionHeader("Apps in ${currentProfile.name}") }
+                    item(key = "h_profile", contentType = CONTENT_HEADER) { SectionHeader(stringResource(R.string.home_apps_in_profile, currentProfile.name)) }
                     appGroup(matching, showProfile = false)
                 }
                 else -> {
@@ -844,12 +852,12 @@ fun MainScreenExpressive(
                         item(key = "h_locked", contentType = CONTENT_HEADER) {
                             // How they re-lock, said once, only while something actually locks them.
                             val relock = when {
-                                !ProtectionEngine.isProtecting(mode) -> " · not protected now"
-                                !globalLockEnabled -> " · paused"
-                                else -> " · " + defaultTimeout.relockPhrase.replaceFirstChar { it.lowercase() }
+                                !ProtectionEngine.isProtecting(mode) -> " · " + stringResource(R.string.home_not_protected_now)
+                                !globalLockEnabled -> " · " + stringResource(R.string.home_paused_lower)
+                                else -> " · " + stringResource(defaultTimeout.relockPhraseRes).replaceFirstChar { it.lowercase() }
                             }
                             SectionHeader(
-                                "Locked · ${lockedShown.size}$relock",
+                                stringResource(R.string.home_section_locked) + " · ${lockedShown.size}$relock",
                                 color = when {
                                     !ProtectionEngine.isProtecting(mode) -> MaterialTheme.colorScheme.error
                                     // A pause the owner chose: calm, like its card.
@@ -861,7 +869,7 @@ fun MainScreenExpressive(
                         appGroup(lockedShown, showProfile = true)
                     }
                     if (unlockedShown.isNotEmpty()) {
-                        item(key = "h_unlocked", contentType = CONTENT_HEADER) { SectionHeader(if (lockedShown.isEmpty()) "Choose apps to lock" else "Not locked") }
+                        item(key = "h_unlocked", contentType = CONTENT_HEADER) { SectionHeader(stringResource(if (lockedShown.isEmpty()) R.string.home_choose_apps else R.string.common_not_locked)) }
                         appGroup(unlockedShown, showProfile = false)
                     }
                 }
@@ -925,7 +933,11 @@ fun MainScreenExpressive(
                     if (wasLocked && !lockedInVault(pkg)) ProtectionGaps.recordIfScreenLock(context, "${app.label} taken out of ${former?.name ?: "its profile"}, unlocking it")
                     optionsForPackage = null
                     if (former != null) {
-                        BioKeyMessages.show("Removed ${app.label} from ${former.name}", Icons.Default.RemoveCircleOutline, actionLabel = "Undo") {
+                        BioKeyMessages.show(
+                            res.getString(R.string.home_removed_from_profile, app.label, former.name),
+                            Icons.Default.RemoveCircleOutline,
+                            actionLabel = res.getString(R.string.common_undo)
+                        ) {
                             vault.moveAppToProfile(pkg, former.id, switchOn = false)
                         }
                     }
@@ -956,7 +968,7 @@ fun MainScreenExpressive(
             labelOf = ::attemptLabel,
             onMarkReviewed = if (ownerProven == false) {
                 {
-                    confirmOwner(activity, "Mark as reviewed") {
+                    confirmOwner(activity, res.getString(R.string.home_confirm_mark_reviewed)) {
                         UnlockAttempts.markSeen(context)
                         showActivity = false
                     }
@@ -964,13 +976,13 @@ fun MainScreenExpressive(
             } else null,
             onClear = {
                 // The record of who tried: a face or fingerprint to clear it, not just the screen lock.
-                confirmOwner(activity, "Clear security activity") {
+                confirmOwner(activity, res.getString(R.string.home_confirm_clear_activity)) {
                     // Proven just now: what stays (a face or fingerprint change) counts as reviewed.
                     UnlockAttempts.markSeen(context)
                     val oldAttempts = UnlockAttempts.clear(context)
                     val oldGaps = ProtectionGaps.clear(context)
                     showActivity = false
-                    BioKeyMessages.show("Cleared", Icons.Default.Delete, actionLabel = "Undo") {
+                    BioKeyMessages.show(res.getString(R.string.home_cleared), Icons.Default.Delete, actionLabel = res.getString(R.string.common_undo)) {
                         UnlockAttempts.restore(context, oldAttempts)
                         ProtectionGaps.restore(context, oldGaps)
                     }
@@ -1024,7 +1036,7 @@ fun MainScreenExpressive(
                 showEditProfile = false
                 filter = FILTER_ALL
                 if (deleted != null) {
-                    BioKeyMessages.show("Deleted $name · its apps aren't locked", Icons.Default.Delete, actionLabel = "Undo") {
+                    BioKeyMessages.show(res.getString(R.string.home_profile_deleted, name), Icons.Default.Delete, actionLabel = res.getString(R.string.common_undo)) {
                         vault.restoreDeletedProfile(deleted)
                     }
                 }
@@ -1034,7 +1046,7 @@ fun MainScreenExpressive(
 
     if (showRelock && currentProfile != null) {
         RelockSheet(
-            title = "Re-lock ${currentProfile.name}",
+            title = stringResource(R.string.home_relock_title, currentProfile.name),
             current = currentProfile.timeoutMode,
             onSelect = { mode ->
                 val before = currentProfile.timeoutMode ?: defaultTimeout
@@ -1088,7 +1100,8 @@ private fun MainHeader(
     onOpenSettings: () -> Unit,
     onLogoPlaced: (Rect) -> Unit = {}
 ) {
-    val labelStyle = headerLabelStyle(status.shortLabel, "Settings")
+    val settings = stringResource(R.string.settings_title)
+    val labelStyle = headerLabelStyle(status.shortLabel, settings)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1101,7 +1114,7 @@ private fun MainHeader(
             labelStyle = labelStyle,
             container = status.container,
             content = status.content,
-            contentDescription = "${status.title}. Details",
+            contentDescription = stringResource(R.string.home_status_description, status.title),
             onClick = onOpenStatus
         )
         // Centred between the two equal-width tiles, with breathing room on both sides.
@@ -1118,11 +1131,11 @@ private fun MainHeader(
         }
         HeaderTile(
             icon = Icons.Default.Settings,
-            label = "Settings",
+            label = settings,
             labelStyle = labelStyle,
             container = MaterialTheme.colorScheme.surfaceContainerHigh,
             content = MaterialTheme.colorScheme.onSurface,
-            contentDescription = "Settings",
+            contentDescription = settings,
             onClick = onOpenSettings
         )
     }
@@ -1220,44 +1233,40 @@ private fun protectionLook(
 ): ProtectionLook {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
-    val apps = if (lockedCount == 1) "1 app locked" else "$lockedCount apps locked"
+    val apps = pluralStringResource(R.plurals.home_apps_locked, lockedCount, lockedCount)
     return when {
         // Locked apps open without a check here too: the same colours as off.
         mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP -> ProtectionLook(
-            colors.errorContainer, colors.onErrorContainer, Icons.Default.GppMaybe, "Set up",
-            "Advanced Protection is on",
-            "It reserves accessibility for accessibility tools. Allow usage access and display over other apps, and BioKey keeps locking your apps in compatibility mode.",
-            "Set up compatibility mode"
+            colors.errorContainer, colors.onErrorContainer, Icons.Default.GppMaybe, stringResource(R.string.home_setup_short),
+            stringResource(R.string.home_needs_compat_title),
+            stringResource(R.string.home_needs_compat_body),
+            stringResource(R.string.home_needs_compat_action)
         )
         mode == ProtectionEngine.Mode.OFF -> ProtectionLook(
-            colors.errorContainer, colors.onErrorContainer, Icons.Default.Warning, "Off",
-            "App lock is off", "Turn on BioKey in Accessibility settings to start locking apps.", "Turn on"
+            colors.errorContainer, colors.onErrorContainer, Icons.Default.Warning, stringResource(R.string.home_off_short),
+            stringResource(R.string.alert_off_title), stringResource(R.string.home_off_body), stringResource(R.string.common_turn_on)
         )
         // Switched on, but not running (it crashed): saying "Protected" here would be the one lie that matters.
         mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> ProtectionLook(
-            colors.errorContainer, colors.onErrorContainer, Icons.Default.Warning, "Not running",
-            "App lock isn't running",
-            "BioKey's accessibility service is switched on but isn't running, so locked apps open without a check. Turn it off and on again in Accessibility settings.",
-            "Open Accessibility settings"
+            colors.errorContainer, colors.onErrorContainer, Icons.Default.Warning, stringResource(R.string.home_not_running_short),
+            stringResource(R.string.home_not_running_title),
+            stringResource(R.string.home_not_running_body),
+            stringResource(R.string.home_not_running_action)
         )
         !enabled -> ProtectionLook(
-            colors.tertiaryContainer, colors.onTertiaryContainer, Icons.Default.PauseCircle, "Paused",
+            colors.tertiaryContainer, colors.onTertiaryContainer, Icons.Default.PauseCircle, stringResource(R.string.common_paused),
             if (pausedUntil > System.currentTimeMillis()) {
-                "Paused until " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil))
-            } else "Protection paused",
-            "Locked apps open without a check until you resume.",
-            "Resume protection"
+                stringResource(R.string.home_paused_until, android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil)))
+            } else stringResource(R.string.home_protection_paused),
+            stringResource(R.string.home_paused_body),
+            stringResource(R.string.home_resume_protection)
         )
         else -> ProtectionLook(
-            colors.primaryContainer, colors.onPrimaryContainer, Icons.Default.VerifiedUser, "Protected",
-            "Protected",
-            apps + " · " + defaultTimeout.relockPhrase.lowercase() +
-                (if (mode == ProtectionEngine.Mode.COMPATIBILITY) "\nCompatibility mode (works with Advanced Protection)" else "") +
-                when (unwatchedCount) {
-                    0 -> ""
-                    1 -> "\n1 locked app isn't protected in your work profile: compatibility mode can't see apps there"
-                    else -> "\n$unwatchedCount locked apps aren't protected in your work profile: compatibility mode can't see apps there"
-                },
+            colors.primaryContainer, colors.onPrimaryContainer, Icons.Default.VerifiedUser, stringResource(R.string.home_protected),
+            stringResource(R.string.home_protected),
+            apps + " · " + stringResource(defaultTimeout.relockPhraseRes).lowercase() +
+                (if (mode == ProtectionEngine.Mode.COMPATIBILITY) "\n" + stringResource(R.string.home_protected_compat) else "") +
+                (if (unwatchedCount == 0) "" else "\n" + pluralStringResource(R.plurals.home_unwatched, unwatchedCount, unwatchedCount)),
             null
         )
     }
@@ -1314,13 +1323,13 @@ private fun ProtectionSheet(
                 Button(onClick = onLockAll, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                     Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Lock all apps now")
+                    Text(stringResource(R.string.shortcut_lock_all_long))
                 }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = onPause, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                     Icon(Icons.Default.PauseCircle, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Pause protection")
+                    Text(stringResource(R.string.home_pause_protection))
                 }
             }
         }
@@ -1374,13 +1383,13 @@ private fun ProfileCard(
                 Column(Modifier.weight(1f)) {
                     Text(profile.name, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
-                        text = (if (appCount == 1) "1 app" else "$appCount apps") + " · " +
-                            if (profile.enabled) (profile.timeoutMode ?: defaultTimeout).relockPhrase.lowercase() else "off",
+                        text = pluralStringResource(R.plurals.home_app_count, appCount, appCount) + " · " +
+                            if (profile.enabled) stringResource((profile.timeoutMode ?: defaultTimeout).relockPhraseRes).lowercase() else stringResource(R.string.home_off),
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
                 IconButton(onClick = onEdit) {
-                    Icon(Icons.Default.Edit, contentDescription = "Rename, change icon or delete ${profile.name}")
+                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.home_profile_edit_description, profile.name))
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -1394,9 +1403,9 @@ private fun ProfileCard(
                     .padding(horizontal = 4.dp, vertical = 8.dp)
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Lock apps in ${profile.name}", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.home_profile_lock_apps, profile.name), style = MaterialTheme.typography.titleMedium)
                     Text(
-                        text = if (profile.enabled) "Each app follows its own switch" else "Off: none of its apps are locked",
+                        text = stringResource(if (profile.enabled) R.string.home_profile_on_text else R.string.home_profile_off_text),
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
@@ -1408,7 +1417,7 @@ private fun ProfileCard(
                 Button(onClick = onAddApps, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Add apps")
+                    Text(stringResource(R.string.home_add_apps))
                 }
                 FilledTonalButton(
                     onClick = onRelock,
@@ -1417,7 +1426,7 @@ private fun ProfileCard(
                 ) {
                     Icon(Icons.Default.LockClock, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Re-lock")
+                    Text(stringResource(R.string.home_relock))
                 }
             }
         }
