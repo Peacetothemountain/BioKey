@@ -128,6 +128,12 @@ object LockStateTracker {
     @Volatile private var selfProtectionGrantedAt = 0L
     @Volatile private var selfProtectionVisitedGuardedScreen = false
 
+    /**
+     * BioKey's main screen is on display (started, not stopped), locked or not. Its windows can't
+     * be read by its own accessibility service, nor send it events: this is how it knows.
+     */
+    @Volatile var ownScreenShowing = false
+
     @Volatile private var ownUnlockedAt = 0L
     @Volatile private var ownLastActiveAt = 0L
     @Volatile private var ownInForeground = false
@@ -275,6 +281,13 @@ object LockStateTracker {
      * @param hopTarget the helper app the user went straight to, or null for Home, Recents or a
      *   regular app. Only a helper hop keeps an IMMEDIATE session alive (for [HOP_MAX_MS]).
      */
+    /** [mode] as the diagnostic log says it: "after 30 s", "at screen off". */
+    private fun relockLabel(mode: LockTimeoutMode) = when (mode) {
+        LockTimeoutMode.IMMEDIATE -> "immediately"
+        LockTimeoutMode.ON_SCREEN_OFF -> "at screen off"
+        else -> if (mode.durationMillis < 60_000L) "after ${mode.durationMillis / 1000} s" else "after ${mode.durationMillis / 60_000} min"
+    }
+
     fun onAppLeft(packageName: String, timeoutMode: LockTimeoutMode, hopTarget: String?) {
         val session = sessionOf(packageName) ?: return
         session.seen = true
@@ -283,7 +296,7 @@ object LockStateTracker {
         for (pkg in PasswordManager.aliasesOf(packageName)) leftAt[pkg] = away.since
         Log.d(TAG, "$packageName left the screen (hop=$hopTarget)")
         // The diagnostic log names locked apps only: a hop's destination is just "a helper app".
-        DiagnosticLog.log("$packageName left the screen" + if (hopTarget != null) " · hop to a helper app" else " · re-lock: ${timeoutMode.name.lowercase()}")
+        DiagnosticLog.log("$packageName left the screen" + if (hopTarget != null) " · hop to a helper app" else " · re-lock: ${relockLabel(timeoutMode)}")
         when {
             timeoutMode == LockTimeoutMode.IMMEDIATE && hopTarget == null -> lockPackage(packageName, "left, re-locks immediately")
             timeoutMode == LockTimeoutMode.ON_SCREEN_OFF -> Unit

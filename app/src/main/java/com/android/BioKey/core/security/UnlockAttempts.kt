@@ -412,14 +412,17 @@ object UnlockAttempts {
 
     private val ProtectionGaps.Gap.isBiometricRecord get() = kind.holds
 
-    /** What started the hold ([heldUntil]): a face or fingerprint change, or BioKey reset; null if none. */
-    fun heldBy(context: Context): ProtectionGaps.Kind? {
-        val first = heldBiometricChange(context, seenSeq(context)) ?: return null
-        return ProtectionGaps.gaps.value.firstOrNull { it.seq == first }?.kind
-    }
+    /**
+     * What keeps the hold up until [heldUntil]: a face or fingerprint change, or BioKey reset (the
+     * record held back longest, so the reason given goes with the time); null if none.
+     */
+    fun heldBy(context: Context): ProtectionGaps.Kind? = lastHeld(context)?.first?.kind
 
-    /** When the oldest face-or-fingerprint record still held back stops being held, on [TrustedClock]; null if none. */
-    fun heldUntil(context: Context): Long? {
+    /** When the last face-or-fingerprint record still held back stops being held, on [TrustedClock]; null if none. */
+    fun heldUntil(context: Context): Long? = lastHeld(context)?.second
+
+    /** The record still held back that is let go last, and when, on [TrustedClock]; null if none. */
+    private fun lastHeld(context: Context): Pair<ProtectionGaps.Gap, Long>? {
         val seen = seenSeq(context)
         val first = heldBiometricChange(context, seen) ?: return null
         val boot = bootCount(context)
@@ -429,13 +432,14 @@ object UnlockAttempts {
         // The last of them to be let go: the alert lasts until then.
         return ProtectionGaps.gaps.value
             .filter { it.isBiometricRecord && it.seq >= first }
-            .maxOfOrNull { gap ->
-                when {
+            .map { gap ->
+                gap to when {
                     gap.boot == boot -> now + (BIOMETRIC_HOLD_MS - (since - gap.toElapsed))
                     gap.net && onNet -> gap.to + BIOMETRIC_HOLD_MS
                     else -> now + (BIOMETRIC_HOLD_MS - since)
                 }
             }
+            .maxByOrNull { it.second }
     }
 
     /** Removes everything kept; returns it, for Undo. */

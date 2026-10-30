@@ -5,6 +5,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Handler
@@ -47,6 +48,8 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         private const val CHANNEL_ID = "biokey_privacy_shield_channel"
         private const val TAG_PREFIX = "biokey-shield:"
         private const val SUMMARY_ID = 1
+        /** How soon access is looked at again after the listener is bound or unbound. */
+        private const val ACCESS_RECHECK_MS = 1_000L
         private const val SNOOZE_24_HOURS_MS = 24 * 60 * 60 * 1000L
 
         /**
@@ -105,8 +108,14 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             service.main.post { service.restorePackages(pkgs) }
         }
 
-        fun isNotificationAccessGranted(context: Context): Boolean =
-            NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+        /**
+         * Asked of Android's notification manager itself: the setting listing the listeners can be
+         * written after this service is bound or unbound, so a look then would read the old value.
+         */
+        fun isNotificationAccessGranted(context: Context): Boolean = runCatching {
+            context.getSystemService(NotificationManager::class.java)
+                .isNotificationListenerAccessGranted(ComponentName(context, BioKeyNotificationShieldService::class.java))
+        }.getOrElse { NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName) }
 
         /**
          * Removes from [hidden] (package -> keys) every key not in [present]. Returns the packages
@@ -210,6 +219,8 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         super.onListenerConnected()
         val app = applicationContext
         ShieldAccessWatch.checkSoon(app)
+        // Again a moment later, should Android still be settling the change.
+        main.postDelayed({ ShieldAccessWatch.checkSoon(app) }, ACCESS_RECHECK_MS)
         activeService = this
         connected = true
         // Nothing seen while unbound is known: the stand-ins are posted afresh, the next lock-all sweeps.
@@ -280,6 +291,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         // Access taken away is the likeliest reason: recorded if so ([ShieldAccessWatch]).
         val app = applicationContext
         ShieldAccessWatch.checkSoon(app)
+        Handler(Looper.getMainLooper()).postDelayed({ ShieldAccessWatch.checkSoon(app) }, ACCESS_RECHECK_MS)
         connected = false
         activeService = null
         standInCounts.clear()

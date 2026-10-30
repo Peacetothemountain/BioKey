@@ -251,8 +251,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        LockStateTracker.ownScreenShowing = true
+    }
+
     override fun onStop() {
         super.onStop()
+        LockStateTracker.ownScreenShowing = false
         if (isChangingConfigurations) return
         // BioKey's own prompt, still running, handed over to the phone's PIN screen (some phones
         // open it as an activity): that isn't leaving BioKey. Never once BioKey is unlocked.

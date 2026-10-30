@@ -10,6 +10,7 @@ import android.app.Service
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -42,6 +43,12 @@ import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.UsageReader.Batch
 import com.android.BioKey.feature.main.MainActivity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
 
 /**
  * Compatibility-mode engine: covers locked apps without the accessibility API.
@@ -63,6 +70,10 @@ class UsageWatchService : Service() {
 
     companion object {
         private const val TAG = "UsageWatchService"
+        /** How long an app come forward with the keyguard up is watched for being paused behind it. */
+        private const val KEYGUARD_SETTLE_MS = 450L
+        /** ActivityInfo's flag for android:showWhenLocked (hidden from apps, set in every Android since 8.1). */
+        private const val FLAG_SHOW_WHEN_LOCKED = 0x800000
         private const val CHANNEL_ID = "biokey_compatibility_mode"
         private const val NOTIFICATION_ID = 2001
         /** How often the foreground app is checked while the screen is on. */
@@ -317,8 +328,7 @@ class UsageWatchService : Service() {
                     // The app it came over, if locked: its lock screen goes up behind the
                     // keyguard now, so the screensaver ending never shows it.
                     // A lock screen already up: the app it's for.
-                    (if (foreground == packageName) lockScreenTarget.takeIf { foregroundClass == LOCK_SCREEN_CLASS } else foreground)
-                        ?.let(::coverBehindScreensaver)
+                    appInFront()?.let { coverBehindKeyguard(it, "on screen as a screensaver started") }
                     // The app in front is there again when it ends: kept, so it is covered then
                     // even if it doesn't report opening again (see recheck).
                     forgetScreen(keepFront = true)
@@ -344,7 +354,13 @@ class UsageWatchService : Service() {
         // the keyguard up, where nothing shows and the lock screen would only end up over them.
         handler.post {
             stir()
-            if (!isRunning || !polling || dreaming || keyguardLocked()) return@post
+            if (!isRunning || !polling || dreaming) return@post
+            if (keyguardLocked()) {
+                // The phone locked with the screen on: the app on screen gets its lock screen
+                // behind the keyguard, so the keyguard going (a foldable unfolded) never shows it.
+                if (isInteractive()) appInFront()?.let { coverBehindKeyguard(it, "on screen as the phone locked") }
+                return@post
+            }
             foreground?.let { fg ->
                 if (!activities.knows(fg) || activities.isVisible(fg)) handleForeground(fg, foregroundClass)
             }
@@ -468,6 +484,11 @@ class UsageWatchService : Service() {
             appOps.startWatchingMode(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW, packageName, opListener)
         }
         isRunning = true
+        pauseWatch.launch {
+            SecurityVault.getInstance(this@UsageWatchService).globalLockEnabledFlow.drop(1).collect {
+                if (isRunning) runCatching { getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification()) }
+            }
+        }
         ProtectionAlerts.serviceRestored(this)
         startEngineTrace(this, vault, "compatibility")
         // A locked app may already be in front (after a reboot or an update): look back for it first.
@@ -491,6 +512,7 @@ class UsageWatchService : Service() {
     override fun onDestroy() {
         val wasRunning = isRunning
         isRunning = false
+        pauseWatch.cancel()
         startPending = false
         stopRequested = false
         if (wasRunning) {
@@ -542,15 +564,20 @@ class UsageWatchService : Service() {
         startPolling()
     }
 
+    /** The app in front: with BioKey's lock screen in front, the app it's for. */
+    private fun appInFront(): String? =
+        if (foreground == packageName) lockScreenTarget.takeIf { foregroundClass == LOCK_SCREEN_CLASS } else foreground
+
     /**
-     * [pkg] was in front as a screensaver came over it: locked, its lock screen starts behind the
-     * keyguard now (no cover: that would show over the screensaver), as the accessibility engine's.
+     * [pkg] was in front as a screensaver came over it, or as the phone locked with the screen on
+     * (Lockdown, a foldable folded): locked, its lock screen starts behind the keyguard now (no
+     * cover: that would show over the screensaver), as the accessibility engine's.
      */
-    private fun coverBehindScreensaver(pkg: String) {
+    private fun coverBehindKeyguard(pkg: String, why: String) {
         if (pkg == packageName || ForegroundRules.isLauncher(this, pkg) || !vault.isAppLocked(pkg) ||
             LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))
         ) return
-        DiagnosticLog.log("Covered $pkg (on screen as a screensaver started)")
+        DiagnosticLog.log("Covered $pkg ($why)")
         LockStateTracker.setRegularLockPending(pkg)
         LockLauncher.launch(this, pkg, isSelfProtection = false, behindKeyguard = true)
     }
@@ -1192,8 +1219,28 @@ class UsageWatchService : Service() {
      */
     private fun launchLockScreen(pkg: String, reprompt: Boolean = false): Boolean {
         if (isOwnScreenShowing()) LockStateTracker.beginOwnLockScreenHop(pkg)
+        // The keyguard up with the screen on: compatibility mode can't see windows. An app whose
+        // screen is made to show over the keyguard (in its manifest) has its cover there; another
+        // is over it only if it stays visible (the camera, made to in its code; paused by its
+        // cover, not stopped): one started behind the keyguard is stopped at once, and its cover
+        // waits there, unseen, for the unlock.
+        if (keyguardLocked() && isInteractive() && !showsOverKeyguard(pkg, foregroundClass)) {
+            handler.postDelayed({
+                if (!isRunning) return@postDelayed
+                val behind = keyguardLocked() && !activities.isVisible(pkg)
+                if (behind) DiagnosticLog.log("Covered $pkg (opened behind the keyguard)")
+                LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = reprompt, behindKeyguard = behind)
+            }, KEYGUARD_SETTLE_MS)
+            return true
+        }
         return LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = reprompt)
     }
+
+    /** Whether [pkg]'s screen [cls] is made to show over the keyguard (android:showWhenLocked). */
+    private fun showsOverKeyguard(pkg: String, cls: String?): Boolean = runCatching {
+        val name = cls?.takeIf { it.isNotEmpty() && foreground == pkg } ?: return false
+        packageManager.getActivityInfo(ComponentName(pkg, name), 0).flags and FLAG_SHOW_WHEN_LOCKED != 0
+    }.getOrDefault(false)
 
     /**
      * BioKey's own screen (not its lock screen) is in front, or resumed beside the app in front
@@ -1247,6 +1294,12 @@ class UsageWatchService : Service() {
         stopSelf()
     }
 
+    /** Whether apps are being locked now (not paused); read at start, before anything else is set up. */
+    private fun protecting() = runCatching { SecurityVault.getInstance(this).isProtectionActive() }.getOrDefault(true)
+
+    /** The notification says whether apps are locked or paused: as that changes, it does. */
+    private val pauseWatch = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
     private fun buildNotification(): Notification {
         val nm = getSystemService(NotificationManager::class.java)
         // Created, or its name and description updated (Android keeps the owner's importance).
@@ -1263,7 +1316,7 @@ class UsageWatchService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_biokey_mark)
-            .setContentTitle(getString(R.string.compat_notification_title))
+            .setContentTitle(getString(if (protecting()) R.string.compat_notification_title else R.string.compat_notification_title_paused))
             .setContentText(getString(R.string.compat_notification_text))
             .setContentIntent(open)
             .setOngoing(true)

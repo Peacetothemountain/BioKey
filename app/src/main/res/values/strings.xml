@@ -362,7 +362,7 @@
     <string name="card_gap_changed_during_hold">%1$s · %2$s (within a day of a face or fingerprint change)</string>
     <string name="card_gap_changed_during_reset">%1$s · %2$s (within a day of BioKey being reset)</string>
     <string name="card_gap_event">%1$s · %2$s</string>
-    <string name="card_gap_force_stopped_unknown">BioKey was force-stopped, for a time that can\'t be told (the clock was set back), until %1$s</string>
+    <string name="card_gap_force_stopped_unknown">BioKey was force-stopped, for a time that can\'t be told (the phone\'s clock was changed), until %1$s</string>
     <string name="card_gap_shield_access_revoked_range">%1$s · Notification access was off while Hide notification content was on</string>
     <!-- What a record of a change says ([ProtectionGaps.Change]). -->
     <string name="change_paused">Protection paused</string>
@@ -444,6 +444,7 @@
     <string name="compat_channel_name">Compatibility mode</string>
     <string name="compat_channel_description">Shown while BioKey locks apps without the accessibility service</string>
     <string name="compat_notification_title">BioKey is protecting your apps</string>
+    <string name="compat_notification_title_paused">Protection paused</string>
     <string name="compat_notification_text">Compatibility mode: watching which app is open</string>
     <string name="cover_held">Still on screen (in picture-in-picture, say). Unlock it to carry on.</string>
     <string name="cover_prompt_failed">The lock screen didn\'t open. Tap Unlock to try again.</string>

@@ -169,6 +169,8 @@ object ProtectionGaps {
     private const val KEY_STOPPED_BOOT = "stopped_boot"
     /** Trusted time minus the phone's clock, while an engine last ran: for reading Android's exit times. */
     private const val KEY_CLOCK_OFFSET = "clock_offset"
+    /** Trusted time and the phone's clock drifting apart by more than this: the clock was changed. */
+    private const val CLOCK_CHANGE_MS = 60_000L
     /** BioKey's last update time as an engine last saw it: an update since is what excuses a stop. */
     private const val KEY_LAST_UPDATE = "last_update"
     /** The process exits already looked at, by their time: Android keeps the last few. */
@@ -382,13 +384,19 @@ object ProtectionGaps {
             // the difference between the two in force when an engine last ran ([onClockChanged]) or
             // now, the earliest result kept: the phone's clock moved before the stop, after it, or
             // both, can only lengthen the gap, never shorten it.
-            val offsets = listOfNotNull(now - wallNow(), if (p.contains(KEY_CLOCK_OFFSET)) p.getLong(KEY_CLOCK_OFFSET, 0L) else null)
-            val converted = forceStopAt?.let { at -> offsets.minOf { at + it } }
+            val kept = if (p.contains(KEY_CLOCK_OFFSET)) p.getLong(KEY_CLOCK_OFFSET, 0L) else null
+            val current = now - wallNow()
+            val converted = forceStopAt?.let { at -> listOfNotNull(current, kept).minOf { at + it } }
             val forceStop = converted?.coerceAtMost(now)
+            // The phone's clock changed while BioKey was stopped (or just before, unheard): which of
+            // the two differences the stop was stamped with can't be told, so neither can its start.
+            val clockChanged = kept != null && kotlin.math.abs(current - kept) > CLOCK_CHANGE_MS
             when {
-                forceStop != null && (switchedOffFrom == null || forceStop < switchedOffFrom) && (clockMoved || now - forceStop >= MIN_GAP_MS) ->
-                    // Converted to "now" or later: the clock was set back, and when it stopped can't be told.
-                    found += Gap(forceStop, now, Kind.FORCE_STOPPED, unknownStart = clockMoved && converted >= now - MIN_GAP_MS)
+                forceStop != null && (switchedOffFrom == null || forceStop < switchedOffFrom) &&
+                    (clockMoved || clockChanged || now - forceStop >= MIN_GAP_MS) ->
+                    // Converted to "now" or later (the clock was set back), or the clock changed since:
+                    // when it stopped can't be told.
+                    found += Gap(forceStop, now, Kind.FORCE_STOPPED, unknownStart = clockChanged || (clockMoved && converted >= now - MIN_GAP_MS))
                 switchedOffFrom != null -> found += Gap(switchedOffFrom, now, Kind.SWITCHED_OFF)
             }
             // Its storage was cleared ([checkStorageCleared]): nothing locked from then until set up again.

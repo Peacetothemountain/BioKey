@@ -53,6 +53,9 @@ internal class EngineReplay(private val context: Application) {
     class Record(val time: Long, val kind: String, val fields: List<String>)
 
     companion object {
+        /** How long after an input what the engine read while handling it can be recorded. */
+        private const val READ_DURING_INPUT_MS = 5L
+
         /** A trace's lines as records; comments and blank lines skipped. */
         fun parse(lines: List<String>): List<Record> = lines.filter { it.isNotBlank() && !it.startsWith("#") }.map { line ->
             val parts = line.split('\t')
@@ -110,12 +113,12 @@ internal class EngineReplay(private val context: Application) {
                 continue
             }
             runUntil(at)
-            // What the engine read while handling this input is recorded after it, at the same
-            // moment: it was so before the input came.
+            // What the engine read while handling this input is recorded after it, within a few
+            // milliseconds (a question asked part-way through): it was so before the input came.
             var firstWindows = true
             for (j in i + 1 until played.size) {
                 val next = played[j]
-                if (next.time != r.time) break
+                if (next.time - r.time > READ_DURING_INPUT_MS) break
                 if (!isState(next)) {
                     if (next.kind.startsWith("o.")) continue else break
                 }

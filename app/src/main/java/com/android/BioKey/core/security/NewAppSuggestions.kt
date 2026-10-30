@@ -151,7 +151,15 @@ object NewAppSuggestions {
         override fun onReceive(context: Context, intent: Intent) {
             val pkg = intent.data?.schemeSpecificPart ?: return
             if (intent.action == ACTION_DISMISSED) {
-                updateSummary(context.applicationContext, cancelled = notificationId(pkg))
+                val app = context.applicationContext
+                val pending: PendingResult? = goAsync()
+                worker.execute {
+                    try {
+                        updateSummary(app, cancelled = notificationId(pkg))
+                    } finally {
+                        pending?.finish()
+                    }
+                }
                 return
             }
             if (intent.action != ACTION_LOCK) return
@@ -180,6 +188,8 @@ object NewAppSuggestions {
 
     private const val GROUP = "com.android.BioKey.NEW_APPS"
     private const val SUMMARY_ID = 1999
+    /** The summary's count of offers, kept in it. */
+    private const val EXTRA_COUNT = "com.android.BioKey.NEW_APPS_COUNT"
 
     /**
      * Several offers at once (a new phone restoring its apps) gather under one summary, which
@@ -187,6 +197,7 @@ object NewAppSuggestions {
      * posted or cancelled. Android's list of what's showing is updated a moment later, so that one
      * is counted (or not) as it will be.
      */
+    @Synchronized
     private fun updateSummary(context: Context, posted: Int? = null, cancelled: Int? = null) {
         val manager = NotificationManagerCompat.from(context)
         val active = runCatching { context.getSystemService(NotificationManager::class.java).activeNotifications.toList() }
@@ -205,7 +216,10 @@ object NewAppSuggestions {
         }
         // Down to one under a summary that's up: the summary stays, counting one. Cancelling it
         // would take the last offer with it (Android cancels a group with its summary).
-        if (offers < 2 && active.none { it.id == SUMMARY_ID }) return
+        val shown = active.firstOrNull { it.id == SUMMARY_ID }
+        if (offers < 2 && shown == null) return
+        // Already counting these: posted again, it would only move up the list.
+        if (shown != null && shown.notification.extras.getInt(EXTRA_COUNT, -1) == offers) return
         val open = PendingIntent.getActivity(
             context,
             SUMMARY_ID,
@@ -215,6 +229,7 @@ object NewAppSuggestions {
         val summary = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_biokey_mark)
             .setContentTitle(context.resources.getQuantityString(R.plurals.new_apps_summary, offers, offers))
+            .addExtras(android.os.Bundle().apply { putInt(EXTRA_COUNT, offers) })
             .setContentText(context.getString(R.string.new_apps_summary_text))
             .setGroup(GROUP)
             .setGroupSummary(true)

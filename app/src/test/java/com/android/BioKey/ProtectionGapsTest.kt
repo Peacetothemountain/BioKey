@@ -297,6 +297,19 @@ class ProtectionGapsTest {
     }
 
     @Test
+    fun theClockMovedAheadAfterAForceStopLeavesItsStartUntold() {
+        // Force-stopped for a minute with the clock right; set two years ahead before BioKey came
+        // back: not "two years", but a stop whose start can't be told.
+        var wall = now
+        ProtectionGaps.wallNow = { wall }
+        exits = listOf(wall to ApplicationExitInfo.REASON_USER_REQUESTED)
+        pass(60_000L)
+        wall += 60_000L + 2 * 365 * 24 * 60 * 60_000L
+        ProtectionGaps.onEngineUp(context)
+        assertTrue(gaps.single().unknownStart)
+    }
+
+    @Test
     fun aMomentsEventIsRecorded() {
         ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK)
         assertEquals(ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, gaps.single().kind)

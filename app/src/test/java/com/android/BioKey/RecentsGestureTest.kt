@@ -57,6 +57,13 @@ class RecentsGestureTest {
         c.moveTo(Rect(173, 0, 907, -50))
         c.moveTo(Rect(173, 0, 907, -50))
         assertTrue(RecentsWatcher.sweptAway(c.first, c.last, 2424, 1080))
+        // Held still part-way up, then flung off: measured from where it rested.
+        val held = RecentsWatcher.Card(Rect(173, 302, 907, 1949))
+        held.moveTo(Rect(173, 302, 907, 1949))
+        held.moveTo(Rect(174, 120, 906, 1767))
+        held.moveTo(Rect(174, 120, 906, 1767))
+        held.moveTo(Rect(173, 0, 907, -50))
+        assertTrue(RecentsWatcher.sweptAway(held.first, held.last, 2424, 1080))
         // Only sliding in, it rests where it came to.
         val still = RecentsWatcher.Card(Rect(0, 302, 421, 1949))
         still.moveTo(Rect(173, 302, 907, 1949))
