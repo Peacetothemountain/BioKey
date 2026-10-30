@@ -114,14 +114,15 @@ object NewAppSuggestions {
             manager.notify(notificationId(pkg), notification)
         } catch (_: SecurityException) {
             // POST_NOTIFICATIONS revoked between the check and notify.
+            return
         }
-        updateSummary(context)
+        updateSummary(context, posted = notificationId(pkg))
     }
 
     /** [pkg] was uninstalled: an offer to lock it would lock nothing. */
     fun onUninstalled(context: Context, pkg: String) {
         NotificationManagerCompat.from(context).cancel(notificationId(pkg))
-        updateSummary(context)
+        updateSummary(context, cancelled = notificationId(pkg))
     }
 
     /** The notification's Lock button. Not exported: only the notification BioKey posted can send it. */
@@ -140,7 +141,7 @@ object NewAppSuggestions {
                         SecurityVault.getInstance(app).setAppLock(pkg, true)
                         DiagnosticLog.log("Locked $pkg from the new-app notification")
                     }
-                    updateSummary(app)
+                    updateSummary(app, cancelled = notificationId(pkg))
                 } finally {
                     pending?.finish()
                 }
@@ -159,11 +160,18 @@ object NewAppSuggestions {
      * Several offers at once (a new phone restoring its apps) gather under one summary, which
      * opens BioKey; a lone offer stands on its own.
      */
-    private fun updateSummary(context: Context) {
+    /**
+     * [posted] or [cancelled]: an offer's id just posted or cancelled. Android's list of what's
+     * showing is updated a moment later, so that one is counted (or not) as it will be.
+     */
+    private fun updateSummary(context: Context, posted: Int? = null, cancelled: Int? = null) {
         val manager = NotificationManagerCompat.from(context)
         val active = runCatching { context.getSystemService(NotificationManager::class.java).activeNotifications.toList() }
             .getOrDefault(emptyList())
-        val offers = active.count { it.notification.group == GROUP && it.id != SUMMARY_ID }
+        val ids = active.filter { it.notification.group == GROUP && it.id != SUMMARY_ID }.map { it.id }.toMutableSet()
+        posted?.let(ids::add)
+        cancelled?.let(ids::remove)
+        val offers = ids.size
         if (offers == 0) {
             manager.cancel(SUMMARY_ID)
             return

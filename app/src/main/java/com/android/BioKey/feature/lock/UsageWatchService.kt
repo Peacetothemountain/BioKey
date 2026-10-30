@@ -306,7 +306,8 @@ class UsageWatchService : Service() {
                     stopPolling()
                     // The app it came over, if locked: its lock screen goes up behind the
                     // keyguard now, so the screensaver ending never shows it.
-                    foreground?.let(::coverBehindScreensaver)
+                    // A lock screen already up: the app it's for.
+                    (if (foreground == packageName) lockScreenTarget else foreground)?.let(::coverBehindScreensaver)
                     // The app in front is there again when it ends: kept, so it is covered then
                     // even if it doesn't report opening again (see recheck).
                     forgetScreen(keepFront = true)
@@ -530,7 +531,6 @@ class UsageWatchService : Service() {
         startPolling()
     }
 
-    /** Nothing known about the screen holds any more, except, with [keepFront], which app is in front. */
     /**
      * [pkg] was in front as a screensaver came over it: locked, its lock screen starts behind the
      * keyguard now (no cover: that would show over the screensaver), as the accessibility engine's.
@@ -544,6 +544,7 @@ class UsageWatchService : Service() {
         LockLauncher.launch(this, pkg, isSelfProtection = false, behindKeyguard = true)
     }
 
+    /** Nothing known about the screen holds any more, except, with [keepFront], which app is in front. */
     private fun forgetScreen(keepFront: Boolean = false) {
         if (!keepFront) {
             foreground = null

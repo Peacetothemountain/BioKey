@@ -59,6 +59,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "BioKeyA11yService"
+        /** SystemUI's windows over an app (its dream overlay, its hub) never make it the app left on screen. */
+        private const val SYSTEM_UI = "com.android.systemui"
 
         /** Coalesces window churn (animations, transitions) into one visibility pass. */
         private const val RECONCILE_DELAY_MS = 150L
@@ -145,31 +147,24 @@ class BioKeyAccessibilityService : AccessibilityService() {
     /** The app most recently brought to the front by a window event. */
     private var foregroundPackage: String? = null
         set(value) {
-            if (value != null && value !in screensavers) appBeforeScreensaver = value
+            if (value != null && value != SYSTEM_UI) appBeforeScreensaver = value
             field = value
         }
-    /** The app in front before a screensaver (or the phone's dream overlay) came over it. */
+    /** The app in front before SystemUI (its dream overlay, its hub) came over it. */
     private var appBeforeScreensaver: String? = null
-    /** The screensavers' packages ([Settings.Secure] "screensaver_components"), and SystemUI's dream overlay and hub. */
-    @Volatile private var screensavers: Set<String> = setOf("com.android.systemui")
-
-    private fun readScreensavers() {
-        val chosen = runCatching { Settings.Secure.getString(contentResolver, "screensaver_components") }.getOrNull()
-        screensavers = chosen.orEmpty().split(',').mapNotNull { ComponentName.unflattenFromString(it.trim())?.packageName }.toSet() +
-            "com.android.systemui"
-    }
-
-    /** The screensaver chosen in Android's settings changed: its package mustn't be taken for an app. */
-    private val screensaverObserver = object : ContentObserver(mainHandler) {
-        override fun onChange(selfChange: Boolean) = readScreensavers()
-    }
+    /**
+     * A screensaver is showing (DREAMING_STARTED until DREAMING_STOPPED): nothing is covered over
+     * it. The app it came over got its lock screen behind the keyguard as it started; the
+     * screensaver's own windows (in an app's package, Photos' or the Clock's) are no app opening.
+     */
+    private var screensaverShowing = false
 
     /** The window in front is a home screen's, whatever the last window event said. */
     private fun frontIsLauncher(): Boolean =
         runCatching { windowList()?.let(::frontWindow)?.let(::packageOf)?.let(::isLauncher) }.getOrNull() == true
 
     /** The app on screen as the phone locked: under a screensaver, the one it came over. */
-    private fun appLeftOnScreen(): String? = foregroundPackage?.takeIf { it !in screensavers } ?: appBeforeScreensaver
+    private fun appLeftOnScreen(): String? = foregroundPackage?.takeIf { it != SYSTEM_UI } ?: appBeforeScreensaver
 
     /**
      * Accessibility window id -> owning package, learned from window events. Google Password
@@ -238,8 +233,14 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     // screen on: as at screen-off, sessions end (ScreenReceiver) and the app it came
                     // over gets its lock screen behind it now.
                     Intent.ACTION_DREAMING_STARTED -> {
-                        readScreensavers()
+                        screensaverShowing = true
                         appLeftOnScreen()?.let { left -> mainHandler.post { coverLeftOnScreen(left) } }
+                    }
+                    // Over: whatever is on screen now (the keyguard, or the app with its lock
+                    // screen) is looked at as usual.
+                    Intent.ACTION_DREAMING_STOPPED -> {
+                        screensaverShowing = false
+                        reevaluateForeground()
                     }
                     // Sessions ended with the screen, and it may come back on without a keyguard (it
                     // timed out moments ago): whatever is on screen is checked again.
@@ -250,6 +251,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     // The keyguard just went away: whatever is on screen must be re-checked even if
                     // no window event arrives (e.g. a locked app was left open when the screen went off).
                     Intent.ACTION_USER_PRESENT -> {
+                        // The phone unlocked: no screensaver is showing, whatever its broadcast said.
+                        screensaverShowing = false
                         // Cleared and not set up again: said at every unlock until it is.
                         ProtectionAlerts.remindIfStorageCleared(this@BioKeyAccessibilityService)
                         windowList()?.let { maskControl.update(it, full = false) }
@@ -333,14 +336,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 addAction(Intent.ACTION_SCREEN_OFF)
                 addAction(Intent.ACTION_SCREEN_ON)
                 addAction(Intent.ACTION_DREAMING_STARTED)
+                addAction(Intent.ACTION_DREAMING_STOPPED)
             },
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
         registerForUnlocks(deviceStateReceiver)
-        readScreensavers()
-        runCatching {
-            contentResolver.registerContentObserver(Settings.Secure.getUriFor("screensaver_components"), false, screensaverObserver)
-        }
         LockStateTracker.addLockAllListener(onLockAll)
         LockStateTracker.addLockAbandonedListener(onLockAbandoned)
         LockStateTracker.addAppUnlockListener(onAppUnlocked)
@@ -1319,6 +1319,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     /** Covers [target] and starts its lock screen, on [displayId] when known (the display its window is on). */
     private fun lock(target: String, why: String, displayId: Int? = null) {
+        // Nothing goes over a screensaver: what it came over was seen to as it started, and its
+        // own windows (an app's, for Photos' or the Clock's) are no app opening.
+        if (screensaverShowing) return
         foregroundPackage = target
         if (LockStateTracker.isRegularLockPending(target) &&
             LockScreenActivity.isLockScreenResumed &&
@@ -1621,7 +1624,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
         LockStateTracker.removeAppUnlockListener(onAppUnlocked)
         LockStateTracker.removeAppLockListener(onAppLocked)
         runCatching { contentResolver.unregisterContentObserver(inputMethodObserver) }
-        runCatching { contentResolver.unregisterContentObserver(screensaverObserver) }
         // Nothing enforces sessions while the service is gone, so none may outlive it.
         LockStateTracker.lockAll(reason = "accessibility engine stopped")
         if (::shield.isInitialized) shield.destroy()

@@ -476,8 +476,14 @@ object LockStateTracker {
      */
     fun onDeviceLockState(locked: Boolean) {
         if (locked && !deviceLocked) lockAll(reason = "phone locked")
+        if (!locked && deviceLocked) phoneUnlocks++
         deviceLocked = locked
     }
+
+    /** Times the phone has been seen unlocked (the keyguard going away), as the engines report it. */
+    @Volatile
+    var phoneUnlocks = 0
+        private set
 
     // ---------------------------------------------------------------------------------------
     // Lock-screen launch debouncing

@@ -118,6 +118,30 @@ class GantletLockScreenTest {
     }
 
     @Test
+    fun aCoverHeldForThePhonesLockIsntHeldForAnotherApp() {
+        // Held for x, behind the keyguard; then the camera (another locked app) opens over it and
+        // its lock is asked for: judged afresh, not held.
+        val keyguard = shadowOf(context.getSystemService(KeyguardManager::class.java))
+        keyguard.setKeyguardLocked(true)
+        val camera = "com.example.camera"
+        SecurityVault.getInstance(context).setAppLock(camera, true)
+        val controller = Robolectric.buildActivity(
+            LockScreenActivity::class.java,
+            Intent(context, LockScreenActivity::class.java)
+                .putExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE, x)
+                .putExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, true)
+        ).setup()
+        open += controller
+        controller.get().markFirstFrameForTests()
+        controller.newIntent(Intent(context, LockScreenActivity::class.java).putExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE, camera))
+        shadowOf(Looper.getMainLooper()).idle()
+        keyguard.setKeyguardLocked(false)
+        controller.pause().stop()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue("Still held for the phone's lock after another app's lock", controller.get().isFinishing)
+    }
+
+    @Test
     fun anOrdinaryCoverStoppedByAnotherScreenCloses() {
         val lockScreen = lockScreenFor()
         lockScreen.pause().stop()

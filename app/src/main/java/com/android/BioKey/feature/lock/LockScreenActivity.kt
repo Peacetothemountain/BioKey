@@ -175,8 +175,12 @@ class LockScreenActivity : ComponentActivity() {
     private var leftWithoutUnlock = false
     /** See [showOverKeyguard]. */
     private var showsOverKeyguard = false
-    /** The keyguard was already locked when this cover went over it (an app over the keyguard: the camera). */
+    /**
+     * The keyguard was already locked when this cover went over it (an app over the keyguard: the
+     * camera), and hasn't gone away since ([LockStateTracker.phoneUnlocks] then).
+     */
     private var overKeyguardOnPurpose = false
+    private var phoneUnlocksWhenOver = 0
     /**
      * Started as the phone locked ([EXTRA_BEHIND_KEYGUARD]) and not yet seen with the phone unlocked:
      * stopped meanwhile (under a screensaver, before the keyguard's own lock delay is up), it stays.
@@ -328,10 +332,13 @@ class LockScreenActivity : ComponentActivity() {
         super.onNewIntent(intent)
         // Already leaving: if the app is still in front, the engine's shield brings a new lock.
         if (isFinishing) return
-        if (intent.getBooleanExtra(EXTRA_BEHIND_KEYGUARD, false)) heldForPhoneLock = true
-        showOverKeyguard(!heldForPhoneLock && coversAppOverKeyguard())
         val newPkg = intent.getStringExtra(EXTRA_LOCKED_PACKAGE).orEmpty()
         val newSelfProt = intent.getBooleanExtra(EXTRA_SELF_PROTECTION, false)
+        // Held for the phone's lock only for the app it was started for: another app's lock (the
+        // camera, opened over the keyguard) is judged afresh.
+        heldForPhoneLock = intent.getBooleanExtra(EXTRA_BEHIND_KEYGUARD, false) ||
+            (heldForPhoneLock && newPkg == lockedPackage && newSelfProt == isSelfProtection)
+        showOverKeyguard(!heldForPhoneLock && coversAppOverKeyguard())
         if (newPkg == lockedPackage && newSelfProt == isSelfProtection) {
             // Same target brought to front again (e.g. over a trampoline): keep the running prompt.
             launchAfterUnlock = launchAfterUnlock || intent.getBooleanExtra(EXTRA_LAUNCH_AFTER_UNLOCK, false)
@@ -658,6 +665,7 @@ class LockScreenActivity : ComponentActivity() {
         if (show == showsOverKeyguard) return
         showsOverKeyguard = show
         overKeyguardOnPurpose = show && isKeyguardLocked()
+        phoneUnlocksWhenOver = LockStateTracker.phoneUnlocks
         setShowWhenLocked(show)
     }
 
@@ -668,7 +676,10 @@ class LockScreenActivity : ComponentActivity() {
     private val onLockAll: () -> Unit = {
         // Not a cover put over the keyguard on purpose, for an app that is itself over it (the
         // camera): that one stays, as its app does.
-        runOnUiThread { if (!isDestroyed && isKeyguardLocked() && !overKeyguardOnPurpose) showOverKeyguard(false) }
+        runOnUiThread {
+            val stillOnPurpose = overKeyguardOnPurpose && LockStateTracker.phoneUnlocks == phoneUnlocksWhenOver
+            if (!isDestroyed && isKeyguardLocked() && !stillOnPurpose) showOverKeyguard(false)
+        }
     }
 
     private fun isKeyguardLocked() = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
