@@ -151,22 +151,32 @@ class UsageWatchService : Service() {
                     ProtectionAlerts.serviceStopped(app)
                 }
                 if (!shown) return@post failed("no overlay")
-                // Drawn, so Android counts it as showing.
-                main.postDelayed({
+                // Drawn, so Android counts it as showing: a moment can pass before it does, so a
+                // refusal is tried again, a few times, while it stays up.
+                fun attempt(left: Int) {
                     try {
                         ContextCompat.startForegroundService(app, Intent(app, UsageWatchService::class.java))
                         DiagnosticLog.log("Compatibility mode started under an overlay")
+                        main.postDelayed({ runCatching { windows?.removeViewImmediate(view) } }, OVERLAY_START_HOLD_MS)
                     } catch (e: Exception) {
-                        failed(e.javaClass.simpleName)
+                        if (left > 0) {
+                            main.postDelayed({ attempt(left - 1) }, OVERLAY_RETRY_MS)
+                        } else {
+                            failed(e.javaClass.simpleName)
+                            runCatching { windows?.removeViewImmediate(view) }
+                        }
                     }
-                    main.postDelayed({ runCatching { windows?.removeViewImmediate(view) } }, OVERLAY_START_HOLD_MS)
-                }, OVERLAY_DRAWN_MS)
+                }
+                main.postDelayed({ attempt(OVERLAY_RETRIES) }, OVERLAY_DRAWN_MS)
             }
         }
 
         /** How long the start overlay is given to be drawn, and kept up after the start. */
         private const val OVERLAY_DRAWN_MS = 100L
         private const val OVERLAY_START_HOLD_MS = 1_000L
+        /** Further tries while the start overlay is up, this far apart (about a second and a half in all). */
+        private const val OVERLAY_RETRIES = 5
+        private const val OVERLAY_RETRY_MS = 250L
 
         fun stop(context: Context) {
             // One still starting checks for itself whether it should run: stopping it before it
