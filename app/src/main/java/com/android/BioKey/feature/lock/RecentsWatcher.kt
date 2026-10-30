@@ -131,14 +131,11 @@ internal class RecentsWatcher(
         val last = Rect(rect)
 
         /**
-         * Seen at [rect]: not moved up or down since the last look, and no higher than where it
-         * rested, it rests there. Not one held still part-way through a swipe up, nor one running
-         * off the top of the screen (only its visible part reported: clipped at the edge).
+         * Seen at [rect]: not moved up or down since the last look, it rests there, unless it's
+         * running off the top of the screen (only its visible part reported: clipped at the edge).
          */
         fun moveTo(rect: Rect) {
-            if (rect.top == last.top && rect.bottom == last.bottom && rect.top >= first.top && rect.top > 0 && rect.bottom > rect.top) {
-                first.set(rect)
-            }
+            if (rect.top == last.top && rect.bottom == last.bottom && rect.top > 0 && rect.bottom > rect.top) first.set(rect)
             last.set(rect)
         }
     }

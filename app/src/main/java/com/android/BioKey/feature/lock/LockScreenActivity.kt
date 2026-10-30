@@ -68,6 +68,8 @@ class LockScreenActivity : ComponentActivity() {
         const val EXTRA_BEHIND_KEYGUARD = "extra_behind_keyguard"
         /** How long a cover in a window waits to be given the whole display before failing closed. */
         private const val FULLSCREEN_WAIT_MS = 1_500L
+        /** The longest the shield waits for this screen to come in over the keyguard ([onCoverShown]). */
+        private const val KEYGUARD_ENTRY_WAIT_MS = 1_000L
         /**
          * How long a shield outlives a cover that sent the user Home: long enough for Home to be in
          * front, and well inside [LockStateTracker.ABANDONED_LOCK_COOLDOWN_MS], so it is still ours.
@@ -471,8 +473,33 @@ class LockScreenActivity : ComponentActivity() {
             askForWholeDisplay()
             return
         }
+        // Over the keyguard, a frame drawn isn't a frame shown: the keyguard's own transition
+        // (the app over it, then this over the app) runs first. The shield waits for it to end.
+        if (showsOverKeyguard && isKeyguardLocked() && !enteredOverKeyguard) {
+            if (!awaitingEntry) {
+                awaitingEntry = true
+                cover.postDelayed(::onEnteredOverKeyguard, KEYGUARD_ENTRY_WAIT_MS)
+            }
+            return
+        }
         dismissShield()
         maybeAutoPrompt()
+    }
+
+    /** Shown over the keyguard: see [onCoverShown]. */
+    private var enteredOverKeyguard = false
+    private var awaitingEntry = false
+
+    override fun onEnterAnimationComplete() {
+        super.onEnterAnimationComplete()
+        if (awaitingEntry) onEnteredOverKeyguard()
+    }
+
+    private fun onEnteredOverKeyguard() {
+        if (!awaitingEntry || isFinishing) return
+        awaitingEntry = false
+        enteredOverKeyguard = true
+        onCoverShown()
     }
 
     /** Full screen, or a window as big as the display: nothing else can be on screen beside it. */

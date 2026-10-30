@@ -48,14 +48,17 @@ class BioKeyBootReceiver : BroadcastReceiver() {
                 if (vault.isSetupCompleted()) {
                     // Compatibility mode may start here (boot is allowed to start it).
                     ProtectionEngine.refresh(appContext)
+                    // Either engine running is protecting: the one expected may hand over to the
+                    // other meanwhile (the accessibility service switched off as compatibility mode
+                    // starts, say).
+                    val anyRunning = { FeatureLinks.engines.accessibilityRunning || FeatureLinks.engines.compatibilityRunning }
                     val protecting = when (ProtectionEngine.mode(appContext)) {
                         ProtectionEngine.Mode.ACCESSIBILITY -> true
                         // Switched on: Android connects it moments after a boot or an update. An alert
                         // only if it still isn't running then, withdrawn as soon as it is.
-                        ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING ->
-                            awaitRunning("Accessibility engine") { FeatureLinks.engines.accessibilityRunning }
+                        ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> awaitRunning("Accessibility engine", anyRunning)
                         // Its permissions don't mean it's running: the start can still fail.
-                        ProtectionEngine.Mode.COMPATIBILITY -> awaitRunning("Compatibility engine") { FeatureLinks.engines.compatibilityRunning }
+                        ProtectionEngine.Mode.COMPATIBILITY -> awaitRunning("Compatibility engine", anyRunning)
                         else -> false
                     }
                     if (!protecting) ProtectionAlerts.serviceStopped(appContext, now = true)

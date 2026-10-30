@@ -1225,16 +1225,26 @@ class UsageWatchService : Service() {
         // cover, not stopped): one started behind the keyguard is stopped at once, and its cover
         // waits there, unseen, for the unlock.
         if (keyguardLocked() && isInteractive() && !showsOverKeyguard(pkg, foregroundClass)) {
+            // One wait at a time for an app (its cover's checks ask again meanwhile).
+            if (!keyguardWaits.add(pkg)) return true
             handler.postDelayed({
-                if (!isRunning) return@postDelayed
+                keyguardWaits -= pkg
+                // Gone, unlocked or left meanwhile (the phone unlocked and another app opened):
+                // looked at as usual from here.
+                if (!isRunning || foreground != pkg || !vault.isProtectionActive() || !vault.isAppLocked(pkg) ||
+                    LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))
+                ) return@postDelayed
                 val behind = keyguardLocked() && !activities.isVisible(pkg)
                 if (behind) DiagnosticLog.log("Covered $pkg (opened behind the keyguard)")
-                LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = reprompt, behindKeyguard = behind)
+                if (!LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = reprompt, behindKeyguard = behind) && !behind) sendHome()
             }, KEYGUARD_SETTLE_MS)
             return true
         }
         return LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = reprompt)
     }
+
+    /** Apps come forward with the keyguard up, being watched for whether they're over it ([launchLockScreen]). */
+    private val keyguardWaits = HashSet<String>()
 
     /** Whether [pkg]'s screen [cls] is made to show over the keyguard (android:showWhenLocked). */
     private fun showsOverKeyguard(pkg: String, cls: String?): Boolean = runCatching {
@@ -1317,7 +1327,7 @@ class UsageWatchService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_biokey_mark)
             .setContentTitle(getString(if (protecting()) R.string.compat_notification_title else R.string.compat_notification_title_paused))
-            .setContentText(getString(R.string.compat_notification_text))
+            .setContentText(getString(if (protecting()) R.string.compat_notification_text else R.string.home_paused_body))
             .setContentIntent(open)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)

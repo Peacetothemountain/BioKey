@@ -175,6 +175,8 @@ object ProtectionGaps {
     private const val KEY_LAST_UPDATE = "last_update"
     /** The process exits already looked at, by their time: Android keeps the last few. */
     private const val KEY_EXITS_SEEN = "exits_seen"
+    /** How many looked-at exits are remembered: well beyond the 16 Android is asked for. */
+    private const val MAX_EXITS_SEEN = 64
     /** This storage has been looked at once ([checkStorageCleared]). */
     private const val KEY_STORAGE_SEEN = "storage_seen"
     /** When BioKey's storage was cleared, on BioKey's clock, until it's set up again and recorded. */
@@ -404,13 +406,20 @@ object ProtectionGaps {
             if (setUp && found.isNotEmpty()) {
                 recorded = true
                 save(p, (found.map { it.copy(seq = UnlockAttempts.nextSeq(context)).stamped(context) } + _gaps.value).fresh(context))
-                found.forEach { DiagnosticLog.log("App locking was off for ${(it.to - it.from) / 1000} s (${it.kind.name.lowercase().replace('_', ' ')})") }
+                found.forEach {
+                    val length = if (it.unknownStart) "a time that can't be told" else "${(it.to - it.from) / 1000} s"
+                    DiagnosticLog.log("App locking was off for $length (${it.kind.name.lowercase().replace('_', ' ')})")
+                }
             }
             p.edit {
                 remove(KEY_STOPPED_AT).remove(KEY_STOPPED_ELAPSED).remove(KEY_STOPPED_BOOT)
                 putLong(KEY_CLOCK_OFFSET, now - wallNow())
                 putLong(KEY_LAST_UPDATE, update)
-                putStringSet(KEY_EXITS_SEEN, exits.mapTo(HashSet()) { it.first.toString() })
+                // Added to, not replaced: Android lists only the newest exits, and after a restart it
+                // can have lost its newest, so an older one seen before comes back into the list.
+                val seen = (seenExits.orEmpty().mapNotNull { it.toLongOrNull() } + exits.map { it.first })
+                    .distinct().sortedDescending().take(MAX_EXITS_SEEN)
+                putStringSet(KEY_EXITS_SEEN, seen.mapTo(HashSet()) { it.toString() })
                 if (setUp) remove(KEY_CLEARED_AT).remove(KEY_CLEARED_UNKNOWN)
             }
             if (setUp) _cleared.value = null

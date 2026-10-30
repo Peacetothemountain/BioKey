@@ -8,6 +8,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Rect
 import android.database.ContentObserver
 import android.os.Build
 import android.os.Handler
@@ -67,8 +68,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
         /** How long an app seen on display is taken to still be there for [hasScreenShowing]. */
         private const val ON_DISPLAY_MEMORY_MS = 3_000L
         /** A locked app come forward with the keyguard up is looked for on display this often, this many times ([awaitOverKeyguard]). */
-        private const val OVER_KEYGUARD_CHECK_MS = 150L
-        private const val OVER_KEYGUARD_CHECKS = 3
+        private const val OVER_KEYGUARD_CHECK_MS = 50L
+        private const val OVER_KEYGUARD_CHECKS = 30
         private const val MAX_ACTIVITY_WINDOWS = 256
         /** SystemUI's windows over an app (its dream overlay, its hub) never make it the app left on screen. */
         private const val SYSTEM_UI = "com.android.systemui"
@@ -184,7 +185,17 @@ class BioKeyAccessibilityService : AccessibilityService() {
      * The app on screen as the phone locked: under a screensaver, the one it came over (a
      * screensaver's own windows never become the app in front: [isScreensaverWindow]).
      */
-    private fun appLeftOnScreen(): String? = foregroundPackage?.takeIf { it != SYSTEM_UI } ?: appBeforeScreensaver
+    private fun appLeftOnScreen(): String? {
+        val front = foregroundPackage?.takeIf { it != SYSTEM_UI } ?: appBeforeScreensaver
+        // BioKey's own screen in front, beside another app (split screen): that one.
+        if (front == packageName) {
+            return lastAppsOnScreen.firstOrNull { it != packageName && it != SessionRules.UNIDENTIFIED_APP && !isLauncher(it) } ?: front
+        }
+        return front
+    }
+
+    /** The apps on screen at the last visibility pass. */
+    private var lastAppsOnScreen: List<String> = emptyList()
 
     /**
      * Accessibility window id -> owning package, learned from window events. Google Password
@@ -618,7 +629,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 // one (its screensaver's window may come before the broadcast): lock() sees to those.
                 if (target != null && !isSystemOrOverlay(target, eventCls) && needsCover(target) &&
                     !LockStateTracker.screensaverShowing && !screensaverWindow && target !in screensaverApps() &&
-                    !(isKeyguardLocked() && !isOnDisplay(target))
+                    !(isKeyguardLocked() && !isEventWindowOnDisplay(event))
                 ) {
                     exitTransition = isExitTransition(target)
                     if (exitTransition == false && isPhoneScreen(display)) LatencyMarks.trigger("accessibility", target, event.eventTime)
@@ -1011,7 +1022,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun noteOnDisplay(list: List<AccessibilityWindowInfo>) {
         val now = SystemClock.elapsedRealtime()
         for (w in list) {
-            if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION || w.id in screensaverWindows) continue
+            if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION || w.id in screensaverWindows || !isUncovered(list, w)) continue
             (windowPackages[w.id] ?: attributedWindows[w.id])?.let { onDisplayAt[it] = now }
         }
     }
@@ -1078,6 +1089,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
             if (active == null && w.isActive) active = pkg to w.title
             if (focused == null && w.isFocused) focused = pkg to w.title
         }
+        // BioKey's own prompt over its main screen hides every app's window: BioKey is on screen.
+        if (visible.isEmpty() && LockStateTracker.ownScreenShowing && !LockScreenActivity.isLockScreenResumed &&
+            SecurityEngine.INSTANCE.isAuthenticatingFor(packageName)
+        ) visible += packageName
         // Nothing app-like on screen (the keyguard, a transition) is not an answer: what is known stays known.
         if (visible.isEmpty()) return
         windowPackages.keys.retainAll(liveIds)
@@ -1102,11 +1117,16 @@ class BioKeyAccessibilityService : AccessibilityService() {
             !SecurityEngine.INSTANCE.isAuthenticating()
         // A launcher coming back doesn't always say so: the window list does.
         if (isLauncher(frontApp)) foregroundPackage = frontApp
-        // Nor does BioKey's main screen (its window can't be read, nor send events): BioKey knows
-        // it's showing, and the unreadable window in front is titled as BioKey's.
-        if (frontApp == SessionRules.UNIDENTIFIED_APP && LockStateTracker.ownScreenShowing && !LockScreenActivity.isLockScreenResumed &&
-            ownTitle != null && inFront?.second?.toString() == ownTitle
+        // Nor does BioKey's main screen (its window can't always be read, nor names an activity):
+        // BioKey knows it's showing, and the window in front is its own (titled as BioKey's), or
+        // its own prompt over it.
+        if (LockStateTracker.ownScreenShowing && !LockScreenActivity.isLockScreenResumed && (
+                frontApp == packageName ||
+                    (frontApp == SessionRules.UNIDENTIFIED_APP && ownTitle != null && inFront?.second?.toString() == ownTitle) ||
+                    (frontApp == SYSTEM_UI && SecurityEngine.INSTANCE.isAuthenticatingFor(packageName))
+                )
         ) foregroundPackage = packageName
+        lastAppsOnScreen = visible.toList()
         val outcome = rules.reconcile(
             SessionRules.Screen(
                 visible = visible,
@@ -1153,8 +1173,14 @@ class BioKeyAccessibilityService : AccessibilityService() {
      * See [ForegroundRules.isHopTarget]; keyboards and unreadable windows also leave a hop running,
      * but not BioKey's own main screen (unreadable too): going there is leaving the app.
      */
-    private fun isHopTarget(pkg: String): Boolean = when (pkg) {
-        SessionRules.UNIDENTIFIED_APP -> !isOwnMainScreenInFront()
+    private fun isHopTarget(pkg: String): Boolean = when {
+        // BioKey's main screen in front (its prompt over it, say): the app was left for BioKey.
+        isOwnMainScreenInFront() -> false
+        else -> isHopTargetOtherwise(pkg)
+    }
+
+    private fun isHopTargetOtherwise(pkg: String): Boolean = when (pkg) {
+        SessionRules.UNIDENTIFIED_APP -> true
         // BioKey's lock screen (for a locked helper) is; its main screen, which its events don't
         // name (their classes are views'), isn't: BioKey knows which is showing.
         packageName -> !LockStateTracker.ownScreenShowing
@@ -1334,6 +1360,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
         }
 
         if (SecurityEngine.INSTANCE.isAuthenticatingFor(target) || LockStateTracker.isRegularLockPending(target)) {
+            // Its lock screen waiting behind the keyguard: nothing goes over the keyguard for it
+            // unless it is over the keyguard itself.
+            if (isPhoneScreen(displayId) && isKeyguardLocked() && isInteractive() && !isOnDisplay(target)) {
+                awaitOverKeyguard(target, "opened")
+                return
+            }
             if (!LockScreenActivity.isLockScreenResumed || LockScreenActivity.activeLockedTarget != target) {
                 if (isPhoneScreen(displayId)) shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
                 launchLockScreen(target, isSelfProtection = false, displayId)
@@ -1436,37 +1468,45 @@ class BioKeyAccessibilityService : AccessibilityService() {
     /**
      * [target] came forward with the keyguard up, but isn't on display: an app started behind the
      * keyguard (from a notification, say) waits there for the phone to be unlocked, and one over it
-     * (the camera) can say so before its window is up. Looked for again a few times: on display,
-     * it's covered over the keyguard; still not, its lock screen waits behind it.
+     * (the camera) can say so before its window is up. Looked for again every moment for a while:
+     * on display, it's covered over the keyguard; still not, its lock screen waits behind it.
      */
     private fun awaitOverKeyguard(target: String, why: String, attempt: Int = 0) {
-        if (attempt == 0 && awaitingOverKeyguard == target) return
-        awaitingOverKeyguard = target
+        if (attempt == 0 && !awaitingOverKeyguard.add(target)) return
         mainHandler.postDelayed({
-            if (awaitingOverKeyguard != target) return@postDelayed
+            if (target !in awaitingOverKeyguard) return@postDelayed
             if (!isRunning || !::vault.isInitialized || !needsCover(target)) {
-                awaitingOverKeyguard = null
+                awaitingOverKeyguard -= target
                 return@postDelayed
             }
             when {
+                // The screen went off: the screen-off cover sees to it.
+                !isInteractive() -> awaitingOverKeyguard -= target
                 // Unlocked meanwhile: looked at as usual.
-                !isKeyguardLocked() || !isInteractive() -> {
-                    awaitingOverKeyguard = null
+                !isKeyguardLocked() -> {
+                    awaitingOverKeyguard -= target
                     reevaluateForeground()
                 }
                 isOnDisplay(target) -> {
-                    awaitingOverKeyguard = null
+                    awaitingOverKeyguard -= target
                     lock(target, why)
                 }
                 attempt + 1 < OVER_KEYGUARD_CHECKS -> awaitOverKeyguard(target, why, attempt + 1)
                 else -> {
-                    awaitingOverKeyguard = null
+                    awaitingOverKeyguard -= target
                     coverLeftOnScreen(target, "$why behind the keyguard")
                 }
             }
         }, OVER_KEYGUARD_CHECK_MS)
     }
-    private var awaitingOverKeyguard: String? = null
+    private val awaitingOverKeyguard = HashSet<String>()
+
+    /** Whether [event]'s own window is on display (not behind the keyguard): read without asking the app. */
+    private fun isEventWindowOnDisplay(event: AccessibilityEvent): Boolean {
+        val list = windowList() ?: return false
+        val w = list.firstOrNull { it.id == event.windowId } ?: return false
+        return w.type == AccessibilityWindowInfo.TYPE_APPLICATION && isUncovered(list, w)
+    }
 
     /**
      * Whether [pkg] has had a screen on display since the screen last went off, just now or in the
@@ -1475,7 +1515,28 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun isOnDisplay(pkg: String): Boolean {
         onDisplayAt[pkg]?.let { if (SystemClock.elapsedRealtime() - it < ON_DISPLAY_MEMORY_MS) return true }
         val windows = runCatching { windowList() }.getOrNull() ?: return false
-        return windows.any { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.id !in screensaverWindows && packageOf(it) == pkg }
+        return windows.any {
+            it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.id !in screensaverWindows && isUncovered(windows, it) &&
+                (windowPackages[it.id] ?: attributedWindows[it.id] ?: packageOf(it)) == pkg
+        }
+    }
+
+    /**
+     * Whether window [w] of [list] (top first) is on display: no full-screen system window (the
+     * keyguard, a screensaver's overlay, the shade pulled down) is above it. An app started behind
+     * the keyguard can be listed while it's there (starting cold); one over it (the camera) is
+     * listed above it.
+     */
+    private fun isUncovered(list: List<AccessibilityWindowInfo>, w: AccessibilityWindowInfo): Boolean {
+        val metrics = resources.displayMetrics
+        val bounds = Rect()
+        for (other in list) {
+            if (other.id == w.id) return true
+            if (other.displayId != w.displayId || other.type != AccessibilityWindowInfo.TYPE_SYSTEM) continue
+            other.getBoundsInScreen(bounds)
+            if (bounds.width() >= metrics.widthPixels * 0.9f && bounds.height() >= metrics.heightPixels * 0.9f) return false
+        }
+        return true
     }
 
     /** The apps whose screensavers are chosen in Android's settings ("screensaver_components"). */

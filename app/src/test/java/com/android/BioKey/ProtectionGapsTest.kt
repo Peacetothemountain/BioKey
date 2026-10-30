@@ -310,6 +310,27 @@ class ProtectionGapsTest {
     }
 
     @Test
+    fun aForceStopSeenBeforeIsntRecordedAgainWhenItComesBackIntoAndroidsList() {
+        // A force stop, recorded; then many newer exits push it out of the 16 Android lists; after
+        // a restart Android has lost the newer ones, and lists it again.
+        var wall = now
+        ProtectionGaps.wallNow = { wall }
+        val stop = wall
+        exits = listOf(stop to ApplicationExitInfo.REASON_USER_REQUESTED)
+        pass(60_000L)
+        wall += 60_000L
+        ProtectionGaps.onEngineUp(context)
+        assertEquals(1, gaps.size)
+        exits = (1..16).map { stop + it * 1_000L to ApplicationExitInfo.REASON_OTHER }
+        ProtectionGaps.onEngineUp(context)
+        exits = listOf(stop to ApplicationExitInfo.REASON_USER_REQUESTED)
+        pass(3 * 60 * 60_000L)
+        wall += 3 * 60 * 60_000L
+        ProtectionGaps.onEngineUp(context)
+        assertEquals(1, gaps.size)
+    }
+
+    @Test
     fun aMomentsEventIsRecorded() {
         ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK)
         assertEquals(ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, gaps.single().kind)

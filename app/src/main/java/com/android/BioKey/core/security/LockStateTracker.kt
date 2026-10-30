@@ -275,12 +275,6 @@ object LockStateTracker {
         cancelExpiry(packageName)
     }
 
-    /**
-     * The unlocked app left the screen.
-     *
-     * @param hopTarget the helper app the user went straight to, or null for Home, Recents or a
-     *   regular app. Only a helper hop keeps an IMMEDIATE session alive (for [HOP_MAX_MS]).
-     */
     /** [mode] as the diagnostic log says it: "after 30 s", "at screen off". */
     private fun relockLabel(mode: LockTimeoutMode) = when (mode) {
         LockTimeoutMode.IMMEDIATE -> "immediately"
@@ -288,6 +282,12 @@ object LockStateTracker {
         else -> if (mode.durationMillis < 60_000L) "after ${mode.durationMillis / 1000} s" else "after ${mode.durationMillis / 60_000} min"
     }
 
+    /**
+     * The unlocked app left the screen.
+     *
+     * @param hopTarget the helper app the user went straight to, or null for Home, Recents or a
+     *   regular app. Only a helper hop keeps an IMMEDIATE session alive (for [HOP_MAX_MS]).
+     */
     fun onAppLeft(packageName: String, timeoutMode: LockTimeoutMode, hopTarget: String?) {
         val session = sessionOf(packageName) ?: return
         session.seen = true
