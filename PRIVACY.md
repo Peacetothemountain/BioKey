@@ -147,6 +147,9 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   protection is paused, and BioKey's other settings.
 - **Unlock sessions** (which apps are unlocked right now) live only in memory, and end whenever
   the phone locks.
+- **Android's own App lock** (Android 17): which of the apps you've locked Android's own App lock
+  was seen locking too, and when it last was, so BioKey can say so. An app not seen locked by it
+  for 30 days is forgotten.
 - **Failed unlock alerts** (off until you turn them on; BioKey asks once): for each failed
   attempt on a locked app (or on BioKey's own prompts that confirm a change, listed as BioKey), which app (its package name and name), when, how many faces or
   fingerprints didn't match, whether biometrics locked out, and how the app was then opened, if

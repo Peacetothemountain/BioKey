@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat
 import com.android.BioKey.core.FeatureLinks
 import com.android.BioKey.core.data.AppClassifier
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.security.AlsoLockedByAndroid
 import com.android.BioKey.core.security.BiometricEnrollment
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.NewAppSuggestions
@@ -114,6 +115,7 @@ class BioKeyApplication : Application() {
                 // Off the main thread, so a prompt's first miss or a screen-off doesn't wait for the disk.
                 UnlockAttempts.load(app)
                 NewAppSuggestions.load(app)
+                AlsoLockedByAndroid.load(app)
                 ProtectionGaps.load(app)
                 // Early, before anything else is written: a cleared storage is told from an empty one here.
                 ProtectionGaps.checkStorageCleared(app)
