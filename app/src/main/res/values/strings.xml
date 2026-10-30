@@ -435,9 +435,17 @@
     <!-- Outside BioKey's screens: stand-ins, the compatibility notification, the cover. -->
     <string name="shield_public_title">Locked app</string>
     <string name="shield_public_text">Notification hidden by BioKey</string>
-    <plurals name="shield_stand_in_text">
-        <item quantity="one">%1$d hidden notification · tap to unlock</item>
-        <item quantity="other">%1$d hidden notifications · tap to unlock</item>
+    <!-- A stand-in's text, as Android's own App lock words a locked app's notification. One hidden: -->
+    <string name="shield_stand_in_message">New message</string>
+    <string name="shield_stand_in_notification">New notification</string>
+    <!-- Several hidden (never fewer than 2). -->
+    <plurals name="shield_stand_in_messages">
+        <item quantity="one">%1$d new message</item>
+        <item quantity="other">%1$d new messages</item>
+    </plurals>
+    <plurals name="shield_stand_in_notifications">
+        <item quantity="one">%1$d new notification</item>
+        <item quantity="other">%1$d new notifications</item>
     </plurals>
     <string name="shield_channel_name">Hidden notifications</string>
     <string name="shield_channel_description">Stand-ins for notifications from locked apps</string>
