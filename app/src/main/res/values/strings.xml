@@ -305,6 +305,7 @@
 
     <!-- BioKey's own lock and setup's final check (MainActivity). -->
     <string name="activity_locked_trip">Locked after you were away from BioKey for a while</string>
+    <string name="activity_locked_away">Locked while you were away from BioKey</string>
     <plurals name="activity_locked_idle">
         <item quantity="one">Locked after %d minute without activity</item>
         <item quantity="other">Locked after %d minutes without activity</item>

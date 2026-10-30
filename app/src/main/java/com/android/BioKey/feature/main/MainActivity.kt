@@ -235,7 +235,7 @@ class MainActivity : ComponentActivity() {
         }
         // Still unlocked here only after a trip of BioKey's own, whose session ended while it was
         // away: the lock says why, as the idle check would have with BioKey on screen.
-        onOwnSessionEnded()
+        onOwnSessionEnded(away = true)
         if (!promptAutoLaunched && !isPermanentLockout && !engine.isAuthenticatingFor(packageName)) {
             promptAutoLaunched = true
             window.decorView.post {
@@ -301,16 +301,20 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * BioKey's session is over: its screens lock. The lock says why only when the session ran out
-     * ([LockStateTracker.ownSessionTimedOut]); locked on purpose ("lock all"), it says nothing.
+     * BioKey's session is over: its screens lock. The lock says why when the session ran out
+     * ([LockStateTracker.ownSessionTimedOut]) or ended while BioKey was [away]; locked on purpose
+     * with BioKey on screen ("lock all"), it says nothing.
      */
-    private fun onOwnSessionEnded() {
+    private fun onOwnSessionEnded(away: Boolean = false) {
         if (!isAuthenticated) return
         isAuthenticated = false
         val minutes = (LockStateTracker.OWN_APP_IDLE_MS / 60_000).toInt()
         lockMessage = when {
             LockStateTracker.ownTripRanOut -> getString(R.string.activity_locked_trip)
             LockStateTracker.ownSessionTimedOut -> resources.getQuantityString(R.plurals.activity_locked_idle, minutes, minutes)
+            // Ended meanwhile some other way (another app came forward, every app was locked):
+            // coming back to a lock unasked for, the owner is told why.
+            away -> getString(R.string.activity_locked_away)
             else -> null
         }
     }

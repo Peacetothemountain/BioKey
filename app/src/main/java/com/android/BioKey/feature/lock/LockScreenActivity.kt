@@ -309,7 +309,9 @@ class LockScreenActivity : ComponentActivity() {
         shownAt = SystemClock.elapsedRealtime()
         isLockScreenResumed = true
         resumedAt = SystemClock.uptimeMillis()
-        if (!isKeyguardLocked()) {
+        // Not while a screensaver shows: during the keyguard's lock delay this screen can come
+        // forward under it for a moment, which isn't the phone unlocked.
+        if (!isKeyguardLocked() && !LockStateTracker.screensaverShowing) {
             heldForPhoneLock = false
             // Over the keyguard for an app that was over it (the camera): the phone is unlocked
             // now, so the next keyguard comes up over this cover like any other.
@@ -326,6 +328,12 @@ class LockScreenActivity : ComponentActivity() {
     override fun onPause() {
         if (isCurrent) isLockScreenResumed = false
         super.onPause()
+    }
+
+    /** In front again with a screensaver gone (it held the prompt back): the prompt comes up now. */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) maybeAutoPrompt()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -371,7 +379,7 @@ class LockScreenActivity : ComponentActivity() {
         // The screen went off, or the keyguard came up over the cover (Lockdown with the screen
         // on): keep the cover, behind the keyguard, so nothing of the app shows once the phone is
         // unlocked, and prompt again then.
-        if (isScreenOff() || (isKeyguardLocked() && !showsOverKeyguard) || heldForPhoneLock) {
+        if (isScreenOff() || (isKeyguardLocked() && !showsOverKeyguard) || heldForPhoneLock || LockStateTracker.screensaverShowing) {
             promptAutoLaunched = false
             isPermanentLockout = false
             showOverKeyguard(false)
@@ -514,6 +522,8 @@ class LockScreenActivity : ComponentActivity() {
     private fun maybeAutoPrompt() {
         if (promptAutoLaunched || !firstFrameCommitted || awaitingFullscreen || isPermanentLockout || isFinishing) return
         if (!isLockScreenResumed || engine.isAuthenticatingFor(lockedPackage)) return
+        // Never over a screensaver: it would take the tap meant to end it.
+        if (LockStateTracker.screensaverShowing) return
         promptAutoLaunched = true
         showPrompt()
     }

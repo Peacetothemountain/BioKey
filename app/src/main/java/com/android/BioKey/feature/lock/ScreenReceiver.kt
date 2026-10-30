@@ -27,6 +27,7 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
             val filter = IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_OFF)
                 addAction(Intent.ACTION_DREAMING_STARTED)
+                addAction(Intent.ACTION_DREAMING_STOPPED)
                 addAction(Intent.ACTION_SHUTDOWN)
             }
             ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
@@ -38,9 +39,11 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         EngineTrace.record("d.bc", intent.action)
         when (intent.action) {
+            Intent.ACTION_DREAMING_STOPPED -> LockStateTracker.screensaverShowing = false
             Intent.ACTION_SCREEN_OFF,
             Intent.ACTION_DREAMING_STARTED,
             Intent.ACTION_SHUTDOWN -> {
+                if (intent.action == Intent.ACTION_DREAMING_STARTED) LockStateTracker.screensaverShowing = true
                 // Always: ending sessions twice is harmless, missing a lock is not (a screensaver
                 // never turns the screen off, so the engines' own screen-off handling misses it).
                 LockStateTracker.onScreenTurnedOff()
@@ -48,6 +51,7 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
             // The phone was unlocked: whoever had it has likely handed it back, so this is when
             // failed unlocks and times app locking was off are told.
             Intent.ACTION_USER_PRESENT -> {
+                LockStateTracker.screensaverShowing = false
                 // Off the main thread: right after a restart, this may be the first read of BioKey's storage.
                 val pending: PendingResult? = goAsync()
                 val app = context.applicationContext

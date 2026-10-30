@@ -168,7 +168,8 @@ object NewAppSuggestions {
         val manager = NotificationManagerCompat.from(context)
         val active = runCatching { context.getSystemService(NotificationManager::class.java).activeNotifications.toList() }
             .getOrDefault(emptyList())
-        val ids = active.filter { it.notification.group == GROUP && it.id != SUMMARY_ID }.map { it.id }.toMutableSet()
+        // By channel, not group: Android may regroup an app's notifications on its own.
+        val ids = active.filter { it.notification.channelId == CHANNEL_ID && it.id != SUMMARY_ID }.map { it.id }.toMutableSet()
         posted?.let(ids::add)
         cancelled?.let(ids::remove)
         val offers = ids.size

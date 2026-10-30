@@ -15,9 +15,9 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInteropFilter
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.DialogWindowProvider
 import com.android.BioKey.BuildConfig
@@ -137,17 +137,22 @@ object WindowProtection {
     }
 }
 
-/** Consumes touches delivered while another app's window covers this one. */
-@OptIn(ExperimentalComposeUiApi::class)
+/**
+ * Consumes touches delivered while another app's window covers this one. Read in the first pass,
+ * before anything below acts on them, without taking part in the gesture: an interop filter here
+ * stopped passing taps on after a drag a sheet took over (dragging it open).
+ */
 fun Modifier.rejectObscuredTouches(onObscuredDetected: () -> Unit = {}): Modifier =
-    pointerInteropFilter { motionEvent ->
-        if (WindowProtection.isMotionEventObscured(motionEvent)) {
-            if (motionEvent.actionMasked == MotionEvent.ACTION_DOWN) {
-                onObscuredDetected()
+    pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val motionEvent = event.motionEvent ?: continue
+                if (WindowProtection.isMotionEventObscured(motionEvent)) {
+                    if (motionEvent.actionMasked == MotionEvent.ACTION_DOWN) onObscuredDetected()
+                    event.changes.forEach { it.consume() }
+                }
             }
-            true
-        } else {
-            false
         }
     }
 

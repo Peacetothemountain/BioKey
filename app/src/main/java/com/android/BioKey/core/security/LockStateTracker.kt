@@ -480,6 +480,14 @@ object LockStateTracker {
         deviceLocked = locked
     }
 
+    /**
+     * A screensaver is showing (DREAMING_STARTED until DREAMING_STOPPED, or the phone unlocked):
+     * the phone counts as locked, nothing is covered over it, and a lock screen started as it came
+     * waits behind it whatever the keyguard's own lock delay says ([ScreenReceiver] keeps this).
+     */
+    @Volatile
+    var screensaverShowing = false
+
     /** Times the phone has been seen unlocked (the keyguard going away), as the engines report it. */
     @Volatile
     var phoneUnlocks = 0

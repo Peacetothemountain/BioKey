@@ -101,6 +101,8 @@ class VaultBackupTest {
 
     @Test
     fun theDiagnosticLogSwitchComesBackAsItWas() {
+        // The log reads its own switch on its thread as BioKey starts: done before this changes it.
+        DiagnosticLog.awaitIoForTests()
         try {
             DiagnosticLog.setEnabled(context, false)
             val saved = freshVault().exportState()
