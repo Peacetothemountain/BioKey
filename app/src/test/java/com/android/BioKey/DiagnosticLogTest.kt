@@ -42,9 +42,13 @@ class DiagnosticLogTest {
 
     @Test
     fun entriesOlderThanThreeDaysAreDroppedOnLoad() {
-        // The app's own start loaded the log already; let that finish before replacing the file.
+        // The app's own start loaded the log already; let that finish before replacing the file,
+        // with the log loaded and on whatever an earlier test in this JVM left it as.
+        DiagnosticLog.init(context)
+        DiagnosticLog.setEnabled(context, true)
         DiagnosticLog.clear()
         DiagnosticLog.log("settled")
+        DiagnosticLog.awaitIoForTests()
         waitUntil("the app's own load") { file.exists() && file.readText().contains("settled") }
         // The log stamps and ages entries on BioKey's trusted clock.
         val now = com.android.BioKey.core.security.TrustedClock.now()
