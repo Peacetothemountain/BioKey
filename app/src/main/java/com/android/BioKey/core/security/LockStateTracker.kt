@@ -192,14 +192,33 @@ object LockStateTracker {
     private val timerScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val expiryJobs = ConcurrentHashMap<String, Job>()
 
+    /**
+     * Where the re-lock delay in force comes from (the vault, as it loads): a delay changed in
+     * Settings while an app is away applies to it, not the one it left under.
+     */
+    @Volatile
+    var timeoutModeOf: ((String) -> LockTimeoutMode)? = null
+
     /** Re-checks a session when its away time runs out so notifications re-mask on time. */
     private fun scheduleExpiry(packageName: String, delayMs: Long, timeoutMode: LockTimeoutMode) {
         cancelExpiry(packageName)
         val job = timerScope.launch {
             delay(delayMs + 50L)
-            isAppUnlocked(packageName, timeoutMode)
+            onExpiryDue(packageName, timeoutMode)
         }
         for (pkg in PasswordManager.aliasesOf(packageName)) expiryJobs[pkg] = job
+    }
+
+    /**
+     * [packageName]'s away time under [scheduled] ran out: it ends under the delay in force now.
+     * Made longer meanwhile, the session carries on, and is looked at again when that runs out.
+     */
+    internal fun onExpiryDue(packageName: String, scheduled: LockTimeoutMode) {
+        val mode = timeoutModeOf?.invoke(packageName) ?: scheduled
+        if (!isAppUnlocked(packageName, mode) || mode.durationMillis <= 0L) return
+        val away = sessionOf(packageName)?.away?.get() ?: return
+        val left = away.since + awayAllowanceMs(mode, away.hopTarget != null) - now()
+        if (left > 0L) scheduleExpiry(packageName, left, mode)
     }
 
     private fun cancelExpiry(packageName: String) {

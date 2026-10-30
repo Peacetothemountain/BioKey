@@ -32,6 +32,17 @@ class RecentsGestureTest {
     }
 
     @Test
+    fun swipedUpOffTheTopIsClosedThoughOnlyItsVisiblePartIsReported() {
+        // Measured on Android 17's launcher (1080 x 2424): the top stops at the edge, then the
+        // height goes below zero as the card leaves the screen.
+        val card17 = Rect(175, 304, 905, 1940)
+        assertTrue(RecentsWatcher.sweptAway(card17, Rect(178, 12, 902, 1109), 2424, 1080))
+        assertTrue(RecentsWatcher.sweptAway(card17, Rect(173, 0, 907, -50), 2424, 1080))
+        // Moved over sideways as its neighbour closed, it wasn't closed itself.
+        assertFalse(RecentsWatcher.sweptAway(Rect(0, 302, 131, 1949), Rect(173, 302, 907, 1949), 2424, 1080))
+    }
+
+    @Test
     fun scrolledSidewaysIsNotClosed() {
         assertFalse(RecentsWatcher.sweptAway(card, moved(-1100, 0), h, w))
         assertFalse(RecentsWatcher.sweptAway(card, moved(900, -20), h, w))

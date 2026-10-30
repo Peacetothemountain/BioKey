@@ -133,6 +133,8 @@ class SecurityVault private constructor(private val context: Context) {
         /** The next [getInstance] reads storage afresh, as after a restart. */
         @VisibleForTesting
         internal fun resetForTests() {
+            // Its writes still queued would otherwise land in the next test's storage.
+            INSTANCE?.awaitPendingWrites()
             INSTANCE = null
         }
     }
@@ -198,6 +200,7 @@ class SecurityVault private constructor(private val context: Context) {
 
     init {
         load()
+        LockStateTracker.timeoutModeOf = ::getTimeoutMode
         listeners.forEach { it.onLocked(context, getLockedPackages()) }
     }
 

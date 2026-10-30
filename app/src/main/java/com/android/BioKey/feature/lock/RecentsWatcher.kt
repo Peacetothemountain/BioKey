@@ -100,13 +100,19 @@ internal class RecentsWatcher(
             return CardRead(cards, byId.filterValues { it.isNotEmpty() }.keys, readEveryId)
         }
 
-        /** Slid up, whole: both edges rose, it kept its size and stayed in its column. */
+        /**
+         * Slid up, whole, in its column: its bottom rose, and either it kept its size or it ran
+         * into the top of the screen. There only what's still on screen is reported: the top stops
+         * at the edge and the height shrinks, below zero once it's off (Android 17's launcher).
+         * Sideways is a scroll; growing (the bottom going down) is opening it.
+         */
         fun sweptAway(first: Rect, last: Rect, screenHeight: Int, screenWidth: Int): Boolean {
             val rise = screenHeight * MIN_RISE
-            return first.top - last.top > rise &&
-                first.bottom - last.bottom > rise &&
-                abs(last.height() - first.height()) < first.height() * 0.15f &&
-                abs(last.left - first.left) < screenWidth * 0.15f
+            if (abs(last.left - first.left) >= screenWidth * 0.15f) return false
+            if (first.bottom - last.bottom <= rise) return false
+            val keptSize = abs(last.height() - first.height()) < first.height() * 0.15f
+            val ranIntoTheTop = last.top <= rise && last.top < first.top
+            return (keptSize && first.top - last.top > rise) || ranIntoTheTop
         }
     }
 

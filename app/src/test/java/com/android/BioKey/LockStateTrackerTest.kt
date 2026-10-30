@@ -48,6 +48,28 @@ class LockStateTrackerTest {
     }
 
     @Test
+    fun aLongerDelaySetWhileAwayApplies() {
+        var mode = LockTimeoutMode.GRACE_30_SECONDS
+        LockStateTracker.timeoutModeOf = { mode }
+        try {
+            LockStateTracker.onAppUnlocked(chat)
+            LockStateTracker.onAppVisible(chat)
+            LockStateTracker.onAppLeft(chat, mode, hopTarget = null)
+            advance(20_000L)
+            // Made longer in Settings while away: the timer set for 30 seconds doesn't end it.
+            mode = LockTimeoutMode.GRACE_1_MINUTE
+            advance(11_000L)
+            LockStateTracker.onExpiryDue(chat, LockTimeoutMode.GRACE_30_SECONDS)
+            assertTrue(LockStateTracker.isAppUnlocked(chat, mode))
+            advance(30_000L)
+            LockStateTracker.onExpiryDue(chat, LockTimeoutMode.GRACE_1_MINUTE)
+            assertFalse(LockStateTracker.isAppUnlocked(chat, mode))
+        } finally {
+            LockStateTracker.timeoutModeOf = null
+        }
+    }
+
+    @Test
     fun graceRunsOutOnTime() {
         val graces = LockTimeoutMode.entries.filter { it.durationMillis > 0L }
         assertEquals(4, graces.size)
