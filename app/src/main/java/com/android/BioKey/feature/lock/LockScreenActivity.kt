@@ -175,6 +175,13 @@ class LockScreenActivity : ComponentActivity() {
     private var leftWithoutUnlock = false
     /** See [showOverKeyguard]. */
     private var showsOverKeyguard = false
+    /** The keyguard was already locked when this cover went over it (an app over the keyguard: the camera). */
+    private var overKeyguardOnPurpose = false
+    /**
+     * Started as the phone locked ([EXTRA_BEHIND_KEYGUARD]) and not yet seen with the phone unlocked:
+     * stopped meanwhile (under a screensaver, before the keyguard's own lock delay is up), it stays.
+     */
+    private var heldForPhoneLock = false
     /** Asked for the whole display ([askForWholeDisplay]); the shield stays up until it comes. */
     private var awaitingFullscreen = false
     /**
@@ -208,7 +215,8 @@ class LockScreenActivity : ComponentActivity() {
             finishSilently()
             return
         }
-        showOverKeyguard(!intent.getBooleanExtra(EXTRA_BEHIND_KEYGUARD, false) && coversAppOverKeyguard())
+        heldForPhoneLock = intent.getBooleanExtra(EXTRA_BEHIND_KEYGUARD, false)
+        showOverKeyguard(!heldForPhoneLock && coversAppOverKeyguard())
 
         cover = LockCoverView(this).apply {
             onUnlock = ::showPrompt
@@ -297,6 +305,12 @@ class LockScreenActivity : ComponentActivity() {
         shownAt = SystemClock.elapsedRealtime()
         isLockScreenResumed = true
         resumedAt = SystemClock.uptimeMillis()
+        if (!isKeyguardLocked()) {
+            heldForPhoneLock = false
+            // Over the keyguard for an app that was over it (the camera): the phone is unlocked
+            // now, so the next keyguard comes up over this cover like any other.
+            showOverKeyguard(false)
+        }
         activeLockedTarget = lockedPackage
         if (!isSelfProtection && isTargetUnlocked(lockedPackage)) {
             finishSilently()
@@ -314,7 +328,8 @@ class LockScreenActivity : ComponentActivity() {
         super.onNewIntent(intent)
         // Already leaving: if the app is still in front, the engine's shield brings a new lock.
         if (isFinishing) return
-        showOverKeyguard(!intent.getBooleanExtra(EXTRA_BEHIND_KEYGUARD, false) && coversAppOverKeyguard())
+        if (intent.getBooleanExtra(EXTRA_BEHIND_KEYGUARD, false)) heldForPhoneLock = true
+        showOverKeyguard(!heldForPhoneLock && coversAppOverKeyguard())
         val newPkg = intent.getStringExtra(EXTRA_LOCKED_PACKAGE).orEmpty()
         val newSelfProt = intent.getBooleanExtra(EXTRA_SELF_PROTECTION, false)
         if (newPkg == lockedPackage && newSelfProt == isSelfProtection) {
@@ -349,7 +364,7 @@ class LockScreenActivity : ComponentActivity() {
         // The screen went off, or the keyguard came up over the cover (Lockdown with the screen
         // on): keep the cover, behind the keyguard, so nothing of the app shows once the phone is
         // unlocked, and prompt again then.
-        if (isScreenOff() || (isKeyguardLocked() && !showsOverKeyguard)) {
+        if (isScreenOff() || (isKeyguardLocked() && !showsOverKeyguard) || heldForPhoneLock) {
             promptAutoLaunched = false
             isPermanentLockout = false
             showOverKeyguard(false)
@@ -642,6 +657,7 @@ class LockScreenActivity : ComponentActivity() {
         // it): each call makes the system work out again what shows over the keyguard.
         if (show == showsOverKeyguard) return
         showsOverKeyguard = show
+        overKeyguardOnPurpose = show && isKeyguardLocked()
         setShowWhenLocked(show)
     }
 
@@ -650,7 +666,9 @@ class LockScreenActivity : ComponentActivity() {
      * (Lockdown), the keyguard must come up over the cover. Can run on any thread.
      */
     private val onLockAll: () -> Unit = {
-        runOnUiThread { if (!isDestroyed && isKeyguardLocked()) showOverKeyguard(false) }
+        // Not a cover put over the keyguard on purpose, for an app that is itself over it (the
+        // camera): that one stays, as its app does.
+        runOnUiThread { if (!isDestroyed && isKeyguardLocked() && !overKeyguardOnPurpose) showOverKeyguard(false) }
     }
 
     private fun isKeyguardLocked() = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true

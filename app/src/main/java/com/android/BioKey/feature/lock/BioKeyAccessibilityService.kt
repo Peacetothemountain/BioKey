@@ -159,6 +159,15 @@ class BioKeyAccessibilityService : AccessibilityService() {
             "com.android.systemui"
     }
 
+    /** The screensaver chosen in Android's settings changed: its package mustn't be taken for an app. */
+    private val screensaverObserver = object : ContentObserver(mainHandler) {
+        override fun onChange(selfChange: Boolean) = readScreensavers()
+    }
+
+    /** The window in front is a home screen's, whatever the last window event said. */
+    private fun frontIsLauncher(): Boolean =
+        runCatching { windowList()?.let(::frontWindow)?.let(::packageOf)?.let(::isLauncher) }.getOrNull() == true
+
     /** The app on screen as the phone locked: under a screensaver, the one it came over. */
     private fun appLeftOnScreen(): String? = foregroundPackage?.takeIf { it !in screensavers } ?: appBeforeScreensaver
 
@@ -203,7 +212,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
         override fun onReceive(context: Context, intent: Intent) {
             EngineTrace.record("d.bc", intent.action)
             // First, and whatever goes wrong below: the screen going off ends every session.
-            if (intent.action == Intent.ACTION_SCREEN_OFF) LockStateTracker.onScreenTurnedOff()
+            // A screensaver too: its cover below needs the sessions ended first, whatever order the
+            // broadcast reaches BioKey's receivers in.
+            if (intent.action == Intent.ACTION_SCREEN_OFF || intent.action == Intent.ACTION_DREAMING_STARTED) {
+                LockStateTracker.onScreenTurnedOff()
+            }
             if (!isRunning) return
             guarded("Screen change") {
                 when (intent.action) {
@@ -211,7 +224,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                         // A locked app left on screen: its lock screen goes up now, behind the
                         // keyguard, once every session has ended with the screen (ScreenReceiver,
                         // on this thread too), so unlocking the phone uncovers the cover, not the app.
-                        appLeftOnScreen()?.let { left -> mainHandler.post { coverLeftOnScreen(left) } }
+                        appLeftOnScreen()?.takeUnless { frontIsLauncher() }?.let { left -> mainHandler.post { coverLeftOnScreen(left) } }
                         watchLauncher(false)
                         foregroundPackage = null
                         appBeforeScreensaver = null
@@ -325,6 +338,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         )
         registerForUnlocks(deviceStateReceiver)
         readScreensavers()
+        runCatching {
+            contentResolver.registerContentObserver(Settings.Secure.getUriFor("screensaver_components"), false, screensaverObserver)
+        }
         LockStateTracker.addLockAllListener(onLockAll)
         LockStateTracker.addLockAbandonedListener(onLockAbandoned)
         LockStateTracker.addAppUnlockListener(onAppUnlocked)
@@ -1027,6 +1043,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (launcherInFront != launcherNowInFront) watchLauncher(launcherNowInFront)
         val coverAllowed = vault.isProtectionActive() && !shield.isShowing && !LockScreenActivity.isLockScreenResumed &&
             !SecurityEngine.INSTANCE.isAuthenticating()
+        // A launcher coming back doesn't always say so: the window list does.
+        if (isLauncher(frontApp)) foregroundPackage = frontApp
         val outcome = rules.reconcile(
             SessionRules.Screen(
                 visible = visible,
@@ -1600,6 +1618,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         LockStateTracker.removeAppUnlockListener(onAppUnlocked)
         LockStateTracker.removeAppLockListener(onAppLocked)
         runCatching { contentResolver.unregisterContentObserver(inputMethodObserver) }
+        runCatching { contentResolver.unregisterContentObserver(screensaverObserver) }
         // Nothing enforces sessions while the service is gone, so none may outlive it.
         LockStateTracker.lockAll(reason = "accessibility engine stopped")
         if (::shield.isInitialized) shield.destroy()

@@ -88,6 +88,17 @@ class OwnSessionTest {
     }
 
     @Test
+    fun aTripThatRanOutAwayIsSaidAsSuch() {
+        LockStateTracker.onOwnAppUnlocked()
+        LockStateTracker.beginOwnPicker()
+        LockStateTracker.onOwnAppStopped()
+        advance(121_000)
+        assertFalse(LockStateTracker.isOwnTripActive())
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
+        assertTrue(LockStateTracker.ownTripRanOut)
+    }
+
+    @Test
     fun aSessionThatRanOutIsATimeout() {
         LockStateTracker.onOwnAppUnlocked()
         advance(LockStateTracker.OWN_APP_IDLE_MS + 1_000)

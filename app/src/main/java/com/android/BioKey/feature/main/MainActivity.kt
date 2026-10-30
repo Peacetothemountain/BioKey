@@ -308,7 +308,11 @@ class MainActivity : ComponentActivity() {
         if (!isAuthenticated) return
         isAuthenticated = false
         val minutes = (LockStateTracker.OWN_APP_IDLE_MS / 60_000).toInt()
-        lockMessage = if (LockStateTracker.ownSessionTimedOut) resources.getQuantityString(R.plurals.activity_locked_idle, minutes, minutes) else null
+        lockMessage = when {
+            LockStateTracker.ownTripRanOut -> getString(R.string.activity_locked_trip)
+            LockStateTracker.ownSessionTimedOut -> resources.getQuantityString(R.plurals.activity_locked_idle, minutes, minutes)
+            else -> null
+        }
     }
 
     /** Starts or stops compatibility mode as needed, then records which engine protects apps. */

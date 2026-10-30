@@ -733,7 +733,7 @@ object LockStateTracker {
     private fun endTripAway() {
         if (!ownInForeground && ownUnlockedAt != 0L) {
             Log.i(TAG, "BioKey's trip away ran out; session ended")
-            lockOwnApp(timedOut = true)
+            lockOwnApp(timedOut = true, tripRanOut = true)
         }
     }
 
@@ -750,8 +750,14 @@ object LockStateTracker {
     var ownSessionTimedOut = false
         private set
 
-    fun lockOwnApp(timedOut: Boolean = false) {
+    /** Whether that was a trip of BioKey's own (a settings page, the file picker) running out while away. */
+    @Volatile
+    var ownTripRanOut = false
+        private set
+
+    fun lockOwnApp(timedOut: Boolean = false, tripRanOut: Boolean = false) {
         ownSessionTimedOut = timedOut
+        ownTripRanOut = tripRanOut
         SecurityEngine.INSTANCE.forgetOwnProof()
         ownUnlockedAt = 0L
         ownLastActiveAt = 0L

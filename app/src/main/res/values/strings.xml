@@ -304,6 +304,7 @@
     <string name="home_choose_apps">Choose apps to lock</string>
 
     <!-- BioKey's own lock and setup's final check (MainActivity). -->
+    <string name="activity_locked_trip">Locked after you were away from BioKey for a while</string>
     <plurals name="activity_locked_idle">
         <item quantity="one">Locked after %d minute without activity</item>
         <item quantity="other">Locked after %d minutes without activity</item>

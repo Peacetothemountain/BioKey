@@ -1,6 +1,7 @@
 package com.android.BioKey
 
 import android.app.Application
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -85,6 +86,43 @@ class GantletLockScreenTest {
         on(screen)
         controller.configurationChange(RuntimeEnvironment.getApplication().resources.configuration)
         shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    @Test
+    fun aCoverStartedAsThePhoneLockedStaysWhenSomethingComesOverIt() {
+        // Started at a screen-off or a screensaver, behind the keyguard.
+        val keyguard = shadowOf(context.getSystemService(KeyguardManager::class.java))
+        keyguard.setKeyguardLocked(true)
+        val controller = Robolectric.buildActivity(
+            LockScreenActivity::class.java,
+            Intent(context, LockScreenActivity::class.java)
+                .putExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE, x)
+                .putExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, true)
+        ).setup()
+        open += controller
+        controller.get().markFirstFrameForTests()
+        shadowOf(Looper.getMainLooper()).idle()
+        // A screensaver stops it before the keyguard's own lock delay is up: the keyguard isn't
+        // locked yet and the screen is on, which would read as something displacing it.
+        keyguard.setKeyguardLocked(false)
+        controller.pause().stop()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse("A cover held for the phone's lock closed", controller.get().isFinishing)
+        assertEquals(0, homes())
+        // Seen with the phone unlocked, it's an ordinary cover again: another screen over it closes it.
+        controller.restart().resume()
+        shadowOf(Looper.getMainLooper()).idle()
+        controller.pause().stop()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue("Still held once the phone was unlocked", controller.get().isFinishing)
+    }
+
+    @Test
+    fun anOrdinaryCoverStoppedByAnotherScreenCloses() {
+        val lockScreen = lockScreenFor()
+        lockScreen.pause().stop()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(lockScreen.get().isFinishing)
     }
 
     @Test
