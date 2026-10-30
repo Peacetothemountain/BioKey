@@ -8,6 +8,9 @@ import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
 import java.util.concurrent.Future
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Notification access taken away while "Hide notification content" is on: locked apps'
@@ -35,8 +38,14 @@ object ShieldAccessWatch {
     @Volatile var lastKnownAccess: Boolean? = null
         private set
     /** [shieldWithoutAccess] as last worked out, for a screen's first frame; null before the first time. */
-    @Volatile var lastWithoutAccess: Boolean? = null
-        private set
+    var lastWithoutAccess: Boolean?
+        get() = withoutAccessFlow.value
+        private set(value) {
+            withoutAccessFlow.value = value
+        }
+    private val withoutAccessFlow = MutableStateFlow<Boolean?>(null)
+    /** [lastWithoutAccess], to follow: home's card comes and goes as access does, with BioKey open. */
+    val withoutAccess: StateFlow<Boolean?> = withoutAccessFlow.asStateFlow()
 
     private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-shield-access").apply { isDaemon = true } }
 

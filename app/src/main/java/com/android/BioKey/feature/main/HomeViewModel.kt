@@ -71,6 +71,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     )
     internal val state: StateFlow<HomeState> = _state.asStateFlow()
 
+    init {
+        // Access taken away or given back while home is open (the shield's listener unbound, say).
+        viewModelScope.launch {
+            ShieldAccessWatch.withoutAccess.collect { without -> if (without != null) _state.update { it.copy(shieldWithoutAccess = without) } }
+        }
+    }
+
     /**
      * Looked at again, off the main thread: home calls this each time it's resumed, and cancels it
      * when paused.
