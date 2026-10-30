@@ -158,11 +158,9 @@ object NewAppSuggestions {
 
     /**
      * Several offers at once (a new phone restoring its apps) gather under one summary, which
-     * opens BioKey; a lone offer stands on its own.
-     */
-    /**
-     * [posted] or [cancelled]: an offer's id just posted or cancelled. Android's list of what's
-     * showing is updated a moment later, so that one is counted (or not) as it will be.
+     * opens BioKey; a lone offer stands on its own. [posted] or [cancelled]: an offer's id just
+     * posted or cancelled. Android's list of what's showing is updated a moment later, so that one
+     * is counted (or not) as it will be.
      */
     private fun updateSummary(context: Context, posted: Int? = null, cancelled: Int? = null) {
         val manager = NotificationManagerCompat.from(context)

@@ -307,7 +307,8 @@ class UsageWatchService : Service() {
                     // The app it came over, if locked: its lock screen goes up behind the
                     // keyguard now, so the screensaver ending never shows it.
                     // A lock screen already up: the app it's for.
-                    (if (foreground == packageName) lockScreenTarget else foreground)?.let(::coverBehindScreensaver)
+                    (if (foreground == packageName) lockScreenTarget.takeIf { foregroundClass == LOCK_SCREEN_CLASS } else foreground)
+                        ?.let(::coverBehindScreensaver)
                     // The app in front is there again when it ends: kept, so it is covered then
                     // even if it doesn't report opening again (see recheck).
                     forgetScreen(keepFront = true)

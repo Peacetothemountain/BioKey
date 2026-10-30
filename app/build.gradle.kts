@@ -115,7 +115,8 @@ android {
 
         unitTests.all { test ->
             // Test classes run in parallel JVMs, each with its own copy of BioKey's singletons
-            // (SecurityVault, LockStateTracker), so no class can lean on what another left behind.
+            // (SecurityVault, LockStateTracker); classes in one JVM run one after another, so each
+            // test resets what it relies on (BioKeyApplication starts every one afresh too).
             // Half the cores, at most four: two on GitHub's four-core runners, where two of these
             // and the Gradle daemon fit in 16 GB, and a desktop isn't swamped. Robolectric keeps a
             // sandbox per Android version in each JVM, which 2 GB holds.

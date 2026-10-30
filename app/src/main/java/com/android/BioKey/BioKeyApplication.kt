@@ -15,6 +15,7 @@ import com.android.BioKey.core.FeatureLinks
 import com.android.BioKey.core.data.AppClassifier
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.BiometricEnrollment
+import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.NewAppSuggestions
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
@@ -70,6 +71,8 @@ class BioKeyApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // A process starting knows of no screensaver (ScreenReceiver hears the next one start).
+        LockStateTracker.screensaverShowing = false
         // Before anything in core/ can ask: the engines and the main screen it opens.
         FeatureLinks.install(
             LockEngines, MainActivity::class.java,

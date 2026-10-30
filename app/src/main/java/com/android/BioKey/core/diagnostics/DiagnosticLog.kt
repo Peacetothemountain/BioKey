@@ -69,16 +69,16 @@ object DiagnosticLog {
     /** Changes whenever the log does, for screens showing it. */
     val version: StateFlow<Int> = _version.asStateFlow()
 
-    /**
-     * Loads the saved log; call once the user's storage is unlocked. Before that, and before the
-     * on/off setting is read (on the log's own thread), entries stay in memory only.
-     */
     /** Tests: waits until what's queued on the log's own thread (loading it, its on/off setting) is done. */
     @androidx.annotation.VisibleForTesting
     internal fun awaitIoForTests() {
         io.submit {}.get()
     }
 
+    /**
+     * Loads the saved log; call once the user's storage is unlocked. Before that, and before the
+     * on/off setting is read (on the log's own thread), entries stay in memory only.
+     */
     fun init(context: Context) {
         val f = File(context.filesDir, FILE_NAME)
         io.execute {

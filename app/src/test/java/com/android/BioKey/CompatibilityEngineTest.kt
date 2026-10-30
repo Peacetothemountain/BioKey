@@ -393,6 +393,9 @@ class CompatibilityEngineTest {
         // Only its lock screen, started behind the keyguard: no cover over the screensaver.
         assertEquals(listOf("Covered $bank (opened)", "Covered $bank (on screen as a screensaver started)"), covered(bank))
         assertFalse(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.GRACE_5_MINUTES))
+        // Over: nothing after this runs as if one still showed.
+        context.sendBroadcast(Intent(Intent.ACTION_DREAMING_STOPPED))
+        step()
     }
 
     @Test

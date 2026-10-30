@@ -485,8 +485,12 @@ object LockStateTracker {
      * the phone counts as locked, nothing is covered over it, and a lock screen started as it came
      * waits behind it whatever the keyguard's own lock delay says ([ScreenReceiver] keeps this).
      */
-    @Volatile
-    var screensaverShowing = false
+    var screensaverShowing: Boolean
+        get() = screensaverFlow.value
+        set(value) { screensaverFlow.value = value }
+    private val screensaverFlow = MutableStateFlow(false)
+    /** [screensaverShowing], to follow: a lock screen held while one showed prompts as it ends. */
+    val screensaver: StateFlow<Boolean> = screensaverFlow.asStateFlow()
 
     /** Times the phone has been seen unlocked (the keyguard going away), as the engines report it. */
     @Volatile

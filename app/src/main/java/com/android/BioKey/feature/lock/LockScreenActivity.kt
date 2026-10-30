@@ -19,6 +19,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.annotation.VisibleForTesting
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.android.BioKey.R
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
@@ -30,6 +33,7 @@ import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 import com.android.BioKey.ui.security.WindowProtection
 import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.launch
 
 /**
  * Covers a locked app (or a BioKey system-settings page) and hosts the system prompt until the
@@ -235,6 +239,17 @@ class LockScreenActivity : ComponentActivity() {
             override fun handleOnBackPressed() = goHomeAndFinish()
         })
         LockStateTracker.addLockAllListener(onLockAll)
+        // A screensaver ending: the broadcast saying so can come after this screen resumed under it,
+        // with its hold and prompt held back. Seen to now, while resumed.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                LockStateTracker.screensaver.collect { showing ->
+                    if (showing) return@collect
+                    if (!isKeyguardLocked()) heldForPhoneLock = false
+                    maybeAutoPrompt()
+                }
+            }
+        }
 
         // The shield above us can go as soon as our identical cover is actually on screen.
         cover.viewTreeObserver.registerFrameCommitCallback {

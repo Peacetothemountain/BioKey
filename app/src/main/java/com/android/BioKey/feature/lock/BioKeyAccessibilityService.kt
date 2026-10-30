@@ -172,11 +172,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
         runCatching { windowList()?.let(::frontWindow)?.let(::packageOf)?.let(::isLauncher) }.getOrNull() == true
 
     /** The app on screen as the phone locked: under a screensaver, the one it came over. */
-    private fun appLeftOnScreen(): String? {
+    private fun appLeftOnScreen(screensaver: Boolean = false): String? {
         val front = foregroundPackage?.takeIf { it != SYSTEM_UI } ?: appBeforeScreensaver ?: return null
-        // A screensaver app's window that came forward just now is its screensaver (seen before
-        // the broadcast saying so): the app on screen was the one before it.
-        if (front in screensaverApps() && SystemClock.elapsedRealtime() - foregroundChangedAt < SCREENSAVER_WINDOW_MS) return appBefore
+        // As a screensaver starts, a screensaver app's window that came forward just now is its
+        // screensaver (seen before the broadcast saying so): the app on screen was the one before it.
+        if (screensaver && front in screensaverApps() && SystemClock.elapsedRealtime() - foregroundChangedAt < SCREENSAVER_WINDOW_MS) return appBefore
         return front
     }
 
@@ -248,7 +248,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     // over gets its lock screen behind it now.
                     Intent.ACTION_DREAMING_STARTED -> {
                         LockStateTracker.screensaverShowing = true
-                        appLeftOnScreen()?.let { left -> mainHandler.post { coverLeftOnScreen(left) } }
+                        appLeftOnScreen(screensaver = true)?.let { left -> mainHandler.post { coverLeftOnScreen(left) } }
                     }
                     // Over: whatever is on screen now (the keyguard, or the app with its lock
                     // screen) is looked at as usual.
@@ -596,7 +596,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 // Fast path: cover a locked app before any other work. The shield covers the
                 // phone's own screen only: an app on another display gets its lock screen there.
                 val target = resolveForegroundPackage(event)
-                if (target != null && !isSystemOrOverlay(target, eventCls) && needsCover(target)) {
+                // Not while a screensaver shows, nor for its own window, nor for an app that provides
+                // one (its screensaver's window may come before the broadcast): lock() sees to those.
+                if (target != null && !isSystemOrOverlay(target, eventCls) && needsCover(target) &&
+                    !LockStateTracker.screensaverShowing && eventCls != ForegroundRules.DREAM_ACTIVITY && target !in screensaverApps()
+                ) {
                     exitTransition = isExitTransition(target)
                     if (exitTransition == false && isPhoneScreen(display)) LatencyMarks.trigger("accessibility", target, event.eventTime)
                     if (exitTransition == false && isPhoneScreen(display)) shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
@@ -1352,10 +1356,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
         // seen before the broadcast saying a screensaver started. Covered at once all the same,
         // in case it is the app, but its lock screen waits a moment: a screensaver takes the cover down.
         if (isPhoneScreen(displayId) && target in screensaverApps()) {
+            screensaverAppCoveredAt = target to SystemClock.elapsedRealtime()
             shield.show(target) { }
             mainHandler.postDelayed({
                 if (LockStateTracker.screensaverShowing) {
-                    shield.hide()
+                    if (shield.targetPackage == target) shield.hide()
                     LockStateTracker.clearRegularLockPending(target)
                 } else if (isRunning) {
                     launchLockScreen(target, isSelfProtection = false, displayId)
@@ -1373,9 +1378,14 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     /** The apps whose screensavers are chosen in Android's settings ("screensaver_components"). */
     private fun screensaverApps(): Set<String> = runCatching {
-        Settings.Secure.getString(contentResolver, "screensaver_components").orEmpty().split(',')
-            .mapNotNull { ComponentName.unflattenFromString(it.trim())?.packageName }.toSet()
+        // The one chosen, or Android's default when none was.
+        val chosen = Settings.Secure.getString(contentResolver, "screensaver_components")?.takeIf { it.isNotBlank() }
+            ?: Settings.Secure.getString(contentResolver, "screensaver_default_component").orEmpty()
+        chosen.split(',').mapNotNull { ComponentName.unflattenFromString(it.trim())?.packageName }.toSet()
     }.getOrDefault(emptySet())
+
+    /** An app that provides the screensaver, covered at once with its lock screen held back ([lock]), and when. */
+    private var screensaverAppCoveredAt: Pair<String, Long>? = null
 
     private fun reevaluateForeground() {
         // Also posted with a delay: the service may have stopped meanwhile.
@@ -1543,6 +1553,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
             }
             // A screensaver showing: nothing is covered over it (and its own window isn't the app).
             if (!stillExposed || LockStateTracker.screensaverShowing) return false
+            // An app that provides the screensaver: its lock screen waits out lock()'s moment, which
+            // tells it apart from its screensaver.
+            screensaverAppCoveredAt?.let { (pkg, at) ->
+                if (pkg == target && SystemClock.elapsedRealtime() - at < SCREENSAVER_SETTLE_MS) return true
+            }
             if (attempt > 0) Log.w(TAG, "Lock screen missing after shield timeout (attempt $attempt); relaunching")
             LockStateTracker.setRegularLockPending(target)
             launchLockScreen(target, isSelfProtection = target == SELF_PROTECTION_PENDING_KEY, force = true)
