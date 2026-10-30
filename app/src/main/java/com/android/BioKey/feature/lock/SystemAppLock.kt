@@ -47,10 +47,7 @@ internal class SystemAppLock {
 
     /** A cover came to the front at [now], in window [windowId] (-1: unknown). */
     fun onCover(windowId: Int, now: Long) {
-        if (!isPending(now)) {
-            apps.clear()
-            namedByPrompt = false
-        }
+        if (!isPending(now)) clear()
         coverAt = now
         if (windowId >= 0) coverWindows += windowId
     }
@@ -62,11 +59,12 @@ internal class SystemAppLock {
     fun isCoverWindow(id: Int): Boolean = id in coverWindows
 
     /**
-     * The waiting cover is taken to be for [packages]. [byPrompt]: Android's prompt names them,
-     * which stands over whatever a tap suggested, and isn't replaced by one.
+     * The waiting cover is taken to be for [packages]. [byPrompt]: Android's prompt names them
+     * (none of BioKey's locked apps, when empty), which stands over whatever a tap suggested, and
+     * isn't replaced by one.
      */
     fun attribute(packages: Collection<String>, byPrompt: Boolean, now: Long) {
-        if (!isPending(now) || packages.isEmpty()) return
+        if (!isPending(now)) return
         if (byPrompt) {
             apps.clear()
             apps += packages
@@ -84,19 +82,30 @@ internal class SystemAppLock {
 
     /**
      * [pkg]'s own window came to the front at [now]. True if it's an app the waiting cover was for:
-     * Android let it through, so its prompt was passed. Either way the cover's moment is over (the
-     * cover was cancelled, or Android's unlock has been taken up).
+     * Android let it through, so its prompt was passed, and its unlock is taken up. Any other app,
+     * and the cover's moment is over (it was cancelled, and closed onto what was below). One prompt
+     * for several apps (split screen) lets them all through: the others still count as they come.
      */
     fun onInFront(pkg: String, now: Long): Boolean {
-        val passed = pkg in appsFor(now)
+        if (pkg in appsFor(now)) {
+            apps -= pkg
+            passed += pkg
+            return true
+        }
+        // One already let through, still coming forward (its next screen, its next event).
+        if (isPending(now) && pkg in passed) return false
         clear()
-        return passed
+        return false
     }
+
+    /** Apps the waiting cover has let through already. */
+    private val passed = HashSet<String>()
 
     /** Nothing is waiting any more: the screen went off, every session ended, or the engine stopped. */
     fun clear() {
         coverAt = 0L
         apps.clear()
+        passed.clear()
         namedByPrompt = false
     }
 

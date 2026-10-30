@@ -14,3 +14,28 @@ internal fun AccessibilityNodeInfo.release() {
         runCatching { recycle() }
     }
 }
+
+internal object AccessibilityNodes {
+    /**
+     * The words under [root] (each node's text and description, trimmed, blank ones left out), in
+     * the order a screen reader would come to them, from at most [maxNodes] nodes. [root] itself
+     * stays the caller's to release.
+     */
+    fun texts(root: AccessibilityNodeInfo, maxNodes: Int): List<String> {
+        val found = ArrayList<String>()
+        val queue = ArrayDeque<AccessibilityNodeInfo>().apply { add(root) }
+        var seen = 0
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+            try {
+                if (++seen > maxNodes) continue
+                node.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let(found::add)
+                node.contentDescription?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let(found::add)
+                for (i in 0 until node.childCount) runCatching { node.getChild(i) }.getOrNull()?.let(queue::add)
+            } finally {
+                if (node !== root) node.release()
+            }
+        }
+        return found
+    }
+}

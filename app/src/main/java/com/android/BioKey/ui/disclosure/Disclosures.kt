@@ -87,6 +87,7 @@ enum class Disclosure(
             R.string.disclosure_accessibility_reads_tap_labels,
             R.string.disclosure_accessibility_reads_recents_names,
             R.string.disclosure_accessibility_reads_window_titles,
+            R.string.disclosure_accessibility_reads_app_lock_prompt,
             R.string.disclosure_accessibility_reads_settings_pages
                 .takeIf { SecurityVault.selfProtectionAvailable }
         ),

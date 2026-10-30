@@ -26,6 +26,7 @@ import com.android.BioKey.feature.lock.ForegroundRules
 import com.android.BioKey.feature.lock.InstantShieldOverlay
 import com.android.BioKey.feature.lock.LockScreenActivity
 import com.android.BioKey.feature.lock.SystemAppLock
+import com.android.BioKey.feature.lock.SystemAppLockPrompt
 import java.time.Duration
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -322,6 +323,71 @@ class SystemAppLockTest {
         assertTrue(LockStateTracker.isAppUnlocked(x, LockTimeoutMode.IMMEDIATE))
         assertEquals(emptyList<String>(), covered(x))
         assertEquals(0, lockScreensStarted())
+    }
+
+    /** SystemUI's prompt over Android's cover, its words [texts] (in English, as on the owner's phone). */
+    private fun androidPromptSays(vararg texts: String) {
+        engine.get().systemPromptWords = SystemAppLockPrompt(
+            "This app is protected with app lock",
+            "%1\$s and %2\$s are protected with app lock",
+            "%1\$s, %2\$s, and %3\$s are protected with app lock"
+        )
+        val systemUi = "com.android.systemui"
+        val root = AccessibilityNodeInfo.obtain().apply { packageName = systemUi }
+        for (t in texts) shadowOf(root).addChild(AccessibilityNodeInfo.obtain().apply { packageName = systemUi; text = t })
+        val prompt = AccessibilityWindowInfo.obtain().also { w ->
+            shadowOf(w).apply {
+                setId(9)
+                setType(AccessibilityWindowInfo.TYPE_SYSTEM)
+                setDisplayId(Display.DEFAULT_DISPLAY)
+                setBoundsInScreen(whole)
+                setActive(true)
+                setFocused(true)
+                setRoot(root)
+            }
+        }
+        onScreen(prompt)
+        send(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, systemUi, "android.widget.FrameLayout", wait = 100)
+    }
+
+    @Test
+    fun aLaunchWithoutATapIsPlacedByAndroidsPrompt() {
+        androidCoverComesUp()
+        androidPromptSays("Verify it's you", "Notes", "This app is protected with app lock", "Use PIN")
+        assertTrue(DiagnosticLog.entries().any { it.text == "Android's App lock prompt names $x" })
+        androidLetsThrough(x)
+        assertTrue(LockStateTracker.isAppUnlocked(x, LockTimeoutMode.IMMEDIATE))
+        assertEquals(emptyList<String>(), covered(x))
+    }
+
+    @Test
+    fun androidsPromptStandsOverATapGuess() {
+        tapIcon("Notes")
+        androidCoverComesUp()
+        // Its prompt is for Diary, which BioKey doesn't lock: not Notes, whatever was tapped.
+        androidPromptSays("Verify it's you", "Diary", "This app is protected with app lock")
+        androidLetsThrough(x)
+        assertFalse(LockStateTracker.isAppUnlocked(x, LockTimeoutMode.IMMEDIATE))
+        assertEquals(listOf("Covered $x (opened)"), covered(x))
+    }
+
+    @Test
+    fun oneOfAndroidsPromptsForSeveralAppsLetsEachThrough() {
+        vault.setAppLock(other, true)
+        androidCoverComesUp()
+        androidPromptSays("Verify it's you", "Notes and Diary are protected with app lock")
+        androidLetsThrough(x)
+        androidLetsThrough(other)
+        assertTrue(LockStateTracker.isAppUnlocked(x, LockTimeoutMode.GRACE_5_MINUTES))
+        assertTrue(LockStateTracker.isAppUnlocked(other, LockTimeoutMode.GRACE_5_MINUTES))
+    }
+
+    @Test
+    fun androidsSentenceIsReadInAnyOrderALanguagePutsItsNamesIn() {
+        val words = SystemAppLockPrompt("Diese App ist gesperrt", "%2\$s und %1\$s sind gesperrt")
+        assertEquals(listOf("Notes", "Diary"), words.namesIn(listOf("Diary und Notes sind gesperrt")))
+        assertEquals(listOf("Titel", "Notes"), words.namesIn(listOf("Titel", "Diese App ist gesperrt", "Notes")))
+        assertEquals(null, words.namesIn(listOf("Notes", "Diary")))
     }
 
     @Test

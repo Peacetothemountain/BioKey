@@ -23,6 +23,7 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import androidx.annotation.VisibleForTesting
 import androidx.core.content.ContextCompat
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
@@ -97,6 +98,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
         /** How many unreadable windows are remembered as some app's ([attributedWindows]). */
         private const val MAX_ATTRIBUTED_WINDOWS = 16
+
+        /** Android's App lock prompt is looked for again this long after its cover came ([readSystemLockPrompt]). */
+        private const val SYSTEM_PROMPT_READ_DELAY_MS = 400L
+        /** At most this many looks at a cover's prompt, and this many of its nodes each time: it has a handful. */
+        private const val MAX_PROMPT_READS = 6
+        private const val MAX_PROMPT_NODES = 80
 
 
         /** Window events, always on. Clicks and content changes only while needed: see [applyEventTypes]. */
@@ -371,6 +378,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         // Read now, in the background, rather than on the main thread at the first app switch.
         ForegroundRules.warmUp(this)
         AppInfoCache.onConfiguration(resources.configuration)
+        systemPromptWords = SystemAppLockPrompt.fromSystem()
         runCatching {
             contentResolver.registerContentObserver(
                 Settings.Secure.getUriFor(Settings.Secure.ENABLED_INPUT_METHODS), false, inputMethodObserver
@@ -635,6 +643,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
             if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && eventPkg != null) {
                 // Android's own App lock is asking: its prompt must stay in view (see onSystemLockCover).
                 if (SystemAppLock.isCover(eventPkg, eventCls)) onSystemLockCover(event.windowId)
+                // Its prompt (SystemUI's) coming up names the app it's for.
+                if (eventPkg == SYSTEM_UI) readSystemLockPrompt()
                 // Fast path: cover a locked app before any other work. The shield covers the
                 // phone's own screen only: an app on another display gets its lock screen there.
                 val target = resolveForegroundPackage(event)
@@ -863,6 +873,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     private fun onWindowsChanged(event: AccessibilityEvent) {
         val changes = event.windowChanges
+        // A window came while Android's App lock cover waits: its prompt, maybe.
+        if (changes and AccessibilityEvent.WINDOWS_CHANGE_ADDED != 0) readSystemLockPrompt()
         // A window came: an app waited for over the keyguard may be on display now.
         if (awaitingOverKeyguard.isNotEmpty() && changes and AccessibilityEvent.WINDOWS_CHANGE_ADDED != 0) {
             for (target in awaitingOverKeyguard.toList()) {
@@ -1266,6 +1278,56 @@ class BioKeyAccessibilityService : AccessibilityService() {
             if (forApps.isEmpty()) "Android's App lock is asking for an app"
             else "Android's App lock is asking for ${forApps.joinToString()}"
         )
+        // Its prompt names the app: read as it comes ([readSystemLockPrompt]), and once more in a
+        // moment, in case it came without saying so.
+        promptReads = 0
+        mainHandler.removeCallbacks(readSystemLockPromptLater)
+        mainHandler.postDelayed(readSystemLockPromptLater, SYSTEM_PROMPT_READ_DELAY_MS)
+    }
+
+    /**
+     * Android's App lock prompt's words in the phone's language (none before Android 17 QPR3): see
+     * [SystemAppLockPrompt]. Read again as the language changes; tests set their own.
+     */
+    @VisibleForTesting
+    internal var systemPromptWords: SystemAppLockPrompt? = null
+
+    /** Looks at the prompt of a waiting cover this many times at most (each a read of SystemUI's window). */
+    private var promptReads = 0
+    private val readSystemLockPromptLater = Runnable { guarded("Android's App lock prompt") { readSystemLockPrompt() } }
+
+    /**
+     * While Android's App lock cover waits, reads its prompt (SystemUI's window) for the app it
+     * names: its name beside its icon, or "X and Y are protected with app lock". That says which
+     * app the cover is for, whoever opened it (a notification, a link: no tap to go by), and
+     * stands over a guess from a tap. Only names of BioKey's locked apps count, each the one
+     * locked app of that name; a prompt naming one app must name exactly one. A prompt naming
+     * none of them means the cover isn't for any of BioKey's, whatever the tap suggested. Nothing
+     * read is kept.
+     */
+    private fun readSystemLockPrompt() {
+        val now = SystemClock.elapsedRealtime()
+        if (!systemLock.isPending(now) || systemLock.isNamedByPrompt || promptReads >= MAX_PROMPT_READS) return
+        val words = systemPromptWords ?: return
+        val list = windowList() ?: return
+        promptReads++
+        for (w in list) {
+            if (w.type != AccessibilityWindowInfo.TYPE_SYSTEM) continue
+            val root = runCatching { w.root }.getOrNull() ?: continue
+            try {
+                if (root.packageName?.toString() != SYSTEM_UI) continue
+                val texts = AccessibilityNodes.texts(root, MAX_PROMPT_NODES)
+                val names = words.namesIn(texts) ?: continue
+                val named = names.mapNotNull { lockedPackagesNamed(it).singleOrNull() }.toSet()
+                val apps = if (words.namesOneApp(texts) && named.size > 1) emptySet() else named
+                systemLock.attribute(apps, byPrompt = true, now)
+                for (pkg in apps) AlsoLockedByAndroid.note(this, pkg)
+                if (apps.isNotEmpty()) DiagnosticLog.log("Android's App lock prompt names ${apps.joinToString()}")
+                return
+            } finally {
+                root.release()
+            }
+        }
     }
 
     /**
@@ -2001,7 +2063,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
         super.onConfigurationChanged(newConfig)
         if (::shield.isInitialized) shield.onConfigurationChanged()
         if (::maskControl.isInitialized) maskControl.refreshPalette()
-        if (::vault.isInitialized && AppInfoCache.onConfiguration(newConfig)) AppInfoCache.reload(this, vault.getLockedPackages())
+        if (::vault.isInitialized && AppInfoCache.onConfiguration(newConfig)) {
+            AppInfoCache.reload(this, vault.getLockedPackages())
+            // In the new language, as Android's prompt now is.
+            systemPromptWords = SystemAppLockPrompt.fromSystem()
+        }
     }
 
     override fun onInterrupt() {
@@ -2033,6 +2099,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
         reconcileDueAt = 0L
         mainHandler.removeCallbacks(trailingSelfProtectionRunnable)
         mainHandler.removeCallbacks(revokeSelfProtectionAfterExitRunnable)
+        mainHandler.removeCallbacks(readSystemLockPromptLater)
+        systemLock.clear()
         if (::maskControl.isInitialized) maskControl.stop()
         mainHandler.removeCallbacksAndMessages(ABANDON_TOKEN)
         // A Recents look still pending would end a session after the service has gone.

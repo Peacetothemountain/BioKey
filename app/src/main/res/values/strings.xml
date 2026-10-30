@@ -98,6 +98,7 @@
     <string name="disclosure_accessibility_reads_tap_labels">The label of what you tap on the home screen, in its search or in Recents</string>
     <string name="disclosure_accessibility_reads_recents_names">The names of apps on Recents cards, while Recents is open and an app you\'ve locked is unlocked</string>
     <string name="disclosure_accessibility_reads_window_titles">The title Android gives each new window, to tell Google Password Manager\'s screens from sign-in sheets over other apps</string>
+    <string name="disclosure_accessibility_reads_app_lock_prompt">The app named on Android\'s own App lock prompt (Android 17), while it\'s up, so an app you\'ve locked there too asks you only once</string>
     <string name="disclosure_accessibility_reads_settings_pages">The text of system Settings pages about BioKey itself (App info, Accessibility, notification access, uninstall)</string>
     <string name="disclosure_accessibility_used_covering">Covering apps you\'ve locked until you authenticate, even before they open</string>
     <string name="disclosure_accessibility_used_home_back">Pressing Home or Back for you, to leave a locked app you didn\'t unlock</string>
