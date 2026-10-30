@@ -70,8 +70,11 @@ class UsageWatchService : Service() {
 
     companion object {
         private const val TAG = "UsageWatchService"
-        /** How long an app come forward with the keyguard up is watched for being paused behind it. */
-        private const val KEYGUARD_SETTLE_MS = 450L
+        /** An app come forward with the keyguard up is watched this often, this many times, for being stopped behind it. */
+        private const val KEYGUARD_CHECK_MS = 150L
+        private const val KEYGUARD_CHECKS = 8
+        /** Back this soon after Home came over it, an app still showing then had left all the same. */
+        private const val QUICK_RETURN_MS = 2_000L
         /** ActivityInfo's flag for android:showWhenLocked (hidden from apps, set in every Android since 8.1). */
         private const val FLAG_SHOW_WHEN_LOCKED = 0x800000
         private const val CHANNEL_ID = "biokey_compatibility_mode"
@@ -791,6 +794,18 @@ class UsageWatchService : Service() {
         foregroundClass = activityClass
         sideVisible -= pkg
         pausedBehind -= pkg
+        // Back moments after Home came over it, before Android had even stopped it (it holds that
+        // back about a second): it was left all the same, and comes back now.
+        homeOver.remove(pkg)?.let { since ->
+            if (SystemClock.elapsedRealtime() - since < QUICK_RETURN_MS && vault.isAppLocked(pkg) &&
+                LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))
+            ) LockStateTracker.onAppLeft(pkg, vault.getTimeoutMode(pkg), null)
+        }
+        if (ForegroundRules.isLauncher(this, pkg)) {
+            if (previous != null && previous != pkg && previous != packageName && vault.isAppLocked(previous)) homeOver[previous] = SystemClock.elapsedRealtime()
+        } else {
+            homeOver.clear()
+        }
         if (pkg == packageName && activityClass == LOCK_SCREEN_CLASS) {
             // BioKey brought its lock screen up over them: an app beside the one in front that has
             // a session hops there, as the one in front does (below), and once that lock screen
@@ -1221,27 +1236,44 @@ class UsageWatchService : Service() {
         if (isOwnScreenShowing()) LockStateTracker.beginOwnLockScreenHop(pkg)
         // The keyguard up with the screen on: compatibility mode can't see windows. An app whose
         // screen is made to show over the keyguard (in its manifest) has its cover there; another
-        // is over it only if it stays visible (the camera, made to in its code; paused by its
-        // cover, not stopped): one started behind the keyguard is stopped at once, and its cover
-        // waits there, unseen, for the unlock.
+        // is over it only if it stays visible (the camera, made to in its code): one started
+        // behind the keyguard is stopped (starting cold, a moment later), and its cover waits
+        // there, unseen, for the unlock.
         if (keyguardLocked() && isInteractive() && !showsOverKeyguard(pkg, foregroundClass)) {
             // One wait at a time for an app (its cover's checks ask again meanwhile).
-            if (!keyguardWaits.add(pkg)) return true
-            handler.postDelayed({
-                keyguardWaits -= pkg
-                // Gone, unlocked or left meanwhile (the phone unlocked and another app opened):
-                // looked at as usual from here.
-                if (!isRunning || foreground != pkg || !vault.isProtectionActive() || !vault.isAppLocked(pkg) ||
-                    LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))
-                ) return@postDelayed
-                val behind = keyguardLocked() && !activities.isVisible(pkg)
-                if (behind) DiagnosticLog.log("Covered $pkg (opened behind the keyguard)")
-                if (!LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = reprompt, behindKeyguard = behind) && !behind) sendHome()
-            }, KEYGUARD_SETTLE_MS)
+            if (keyguardWaits.add(pkg)) awaitKeyguardVerdict(pkg, reprompt)
             return true
         }
         return LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = reprompt)
     }
+
+    /** See [launchLockScreen]: looked at every [KEYGUARD_CHECK_MS], [KEYGUARD_CHECKS] times at most. */
+    private fun awaitKeyguardVerdict(pkg: String, reprompt: Boolean, attempt: Int = 0) {
+        handler.postDelayed({
+            val locked = keyguardLocked()
+            when {
+                // Unlocked (its session), or protection off, meanwhile: nothing to do.
+                !isRunning || !vault.isProtectionActive() || !vault.isAppLocked(pkg) ||
+                    LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg)) -> keyguardWaits -= pkg
+                // The phone unlocked and another app opened: looked at as usual (never a lock
+                // screen over the next one).
+                !locked && foreground != pkg -> keyguardWaits -= pkg
+                locked && !activities.isVisible(pkg) -> {
+                    keyguardWaits -= pkg
+                    DiagnosticLog.log("Covered $pkg (opened behind the keyguard)")
+                    LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = reprompt, behindKeyguard = true)
+                }
+                !locked || attempt + 1 >= KEYGUARD_CHECKS -> {
+                    keyguardWaits -= pkg
+                    if (!LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = reprompt)) sendHome()
+                }
+                else -> awaitKeyguardVerdict(pkg, reprompt, attempt + 1)
+            }
+        }, KEYGUARD_CHECK_MS)
+    }
+
+    /** Locked apps Home came over, and when, while they hadn't stopped yet ([handleForeground]). */
+    private val homeOver = HashMap<String, Long>()
 
     /** Apps come forward with the keyguard up, being watched for whether they're over it ([launchLockScreen]). */
     private val keyguardWaits = HashSet<String>()
@@ -1307,6 +1339,15 @@ class UsageWatchService : Service() {
     /** Whether apps are being locked now (not paused); read at start, before anything else is set up. */
     private fun protecting() = runCatching { SecurityVault.getInstance(this).isProtectionActive() }.getOrDefault(true)
 
+    /** What the notification says: how it watches, or how long protection is paused for. */
+    private fun notificationText(): String {
+        if (protecting()) return getString(R.string.compat_notification_text)
+        val until = runCatching { SecurityVault.getInstance(this).pausedUntilFlow.value }.getOrDefault(0L)
+        return if (until > 0L) {
+            getString(R.string.home_paused_until, android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(until)))
+        } else getString(R.string.home_paused_body)
+    }
+
     /** The notification says whether apps are locked or paused: as that changes, it does. */
     private val pauseWatch = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -1327,7 +1368,7 @@ class UsageWatchService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_biokey_mark)
             .setContentTitle(getString(if (protecting()) R.string.compat_notification_title else R.string.compat_notification_title_paused))
-            .setContentText(getString(if (protecting()) R.string.compat_notification_text else R.string.home_paused_body))
+            .setContentText(notificationText())
             .setContentIntent(open)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)

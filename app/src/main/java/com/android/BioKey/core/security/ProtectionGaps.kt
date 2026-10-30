@@ -417,8 +417,12 @@ object ProtectionGaps {
                 putLong(KEY_LAST_UPDATE, update)
                 // Added to, not replaced: Android lists only the newest exits, and after a restart it
                 // can have lost its newest, so an older one seen before comes back into the list.
-                val seen = (seenExits.orEmpty().mapNotNull { it.toLongOrNull() } + exits.map { it.first })
-                    .distinct().sortedDescending().take(MAX_EXITS_SEEN)
+                // Those listed now are always kept (a clock set back can make a new one look
+                // oldest); of the rest, the latest are, up to the limit.
+                val listed = exits.map { it.first }.distinct()
+                val earlier = seenExits.orEmpty().mapNotNull { it.toLongOrNull() }.filter { it !in listed }
+                    .sortedDescending().take((MAX_EXITS_SEEN - listed.size).coerceAtLeast(0))
+                val seen = listed + earlier
                 putStringSet(KEY_EXITS_SEEN, seen.mapTo(HashSet()) { it.toString() })
                 if (setUp) remove(KEY_CLEARED_AT).remove(KEY_CLEARED_UNKNOWN)
             }

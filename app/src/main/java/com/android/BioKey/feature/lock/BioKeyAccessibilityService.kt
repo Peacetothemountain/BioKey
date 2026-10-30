@@ -69,7 +69,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         private const val ON_DISPLAY_MEMORY_MS = 3_000L
         /** A locked app come forward with the keyguard up is looked for on display this often, this many times ([awaitOverKeyguard]). */
         private const val OVER_KEYGUARD_CHECK_MS = 50L
-        private const val OVER_KEYGUARD_CHECKS = 30
+        private const val OVER_KEYGUARD_CHECKS = 18
         private const val MAX_ACTIVITY_WINDOWS = 256
         /** SystemUI's windows over an app (its dream overlay, its hub) never make it the app left on screen. */
         private const val SYSTEM_UI = "com.android.systemui"
@@ -189,7 +189,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
         val front = foregroundPackage?.takeIf { it != SYSTEM_UI } ?: appBeforeScreensaver
         // BioKey's own screen in front, beside another app (split screen): that one.
         if (front == packageName) {
-            return lastAppsOnScreen.firstOrNull { it != packageName && it != SessionRules.UNIDENTIFIED_APP && !isLauncher(it) } ?: front
+            return lastAppsOnScreen.firstOrNull { it != packageName && it != SessionRules.UNIDENTIFIED_APP && !isLauncher(it) && needsCover(it) }
+                ?: lastAppsOnScreen.firstOrNull { it != packageName && it != SessionRules.UNIDENTIFIED_APP && !isLauncher(it) } ?: front
         }
         return front
     }
@@ -843,6 +844,15 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     private fun onWindowsChanged(event: AccessibilityEvent) {
         val changes = event.windowChanges
+        // A window came: an app waited for over the keyguard may be on display now.
+        if (awaitingOverKeyguard.isNotEmpty() && changes and AccessibilityEvent.WINDOWS_CHANGE_ADDED != 0) {
+            for (target in awaitingOverKeyguard.toList()) {
+                if (isOnDisplay(target)) {
+                    awaitingOverKeyguard -= target
+                    lock(target, "opened")
+                }
+            }
+        }
         val surfaced = AccessibilityEvent.WINDOWS_CHANGE_ADDED or
             AccessibilityEvent.WINDOWS_CHANGE_ACTIVE or
             AccessibilityEvent.WINDOWS_CHANGE_FOCUSED
@@ -1090,9 +1100,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
             if (focused == null && w.isFocused) focused = pkg to w.title
         }
         // BioKey's own prompt over its main screen hides every app's window: BioKey is on screen.
-        if (visible.isEmpty() && LockStateTracker.ownScreenShowing && !LockScreenActivity.isLockScreenResumed &&
+        val ownPromptOnly = visible.isEmpty() && LockStateTracker.ownScreenShowing && !LockScreenActivity.isLockScreenResumed &&
             SecurityEngine.INSTANCE.isAuthenticatingFor(packageName)
-        ) visible += packageName
+        if (ownPromptOnly) visible += packageName
         // Nothing app-like on screen (the keyguard, a transition) is not an answer: what is known stays known.
         if (visible.isEmpty()) return
         windowPackages.keys.retainAll(liveIds)
@@ -1126,7 +1136,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     (frontApp == SYSTEM_UI && SecurityEngine.INSTANCE.isAuthenticatingFor(packageName))
                 )
         ) foregroundPackage = packageName
-        lastAppsOnScreen = visible.toList()
+        // What the prompt hides is still there: the last real look stands.
+        if (!ownPromptOnly) lastAppsOnScreen = visible.toList()
         val outcome = rules.reconcile(
             SessionRules.Screen(
                 visible = visible,
@@ -1528,13 +1539,19 @@ class BioKeyAccessibilityService : AccessibilityService() {
      * listed above it.
      */
     private fun isUncovered(list: List<AccessibilityWindowInfo>, w: AccessibilityWindowInfo): Boolean {
-        val metrics = resources.displayMetrics
+        // The display's extent, as its windows show it (a folded phone's outer screen is smaller).
+        val display = Rect()
         val bounds = Rect()
+        for (other in list) {
+            if (other.displayId != w.displayId) continue
+            other.getBoundsInScreen(bounds)
+            display.union(bounds)
+        }
         for (other in list) {
             if (other.id == w.id) return true
             if (other.displayId != w.displayId || other.type != AccessibilityWindowInfo.TYPE_SYSTEM) continue
             other.getBoundsInScreen(bounds)
-            if (bounds.width() >= metrics.widthPixels * 0.9f && bounds.height() >= metrics.heightPixels * 0.9f) return false
+            if (bounds.width() >= display.width() * 0.9f && bounds.height() >= display.height() * 0.9f) return false
         }
         return true
     }

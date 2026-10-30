@@ -68,8 +68,11 @@ class LockScreenActivity : ComponentActivity() {
         const val EXTRA_BEHIND_KEYGUARD = "extra_behind_keyguard"
         /** How long a cover in a window waits to be given the whole display before failing closed. */
         private const val FULLSCREEN_WAIT_MS = 1_500L
-        /** The longest the shield waits for this screen to come in over the keyguard ([onCoverShown]). */
+        /** The longest the shield waits for this screen to come in ([onCoverShown]), and over the keyguard. */
+        private const val ENTRY_WAIT_MS = 600L
         private const val KEYGUARD_ENTRY_WAIT_MS = 1_000L
+        /** Come in over the keyguard: how long its own transition is given to end. */
+        private const val KEYGUARD_SETTLE_MS = 150L
         /**
          * How long a shield outlives a cover that sent the user Home: long enough for Home to be in
          * front, and well inside [LockStateTracker.ABANDONED_LOCK_COOLDOWN_MS], so it is still ours.
@@ -390,6 +393,10 @@ class LockScreenActivity : ComponentActivity() {
 
     override fun onStop() {
         if (isCurrent) isLockScreenResumed = false
+        // Hidden: it comes in again when it's next shown.
+        entered = false
+        awaitingEntry = false
+        if (::cover.isInitialized) cover.removeCallbacks(entryFallback)
         super.onStop()
         if (isChangingConfigurations) return
         // A trip BioKey's own session is on, this screen having come up over it, ends here, after
@@ -473,12 +480,13 @@ class LockScreenActivity : ComponentActivity() {
             askForWholeDisplay()
             return
         }
-        // Over the keyguard, a frame drawn isn't a frame shown: the keyguard's own transition
-        // (the app over it, then this over the app) runs first. The shield waits for it to end.
-        if (showsOverKeyguard && isKeyguardLocked() && !enteredOverKeyguard) {
+        // A frame drawn isn't a frame shown while this screen is still coming in (its opening
+        // transition; over the keyguard, the keyguard's own first): the shield waits for that,
+        // and the prompt for the shield.
+        if (!entered) {
             if (!awaitingEntry) {
                 awaitingEntry = true
-                cover.postDelayed(::onEnteredOverKeyguard, KEYGUARD_ENTRY_WAIT_MS)
+                cover.postDelayed(entryFallback, if (showsOverKeyguard) KEYGUARD_ENTRY_WAIT_MS else ENTRY_WAIT_MS)
             }
             return
         }
@@ -486,20 +494,26 @@ class LockScreenActivity : ComponentActivity() {
         maybeAutoPrompt()
     }
 
-    /** Shown over the keyguard: see [onCoverShown]. */
-    private var enteredOverKeyguard = false
+    /** This screen has come in since it was last hidden ([onEnterAnimationComplete]): see [onCoverShown]. */
+    private var entered = false
     private var awaitingEntry = false
+    /** No word that it came in: taken to have, so the shield never waits on it for long. */
+    private val entryFallback = Runnable { onEntered() }
 
     override fun onEnterAnimationComplete() {
         super.onEnterAnimationComplete()
-        if (awaitingEntry) onEnteredOverKeyguard()
+        // Over the keyguard, its own transition can still be ending: a moment more.
+        if (showsOverKeyguard && isKeyguardLocked()) cover.postDelayed(entryFallback, KEYGUARD_SETTLE_MS) else onEntered()
     }
 
-    private fun onEnteredOverKeyguard() {
-        if (!awaitingEntry || isFinishing) return
-        awaitingEntry = false
-        enteredOverKeyguard = true
-        onCoverShown()
+    private fun onEntered() {
+        if (entered || isFinishing) return
+        entered = true
+        cover.removeCallbacks(entryFallback)
+        if (awaitingEntry) {
+            awaitingEntry = false
+            onCoverShown()
+        }
     }
 
     /** Full screen, or a window as big as the display: nothing else can be on screen beside it. */
@@ -567,7 +581,7 @@ class LockScreenActivity : ComponentActivity() {
     }
 
     private fun maybeAutoPrompt() {
-        if (promptAutoLaunched || !firstFrameCommitted || awaitingFullscreen || isPermanentLockout || isFinishing) return
+        if (promptAutoLaunched || !firstFrameCommitted || !entered || awaitingFullscreen || isPermanentLockout || isFinishing) return
         if (!isLockScreenResumed || engine.isAuthenticatingFor(lockedPackage)) return
         // Never over a screensaver: it would take the tap meant to end it. Nor over the keyguard,
         // unless this cover is meant to be there (its app is): it would name the app there.
