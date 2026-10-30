@@ -301,7 +301,12 @@ class UsageWatchService : Service() {
                 // is nothing to watch until it ends, and nothing to cover over it.
                 Intent.ACTION_DREAMING_STARTED -> {
                     dreaming = true
+                    // Ended now, whatever order the broadcast reaches BioKey's receivers in.
+                    LockStateTracker.onScreenTurnedOff()
                     stopPolling()
+                    // The app it came over, if locked: its lock screen goes up behind the
+                    // keyguard now, so the screensaver ending never shows it.
+                    foreground?.let(::coverBehindScreensaver)
                     // The app in front is there again when it ends: kept, so it is covered then
                     // even if it doesn't report opening again (see recheck).
                     forgetScreen(keepFront = true)
@@ -526,6 +531,19 @@ class UsageWatchService : Service() {
     }
 
     /** Nothing known about the screen holds any more, except, with [keepFront], which app is in front. */
+    /**
+     * [pkg] was in front as a screensaver came over it: locked, its lock screen starts behind the
+     * keyguard now (no cover: that would show over the screensaver), as the accessibility engine's.
+     */
+    private fun coverBehindScreensaver(pkg: String) {
+        if (pkg == packageName || ForegroundRules.isLauncher(this, pkg) || !vault.isAppLocked(pkg) ||
+            LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))
+        ) return
+        DiagnosticLog.log("Covered $pkg (on screen as a screensaver started)")
+        LockStateTracker.setRegularLockPending(pkg)
+        LockLauncher.launch(this, pkg, isSelfProtection = false, behindKeyguard = true)
+    }
+
     private fun forgetScreen(keepFront: Boolean = false) {
         if (!keepFront) {
             foreground = null

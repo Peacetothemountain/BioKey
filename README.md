@@ -133,6 +133,7 @@ An app lock running as a regular app can't defend against everything:
 
 - **Root, ADB, or a modified OS** can bypass any app lock.
 - **Compatibility mode** (used under Advanced Protection) covers a locked app a little later than the accessibility engine (no tap prediction; it checks every 0.15 s) and can't provide self-protection. It shows a low-priority notification, which Android requires for this kind of background work.
+- **Compatibility mode after a restart** starts once Android says it has finished starting up, which on some phones comes many seconds after the first unlock: until then, locked apps open without a check. (The accessibility engine starts with the first unlock.)
 - **Compatibility mode needs both its permissions.** Turning off usage access or display over other apps stops it: BioKey ends every session and alerts you, but the app on screen at that moment can't be covered.
 - **Safe mode** turns off every downloaded app, BioKey included, until you restart normally: preinstalled locked apps (Photos, Gmail or Chrome, for example) open without a check, and no alert can be shown.
 - **Recents previews** of a locked app can't be blanked; only the system App Lock can do that.

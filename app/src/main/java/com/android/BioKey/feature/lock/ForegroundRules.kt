@@ -103,6 +103,9 @@ object ForegroundRules {
         "com.android.vending"
     )
 
+    /** The activity every screensaver runs in, whichever app's it is. */
+    const val DREAM_ACTIVITY = "android.service.dreams.DreamActivity"
+
     /** The system file picker: the one trip BioKey's own session survives ([com.android.BioKey.core.security.LockStateTracker.beginOwnPicker]). */
     val DOCUMENTS_UI = setOf("com.android.documentsui", "com.google.android.documentsui")
 

@@ -1155,6 +1155,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
      * [displayId] is the display it is on, when known (see [displayOf]).
      */
     private fun handleForeground(target: String, cls: String, exitTransition: Boolean? = null, displayId: Int? = null) {
+        // A screensaver runs in an activity of its own (in the Clock's package, say): it isn't that
+        // app opening, and the phone locking it stands for is handled where it starts (DREAMING_STARTED).
+        if (cls == ForegroundRules.DREAM_ACTIVITY) return
         // BioKey's own windows (lock screen, main UI) have their own authentication.
         if (target == packageName) {
             if (cls == MainActivity::class.java.name) {

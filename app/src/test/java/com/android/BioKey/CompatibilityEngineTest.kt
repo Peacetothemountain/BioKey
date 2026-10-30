@@ -364,7 +364,7 @@ class CompatibilityEngineTest {
     }
 
     @Test
-    fun theAppInFrontWhenAScreensaverStartsIsCoveredWhenItEnds() {
+    fun theAppInFrontWhenAScreensaverStartsIsCoveredBehindItAsItStarts() {
         event(ACTIVITY_RESUMED, bank)
         step()
         LockStateTracker.onAppUnlocked(bank)
@@ -377,7 +377,8 @@ class CompatibilityEngineTest {
         shadowOf(context.getSystemService(UsageStatsManager::class.java)).simulateTimeChange(-60_000)
         context.sendBroadcast(Intent(Intent.ACTION_DREAMING_STOPPED))
         repeat(3) { step() }
-        assertEquals(listOf("Covered $bank (opened)", "Covered $bank (still in front, uncovered)"), covered(bank))
+        // Its lock screen went up behind the keyguard as the screensaver started: nothing more to cover.
+        assertEquals(listOf("Covered $bank (opened)", "Covered $bank (on screen as a screensaver started)"), covered(bank))
     }
 
     @Test
@@ -389,7 +390,8 @@ class CompatibilityEngineTest {
         step()
         context.sendBroadcast(Intent(Intent.ACTION_DREAMING_STARTED))
         repeat(3) { step() }
-        assertEquals(1, covered(bank).size)
+        // Only its lock screen, started behind the keyguard: no cover over the screensaver.
+        assertEquals(listOf("Covered $bank (opened)", "Covered $bank (on screen as a screensaver started)"), covered(bank))
         assertFalse(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.GRACE_5_MINUTES))
     }
 

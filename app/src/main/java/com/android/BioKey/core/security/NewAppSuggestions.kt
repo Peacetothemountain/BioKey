@@ -161,14 +161,16 @@ object NewAppSuggestions {
      */
     private fun updateSummary(context: Context) {
         val manager = NotificationManagerCompat.from(context)
-        val offers = runCatching {
-            context.getSystemService(NotificationManager::class.java).activeNotifications
-                .count { it.notification.group == GROUP && it.id != SUMMARY_ID }
-        }.getOrDefault(0)
-        if (offers < 2) {
+        val active = runCatching { context.getSystemService(NotificationManager::class.java).activeNotifications.toList() }
+            .getOrDefault(emptyList())
+        val offers = active.count { it.notification.group == GROUP && it.id != SUMMARY_ID }
+        if (offers == 0) {
             manager.cancel(SUMMARY_ID)
             return
         }
+        // Down to one under a summary that's up: the summary stays, counting one. Cancelling it
+        // would take the last offer with it (Android cancels a group with its summary).
+        if (offers < 2 && active.none { it.id == SUMMARY_ID }) return
         val open = PendingIntent.getActivity(
             context,
             SUMMARY_ID,

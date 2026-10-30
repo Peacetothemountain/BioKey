@@ -223,6 +223,9 @@ internal class UsageReader(
     /** [event], an activity event, as the engine sees it; [locked] are the apps locked now. */
     private fun usageEvent(event: UsageEvents.Event, locked: Set<String>): UsageEvent? {
         val pkg = event.packageName ?: return null
+        // A screensaver runs in an activity of its own (in the Clock's package, say): it isn't
+        // that app opening, and it ends every session itself (ScreenReceiver).
+        if (event.className == ForegroundRules.DREAM_ACTIVITY) return null
         val lockedOverlay = pkg in ForegroundRules.SYSTEM_OVERLAYS && pkg in locked
         return UsageEvent(event.eventType, pkg, event.className, event.timeStamp, lockedOverlay)
     }
