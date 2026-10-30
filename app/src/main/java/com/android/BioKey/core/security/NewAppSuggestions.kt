@@ -34,6 +34,7 @@ object NewAppSuggestions {
     private const val PREFS = "biokey_new_apps"
     private const val KEY_ENABLED = "enabled"
     private const val ACTION_LOCK = "com.android.BioKey.action.LOCK_NEW_APP"
+    private const val ACTION_DISMISSED = "com.android.BioKey.action.NEW_APP_DISMISSED"
 
     private val _enabled = MutableStateFlow(true)
     val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
@@ -93,6 +94,13 @@ object NewAppSuggestions {
             FeatureLinks.openMainScreen(context).putExtra(FeatureLinks.EXTRA_SEARCH, label),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+        // Swiped away: the summary counts one fewer.
+        val dismissed = PendingIntent.getBroadcast(
+            context,
+            notificationId(pkg),
+            Intent(context, LockReceiver::class.java).setAction(ACTION_DISMISSED).setData(Uri.fromParts("package", pkg, null)),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
         val public = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_biokey_mark)
             .setContentTitle(context.getString(R.string.new_app_public_title))
@@ -106,6 +114,7 @@ object NewAppSuggestions {
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPublicVersion(public)
             .setContentIntent(open)
+            .setDeleteIntent(dismissed)
             .setAutoCancel(true)
             .addAction(R.drawable.ic_tile_lock_all, context.getString(R.string.new_app_lock), lock)
             .setGroup(GROUP)
@@ -125,11 +134,27 @@ object NewAppSuggestions {
         updateSummary(context, cancelled = notificationId(pkg))
     }
 
-    /** The notification's Lock button. Not exported: only the notification BioKey posted can send it. */
+    /**
+     * Offers gone without a word to BioKey (tapped, which opens BioKey): the summary is counted
+     * again, once Android's list of what's showing has caught up. Off the calling thread.
+     */
+    fun refreshSummarySoon(context: Context) {
+        val app = context.applicationContext
+        worker.execute { runCatching { updateSummary(app) } }
+    }
+
+    /**
+     * The notification's Lock button, and an offer swiped away. Not exported: only the
+     * notification BioKey posted can send it.
+     */
     class LockReceiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action != ACTION_LOCK) return
             val pkg = intent.data?.schemeSpecificPart ?: return
+            if (intent.action == ACTION_DISMISSED) {
+                updateSummary(context.applicationContext, cancelled = notificationId(pkg))
+                return
+            }
+            if (intent.action != ACTION_LOCK) return
             NotificationManagerCompat.from(context).cancel(notificationId(pkg))
             // The vault may have to be read from disk (BioKey just started for this): not on the main thread.
             val pending: PendingResult? = goAsync()
@@ -193,6 +218,8 @@ object NewAppSuggestions {
             .setContentText(context.getString(R.string.new_apps_summary_text))
             .setGroup(GROUP)
             .setGroupSummary(true)
+            // Recounted, not news.
+            .setOnlyAlertOnce(true)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setContentIntent(open)
             .setAutoCancel(true)

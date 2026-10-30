@@ -43,6 +43,27 @@ class RecentsGestureTest {
     }
 
     @Test
+    fun aCardSlidInFromTheSideIsMeasuredFromWhereItRests() {
+        // Recents opened from Home (Android 17, 1080 x 2424): the cards slide in from the left,
+        // clipped at the edge, then rest; swiped up from there, the card is closed.
+        val c = RecentsWatcher.Card(Rect(0, 302, 421, 1949))
+        c.moveTo(Rect(88, 302, 822, 1949))
+        c.moveTo(Rect(173, 302, 907, 1949))
+        c.moveTo(Rect(173, 302, 907, 1949))
+        c.moveTo(Rect(176, 120, 904, 1766))
+        c.moveTo(Rect(178, 12, 902, 1109))
+        assertTrue(RecentsWatcher.sweptAway(c.first, c.last, 2424, 1080))
+        // Seen off the top twice, it's still leaving, not resting there.
+        c.moveTo(Rect(173, 0, 907, -50))
+        c.moveTo(Rect(173, 0, 907, -50))
+        assertTrue(RecentsWatcher.sweptAway(c.first, c.last, 2424, 1080))
+        // Only sliding in, it rests where it came to.
+        val still = RecentsWatcher.Card(Rect(0, 302, 421, 1949))
+        still.moveTo(Rect(173, 302, 907, 1949))
+        assertFalse(RecentsWatcher.sweptAway(still.first, still.last, 2424, 1080))
+    }
+
+    @Test
     fun scrolledSidewaysIsNotClosed() {
         assertFalse(RecentsWatcher.sweptAway(card, moved(-1100, 0), h, w))
         assertFalse(RecentsWatcher.sweptAway(card, moved(900, -20), h, w))

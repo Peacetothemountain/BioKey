@@ -119,8 +119,23 @@ internal class RecentsWatcher(
         }
     }
 
-    private class Card(val first: Rect) {
-        val last = Rect(first)
+    /**
+     * A card on screen: where it was [last] seen, and where it [first] rested since, which a swipe
+     * is measured from. Recents opened from Home slides its cards in sideways: measured from where
+     * they came in, a swipe up would look like a scroll.
+     */
+    internal class Card(rect: Rect) {
+        val first = Rect(rect)
+        val last = Rect(rect)
+
+        /**
+         * Seen at [rect]: not moved up or down since the last look, it rests there, unless it's
+         * running off the top of the screen (only its visible part reported: clipped at the edge).
+         */
+        fun moveTo(rect: Rect) {
+            if (rect.top == last.top && rect.bottom == last.bottom && rect.top > 0 && rect.bottom > rect.top) first.set(rect)
+            last.set(rect)
+        }
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -226,7 +241,7 @@ internal class RecentsWatcher(
                 if (sweptAway(card.first, card.last, metrics.heightPixels, metrics.widthPixels)) onClosed(name)
             }
             cards.keys.retainAll(now.keys)
-            for ((name, rect) in now) cards.getOrPut(name) { Card(rect) }.last.set(rect)
+            for ((name, rect) in now) cards.getOrPut(name) { Card(rect) }.moveTo(rect)
         } finally {
             root.release()
         }

@@ -142,36 +142,6 @@ class GantletLockScreenTest {
     }
 
     @Test
-    fun aLockScreenWithdrawnForItsAppCloses() {
-        // Started for a screensaver app's window, which turned out to be its screensaver. Names of
-        // their own: a withdrawal holds a moment, and mustn't reach another test's lock screen.
-        val photos = "com.example.withdrawn.photos"
-        val other = "com.example.withdrawn.other"
-        SecurityVault.getInstance(context).setAppLock(photos, true)
-        SecurityVault.getInstance(context).setAppLock(other, true)
-        val lockScreen = lockScreenFor(photos)
-        LockScreenActivity.withdraw(other)
-        shadowOf(Looper.getMainLooper()).idle()
-        assertFalse("Closed for another app's withdrawal", lockScreen.get().isFinishing)
-        LockScreenActivity.withdraw(photos)
-        shadowOf(Looper.getMainLooper()).idle()
-        assertTrue(lockScreen.get().isFinishing)
-    }
-
-    @Test
-    fun aLockScreenStillStartingForAWithdrawnAppCloses() {
-        val clock = "com.example.withdrawn.clock"
-        SecurityVault.getInstance(context).setAppLock(clock, true)
-        LockScreenActivity.withdraw(clock)
-        val controller = Robolectric.buildActivity(
-            LockScreenActivity::class.java,
-            Intent(context, LockScreenActivity::class.java).putExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE, clock)
-        ).setup()
-        open += controller
-        assertTrue(controller.get().isFinishing)
-    }
-
-    @Test
     fun anOrdinaryCoverStoppedByAnotherScreenCloses() {
         val lockScreen = lockScreenFor()
         lockScreen.pause().stop()

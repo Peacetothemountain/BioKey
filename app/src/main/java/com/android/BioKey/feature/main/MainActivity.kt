@@ -37,6 +37,7 @@ import com.android.BioKey.R
 import com.android.BioKey.core.FeatureLinks
 import com.android.BioKey.core.security.BiometricEnrollment
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.NewAppSuggestions
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
@@ -206,6 +207,8 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         refreshPermissions()
         BiometricEnrollment.checkSoon(this)
+        // A new-app offer tapped to come here is gone: its summary counts one fewer.
+        NewAppSuggestions.refreshSummarySoon(this)
         // Reset and not set up again, notifications allowed again (setup asks): the reminders start.
         if (!vault.isSetupCompleted()) appScope.launch(Dispatchers.Default) { ProtectionAlerts.resumeStorageClearedReminders(application) }
 

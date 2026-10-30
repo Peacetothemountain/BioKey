@@ -379,8 +379,8 @@ object ProtectionGaps {
             // told, so it's kept whatever its length looks like.
             val clockMoved = forceStopAt != null && forceStopAt > wallNow()
             // Android stamps exits on the phone's clock; "now" is BioKey's trusted one. Converted with
-            // the smallest difference between the two seen while an engine last ran ([onClockChanged])
-            // or now, the earliest result kept: the phone's clock moved before the stop, after it, or
+            // the difference between the two in force when an engine last ran ([onClockChanged]) or
+            // now, the earliest result kept: the phone's clock moved before the stop, after it, or
             // both, can only lengthen the gap, never shorten it.
             val offsets = listOfNotNull(now - wallNow(), if (p.contains(KEY_CLOCK_OFFSET)) p.getLong(KEY_CLOCK_OFFSET, 0L) else null)
             val converted = forceStopAt?.let { at -> offsets.minOf { at + it } }
@@ -532,17 +532,17 @@ object ProtectionGaps {
     }
 
     /**
-     * The phone's clock was changed. While an engine runs, the smallest difference between trusted
-     * time and the phone's clock is kept: a force stop's time, stamped by Android on the phone's
-     * clock, is read with it, so a clock moved ahead before the stop and back afterwards can't
-     * shorten the gap ([onEngineUp]).
+     * The phone's clock was changed. While an engine runs, the difference between trusted time and
+     * the phone's clock is kept, the latest: the one in force when a force stop came, whose time
+     * Android stamps on the phone's clock ([onEngineUp]). A clock moved ahead before the stop and
+     * back afterwards can't shorten the gap (the stop is read with the clock it was stamped on),
+     * nor one moved ahead and back long before it lengthen it to years.
      */
     fun onClockChanged(context: Context) {
         val p = load(context) ?: return
         synchronized(lock) {
             if (p.getLong(KEY_STOPPED_AT, 0L) != 0L) return
-            val offset = clock() - wallNow()
-            if (!p.contains(KEY_CLOCK_OFFSET) || offset < p.getLong(KEY_CLOCK_OFFSET, 0L)) p.edit { putLong(KEY_CLOCK_OFFSET, offset) }
+            p.edit { putLong(KEY_CLOCK_OFFSET, clock() - wallNow()) }
         }
     }
 

@@ -12,6 +12,7 @@ import com.android.BioKey.BioKeyApplication
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.feature.main.MainActivity
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -309,10 +310,12 @@ object ForegroundRules {
     /**
      * Anything that can come between leaving an unlocked app and coming straight back to it
      * without ending its session: a helper, a system screen it opened (permission page, share
-     * sheet), or BioKey itself (the lock screen of a helper that is locked too).
+     * sheet), or BioKey's lock screen (for a helper that is locked too). Not BioKey's own screens:
+     * going there is leaving the app.
      */
     fun isHopTarget(context: Context, pkg: String, activityClass: String?): Boolean =
-        pkg == context.packageName || pkg in SYSTEM_OVERLAYS || isHopHelper(context, pkg, activityClass)
+        (pkg == context.packageName && activityClass != MainActivity::class.java.name) || pkg in SYSTEM_OVERLAYS ||
+            isHopHelper(context, pkg, activityClass)
 
     /** A helper app worth keeping the previous app's session for; [activityClass] spots custom tabs. */
     fun isHopHelper(context: Context, pkg: String, activityClass: String?): Boolean {

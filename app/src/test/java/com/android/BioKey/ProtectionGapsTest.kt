@@ -278,6 +278,25 @@ class ProtectionGapsTest {
     }
 
     @Test
+    fun theClockMovedAheadAndBackLongBeforeAForceStopDoesntLengthenIt() {
+        // Three years ahead and back while the engine runs, then a five-minute force stop with
+        // the clock right: five minutes, not three years.
+        var wall = now
+        ProtectionGaps.wallNow = { wall }
+        wall += 3 * 365 * 24 * 60 * 60_000L
+        ProtectionGaps.onClockChanged(context)
+        wall = now
+        ProtectionGaps.onClockChanged(context)
+        pass(60_000L)
+        wall += 60_000L
+        exits = listOf(wall to ApplicationExitInfo.REASON_USER_REQUESTED)
+        pass(5 * 60_000L)
+        wall += 5 * 60_000L
+        ProtectionGaps.onEngineUp(context)
+        assertEquals(5 * 60_000L, gaps.single().let { it.to - it.from })
+    }
+
+    @Test
     fun aMomentsEventIsRecorded() {
         ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK)
         assertEquals(ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, gaps.single().kind)

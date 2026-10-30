@@ -62,6 +62,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         /** How long a cover for an app that provides the screensaver waits to tell the two apart. */
         private const val SCREENSAVER_SETTLE_MS = 300L
         /** A screensaver app coming forward this shortly before a screensaver starts is taken to be the screensaver. */
+        /** A window taken for a screensaver's ([isScreensaverWindow]) is a screensaver's only if one starts this soon. */
         private const val SCREENSAVER_WINDOW_MS = 3_000L
         /** How long an app seen on display is taken to still be there for [hasScreenShowing]. */
         private const val ON_DISPLAY_MEMORY_MS = 3_000L
@@ -170,16 +171,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
             // A screensaver's windows (an app's package, for Photos' or the Clock's) say nothing
             // about the app on screen: kept as it was until it ends.
             if (value != null && LockStateTracker.screensaverShowing) return
-            if (value != null && value != field) {
-                field?.takeIf { it != SYSTEM_UI }?.let { appBefore = it }
-                foregroundChangedAt = SystemClock.elapsedRealtime()
-            }
             if (value != null && value != SYSTEM_UI) appBeforeScreensaver = value
             field = value
         }
-    /** The app in front before the one in front now, and when that changed. */
-    private var appBefore: String? = null
-    private var foregroundChangedAt = 0L
     /** The app in front before SystemUI (its dream overlay, its hub) came over it. */
     private var appBeforeScreensaver: String? = null
 
@@ -187,14 +181,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun frontIsLauncher(): Boolean =
         runCatching { windowList()?.let(::frontWindow)?.let(::packageOf)?.let(::isLauncher) }.getOrNull() == true
 
-    /** The app on screen as the phone locked: under a screensaver, the one it came over. */
-    private fun appLeftOnScreen(screensaver: Boolean = false): String? {
-        val front = foregroundPackage?.takeIf { it != SYSTEM_UI } ?: appBeforeScreensaver ?: return null
-        // As a screensaver starts, a screensaver app's window that came forward just now is its
-        // screensaver (seen before the broadcast saying so): the app on screen was the one before it.
-        if (screensaver && front in screensaverApps() && SystemClock.elapsedRealtime() - foregroundChangedAt < SCREENSAVER_WINDOW_MS) return appBefore
-        return front
-    }
+    /**
+     * The app on screen as the phone locked: under a screensaver, the one it came over (a
+     * screensaver's own windows never become the app in front: [isScreensaverWindow]).
+     */
+    private fun appLeftOnScreen(): String? = foregroundPackage?.takeIf { it != SYSTEM_UI } ?: appBeforeScreensaver
 
     /**
      * Accessibility window id -> owning package, learned from window events. Google Password
@@ -266,9 +257,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     Intent.ACTION_DREAMING_STARTED -> {
                         LockStateTracker.screensaverShowing = true
                         onDisplayAt.clear()
-                        val left = appLeftOnScreen(screensaver = true)
-                        withdrawScreensaverAppCover(left)
-                        left?.let { mainHandler.post { coverLeftOnScreen(it) } }
+                        appLeftOnScreen()?.let { left -> mainHandler.post { coverLeftOnScreen(left) } }
                     }
                     // Over: whatever is on screen now (the keyguard, or the app with its lock
                     // screen) is looked at as usual.
@@ -399,6 +388,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private val onLockAll: () -> Unit = {
         mainHandler.post {
             rules.reset()
+            // The phone locked with the screen on (Lockdown), say: what was on display before isn't
+            // over the keyguard now.
+            onDisplayAt.clear()
             if (isRunning && ::vault.isInitialized && isInteractive()) {
                 // A locked app in picture-in-picture is masked at once.
                 guarded("Masks after lock-all") { windowList()?.let { maskControl.update(it, full = false) } }
@@ -612,14 +604,14 @@ class BioKeyAccessibilityService : AccessibilityService() {
             // Worked out once per event: it looks at the window list.
             var exitTransition: Boolean? = null
             val display = displayOf(event)
+            var screensaverWindow = false
             if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && eventPkg != null) {
                 // Fast path: cover a locked app before any other work. The shield covers the
                 // phone's own screen only: an app on another display gets its lock screen there.
                 val target = resolveForegroundPackage(event)
                 // A screensaver's window, seen before (or without) the broadcast saying it started:
                 // never an app opening, then or later (onWindowSurfaced, the visibility pass).
-                val screensaverWindow = isScreensaverWindow(eventPkg, eventCls)
-                if (screensaverWindow && event.windowId >= 0) screensaverWindows += event.windowId
+                screensaverWindow = isScreensaverWindow(event, eventPkg, eventCls)
                 // Not while a screensaver shows, nor for its own window, nor for an app that provides
                 // one (its screensaver's window may come before the broadcast): lock() sees to those.
                 if (target != null && !isSystemOrOverlay(target, eventCls) && needsCover(target) &&
@@ -698,6 +690,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 scheduleReconcile()
                 return
             }
+            // A screensaver's window isn't that app opening, and the phone locking it stands for is
+            // handled where it starts (DREAMING_STARTED).
+            if (screensaverWindow) return
             handleForeground(target, eventCls, exitTransition, display)
             scheduleReconcile()
         } catch (t: Throwable) {
@@ -943,7 +938,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun isOwnScreenInFront(front: String?): Boolean =
         foregroundPackage == packageName && (front == null || front == packageName || front == SessionRules.UNIDENTIFIED_APP)
 
-    private fun frontWindow(list: List<AccessibilityWindowInfo>) = WindowReader.frontWindow(list)
+    /** The window in front, a screensaver's aside ([screensaverWindows]): the app it came over, or none. */
+    private fun frontWindow(list: List<AccessibilityWindowInfo>) =
+        WindowReader.frontWindow(if (screensaverWindows.isEmpty()) list else list.filter { it.id !in screensaverWindows })
 
     /** Whether the window the user is using ([frontWindow]) is [pkg]'s. */
     private fun isInFront(pkg: String): Boolean = mayBe(pkg, windowList()?.let(::frontWindow)?.let(::packageOf))
@@ -1083,6 +1080,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         windowPackages.keys.retainAll(liveIds)
         windowTypes.keys.retainAll(liveIds)
         screensaverWindows.retainAll(liveIds)
+        activityWindows.retainAll(liveIds)
         reader.forgetAllBut(liveIds)
 
         maskControl.update(windowList, full = true)
@@ -1212,9 +1210,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
      * [displayId] is the display it is on, when known (see [displayOf]).
      */
     private fun handleForeground(target: String, cls: String, exitTransition: Boolean? = null, displayId: Int? = null) {
-        // A screensaver's window (in the Clock's package, say) isn't that app opening, and the phone
-        // locking it stands for is handled where it starts (DREAMING_STARTED).
-        if (isScreensaverWindow(target, cls)) return
+        // A screensaver's own activity (in the Clock's package, say): see handleEvent.
+        if (cls == ForegroundRules.DREAM_ACTIVITY) return
         // BioKey's own windows (lock screen, main UI) have their own authentication.
         if (target == packageName) {
             if (cls == MainActivity::class.java.name) {
@@ -1422,26 +1419,46 @@ class BioKeyAccessibilityService : AccessibilityService() {
     }.getOrDefault(emptySet())
 
     /**
-     * A screensaver's window: its own activity, or (Photos', the Clock's) a bare view its app put
-     * up with no activity behind it, which an app's screens never are (they're its activities).
+     * Whether [event] is from a screensaver's window: its own activity, or (Photos', the Clock's) a
+     * window of bare views from the app that provides it, with screensavers switched on, which
+     * isn't one of the app's screens (a screen's first event names its activity: [activityWindows]).
+     * Remembered by window ([screensaverWindows]); if no screensaver starts soon after, it wasn't
+     * one ([forgetUnconfirmedScreensaverWindows]).
      */
-    private fun isScreensaverWindow(pkg: String, cls: String) = cls == ForegroundRules.DREAM_ACTIVITY ||
-        ((cls.startsWith("android.widget.") || cls.startsWith("android.view.")) && pkg in screensaverApps())
+    private fun isScreensaverWindow(event: AccessibilityEvent, pkg: String, cls: String): Boolean {
+        val id = event.windowId
+        if (id >= 0 && id in screensaverWindows) return true
+        val found = cls == ForegroundRules.DREAM_ACTIVITY ||
+            (isViewClass(cls) && id >= 0 && id !in activityWindows && screensaversOn() && pkg in screensaverApps())
+        if (!found) {
+            if (id >= 0 && cls.isNotEmpty() && !isViewClass(cls)) activityWindows += id
+            return false
+        }
+        if (id >= 0) {
+            screensaverWindows += id
+            mainHandler.removeCallbacks(forgetUnconfirmedScreensaverWindows)
+            mainHandler.postDelayed(forgetUnconfirmedScreensaverWindows, SCREENSAVER_WINDOW_MS)
+        }
+        return true
+    }
+
+    private fun isViewClass(cls: String) = cls.startsWith("android.widget.") || cls.startsWith("android.view.")
+
+    /** Whether screensavers are switched on in Android's settings (off, or unknown: no screensaver windows). */
+    private fun screensaversOn() = runCatching { Settings.Secure.getInt(contentResolver, "screensaver_enabled", 0) == 1 }.getOrDefault(false)
 
     /**
-     * A screensaver started: an app that provides one, covered moments ago ([lock]) as its window
-     * came forward, was its screensaver, not the app opening, unless it's the app the screensaver
-     * came over ([left]). Its cover and lock screen go (the broadcast can come most of a second
-     * after the window, once the lock screen is up).
+     * Windows taken for a screensaver's with none started since ([SCREENSAVER_WINDOW_MS]): an
+     * app's after all, looked at again like any other.
      */
-    private fun withdrawScreensaverAppCover(left: String?) {
-        val (pkg, at) = screensaverAppCoveredAt ?: return
-        screensaverAppCoveredAt = null
-        if (pkg == left || SystemClock.elapsedRealtime() - at >= SCREENSAVER_WINDOW_MS) return
-        if (shield.targetPackage == pkg) shield.hide()
-        LockStateTracker.clearRegularLockPending(pkg)
-        LockScreenActivity.withdraw(pkg)
+    private val forgetUnconfirmedScreensaverWindows = Runnable {
+        if (LockStateTracker.screensaverShowing || screensaverWindows.isEmpty()) return@Runnable
+        screensaverWindows.clear()
+        scheduleReconcile(0L)
     }
+
+    /** Windows whose events named an activity: an app's screens, never a screensaver's. */
+    private val activityWindows = HashSet<Int>()
 
     /**
      * Apps whose screens a window list showed, and when, since the screen last went off (or a
@@ -1464,7 +1481,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
             // The window in front, from the window list: its app is known from its events, and only
             // a window never seen is asked (an IPC into the app, which waits for its UI thread),
             // at the very moment a locked app left on screen is to be covered.
-            val front = windowList()?.let(::frontWindow)
+            val list = windowList()
+            val front = list?.let(::frontWindow)
+            // Only a screensaver on screen: nothing to look at (its root would be its app's).
+            if (front == null && list?.any { it.id in screensaverWindows } == true) return
             val pkg: String?
             val windowId: Int
             if (front != null) {

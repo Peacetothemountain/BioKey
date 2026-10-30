@@ -137,20 +137,6 @@ class LockScreenActivity : ComponentActivity() {
          */
         @Volatile private var current: WeakReference<LockScreenActivity>? = null
 
-        /** [withdraw]n, and when ([SystemClock.elapsedRealtime]): a lock screen still starting for it closes. */
-        @Volatile private var withdrawn: Pair<String, Long>? = null
-        private const val WITHDRAWN_MS = 2_000L
-
-        /**
-         * Closes the lock screen for [pkg], up or still starting: it was started for a window that
-         * turned out not to be that app (its screensaver's), so there's nothing behind it to cover.
-         */
-        fun withdraw(pkg: String) {
-            withdrawn = pkg to SystemClock.elapsedRealtime()
-            val screen = current?.get() ?: return
-            screen.runOnUiThread { screen.withdrawIfFor(pkg) }
-        }
-
         /**
          * What to send once [pkg] is unlocked from a stand-in: the link of its newest hidden
          * notification, if that is the app's own link to one of its screens. Null means opening
@@ -233,7 +219,7 @@ class LockScreenActivity : ComponentActivity() {
         shownAt = SystemClock.elapsedRealtime()
         vault = SecurityVault.getInstance(this)
 
-        if (!readIntent(intent) || isWithdrawn()) {
+        if (!readIntent(intent)) {
             finishSilently()
             return
         }
@@ -556,8 +542,9 @@ class LockScreenActivity : ComponentActivity() {
     private fun maybeAutoPrompt() {
         if (promptAutoLaunched || !firstFrameCommitted || awaitingFullscreen || isPermanentLockout || isFinishing) return
         if (!isLockScreenResumed || engine.isAuthenticatingFor(lockedPackage)) return
-        // Never over a screensaver: it would take the tap meant to end it.
-        if (LockStateTracker.screensaverShowing) return
+        // Never over a screensaver: it would take the tap meant to end it. Nor over the keyguard,
+        // unless this cover is meant to be there (its app is): it would name the app there.
+        if (LockStateTracker.screensaverShowing || (isKeyguardLocked() && !showsOverKeyguard)) return
         promptAutoLaunched = true
         showPrompt()
     }
@@ -669,15 +656,6 @@ class LockScreenActivity : ComponentActivity() {
         EngineTrace.record(if (displaced) "u.displaced" else "u.abandon", lockedPackage)
         if (displaced) LockStateTracker.markLockDisplaced(lockedPackage) else LockStateTracker.markLockAbandoned(lockedPackage)
         if (isSelfProtection) LockStateTracker.clearSelfProtection()
-    }
-
-    private fun isWithdrawn() = !isSelfProtection &&
-        withdrawn?.let { (pkg, at) -> pkg == lockedPackage && SystemClock.elapsedRealtime() - at < WITHDRAWN_MS } == true
-
-    private fun withdrawIfFor(pkg: String) {
-        if (isFinishing || isDestroyed || isSelfProtection || lockedPackage != pkg) return
-        EngineTrace.record("l.withdrawn", pkg)
-        finishSilently()
     }
 
     private fun goHomeAndFinish() {

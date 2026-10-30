@@ -78,4 +78,32 @@ class NewAppSuggestionsTest {
         assertTrue(app in vault.selectedAppsFlow.value)
         assertTrue(notifications.allNotifications.isEmpty())
     }
+
+    @Test
+    fun anOfferSwipedAwayIsNoLongerCounted() {
+        val others = listOf("com.example.newchat", "com.example.newmail")
+        for (pkg in others) {
+            val activity = ComponentName(pkg, "$pkg.Main")
+            shadowOf(context.packageManager).addActivityIfNotPresent(activity)
+            shadowOf(context.packageManager).addIntentFilterForActivity(activity, IntentFilter(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) })
+        }
+        NewAppSuggestions.onInstalled(context, app, "New Bank")
+        NewAppSuggestions.onInstalled(context, others[0], "New Chat")
+        NewAppSuggestions.onInstalled(context, others[1], "New Mail")
+        assertEquals("3 new apps to lock?", summaryTitle())
+        // Swiped away: Android removes it and sends its delete intent.
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val bank = manager.activeNotifications.single { it.notification.extras.getCharSequence("android.title").toString() == "Lock New Bank?" }
+        manager.cancel(bank.tag, bank.id)
+        NewAppSuggestions.LockReceiver().onReceive(
+            context,
+            Intent("com.android.BioKey.action.NEW_APP_DISMISSED").setData(Uri.fromParts("package", app, null))
+        )
+        assertEquals("2 new apps to lock?", summaryTitle())
+        assertTrue(app !in vault.selectedAppsFlow.value)
+    }
+
+    private fun summaryTitle() = context.getSystemService(NotificationManager::class.java).activeNotifications
+        .single { it.notification.flags and android.app.Notification.FLAG_GROUP_SUMMARY != 0 }
+        .notification.extras.getCharSequence("android.title").toString()
 }
