@@ -88,6 +88,8 @@ class MainActivity : ComponentActivity() {
     private var isAuthenticated by mutableStateOf(false)
     private var promptAutoLaunched = false
     private var lockMessage by mutableStateOf<String?>(null)
+    /** Why BioKey locked: shown, unless a prompt's error ([lockMessage]) is, until it's unlocked or left. */
+    private var lockReason by mutableStateOf<String?>(null)
     private var isPermanentLockout by mutableStateOf(false)
     private var protectionMode by mutableStateOf(ProtectionEngine.Mode.OFF)
     private var pauseRequested by mutableStateOf(false)
@@ -155,7 +157,7 @@ class MainActivity : ComponentActivity() {
                     !isAuthenticated -> BioKeyLockScreen(
                         onUnlockClicked = { authenticate() },
                         onCancelClicked = { finishAffinity() },
-                        statusMessage = lockMessage,
+                        statusMessage = lockMessage ?: lockReason,
                         isPermanentLockout = isPermanentLockout,
                         // Only the accessibility service can lock the phone: in compatibility
                         // mode the lockout leaves Cancel, and the power button the message names.
@@ -260,6 +262,7 @@ class MainActivity : ComponentActivity() {
         // visit prompts again.
         isPermanentLockout = false
         lockMessage = null
+        lockReason = null
         // A trip BioKey started itself (a settings page, the backup file picker, another app's lock
         // screen brought up over it) keeps its session; anything else ends it.
         if (LockStateTracker.isOwnTripActive()) {
@@ -309,7 +312,7 @@ class MainActivity : ComponentActivity() {
         if (!isAuthenticated) return
         isAuthenticated = false
         val minutes = (LockStateTracker.OWN_APP_IDLE_MS / 60_000).toInt()
-        lockMessage = when {
+        lockReason = when {
             LockStateTracker.ownTripRanOut -> getString(R.string.activity_locked_trip)
             LockStateTracker.ownSessionTimedOut -> resources.getQuantityString(R.plurals.activity_locked_idle, minutes, minutes)
             // Ended meanwhile some other way (another app came forward, every app was locked):
@@ -376,6 +379,7 @@ class MainActivity : ComponentActivity() {
             onSuccess = {
                 LockStateTracker.onOwnAppUnlocked()
                 isAuthenticated = true
+                lockReason = null
                 onAuthenticated()
             },
             onError = { code, message ->

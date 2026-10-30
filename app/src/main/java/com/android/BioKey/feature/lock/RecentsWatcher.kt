@@ -36,7 +36,10 @@ internal class RecentsWatcher(
         const val MIN_RISE = 0.12f
         /** A card tapped to open it is never "closed", however it animates. */
         const val TAP_GRACE_MS = 2_000L
-        /** A burst of changes in the launcher settles this fast. */
+        /**
+         * While cards move, they're looked at this often: a swipe changes the launcher every
+         * frame, so waiting for the changes to stop would only see a card once it had gone.
+         */
         const val SETTLE_MS = 30L
         /**
          * While the last look found the home screen, not Recents, look at most this often: live
@@ -134,13 +137,14 @@ internal class RecentsWatcher(
     private val scanRunnable = Runnable(::scan)
 
     /**
-     * The launcher's content changed ([changeTypes] says how): look again, once the burst of
-     * changes settles. On the home screen a widget rewording itself is no reason to.
+     * The launcher's content changed ([changeTypes] says how): look again shortly. A look already
+     * due stays due, not put off by the changes that follow, so a card is seen on its way out
+     * however fast it's flung. On the home screen a widget rewording itself is no reason to look.
      */
     fun onLauncherChanged(pkg: String, changeTypes: Int) {
         if (!changeNeedsScan(changeTypes, inRecents)) return
         launcher = pkg
-        handler.removeCallbacks(scanRunnable)
+        if (handler.hasCallbacks(scanRunnable)) return
         handler.postDelayed(scanRunnable, scanDelayMs(SystemClock.elapsedRealtime() - scannedAt, inRecents))
     }
 

@@ -137,6 +137,20 @@ class LockScreenActivity : ComponentActivity() {
          */
         @Volatile private var current: WeakReference<LockScreenActivity>? = null
 
+        /** [withdraw]n, and when ([SystemClock.elapsedRealtime]): a lock screen still starting for it closes. */
+        @Volatile private var withdrawn: Pair<String, Long>? = null
+        private const val WITHDRAWN_MS = 2_000L
+
+        /**
+         * Closes the lock screen for [pkg], up or still starting: it was started for a window that
+         * turned out not to be that app (its screensaver's), so there's nothing behind it to cover.
+         */
+        fun withdraw(pkg: String) {
+            withdrawn = pkg to SystemClock.elapsedRealtime()
+            val screen = current?.get() ?: return
+            screen.runOnUiThread { screen.withdrawIfFor(pkg) }
+        }
+
         /**
          * What to send once [pkg] is unlocked from a stand-in: the link of its newest hidden
          * notification, if that is the app's own link to one of its screens. Null means opening
@@ -219,7 +233,7 @@ class LockScreenActivity : ComponentActivity() {
         shownAt = SystemClock.elapsedRealtime()
         vault = SecurityVault.getInstance(this)
 
-        if (!readIntent(intent)) {
+        if (!readIntent(intent) || isWithdrawn()) {
             finishSilently()
             return
         }
@@ -357,11 +371,16 @@ class LockScreenActivity : ComponentActivity() {
         if (isFinishing) return
         val newPkg = intent.getStringExtra(EXTRA_LOCKED_PACKAGE).orEmpty()
         val newSelfProt = intent.getBooleanExtra(EXTRA_SELF_PROTECTION, false)
-        // Held for the phone's lock only for the app it was started for: another app's lock (the
-        // camera, opened over the keyguard) is judged afresh.
+        // Held for the phone's lock only for the app it was started for, and while that app isn't
+        // over the keyguard itself: another app's lock (the camera, opened over the keyguard), or
+        // the same app's opened there again (the camera left on screen as the phone locked, then
+        // opened from the power button), is judged afresh.
         heldForPhoneLock = intent.getBooleanExtra(EXTRA_BEHIND_KEYGUARD, false) ||
-            (heldForPhoneLock && newPkg == lockedPackage && newSelfProt == isSelfProtection)
-        showOverKeyguard(!heldForPhoneLock && coversAppOverKeyguard())
+            (heldForPhoneLock && newPkg == lockedPackage && newSelfProt == isSelfProtection && !isOverKeyguardNow(newPkg))
+        // Once over the keyguard with its app, the cover stays there for it while the keyguard
+        // does: that app's window can be gone from view by the next request, under this cover.
+        val sameTarget = newPkg == lockedPackage && newSelfProt == isSelfProtection
+        showOverKeyguard(!heldForPhoneLock && (coversAppOverKeyguard(newPkg) || (sameTarget && showsOverKeyguard && isKeyguardLocked())))
         if (newPkg == lockedPackage && newSelfProt == isSelfProtection) {
             // Same target brought to front again (e.g. over a trampoline): keep the running prompt.
             launchAfterUnlock = launchAfterUnlock || intent.getBooleanExtra(EXTRA_LAUNCH_AFTER_UNLOCK, false)
@@ -652,6 +671,15 @@ class LockScreenActivity : ComponentActivity() {
         if (isSelfProtection) LockStateTracker.clearSelfProtection()
     }
 
+    private fun isWithdrawn() = !isSelfProtection &&
+        withdrawn?.let { (pkg, at) -> pkg == lockedPackage && SystemClock.elapsedRealtime() - at < WITHDRAWN_MS } == true
+
+    private fun withdrawIfFor(pkg: String) {
+        if (isFinishing || isDestroyed || isSelfProtection || lockedPackage != pkg) return
+        EngineTrace.record("l.withdrawn", pkg)
+        finishSilently()
+    }
+
     private fun goHomeAndFinish() {
         abandon()
         if (!isSelfProtection || !BioKeyAccessibilityService.dismissSelfProtection()) goHome()
@@ -710,11 +738,22 @@ class LockScreenActivity : ComponentActivity() {
     private fun isKeyguardLocked() = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
 
     /**
-     * The keyguard is up with the screen on: the app this covers can only be over it (the camera,
-     * say). With the screen off, it's an app left on screen as the phone locked: its cover waits
-     * behind the keyguard (see [showOverKeyguard]).
+     * The keyguard is up with the screen on, and the app this covers is on display: it can only be
+     * over the keyguard (the camera, say). With the screen off, it's an app left on screen as the
+     * phone locked; started while locked by something else (a notification's action, say), it
+     * waits behind the keyguard for the phone to be unlocked. Either way its cover waits there too
+     * (see [showOverKeyguard]). In compatibility mode, which can't see windows, an app only ever
+     * comes forward while locked over the keyguard.
      */
-    private fun coversAppOverKeyguard() = isKeyguardLocked() && !isScreenOff()
+    private fun coversAppOverKeyguard(pkg: String = lockedPackage) = isKeyguardLocked() && !isScreenOff() &&
+        BioKeyAccessibilityService.hasScreenShowing(pkg) != false
+
+    /**
+     * [pkg] is on display over the keyguard now, as the accessibility engine has seen (compatibility
+     * mode can't tell: no).
+     */
+    private fun isOverKeyguardNow(pkg: String) = isKeyguardLocked() && !isScreenOff() &&
+        !LockStateTracker.screensaverShowing && BioKeyAccessibilityService.hasScreenShowing(pkg) == true
 
     private fun isScreenOff() = getSystemService(PowerManager::class.java)?.isInteractive == false
 

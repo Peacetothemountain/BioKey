@@ -57,6 +57,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -378,7 +379,9 @@ internal fun AppOptionsSheet(
     onNewProfile: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // Open all the way at once: dragged open from half-way, a sheet about as tall as the screen
+    // (an app in no profile) can stay mid-settle, its rows' taps taken to stop it.
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         ProtectDialogWindow()
         // The lock switch's "unlocked · Undo" comes up while the sheet stays open: shown here,
         // not behind the sheet's scrim.
