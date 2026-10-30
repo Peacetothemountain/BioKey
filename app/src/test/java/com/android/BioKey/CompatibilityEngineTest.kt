@@ -20,6 +20,8 @@ import android.provider.Settings
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import android.app.KeyguardManager
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.LockTimeoutMode
@@ -418,6 +420,68 @@ class CompatibilityEngineTest {
         LockStateTracker.onAppUnlocked(bank)
         event(ACTIVITY_RESUMED, bank) // Back from the lock screen.
         step()
+    }
+
+    /** Home goes over the bank, unlocked, and the bank comes back before Android stopped it. */
+    private fun homeAndStraightBack(delay: LockTimeoutMode) {
+        ForegroundRules.pinSystemLists(mapOf(launcher to true), launcher, emptySet(), emptySet())
+        vault.setTimeoutMode(delay)
+        unlockBank()
+        event(ACTIVITY_PAUSED, bank)
+        event(ACTIVITY_RESUMED, launcher, "$launcher.NexusLauncherActivity")
+        step()
+        // Android holds back the bank's stop about a second: it's back first.
+        event(ACTIVITY_PAUSED, launcher, "$launcher.NexusLauncherActivity")
+        event(ACTIVITY_RESUMED, bank)
+        step()
+    }
+
+    @Test
+    fun anAppBackMomentsAfterHomeBeforeItStoppedHadLeft() {
+        homeAndStraightBack(LockTimeoutMode.IMMEDIATE)
+        assertFalse(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+        assertEquals(2, covered(bank).size)
+    }
+
+    @Test
+    fun anAppBackMomentsAfterHomeKeepsALongerDelay() {
+        homeAndStraightBack(LockTimeoutMode.GRACE_30_SECONDS)
+        assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.GRACE_30_SECONDS))
+        assertEquals(1, covered(bank).size)
+    }
+
+    /** The keyguard is up with the screen on; the bank comes forward, and [then] follows. */
+    private fun bankComesForwardOnTheKeyguard(then: () -> Unit): List<Intent> {
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(true)
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        started()
+        event(ACTIVITY_RESUMED, bank)
+        step(150)
+        then()
+        repeat(8) { step(150) }
+        return started().filter { it.component?.className == lockScreen && it.getStringExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE) == bank }
+    }
+
+    @Test
+    fun anAppStartedBehindTheKeyguardHasItsLockScreenWaitBehindIt() {
+        // Starting cold behind the keyguard: paused, and stopped a moment later.
+        val starts = bankComesForwardOnTheKeyguard {
+            event(ACTIVITY_PAUSED, bank)
+            step(150)
+            event(ACTIVITY_STOPPED, bank)
+        }
+        // Every start behind it (the cover asks again while the lock screen, behind it, can't come up).
+        assertTrue(starts.isNotEmpty())
+        assertTrue(starts.all { it.getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false) })
+        assertTrue(covered(bank).contains("Covered $bank (opened behind the keyguard)"))
+    }
+
+    @Test
+    fun anAppOverTheKeyguardHasItsLockScreenOverItToo() {
+        // The camera, say: it stays on screen.
+        val starts = bankComesForwardOnTheKeyguard { }
+        assertEquals(1, starts.size)
+        assertFalse(starts.single().getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false))
     }
 
     @Test
