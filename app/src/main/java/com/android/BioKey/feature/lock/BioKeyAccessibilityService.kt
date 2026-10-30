@@ -251,7 +251,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
                         // A locked app left on screen: its lock screen goes up now, behind the
                         // keyguard, once every session has ended with the screen (ScreenReceiver,
                         // on this thread too), so unlocking the phone uncovers the cover, not the app.
-                        appLeftOnScreen()?.takeUnless { frontIsLauncher() }?.let { left -> mainHandler.post { coverLeftOnScreen(left) } }
+                        // The window in front first: an app back moments after Home (its event lost in the
+                        // launcher's transition) is on screen, whatever was last heard.
+                        val inFrontNow = runCatching { windowList()?.let(::frontWindow)?.let(::packageOf) }.getOrNull()
+                            ?.takeIf { it != SYSTEM_UI && it != packageName && it != SessionRules.UNIDENTIFIED_APP && !isLauncher(it) }
+                        (inFrontNow ?: appLeftOnScreen()?.takeUnless { frontIsLauncher() })?.let { left -> mainHandler.post { coverLeftOnScreen(left) } }
                         onDisplayAt.clear()
                         watchLauncher(false)
                         foregroundPackage = null

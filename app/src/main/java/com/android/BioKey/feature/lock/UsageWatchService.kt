@@ -48,6 +48,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 
 /**
@@ -488,7 +489,9 @@ class UsageWatchService : Service() {
         }
         isRunning = true
         pauseWatch.launch {
-            SecurityVault.getInstance(this@UsageWatchService).globalLockEnabledFlow.drop(1).collect {
+            // Paused, resumed, or the pause's end set (just after protection goes off).
+            val vault = SecurityVault.getInstance(this@UsageWatchService)
+            merge(vault.globalLockEnabledFlow.drop(1), vault.pausedUntilFlow.drop(1)).collect {
                 if (isRunning) runCatching { getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification()) }
             }
         }
@@ -1256,8 +1259,12 @@ class UsageWatchService : Service() {
                 !isRunning || !vault.isProtectionActive() || !vault.isAppLocked(pkg) ||
                     LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg)) -> keyguardWaits -= pkg
                 // The phone unlocked and another app opened: looked at as usual (never a lock
-                // screen over the next one).
-                !locked && foreground != pkg -> keyguardWaits -= pkg
+                // screen over the next one, nor its cover left over it).
+                !locked && foreground != pkg -> {
+                    keyguardWaits -= pkg
+                    LockStateTracker.clearRegularLockPending(pkg)
+                    if (shield.targetPackage == pkg) shield.hide()
+                }
                 locked && !activities.isVisible(pkg) -> {
                     keyguardWaits -= pkg
                     DiagnosticLog.log("Covered $pkg (opened behind the keyguard)")
