@@ -183,6 +183,11 @@ internal class EngineReplay(private val context: Application) {
             for (r in apps) vault.moveAppToProfile(r.fields[1], profile.id)
         }
         if (env.any { it.fields[0] == "protection" && it.fields[1] == "0" }) vault.setGlobalLockEnabled(false)
+        // Screensavers as they were set (off, with none chosen, in a trace from before they were recorded).
+        val screensaver = env.firstOrNull { it.fields[0] == "screensaver" }?.fields
+        Settings.Secure.putInt(context.contentResolver, "screensaver_enabled", screensaver?.getOrNull(1)?.toIntOrNull() ?: 0)
+        Settings.Secure.putString(context.contentResolver, "screensaver_components", screensaver?.getOrNull(2).orEmpty())
+        Settings.Secure.putString(context.contentResolver, "screensaver_default_component", screensaver?.getOrNull(3).orEmpty())
         val homes = env.filter { it.fields[0] == "home" }
         ForegroundRules.pinSystemLists(
             homeApps = homes.associate { it.fields[1] to (it.fields[2] == "1") },

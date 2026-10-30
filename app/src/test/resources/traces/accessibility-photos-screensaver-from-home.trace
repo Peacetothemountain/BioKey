@@ -1,0 +1,71 @@
+# BioKey engine trace v1
+26809696	env	engine	accessibility
+26809696	env	protection	1
+26809696	env	locked	com.android.camera2	GRACE_30_SECONDS	Camera
+26809696	env	locked	com.google.android.apps.photos	GRACE_30_SECONDS	Photos
+26809696	env	locked	com.google.android.gm	GRACE_30_SECONDS	Gmail
+26809696	env	locked	com.google.android.gms.passwordmanager	GRACE_30_SECONDS	Google Password Manager
+26809696	env	locked	com.google.android.documentsui	GRACE_30_SECONDS	Files
+26809696	env	locked	com.google.android.apps.docs	GRACE_30_SECONDS	Drive
+26809696	env	locked	com.google.android.deskclock	GRACE_30_SECONDS	Clock
+26809696	env	locked	com.google.android.apps.credentialmanager	GRACE_30_SECONDS	Google Password Manager
+26809696	env	locked	com.google.android.apps.messaging	GRACE_30_SECONDS	Messages
+26809696	env	locked	com.android.chrome	GRACE_30_SECONDS	Chrome
+26809696	env	locked	com.biokey.gantlet.plain	GRACE_30_SECONDS	Gantlet Plain
+26809696	env	locked	com.google.android.calendar	GRACE_30_SECONDS	Calendar
+26809696	env	home	com.google.android.apps.nexuslauncher	1	1
+26809696	env	picker	com.google.android.apps.photos
+26809696	env	picker	com.android.camera2
+26809696	env	picker	com.google.android.photopicker
+26809696	env	picker	com.google.android.contacts
+26809696	env	picker	com.google.android.providers.media.module
+26809697	env	picker	com.google.android.documentsui
+26809697	env	picker	com.google.android.apps.docs
+26809697	env	keyboard	com.callstack.agentdevice.imehelper
+26809697	env	keyboard	com.google.android.tts
+26809697	env	keyboard	com.google.android.inputmethod.latin
+26809700	env	screensaver	1	com.google.android.apps.photos/.daydream.PhotosDreamService	com.google.android.deskclock/com.android.deskclock.Screensaver
+26809703	o.log	Accessibility engine started
+26809703	a.ev	4194304			1309	0	1	0	%00
+26809703	d.deviceLocked	0
+26809703	a.ev	4194304			1320	0	1	0	%00
+26809704	a.ev	4194304			1320	0	4	0	%00
+26809855	d.interactive	1
+26809857	a.win	1309%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1320%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+26809957	a.win	1309%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1320%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+26810109	a.win	1309%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1320%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+26820949	a.ev	4194304			1320	0	2	0	%00
+26820952	a.ev	4194304			1309	0	16	0	%00
+26821073	a.ev	4194304			1309	0	8	0	%00
+26821117	a.win	1309%2C3%2C0%2C%2C0%2C0 0 1080 141%2C%2Ccom.android.systemui
+26821253	a.ev	32	com.google.android.apps.photos	android.widget.FrameLayout	1325	0	0	0	%00
+26821258	a.ev	4194304			1309	0	24	0	%00
+26821258	a.ev	4194304			1325	0	1	0	%00
+26821269	a.win	1309%2C3%2C0%2C%2C1%2C0 -122 1080 19%2C%2Ccom.android.systemui	1325%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CPhotos%2Ccom.google.android.apps.photos
+26821269	a.ev	32	com.google.android.apps.photos	android.widget.FrameLayout	1325	0	0	0	%00	No photos selected.
+26821407	a.ev	4194304			1309	0	2	0	%00
+26821414	a.win	1325%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CPhotos%2Ccom.google.android.apps.photos
+26821438	d.bc	android.intent.action.DREAMING_STARTED
+26821438	o.log	All sessions ended (screen off)
+26821439	d.bc	android.intent.action.DREAMING_STARTED
+26821439	a.win	1325%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CPhotos%2Ccom.google.android.apps.photos
+26821439	a.win	1325%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CPhotos%2Ccom.google.android.apps.photos
+26821439	a.win	1325%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CPhotos%2Ccom.google.android.apps.photos
+26821439	a.win	1325%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CPhotos%2Ccom.google.android.apps.photos
+26821577	a.ev	32	com.android.systemui	android.widget.FrameLayout	1326	0	0	0	%00
+26821577	a.win	1325%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CPhotos%2Ccom.google.android.apps.photos
+26821729	a.win	1325%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CPhotos%2Ccom.google.android.apps.photos
+26823871	a.ev	4194304			1325	0	96	0	%00
+26823874	a.win	1325%2C1%2C0%2C%2C0%2C0 0 1080 2424%2CPhotos%2Ccom.google.android.apps.photos
+26823914	a.ev	32	com.google.android.apps.nexuslauncher	com.google.android.apps.nexuslauncher.NexusLauncherActivity	1320	0	0	0	%00	Home screen 1 of 1
+26823914	a.ev	4194304			1325	0	2	0	%00
+26823918	a.ev	4194304			1320	0	1	0	%00
+26823918	a.win	1320%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+26823920	a.ev	32	com.google.android.apps.nexuslauncher	com.google.android.apps.nexuslauncher.NexusLauncherActivity	1320	0	0	0	%00	Home screen 1 of 1
+26824001	a.ev	4194304			1309	0	1	0	%00
+26824034	a.win	1309%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1320%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+26824451	d.bc	android.intent.action.DREAMING_STOPPED
+26824452	d.bc	android.intent.action.DREAMING_STOPPED
+26824453	a.win	1309%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1320%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+26824454	a.win	1309%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1320%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+26824607	a.win	1309%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1320%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher

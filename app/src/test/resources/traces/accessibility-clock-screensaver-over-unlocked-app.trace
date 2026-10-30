@@ -1,0 +1,175 @@
+# BioKey engine trace v1
+26844060	env	engine	accessibility
+26844060	env	protection	1
+26844060	env	locked	com.android.camera2	GRACE_30_SECONDS	Camera
+26844060	env	locked	com.google.android.apps.photos	GRACE_30_SECONDS	Photos
+26844060	env	locked	com.google.android.gm	GRACE_30_SECONDS	Gmail
+26844060	env	locked	com.google.android.gms.passwordmanager	GRACE_30_SECONDS	Google Password Manager
+26844060	env	locked	com.google.android.documentsui	GRACE_30_SECONDS	Files
+26844060	env	locked	com.google.android.apps.docs	GRACE_30_SECONDS	Drive
+26844060	env	locked	com.google.android.deskclock	GRACE_30_SECONDS	Clock
+26844060	env	locked	com.google.android.apps.credentialmanager	GRACE_30_SECONDS	Google Password Manager
+26844060	env	locked	com.google.android.apps.messaging	GRACE_30_SECONDS	Messages
+26844060	env	locked	com.android.chrome	GRACE_30_SECONDS	Chrome
+26844060	env	locked	com.biokey.gantlet.plain	GRACE_30_SECONDS	Gantlet Plain
+26844060	env	locked	com.google.android.calendar	GRACE_30_SECONDS	Calendar
+26844060	env	home	com.google.android.apps.nexuslauncher	1	1
+26844060	env	picker	com.google.android.apps.photos
+26844060	env	picker	com.android.camera2
+26844060	env	picker	com.google.android.photopicker
+26844060	env	picker	com.google.android.contacts
+26844060	env	picker	com.google.android.providers.media.module
+26844060	env	picker	com.google.android.documentsui
+26844060	env	picker	com.google.android.apps.docs
+26844060	env	keyboard	com.callstack.agentdevice.imehelper
+26844060	env	keyboard	com.google.android.tts
+26844060	env	keyboard	com.google.android.inputmethod.latin
+26844061	env	screensaver	1	com.google.android.deskclock/com.android.deskclock.Screensaver	com.google.android.deskclock/com.android.deskclock.Screensaver
+26844061	o.log	Accessibility engine started
+26844062	a.ev	4194304			1337	0	1	0	%00
+26844070	d.deviceLocked	0
+26844070	a.ev	32	com.google.android.apps.nexuslauncher	com.google.android.apps.nexuslauncher.NexusLauncherActivity	1347	0	0	0	%00	Home screen 1 of 1
+26844071	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1347%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+26844074	a.ev	4194304			1337	0	16	0	%00
+26844074	a.ev	4194304			1347	0	1	0	%00
+26844077	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1347%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+26844078	a.ev	4194304			1347	0	4	0	%00
+26844222	d.interactive	1
+26844223	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1347%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+26844315	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1347%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+26844467	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1347%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+26848325	a.ev	4194304			1347	0	2	0	%00
+26848325	a.ev	4194304			1337	0	16	0	%00
+26848480	a.win	1337%2C3%2C0%2C%2C0%2C0 0 1080 142%2C%2Ccom.android.systemui
+26848517	a.ev	32	com.biokey.gantlet.plain	com.biokey.gantlet.MainActivity	1350	0	0	0	%00	Gantlet Plain
+26848522	o.log	Covered com.biokey.gantlet.plain (opened)
+26848522	o.launch	com.biokey.gantlet.plain	0	0
+26848540	a.ev	4194304			1337	0	16	0	%00
+26848541	a.ev	32	com.biokey.gantlet.plain	com.biokey.gantlet.MainActivity	1350	0	0	0	%00	Gantlet Plain
+26848541	a.ev	4194304			1350	0	1	0	%00
+26848547	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1350%2C1%2C0%2Caf%2C0%2C11 24 1069 2400%2CGantlet Plain%2Ccom.biokey.gantlet.plain
+26848576	l.target	com.biokey.gantlet.plain
+26848583	l.resumed	1
+26848616	l.dismiss	com.biokey.gantlet.plain
+26848618	p.up	com.biokey.gantlet.plain
+26848628	a.ev	4194304			1350	0	2	0	%00
+26848631	a.ev	4194304			1337	0	16	0	%00
+26848631	a.ev	4194304			1349	0	1	0	%00
+26848664	a.ev	4194304			1349	0	16	0	%00
+26848664	a.ev	4194304			1337	0	16	0	%00
+26848664	a.ev	4194304			1351	0	1	0	%00
+26848667	a.ev	4194304			1351	0	96	0	%00
+26848696	a.ev	4194304			1349	0	2	0	%00
+26848717	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1351%2C1%2C0%2C%2C0%2C0 0 1080 2424%2CBioKey%2C
+26848739	a.ev	4194304			1337	0	2	0	%00
+26848739	a.ev	4194304			1351	0	2	0	%00
+26848740	a.ev	4194304			1352	0	1	0	%00
+26848892	a.win	1352%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2CUnlock Gantlet Plain%2Ccom.android.systemui
+26851365	p.down	com.biokey.gantlet.plain
+26851365	u.unlock	com.biokey.gantlet.plain
+26851365	o.log	Unlocked com.biokey.gantlet.plain
+26851366	l.dismiss	com.biokey.gantlet.plain
+26851370	l.resumed	0
+26851385	a.ev	4194304			1352	0	2	0	%00
+26851441	a.ev	32	com.biokey.gantlet.plain	com.biokey.gantlet.MainActivity	1350	0	0	0	%00	Gantlet Plain
+26851441	a.ev	32	com.biokey.gantlet.plain	com.biokey.gantlet.MainActivity	1350	0	0	0	%00	Gantlet Plain
+26851441	a.ev	4194304			1337	0	1	0	%00
+26851454	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1350%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CGantlet Plain%2Ccom.biokey.gantlet.plain
+26851454	a.ev	4194304			1350	0	1	0	%00
+26851467	a.ev	4194304			1350	0	8	0	%00
+26851537	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1350%2C1%2C0%2Caf%2C0%2C-1133 0 -54 2424%2CGantlet Plain%2Ccom.biokey.gantlet.plain
+26851920	a.ev	4194304			1350	0	8	0	%00
+26851935	l.target	
+26851935	l.dismiss	com.biokey.gantlet.plain
+26852084	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1350%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CGantlet Plain%2Ccom.biokey.gantlet.plain
+26852668	a.ev	4194304			1350	0	2	0	%00
+26852668	a.ev	4194304			1337	0	16	0	%00
+26852851	a.win	1337%2C3%2C0%2C%2C0%2C0 0 1080 142%2C%2Ccom.android.systemui
+26852890	a.ev	32	com.google.android.deskclock	android.widget.FrameLayout	1359	0	0	0	%00	8:39 AM	Fri%2C Oct 30
+26852895	a.ev	4194304			1337	0	24	0	%00
+26852895	a.ev	4194304			1359	0	1	0	%00
+26852914	a.win	1337%2C3%2C0%2C%2C1%2C0 -3 1080 138%2C%2Ccom.android.systemui	1359%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CClock%2Ccom.google.android.deskclock
+26852914	a.ev	32	com.google.android.deskclock	android.widget.FrameLayout	1359	0	0	0	%00	8:39 AM	Fri%2C Oct 30
+26853057	a.win	1337%2C3%2C0%2C%2C1%2C0 -3 1080 138%2C%2Ccom.android.systemui	1359%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CClock%2Ccom.google.android.deskclock
+26853159	d.bc	android.intent.action.DREAMING_STARTED
+26853159	o.log	All sessions ended (screen off)
+26853159	d.bc	android.intent.action.DREAMING_STARTED
+26853167	a.win	1337%2C3%2C0%2C%2C1%2C0 -3 1080 138%2C%2Ccom.android.systemui	1359%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CClock%2Ccom.google.android.deskclock
+26853169	a.win	1337%2C3%2C0%2C%2C1%2C0 -3 1080 138%2C%2Ccom.android.systemui	1359%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CClock%2Ccom.google.android.deskclock
+26853170	a.win	1337%2C3%2C0%2C%2C1%2C0 -3 1080 138%2C%2Ccom.android.systemui	1359%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CClock%2Ccom.google.android.deskclock
+26853170	a.win	1337%2C3%2C0%2C%2C1%2C0 -3 1080 138%2C%2Ccom.android.systemui	1359%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CClock%2Ccom.google.android.deskclock
+26853171	o.log	Covered com.biokey.gantlet.plain (on screen as the phone locked)
+26853171	o.launch	com.biokey.gantlet.plain	0	0
+26853191	l.target	com.biokey.gantlet.plain
+26853195	l.resumed	1
+26853205	l.resumed	0
+26853205	l.resumed	1
+26853206	a.ev	4194304			1337	0	2	0	%00
+26853239	l.dismiss	com.biokey.gantlet.plain
+26853240	a.ev	4194304			1359	0	96	0	%00
+26853240	a.win	1359%2C1%2C0%2C%2C0%2C0 0 1080 2424%2CClock%2Ccom.google.android.deskclock
+26853262	l.resumed	0
+26853268	a.ev	4194304			1359	0	96	0	%00
+26853273	a.win	1359%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CClock%2Ccom.google.android.deskclock
+26853289	a.ev	4194304			1337	0	1	0	%00
+26853317	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1359%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CClock%2Ccom.google.android.deskclock
+26853318	a.ev	32	com.google.android.deskclock	android.widget.FrameLayout	1359	0	0	0	%00	8:39 AM	Fri%2C Oct 30
+26853338	a.ev	32	com.android.systemui	android.widget.FrameLayout	1360	0	0	0	%00
+26853351	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1359%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CClock%2Ccom.google.android.deskclock
+26853365	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1359%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CClock%2Ccom.google.android.deskclock
+26853667	a.ev	4194304			1337	0	2	0	%00
+26853819	a.win	1359%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CClock%2Ccom.google.android.deskclock
+26854686	l.resumed	1
+26854688	a.ev	4194304			1359	0	96	0	%00
+26854691	a.win	1359%2C1%2C0%2C%2C0%2C0 0 1080 2424%2CClock%2Ccom.google.android.deskclock
+26854727	a.ev	4194304			1359	0	2	0	%00
+26854735	a.ev	4194304			1361	0	1	0	%00
+26854746	d.bc	android.intent.action.DREAMING_STOPPED
+26854751	p.up	com.biokey.gantlet.plain
+26854753	d.bc	android.intent.action.DREAMING_STOPPED
+26854765	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1361%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CBioKey%2C
+26854799	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1361%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CBioKey%2C
+26854799	a.ev	4194304			1337	0	1	0	%00
+26854800	a.ev	4194304			1361	0	96	0	%00
+26854824	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1361%2C1%2C0%2C%2C0%2C0 0 1080 2424%2CBioKey%2C
+26854848	a.ev	4194304			1337	0	2	0	%00
+26854849	a.ev	4194304			1361	0	2	0	%00
+26854849	a.ev	4194304			1362	0	1	0	%00
+26855017	a.win	1362%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2CUnlock Gantlet Plain%2Ccom.android.systemui
+26858702	p.down	com.biokey.gantlet.plain
+26858703	u.unlock	com.biokey.gantlet.plain
+26858703	o.log	Unlocked com.biokey.gantlet.plain
+26858703	l.dismiss	com.biokey.gantlet.plain
+26858719	l.resumed	0
+26858740	a.ev	4194304			1362	0	2	0	%00
+26858740	a.ev	4194304			1337	0	1	0	%00
+26858743	a.win	1337%2C3%2C0%2C%2C0%2C0 0 1080 142%2C%2Ccom.android.systemui
+26858769	a.ev	32	com.biokey.gantlet.plain	com.biokey.gantlet.MainActivity	1350	0	0	0	%00	Gantlet Plain
+26858770	a.ev	4194304			1337	0	16	0	%00
+26858770	a.ev	4194304			1350	0	1	0	%00
+26858771	a.ev	32	com.biokey.gantlet.plain	com.biokey.gantlet.MainActivity	1350	0	0	0	%00	Gantlet Plain
+26858894	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1350%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CGantlet Plain%2Ccom.biokey.gantlet.plain
+26859233	a.ev	4194304			1350	0	8	0	%00
+26859303	l.target	
+26859303	l.dismiss	com.biokey.gantlet.plain
+26859382	a.ev	4194304			1350	0	8	0	%00
+26859398	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1350%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CGantlet Plain%2Ccom.biokey.gantlet.plain
+26859880	a.ev	4194304			1350	0	96	0	%00
+26859909	a.ev	4194304			1350	0	2	0	%00
+26859910	a.ev	4194304			1337	0	16	0	%00
+26859952	a.ev	32	com.google.android.apps.nexuslauncher	com.google.android.apps.nexuslauncher.NexusLauncherActivity	1347	0	0	0	%00	Home screen 1 of 1
+26859956	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1347%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+26859959	a.ev	4194304			1337	0	16	0	%00
+26859959	a.ev	4194304			1347	0	1	0	%00
+26859967	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1347%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+26859967	a.ev	32	com.google.android.apps.nexuslauncher	com.google.android.apps.nexuslauncher.NexusLauncherActivity	1347	0	0	0	%00	Home screen 1 of 1
+26860038	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1347%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+26860053	a.ev	2048	com.google.android.apps.nexuslauncher	android.widget.FrameLayout	1347	0	0	1	%00
+26860152	a.ev	2048	com.google.android.apps.nexuslauncher	android.widget.FrameLayout	1347	0	0	1	%00
+26860254	a.ev	2048	com.google.android.apps.nexuslauncher	android.widget.FrameLayout	1347	0	0	1	%00
+26860353	a.ev	2048	com.google.android.apps.nexuslauncher	android.widget.FrameLayout	1347	0	0	1	%00
+26860454	a.ev	2048	com.google.android.apps.nexuslauncher	android.widget.FrameLayout	1347	0	0	1	%00
+26860463	a.win	1337%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	1347%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+26860464	o.log	com.biokey.gantlet.plain left the screen · re-lock: grace_30_seconds
+26860555	a.ev	2048	com.google.android.apps.nexuslauncher	android.widget.FrameLayout	1347	0	0	1	%00
+26860656	a.ev	2048	com.google.android.apps.nexuslauncher	android.widget.FrameLayout	1347	0	0	1	%00

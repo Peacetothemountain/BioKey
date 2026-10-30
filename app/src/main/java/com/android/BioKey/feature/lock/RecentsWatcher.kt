@@ -5,6 +5,7 @@ import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import kotlin.math.abs
@@ -30,6 +31,7 @@ internal class RecentsWatcher(
     private val onClearAll: () -> Unit
 ) {
     internal companion object {
+        private const val TAG = "RecentsWatcher"
         /** Nodes of a Recents card that carry the app's name. */
         val CARD_IDS = listOf("snapshot", "task_thumbnail", "task_thumbnail_live_tile")
         /** How far up, as a share of the screen, a card must have gone to count as swiped away. */
@@ -242,6 +244,11 @@ internal class RecentsWatcher(
             }
             cards.keys.retainAll(now.keys)
             for ((name, rect) in now) cards.getOrPut(name) { Card(rect) }.moveTo(rect)
+        } catch (e: RuntimeException) {
+            // The launcher's windows changed under the look (a node gone stale): the next look
+            // reads every ID afresh. Thrown out of a posted look, it would stop the whole service.
+            Log.w(TAG, "Recents look failed: ${e.javaClass.simpleName}")
+            cardIds = null
         } finally {
             root.release()
         }
