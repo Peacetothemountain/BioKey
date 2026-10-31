@@ -36,7 +36,7 @@ import org.robolectric.annotation.Config
  * word. Not up within a second, with the app still on screen: Home.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [34], shadows = [InstallTimePermissions::class])
 class FailClosedTest {
 
     private val context: Application = ApplicationProvider.getApplicationContext()
@@ -107,6 +107,25 @@ class FailClosedTest {
         idle(1_000)
         assertEquals(1, homePresses())
         assertTrue(DiagnosticLog.entries().any { it.text == "Lock screen for $x didn't appear; went Home" })
+    }
+
+    @Test
+    fun aTapOnTheLockScreenWithNoPromptUpAsksAgain() {
+        // A lock screen whose prompt never came (its app gone behind the keyguard, say): a tap anywhere asks.
+        val screen = Robolectric.buildActivity(
+            LockScreenActivity::class.java,
+            android.content.Intent(context, LockScreenActivity::class.java).putExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE, x)
+        ).setup()
+        try {
+            screen.get().markFirstFrameForTests()
+            val cover = screen.get().findViewById<android.view.ViewGroup>(android.R.id.content).getChildAt(0)
+            com.android.BioKey.core.diagnostics.EngineTrace.lines()
+            cover.performClick()
+            assertTrue(com.android.BioKey.core.diagnostics.EngineTrace.lines().any { it.endsWith("\tp.up\t$x") })
+        } finally {
+            runCatching { screen.pause().stop().destroy() }
+            com.android.BioKey.core.security.SecurityEngine.INSTANCE.resetAuthenticatingState()
+        }
     }
 
     @Test

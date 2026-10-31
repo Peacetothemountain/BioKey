@@ -191,6 +191,11 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     private val identityScroll = android.widget.ScrollView(context).apply {
         isVerticalFadingEdgeEnabled = false
         overScrollMode = OVER_SCROLL_NEVER
+        // A scroll view takes the window's focus first, and out of touch mode (a key pressed, input
+        // driven by a tool) Android shades the focused view: a grey band behind the icon and name.
+        // Nothing here is for a keyboard to land on; the buttons are.
+        isFocusable = false
+        defaultFocusHighlightEnabled = false
         addView(identity, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
     }
 
@@ -205,10 +210,13 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     val isDark: Boolean get() = palette.isDark
 
     init {
-        // Not clickable in itself, or screen readers would offer a double-tap that does nothing on
-        // the lock screen: [onTouchEvent] keeps touches from what's below. The shield's tap
-        // listener makes it clickable, as a tap there brings the lock screen up.
+        // Not clickable in itself, or screen readers would offer a double-tap that does nothing:
+        // [onTouchEvent] keeps touches from what's below. The shield's tap listener makes it
+        // clickable, as a tap there brings the lock screen up, and the lock screen's, as a tap
+        // there asks again.
         filterTouchesWhenObscured = true
+        // Tappable (the lock screen asks again on a tap), never shaded as focused: see identityScroll.
+        defaultFocusHighlightEnabled = false
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
         WindowProtection.hideFromNonToolAccessibilityServices(this)
 

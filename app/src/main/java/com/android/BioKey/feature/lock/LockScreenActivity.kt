@@ -253,6 +253,7 @@ class LockScreenActivity : ComponentActivity() {
             onUnlock = ::showPrompt
             onCancel = ::goHomeAndFinish
             onLockDevice = ::lockDeviceOrHome
+            setOnClickListener { onCoverTapped() }
         }
         bindCover()
         setContentView(cover)
@@ -364,6 +365,7 @@ class LockScreenActivity : ComponentActivity() {
             finishSilently()
             return
         }
+        awaitEntryAgain()
         maybeAutoPrompt()
     }
 
@@ -375,7 +377,35 @@ class LockScreenActivity : ComponentActivity() {
     /** In front again with a screensaver gone (it held the prompt back): the prompt comes up now. */
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) maybeAutoPrompt()
+        if (!hasFocus) return
+        awaitEntryAgain()
+        maybeAutoPrompt()
+    }
+
+    /**
+     * Shown again after being hidden ([onStop]), it waits to have come in before it prompts
+     * ([onCoverShown]), but no opening transition says so when it comes back from behind the
+     * keyguard (the phone unlocked over it), and its first frame was drawn long ago: it would
+     * wait for ever, no prompt and no buttons, as the owner sees it. Its next frame is waited for
+     * instead, and then at most [ENTRY_WAIT_MS].
+     */
+    private fun awaitEntryAgain() {
+        if (entered || awaitingEntry || !firstFrameCommitted || isFinishing || !::cover.isInitialized) return
+        whenCoverDrawn()
+    }
+
+    /**
+     * A tap anywhere on the cover asks again whenever no prompt is up (Android dismissed it, a
+     * screensaver or the keyguard held it back): the owner is never left with a cover and no way
+     * on but Back.
+     */
+    private fun onCoverTapped() {
+        if (isFinishing || isPermanentLockout || engine.isAuthenticatingFor(lockedPackage)) return
+        if (LockStateTracker.screensaverShowing || (isKeyguardLocked() && !showsOverKeyguard)) return
+        // On screen, as the tap shows.
+        if (!entered) onEntered()
+        promptAutoLaunched = true
+        showPrompt()
     }
 
     override fun onNewIntent(intent: Intent) {
