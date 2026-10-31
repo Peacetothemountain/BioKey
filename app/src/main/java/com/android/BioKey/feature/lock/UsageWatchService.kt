@@ -109,6 +109,8 @@ class UsageWatchService : Service() {
         private const val PKG_PLAY_STORE = "com.android.vending"
         /** What was on screen as a lock screen was asked for counts for its prompt this long ([lockedOnScreenWith]). */
         private const val LOCKED_AT_LOCK_MS = 60_000L
+        /** With no cover up to check, how long a lock screen has to come up before its app is sent Home ([checkLockScreenSoon]). */
+        private const val LOCK_SCREEN_CHECK_MS = 1_000L
         private val LOCK_SCREEN_CLASS = LockScreenActivity::class.java.name
 
         @Volatile
@@ -432,6 +434,37 @@ class UsageWatchService : Service() {
         goHome()
     }
 
+    /**
+     * [pkg]'s lock screen couldn't even be asked for behind the keyguard. Home there would change
+     * nothing: it's covered as it shows once the phone is unlocked, as any app found in front is.
+     */
+    private fun noBehindKeyguard(pkg: String) {
+        DiagnosticLog.log("Lock screen for $pkg couldn't be started behind the keyguard; covered once the phone is unlocked")
+    }
+
+    /** [pkg]'s lock screen couldn't even be asked for: Home takes it off screen. */
+    private fun couldntStart(pkg: String) {
+        DiagnosticLog.log("Lock screen for $pkg couldn't be started; went Home")
+        sendHome()
+    }
+
+    /**
+     * The cover couldn't go up over [pkg], so nothing checks that its lock screen appears (the
+     * cover's own checks do that), and Android can refuse one started from the background without
+     * a word: looked at once, [LOCK_SCREEN_CHECK_MS] later. Not up, and [pkg] still showing
+     * without a session where it shows (not behind the keyguard), Home takes it off screen.
+     */
+    private fun checkLockScreenSoon(pkg: String) {
+        handler.postDelayed({
+            stir()
+            if (!isRunning || permissionLost) return@postDelayed
+            if (LockScreenActivity.isLockScreenResumed && LockScreenActivity.activeLockedTarget == pkg) return@postDelayed
+            if (!isInteractive() || pkg in keyguardWaits || keyguardLocked() || !isExposed(pkg)) return@postDelayed
+            DiagnosticLog.log("Lock screen for $pkg didn't appear; went Home")
+            sendHome()
+        }, LOCK_SCREEN_CHECK_MS)
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -604,7 +637,7 @@ class UsageWatchService : Service() {
         ) return
         DiagnosticLog.log("Covered $pkg ($why)")
         LockStateTracker.setRegularLockPending(pkg)
-        LockLauncher.launch(this, pkg, isSelfProtection = false, behindKeyguard = true)
+        if (!LockLauncher.launch(this, pkg, isSelfProtection = false, behindKeyguard = true)) noBehindKeyguard(pkg)
     }
 
     /** Nothing known about the screen holds any more, except, with [keepFront], which app is in front. */
@@ -1142,7 +1175,7 @@ class UsageWatchService : Service() {
         val overInUse = front != null && front != pkg &&
             (front == packageName || vault.isAppLocked(front) || hopTo(front, foregroundClass, pkg) != null)
         if (overInUse || isInUseBeside(pkg)) {
-            if (!launchLockScreen(pkg)) sendHome()
+            if (!launchLockScreen(pkg)) couldntStart(pkg)
             return
         }
         expanding = pkg
@@ -1196,7 +1229,7 @@ class UsageWatchService : Service() {
         }
         // Still floating: its lock screen goes up under the cover, which stays over both.
         LockStateTracker.setRegularLockPending(pkg)
-        if (!launchLockScreen(pkg)) sendHome()
+        if (!launchLockScreen(pkg)) couldntStart(pkg)
     }
 
     /**
@@ -1292,7 +1325,7 @@ class UsageWatchService : Service() {
         // one: its lock screen comes up under it, its prompt over it, and the cover stays.
         val heldFor = held?.first
         if (heldFor != null && heldFor != pkg && shield.isShowing && shield.targetPackage == heldFor && isHeldOpen(heldFor)) {
-            if (!launchLockScreen(pkg)) sendHome()
+            if (!launchLockScreen(pkg)) couldntStart(pkg)
             return
         }
         // The overlay goes up first and hides the app. The lock screen may start from the
@@ -1300,9 +1333,10 @@ class UsageWatchService : Service() {
         if (!shield.show(pkg) { launchLockScreen(pkg) }) {
             if (!checkPermissions()) return
             DiagnosticLog.log("Cover for $pkg couldn't be shown")
+            checkLockScreenSoon(pkg)
         }
         // Couldn't even ask for the lock screen: leave the app. The cover stays up and retries.
-        if (!launchLockScreen(pkg)) sendHome()
+        if (!launchLockScreen(pkg)) couldntStart(pkg)
     }
 
     /**
@@ -1346,11 +1380,11 @@ class UsageWatchService : Service() {
                 locked && !activities.isVisible(pkg) -> {
                     keyguardWaits -= pkg
                     DiagnosticLog.log("Covered $pkg (opened behind the keyguard)")
-                    LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = reprompt, behindKeyguard = true)
+                    if (!LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = reprompt, behindKeyguard = true)) noBehindKeyguard(pkg)
                 }
                 !locked || attempt + 1 >= KEYGUARD_CHECKS -> {
                     keyguardWaits -= pkg
-                    if (!LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = reprompt)) sendHome()
+                    if (!LockLauncher.launch(this, pkg, isSelfProtection = false, reprompt = reprompt)) couldntStart(pkg)
                 }
                 else -> awaitKeyguardVerdict(pkg, reprompt, attempt + 1)
             }

@@ -485,6 +485,20 @@ class CompatibilityEngineTest {
     }
 
     @Test
+    fun withNoCoverAndNoLockScreenTheAppGoesHome() {
+        // The cover's window can't be shown, and Android refuses the lock screen without a word.
+        (UsageWatchService::class.java.getDeclaredField("shield").apply { isAccessible = true }.get(engine.get()) as InstantShieldOverlay).destroy()
+        step()
+        started()
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        assertTrue(started().none { it.hasCategory(Intent.CATEGORY_HOME) })
+        repeat(6) { step() }
+        assertTrue(started().any { it.hasCategory(Intent.CATEGORY_HOME) })
+        assertTrue(DiagnosticLog.entries().any { it.text == "Lock screen for $bank didn't appear; went Home" })
+    }
+
+    @Test
     fun bothHalvesOfASplitScreenAreAskedForInOnePrompt() {
         vault.setAppLock(chat, true)
         // A pair opened from Recents: both resume.

@@ -99,6 +99,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         /** How many unreadable windows are remembered as some app's ([attributedWindows]). */
         private const val MAX_ATTRIBUTED_WINDOWS = 16
 
+        /** With no cover up to check, how long a lock screen has to come up before its app is sent Home ([raiseShield]). */
+        private const val LOCK_SCREEN_CHECK_MS = 1_000L
+
         /** Android's App lock prompt is looked for again this long after its cover came ([readSystemLockPrompt]). */
         private const val SYSTEM_PROMPT_READ_DELAY_MS = 400L
         /** At most this many looks at a cover's prompt, and this many of its nodes each time: it has a handful. */
@@ -387,7 +390,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         shield = InstantShieldOverlay(
             this,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            goHome = { pressHome() },
+            goHome = ::goHomeAnyway,
             onTimeout = ::onShieldTimeout
         )
         maskControl = MaskController(this, vault, shield, mainHandler, maskHost)
@@ -679,7 +682,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 ) {
                     exitTransition = isExitTransition(target)
                     if (exitTransition == false && isPhoneScreen(display)) LatencyMarks.trigger("accessibility", target, event.eventTime)
-                    if (exitTransition == false && isPhoneScreen(display)) shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
+                    if (exitTransition == false && isPhoneScreen(display)) raiseShield(target) { launchLockScreen(target, isSelfProtection = false) }
                 }
                 if (event.windowId >= 0) windowPackages[event.windowId] = target ?: eventPkg
                 if (eventCls.isNotEmpty()) lastClassByPackage[eventPkg] = eventCls
@@ -713,7 +716,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     LockStateTracker.isRegularLockPending(SELF_PROTECTION_PENDING_KEY)
                 ) {
                     if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && !LockScreenActivity.isLockScreenResumed) {
-                        shield.show(SELF_PROTECTION_PENDING_KEY) {
+                        raiseShield(SELF_PROTECTION_PENDING_KEY) {
                             launchLockScreen(SELF_PROTECTION_PENDING_KEY, isSelfProtection = true)
                         }
                         launchLockScreen(SELF_PROTECTION_PENDING_KEY, isSelfProtection = true)
@@ -1613,7 +1616,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             // now (the lock-screen camera, say), it's left there uncovered, if allowed.
             if (isPhoneScreen(displayId) && letsThroughOverKeyguard(target)) return
             if (!LockScreenActivity.isLockScreenResumed || LockScreenActivity.activeLockedTarget != target) {
-                if (isPhoneScreen(displayId)) shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
+                if (isPhoneScreen(displayId)) raiseShield(target) { launchLockScreen(target, isSelfProtection = false) }
                 launchLockScreen(target, isSelfProtection = false, displayId)
             }
             return
@@ -1694,7 +1697,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         // in case it is the app, but its lock screen waits a moment: a screensaver takes the cover down.
         if (isPhoneScreen(displayId) && target in screensaverApps()) {
             screensaverAppCoveredAt = target to SystemClock.elapsedRealtime()
-            shield.show(target) { }
+            raiseShield(target) { }
             mainHandler.postDelayed({
                 if (LockStateTracker.screensaverShowing) {
                     if (shield.targetPackage == target) shield.hide()
@@ -1706,7 +1709,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             return
         }
         if (isPhoneScreen(displayId)) {
-            shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
+            raiseShield(target) { launchLockScreen(target, isSelfProtection = false) }
         } else {
             scheduleReconcile(0L)
         }
@@ -1984,7 +1987,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         LockStateTracker.setRegularLockPending(SELF_PROTECTION_PENDING_KEY)
         Log.i(TAG, "Guarding a BioKey system settings screen")
         DiagnosticLog.log("Guarding a page that could switch BioKey off")
-        shield.show(SELF_PROTECTION_PENDING_KEY) {
+        raiseShield(SELF_PROTECTION_PENDING_KEY) {
             launchLockScreen(SELF_PROTECTION_PENDING_KEY, isSelfProtection = true)
         }
         launchLockScreen(SELF_PROTECTION_PENDING_KEY, isSelfProtection = true)
@@ -2051,15 +2054,18 @@ class BioKeyAccessibilityService : AccessibilityService() {
     // -------------------------------------------------------------------------------------------
 
     /** Shield timed out: relaunch the lock if the locked app is still on screen, else let it go. */
+    /** Whether [target] (or, for [SELF_PROTECTION_PENDING_KEY], a guarded settings page) is still on the phone's screen, uncovered by an unlock. */
+    private fun isStillExposed(target: String): Boolean = if (target == SELF_PROTECTION_PENDING_KEY) {
+        val foreground = activeRoot()?.let { root -> root.packageName?.toString().also { root.release() } }
+            ?: foregroundPackage
+        foreground != null && SelfProtectionDetector.isHostPackage(foreground) && shouldGuardSelf() && (selfProtection?.isGuardedScreen(foreground, null) == true)
+    } else {
+        !LockStateTracker.isAppUnlocked(target, vault.getTimeoutMode(target)) && isUnderShield(target)
+    }
+
     private fun onShieldTimeout(target: String, attempt: Int): Boolean {
         try {
-            val stillExposed = if (target == SELF_PROTECTION_PENDING_KEY) {
-                val foreground = activeRoot()?.let { root -> root.packageName?.toString().also { root.release() } }
-                    ?: foregroundPackage
-                foreground != null && SelfProtectionDetector.isHostPackage(foreground) && shouldGuardSelf() && (selfProtection?.isGuardedScreen(foreground, null) == true)
-            } else {
-                !LockStateTracker.isAppUnlocked(target, vault.getTimeoutMode(target)) && isUnderShield(target)
-            }
+            val stillExposed = isStillExposed(target)
             // A screensaver showing: nothing is covered over it (and its own window isn't the app).
             if (!stillExposed || LockStateTracker.screensaverShowing) return false
             // An app that provides the screensaver: its lock screen waits out lock()'s moment, which
@@ -2117,10 +2123,49 @@ class BioKeyAccessibilityService : AccessibilityService() {
             lastLaunch = null
             // Could not cover the app: fail closed by leaving it (on another display its patch stays over it).
             if (isPhoneScreen(displayId)) {
-                pressHome()
+                DiagnosticLog.log("Lock screen for $targetPkg couldn't be started; went Home")
+                goHomeAnyway()
                 shield.hide()
+            } else {
+                DiagnosticLog.log("Lock screen for $targetPkg couldn't be started on another display; its patch stays")
             }
         }
+    }
+
+    /** Home, as the service presses it, or else as any app asks for it: how a cover that can't do its job fails closed. */
+    private fun goHomeAnyway() {
+        if (!pressHome()) goHome()
+    }
+
+    /**
+     * Puts the cover up over [target] (BioKey's own settings pages too, as [SELF_PROTECTION_PENDING_KEY]),
+     * [onTapped] bringing its lock screen. The cover's own checks then see that its lock screen
+     * comes up, and fail closed if it doesn't ([onShieldTimeout]); a cover that couldn't go up
+     * checks nothing, and Android can refuse a lock screen started from the background without a
+     * word. So then it's looked at once, [LOCK_SCREEN_CHECK_MS] later: not up, and [target] still
+     * on screen, Home takes it off screen.
+     */
+    private fun raiseShield(target: String, onTapped: () -> Unit) {
+        if (shield.show(target, onTapped)) return
+        // One look per app at a time: its next events while it starts ask for the same.
+        if (!lockScreenChecks.add(target)) return
+        DiagnosticLog.log("Cover for $target couldn't be shown; checking its lock screen comes up")
+        mainHandler.postDelayed({ guarded("Lock screen check") { failClosedIfNoLockScreen(target) } }, LOCK_SCREEN_CHECK_MS)
+    }
+
+    /** Apps a [failClosedIfNoLockScreen] look is on its way for. */
+    private val lockScreenChecks = HashSet<String>()
+
+    /** [target]'s lock screen should be up by now ([raiseShield]): if it isn't and [target] is still exposed, Home. */
+    private fun failClosedIfNoLockScreen(target: String) {
+        lockScreenChecks -= target
+        if (!isRunning || !::vault.isInitialized) return
+        if (LockScreenActivity.isLockScreenResumed && LockScreenActivity.activeLockedTarget == target) return
+        // Behind the keyguard (or a screensaver) nothing shows: its lock screen waits there.
+        if (!isInteractive() || LockStateTracker.screensaverShowing || (isKeyguardLocked() && !isOnDisplay(target))) return
+        if (!isStillExposed(target)) return
+        DiagnosticLog.log("Lock screen for $target didn't appear; went Home")
+        goHomeAnyway()
     }
 
     /** The last lock screen started (app, display, when), for [isLockScreenOnItsWay]. */

@@ -148,7 +148,10 @@ class InstantShieldOverlay(
             armTimeout()
         } else if (attempt < MAX_ATTEMPTS || keepCoverWhile == null) {
             Log.w(TAG, "Lock screen did not appear; failing closed")
-            if (attempt >= MAX_ATTEMPTS) goHome()
+            if (attempt >= MAX_ATTEMPTS) {
+                DiagnosticLog.log("Lock screen for $pkg didn't appear; went Home")
+                goHome()
+            }
             hide()
         } else if (keepCoverWhile(pkg)) {
             keepCovering(pkg)
