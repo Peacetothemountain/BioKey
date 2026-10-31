@@ -190,7 +190,9 @@ class SecurityVault private constructor(private val context: Context) {
      * "Let the camera open over the lock screen": while the phone is locked, the phone's lock-screen
      * camera and its emergency dialer open over the keyguard uncovered, locked apps or not, as
      * Android's own App lock lets them; once the phone is unlocked with one in front, it's covered.
-     * On by default, as in Android's. Off, they're covered over the keyguard too.
+     * On by default for a new setup, as in Android's; a phone set up before it came keeps them
+     * covered (as they were then) until the owner switches it on. Off, they're covered over the
+     * keyguard too.
      */
     val keyguardCameraFlow: StateFlow<Boolean> = _keyguardCameraFlow.asStateFlow()
 
@@ -724,7 +726,9 @@ class SecurityVault private constructor(private val context: Context) {
         // Off in a build without it, even if an earlier build saved it on.
         _accessibilitySelfProtectionFlow.value = prefs.getBoolean(KEY_SELF_PROTECTION, false) && selfProtectionAvailable
         _autoSortProfilesFlow.value = prefs.getBoolean(KEY_AUTO_SORT, true)
-        _keyguardCameraFlow.value = prefs.getBoolean(KEY_KEYGUARD_CAMERA, true)
+        // Never asked for before: on for a new setup; set up already, kept as it was (covered), so
+        // nothing is less locked after an update without the owner choosing it.
+        _keyguardCameraFlow.value = prefs.getBoolean(KEY_KEYGUARD_CAMERA, !_setupCompletedFlow.value)
         _relockAtPhoneLockFlow.value = prefs.getBoolean(KEY_RELOCK_AT_PHONE_LOCK, false)
         LockStateTracker.relockAtPhoneLock = _relockAtPhoneLockFlow.value
 

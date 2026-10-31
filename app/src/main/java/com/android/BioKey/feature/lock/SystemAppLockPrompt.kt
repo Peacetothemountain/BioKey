@@ -9,9 +9,18 @@ import android.content.res.Resources
  * [threeApps]). Read from Android's own resources ([fromSystem]), so they match the prompt in any
  * language; a prompt with none of them isn't Android's App lock prompt.
  */
-internal class SystemAppLockPrompt(private val oneApp: String, twoApps: String? = null, threeApps: String? = null) {
+internal class SystemAppLockPrompt(
+    private val oneApp: String,
+    twoApps: String? = null,
+    threeApps: String? = null,
+    /** The prompt's own title ("Verify it's you"): what Android calls its window too. */
+    private val title: String? = null
+) {
 
     companion object {
+        /** What SystemUI names the prompt's window itself, whatever its title. */
+        private const val PROMPT_WINDOW = "BiometricPrompt"
+
         /** Android's own words, or null where it has none (before Android 17 QPR3, or another build). */
         fun fromSystem(): SystemAppLockPrompt? = runCatching {
             val res = Resources.getSystem()
@@ -20,7 +29,8 @@ internal class SystemAppLockPrompt(private val oneApp: String, twoApps: String? 
             SystemAppLockPrompt(
                 one,
                 words("locked_app_biometric_prompt_desc_two_apps"),
-                words("locked_app_biometric_prompt_desc_three_apps")
+                words("locked_app_biometric_prompt_desc_three_apps"),
+                words("biometric_dialog_default_title")
             )
         }.getOrNull()
 
@@ -41,12 +51,22 @@ internal class SystemAppLockPrompt(private val oneApp: String, twoApps: String? 
     private val forms = listOfNotNull(twoApps, threeApps).mapNotNull(::patternOf)
 
     /**
+     * Whether a window titled [windowTitle] is a biometric prompt's (SystemUI's own name for it,
+     * or the title Android's App lock gives its prompt): never the notification shade or a
+     * heads-up, which can show any words at all.
+     */
+    fun isPromptWindow(windowTitle: CharSequence?): Boolean {
+        val t = windowTitle?.toString()?.trim() ?: return false
+        return t == PROMPT_WINDOW || (title != null && t == title)
+    }
+
+    /**
      * The names on a prompt whose texts are [texts], or null if it isn't Android's App lock prompt.
-     * One app: every other text there, its name among them (beside the title and buttons, which
+     * One app: every other text there but its title, its name among them (beside the buttons, which
      * name no app); several: the names in its sentence, in their order.
      */
     fun namesIn(texts: List<String>): List<String>? {
-        if (oneApp in texts) return texts.filter { it != oneApp }
+        if (oneApp in texts) return texts.filter { it != oneApp && it != title }
         for (text in texts) {
             for ((pattern, order) in forms) {
                 val match = pattern.matchEntire(text) ?: continue

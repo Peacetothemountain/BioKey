@@ -173,6 +173,46 @@ class LockScreenCameraTest {
     }
 
     @Test
+    fun anotherScreenOfTheCameraAppOverTheKeyguardIsCovered() {
+        onScreen(appWindow(2, camera), keyguardWindow())
+        windowEvent(camera, "$camera.SettingsActivity", wait = 1_500)
+        assertTrue(covered().toString(), covered().isNotEmpty())
+    }
+
+    @Test
+    fun theCamerasStartingWindowWaitsForItsScreenToNameItself() {
+        onScreen(appWindow(2, camera), keyguardWindow())
+        // Its starting window comes first, naming no screen; then the lock-screen camera's own.
+        windowEvent(camera, "android.widget.FrameLayout", wait = 100)
+        windowEvent(camera, secureScreen, wait = 1_500)
+        assertEquals(emptyList<String>(), covered())
+    }
+
+    @Test
+    fun aScreenThatNeverNamesItselfIsCovered() {
+        onScreen(appWindow(2, camera), keyguardWindow())
+        windowEvent(camera, "android.widget.FrameLayout", wait = 1_500)
+        assertTrue(covered().toString(), covered().isNotEmpty())
+    }
+
+    @Test
+    fun aPhoneSetUpBeforeTheSettingCameKeepsTheCameraCovered() {
+        // Set up already, from before the setting existed: it isn't stored.
+        val prefs = context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE)
+        vault.awaitPendingWrites()
+        prefs.edit().remove("keyguard_camera_allowed").commit()
+        SecurityVault.resetForTests()
+        assertEquals(false, SecurityVault.getInstance(context).isKeyguardCameraAllowed())
+        // A new setup: on, as Android's own App lock has it.
+        prefs.edit().clear().commit()
+        SecurityVault.resetForTests()
+        assertEquals(true, SecurityVault.getInstance(context).isKeyguardCameraAllowed())
+        SecurityVault.resetForTests()
+        vault = SecurityVault.getInstance(context)
+        vault.setSetupCompletedSync(true)
+    }
+
+    @Test
     fun theCameraStartedBehindTheKeyguardIsStillCoveredBehindIt() {
         // From a notification's action, say: it starts behind the keyguard, under it, not over it.
         onScreen(keyguardWindow(), appWindow(2, camera))

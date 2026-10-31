@@ -275,15 +275,20 @@ object ForegroundRules {
         Intent("android.intent.action.CALL_EMERGENCY", Uri.parse("tel:"))
     )
 
-    /** The apps handling [KEYGUARD_INTENTS] on this phone, each with those of its activities (read again at most every 5 min). */
+    /**
+     * The screens that answer [KEYGUARD_INTENTS] on this phone, by app: each intent's default
+     * handler only, the one the lock screen opens (none where Android would ask which to use).
+     * Read again at most every 5 min.
+     */
     private val keyguardApps = SystemList(5 * 60_000L, emptyMap<String, Set<String>>()) { context ->
         val pm = context.packageManager
         val found = HashMap<String, MutableSet<String>>()
         for (intent in KEYGUARD_INTENTS) {
-            for (info in pm.queryIntentActivities(intent, PackageManager.MATCH_ALL)) {
-                val activity = info.activityInfo ?: continue
-                found.getOrPut(activity.packageName) { HashSet() } += activity.name
-            }
+            val activity = pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo ?: continue
+            // Android's chooser: no default handler.
+            if (activity.packageName == "android") continue
+            // An alias's own name, and the screen it opens, which is what its windows say.
+            found.getOrPut(activity.packageName) { HashSet() } += listOfNotNull(activity.name, activity.targetActivity)
         }
         found - context.packageName
     }

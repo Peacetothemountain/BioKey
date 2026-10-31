@@ -1129,18 +1129,17 @@ class UsageWatchService : Service() {
 
     /**
      * Whether [pkg], in front with the keyguard up and the screen on, is left uncovered there: its
-     * screen in front is the phone's lock-screen camera or emergency dialer (one of its screens
-     * answering [ForegroundRules.KEYGUARD_INTENTS], or one made to show over the keyguard, as only
-     * those can), and the owner lets those open over the lock screen (on by default, as Android's
-     * own App lock does). Only while the phone stays locked: unlocked with it still in front, it's
+     * screen in front is the phone's lock-screen camera or emergency dialer (the very screen that
+     * answers one of [ForegroundRules.KEYGUARD_INTENTS] by default), and the owner lets those open
+     * over the lock screen. Only while the phone stays locked: unlocked with it still in front, it's
      * covered as usual (the phone-unlocked broadcast). Any other screen of the app, one started
-     * behind the keyguard among them, is covered as before ([launchLockScreen]), as is everything
-     * with the setting off.
+     * behind the keyguard or one whose name isn't known among them, is covered as before
+     * ([launchLockScreen]), as is everything with the setting off.
      */
     private fun letsThroughOverKeyguard(pkg: String): Boolean {
         if (!vault.isKeyguardCameraAllowed() || !ForegroundRules.isKeyguardApp(this, pkg)) return false
         val cls = foregroundClass?.takeIf { foreground == pkg && it.isNotEmpty() } ?: return false
-        if (cls !in ForegroundRules.keyguardActivities(this, pkg) && !showsOverKeyguard(pkg, cls)) return false
+        if (cls !in ForegroundRules.keyguardActivities(this, pkg)) return false
         if (!keyguardLocked() || !isInteractive()) return false
         if (keyguardLetThrough != pkg) DiagnosticLog.log("$pkg opened over the lock screen (its camera or emergency calls): covered once the phone is unlocked")
         keyguardLetThrough = pkg
