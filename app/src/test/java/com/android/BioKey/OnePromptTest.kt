@@ -142,6 +142,47 @@ class OnePromptTest {
     }
 
     @Test
+    fun aSplitFormedUnderTheCoverFromRecentsIsAskedForInOnePrompt() {
+        // Recents: Notes chosen for split screen, then Diary's card tapped. The cover goes up at the
+        // tap, before either half has a window, so no window list ever shows them: only their events.
+        val launcher = "com.google.android.apps.nexuslauncher"
+        onScreen(window(1, launcher, whole, active = true))
+        engine.get().onAccessibilityEvent(AccessibilityEvent(AccessibilityEvent.TYPE_VIEW_CLICKED).apply {
+            packageName = launcher
+            className = "android.widget.TextView"
+            text.add("Diary")
+        })
+        idle(100)
+        for (pkg in listOf(x, y)) {
+            engine.get().onAccessibilityEvent(AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply {
+                packageName = pkg
+                className = "$pkg.MainActivity"
+            })
+            idle(50)
+        }
+        lockScreenUpFor(y)
+        assertEquals(listOf(x), BioKeyAccessibilityService.lockedAppsOnScreenWith(y))
+    }
+
+    @Test
+    fun anAppLeftFromItsCoverIsntAskedForWithTheNext() {
+        engine.get().onAccessibilityEvent(AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply {
+            packageName = x
+            className = "$x.MainActivity"
+        })
+        idle(50)
+        // Its lock screen cancelled: Home.
+        LockStateTracker.markLockAbandoned(x)
+        engine.get().onAccessibilityEvent(AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply {
+            packageName = y
+            className = "$y.MainActivity"
+        })
+        idle(50)
+        lockScreenUpFor(y)
+        assertEquals(emptyList<String>(), BioKeyAccessibilityService.lockedAppsOnScreenWith(y))
+    }
+
+    @Test
     fun anUnlockedAppBesideItIsntAskedFor() {
         LockStateTracker.onAppUnlocked(y)
         splitScreenOpens()

@@ -337,6 +337,8 @@ class UsageWatchService : Service() {
                     // Waiting: the app in front is still there once the phone locks, and covered then.
                     val waiting = LockStateTracker.awaitingPhoneLock
                     leftAtScreenOff = appInFront()?.takeIf { waiting }
+                    // And what showed with it (a split screen's other half): asked for with it then.
+                    onScreenAtScreenOff = if (waiting) activities.resumedApps() + listOfNotNull(appInFront()) else emptySet()
                     forgetScreen(keepFront = waiting)
                     shield.hide()
                     if (waiting) checkPhoneLockInTheDark()
@@ -349,6 +351,10 @@ class UsageWatchService : Service() {
                         LockStateTracker.onScreenOn(runCatching { deviceLockedNow() }.getOrDefault(true))
                     } else {
                         LockStateTracker.onUserPresent()
+                        // A lock screen waiting behind the keyguard prompts now, for what it hid then.
+                        if (lockedAtLock.isNotEmpty() && LockScreenActivity.activeLockedTarget in lockedAtLock) {
+                            lockedAtLockAt = SystemClock.elapsedRealtime()
+                        }
                     }
                     if (checkPermissions()) wake()
                     // Unlocked from inside the lock-screen camera, say: it's covered now, not at the next look.
@@ -684,8 +690,17 @@ class UsageWatchService : Service() {
         ) return
         DiagnosticLog.log("Covered $pkg ($why)")
         LockStateTracker.setRegularLockPending(pkg)
+        // What it hides behind the keyguard: the apps on screen with it (a split screen's other half),
+        // now or, after a screen-off that waited for the phone to lock, as it went off. Its prompt,
+        // once the phone is unlocked, asks for them all at once ([lockedOnScreenWith]).
+        lockedAtLock = activities.resumedApps() + onScreenAtScreenOff + pkg
+        lockedAtLockAt = SystemClock.elapsedRealtime()
+        onScreenAtScreenOff = emptySet()
         if (!LockLauncher.launch(this, pkg, isSelfProtection = false, behindKeyguard = true)) noBehindKeyguard(pkg)
     }
+
+    /** The apps on screen as the screen went off with sessions kept until the phone locks ([coverBehindKeyguard]). */
+    private var onScreenAtScreenOff: Set<String> = emptySet()
 
     /** Nothing known about the screen holds any more, except, with [keepFront], which app is in front. */
     private fun forgetScreen(keepFront: Boolean = false) {

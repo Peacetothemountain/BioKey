@@ -100,6 +100,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         /** How many unreadable windows are remembered as some app's ([attributedWindows]). */
         private const val MAX_ATTRIBUTED_WINDOWS = 16
 
+        /** An app covered this recently is taken to be on screen with the one whose prompt is asked for ([lockedOnScreenWith]). */
+        private const val COVERED_WITH_MS = 3_000L
+
         /** With no cover up to check, how long a lock screen has to come up before its app is sent Home ([raiseShield]). */
         private const val LOCK_SCREEN_CHECK_MS = 1_000L
 
@@ -1562,12 +1565,23 @@ class BioKeyAccessibilityService : AccessibilityService() {
         windowList()?.forEach { w ->
             if (w.type == AccessibilityWindowInfo.TYPE_APPLICATION && w.id !in screensaverWindows) packageOf(w)?.let(found::add)
         }
+        // Covered moments ago with it, and still without a lock screen of its own: the other half of
+        // a split screen formed under the cover (from Recents, say), whose window no list ever
+        // showed, as the cover was up before either half came. One that was left, or pushed away by
+        // another app, since, isn't (needsCover).
+        val now = SystemClock.elapsedRealtime()
+        coveredAt.values.removeAll { now - it >= COVERED_WITH_MS }
+        val coveredWith = coveredAt.keys.filterTo(HashSet()) { needsCover(it) }
+        found += coveredWith
         val same = PasswordManager.aliasesOf(pkg)
         return found.filter {
             it !in same && it != SessionRules.UNIDENTIFIED_APP && isCoverableByVisibility(it) && !isLauncher(it) &&
-                needsCover(it, ignoreAbandoned = true)
+                needsCover(it, ignoreAbandoned = it !in coveredWith)
         }
     }
+
+    /** Apps covered lately ([lock]), and when: see [lockedOnScreenWith]. */
+    private val coveredAt = HashMap<String, Long>()
 
     /** What [MaskController] asks of the service. */
     private val maskHost = object : MaskController.Host {
@@ -1797,6 +1811,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         // Once per cover, not once per event of an app still starting under it.
         if (!isLockScreenOnItsWay(target, displayId)) DiagnosticLog.log("Covered $target ($why)")
         LockStateTracker.setRegularLockPending(target)
+        coveredAt[target] = SystemClock.elapsedRealtime()
         // The shield covers the phone's own screen; on another display the app's patch is its
         // cover, put up by the visibility pass: brought forward, so it doesn't wait for one.
         // An app that provides the screensaver (Clock, Photos): its screensaver's window can be
@@ -1940,7 +1955,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 if (screen != null && screen in ForegroundRules.keyguardActivities(this, pkg)) return@guarded
                 keyguardScreenUnnamed += pkg
                 if (keyguardLetThrough == pkg) keyguardLetThrough = null
-                if (isRunning && ::vault.isInitialized && needsCover(pkg) && isKeyguardLocked()) {
+                // Gone meanwhile (it closed, or crashed): nothing of it shows, nothing to cover.
+                if (isRunning && ::vault.isInitialized && needsCover(pkg) && isKeyguardLocked() && isOnDisplayNow(pkg)) {
                     lock(pkg, "over the lock screen, not as its camera or emergency calls")
                 }
             }
@@ -1968,6 +1984,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
      */
     private fun isOnDisplay(pkg: String): Boolean {
         onDisplayAt[pkg]?.let { if (SystemClock.elapsedRealtime() - it < ON_DISPLAY_MEMORY_MS) return true }
+        return isOnDisplayNow(pkg)
+    }
+
+    /** Whether the window list shows a screen of [pkg] on display now, whatever was seen moments ago. */
+    private fun isOnDisplayNow(pkg: String): Boolean {
         val windows = runCatching { windowList() }.getOrNull() ?: return false
         return windows.any {
             it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.id !in screensaverWindows && isUncovered(windows, it) &&

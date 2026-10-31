@@ -485,6 +485,38 @@ class CompatibilityEngineTest {
     }
 
     @Test
+    fun aSplitLeftOnScreenAsThePhoneLocksIsAskedForInOnePrompt() {
+        vault.setAppLock(chat, true)
+        vault.setRelockAtPhoneLock(true)
+        try {
+            // Both halves of a split screen, unlocked.
+            LockStateTracker.onAppUnlocked(bank)
+            LockStateTracker.onAppUnlocked(chat)
+            event(ACTIVITY_RESUMED, bank)
+            event(ACTIVITY_RESUMED, chat)
+            step()
+            // The screen times out; the phone locks a moment later, the screen still off.
+            val keyguard = shadowOf(context.getSystemService(KeyguardManager::class.java))
+            val power = shadowOf(context.getSystemService(PowerManager::class.java))
+            keyguard.setIsDeviceLocked(false)
+            power.setIsInteractive(false)
+            context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+            step()
+            assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+            started()
+            keyguard.setKeyguardLocked(true)
+            keyguard.setIsDeviceLocked(true)
+            repeat(15) { step() }
+            val behind = started().filter { it.component?.className == lockScreen && it.getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false) }
+            val target = behind.single().getStringExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE)!!
+            // Its prompt, once the phone is unlocked, names the other half too.
+            assertEquals(listOf(if (target == bank) chat else bank), UsageWatchService.lockedAppsOnScreenWith(target))
+        } finally {
+            vault.setRelockAtPhoneLock(false)
+        }
+    }
+
+    @Test
     fun withNoCoverAndNoLockScreenTheAppGoesHome() {
         // The cover's window can't be shown, and Android refuses the lock screen without a word.
         (UsageWatchService::class.java.getDeclaredField("shield").apply { isAccessible = true }.get(engine.get()) as InstantShieldOverlay).destroy()
