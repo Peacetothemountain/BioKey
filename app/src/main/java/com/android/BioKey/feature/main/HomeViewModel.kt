@@ -10,10 +10,12 @@ import androidx.lifecycle.viewModelScope
 import com.android.BioKey.R
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionGaps
+import com.android.BioKey.core.security.ScreenLockWatch
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.TrustedClock
 import com.android.BioKey.core.security.UnlockAttempts
+import com.android.BioKey.core.security.UnlockMethods
 import com.android.BioKey.feature.notification.ShieldAccessWatch
 import com.android.BioKey.ui.theme.BioKeyMessages
 import kotlinx.coroutines.Dispatchers
@@ -40,7 +42,14 @@ internal data class HomeState(
     /** Hiding notification content is on, but its access was taken away. */
     val shieldWithoutAccess: Boolean,
     /** The Lock Settings card put away; null until read, so the card doesn't flash in and out. */
-    val lockSettingsDismissed: Boolean?
+    val lockSettingsDismissed: Boolean?,
+    /**
+     * A strong face or fingerprint could be added: the sensor is there, none is set up, and there
+     * is a screen lock ([UnlockMethods.canAddStrongBiometric]). Home's "Add a fingerprint" card.
+     */
+    val canAddBiometric: Boolean = false,
+    /** That card put away ("No thanks"); back once the screen lock is removed ([ScreenLockWatch]). Null until read. */
+    val addBiometricDismissed: Boolean? = null
 )
 
 /** What Review opens with: whether the owner is proven, and until when a face or fingerprint change is held. */
@@ -101,6 +110,19 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             UnlockAttempts.prune(app)
             ProtectionGaps.prune(app)
         }
+        launch(Dispatchers.IO) {
+            // The screen lock gone (or back) since: recorded, and home's card follows.
+            ScreenLockWatch.check(app)
+            val canAdd = UnlockMethods.canAddStrongBiometric(app)
+            val dismissed = ScreenLockWatch.addBiometricDismissed(app)
+            _state.update { it.copy(canAddBiometric = canAdd, addBiometricDismissed = dismissed) }
+        }
+    }
+
+    /** "No thanks" on the "Add a fingerprint" card: away until the screen lock is next removed. */
+    fun dismissAddBiometric() {
+        _state.update { it.copy(addBiometricDismissed = true) }
+        ScreenLockWatch.dismissAddBiometric(app)
     }
 
     /** "Remind me": only strengthens, so no authentication. */

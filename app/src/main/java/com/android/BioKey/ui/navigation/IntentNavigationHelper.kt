@@ -6,6 +6,7 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.biometrics.BiometricManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -86,6 +87,49 @@ object IntentNavigationHelper {
             Intent(Settings.ACTION_SETTINGS)
         )
     )
+
+    /**
+     * Adding a strong (Class 3) face or fingerprint, where Android has that page (it asks for the
+     * screen lock first), else the security page where they're listed.
+     */
+    fun openBiometricEnroll(context: Context) = launchFallbackCascade(
+        context,
+        listOf(
+            Intent(Settings.ACTION_BIOMETRIC_ENROLL)
+                .putExtra(Settings.EXTRA_BIOMETRIC_AUTHENTICATORS_ALLOWED, BiometricManager.Authenticators.BIOMETRIC_STRONG),
+            Intent(Settings.ACTION_SECURITY_SETTINGS),
+            Intent(Settings.ACTION_SETTINGS)
+        )
+    )
+
+    /** Android's own App lock page (Android 17 QPR3 and later); not an SDK constant. */
+    private const val APP_LOCK_SETTINGS = "android.settings.APP_LOCK_SETTINGS"
+
+    /**
+     * Private space's page, as Android's App lock page opens it. Settings may not let other apps
+     * open it (Pixel's doesn't export it): then it doesn't resolve, and BioKey doesn't offer it.
+     */
+    private const val PRIVATE_SPACE_SETTINGS = "com.android.settings.action.OPEN_PRIVATE_SPACE_SETTINGS"
+
+    private fun privateSpaceIntent() = Intent(PRIVATE_SPACE_SETTINGS).setPackage(SETTINGS_PACKAGE)
+
+    /** Whether a system app answers [intent] (a copy is looked up: [pinToSystemHandler] sets its target). */
+    private fun hasSystemPage(context: Context, intent: Intent): Boolean =
+        runCatching { pinToSystemHandler(context, Intent(intent)) }.getOrDefault(false)
+
+    /** Android's own App lock exists on this phone: its settings page answers. Blocking: off the main thread. */
+    fun hasAndroidAppLock(context: Context): Boolean = hasSystemPage(context, Intent(APP_LOCK_SETTINGS))
+
+    fun openAndroidAppLock(context: Context) = launchFallbackCascade(context, listOf(Intent(APP_LOCK_SETTINGS)))
+
+    /**
+     * Private space (Android 15 and later) can be opened from here: only where its page answers
+     * other apps. Blocking: off the main thread.
+     */
+    fun hasPrivateSpacePage(context: Context): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && hasSystemPage(context, privateSpaceIntent())
+
+    fun openPrivateSpace(context: Context) = launchFallbackCascade(context, listOf(privateSpaceIntent()))
 
     /** BioKey's own accessibility toggle where the device has that page, else the accessibility list. */
     fun accessibilitySettingsIntent(context: Context): Intent {

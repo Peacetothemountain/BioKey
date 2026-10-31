@@ -68,10 +68,15 @@ object NewAppSuggestions {
         )
     }
 
-    /** [pkg] was just installed (not updated), and auto-sort has had its turn. */
-    fun onInstalled(context: Context, pkg: String, label: String) {
+    /**
+     * [pkg] was just installed (not updated), and auto-sort has had its turn. [lockedBefore]: it was
+     * locked until it was uninstalled, and came back signed by someone else ([ReinstallMemory]): it's
+     * offered (saying so) even with these offers switched off, since it was the owner's choice to
+     * lock it, and BioKey won't lock a different developer's app by itself.
+     */
+    fun onInstalled(context: Context, pkg: String, label: String, lockedBefore: Boolean = false) {
         load(context)
-        if (!_enabled.value) return
+        if (!_enabled.value && !lockedBefore) return
         val vault = SecurityVault.getInstance(context)
         if (!vault.isSetupCompleted() || pkg == context.packageName) return
         // Auto-sort locked it already, or the owner had it on from before.
@@ -107,8 +112,10 @@ object NewAppSuggestions {
             .build()
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_biokey_mark)
-            .setContentTitle(context.getString(R.string.new_app_title, label))
-            .setContentText(context.getString(R.string.new_app_text))
+            .setContentTitle(context.getString(if (lockedBefore) R.string.new_app_title_again else R.string.new_app_title, label))
+            .setContentText(context.getString(if (lockedBefore) R.string.new_app_text_again else R.string.new_app_text))
+            // Why it wasn't locked by itself takes more than a line.
+            .apply { if (lockedBefore) setStyle(NotificationCompat.BigTextStyle().bigText(context.getString(R.string.new_app_text_again))) }
             .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
             // The new app's name stays off the phone's lock screen.
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)

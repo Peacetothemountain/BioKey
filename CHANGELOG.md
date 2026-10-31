@@ -4,6 +4,20 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
 
 ## Unreleased
 
+- **What locking does:** the first time you lock an app, a sheet says what the lock doesn't cover
+  (notifications without the shield, its widgets, assistants and apps with access) and, for a
+  gallery, files or messaging app, which other apps can see the same photos, files or messages.
+  Once per app, with "Don't show again"; always in the app's options.
+- **App list order:** locked first, then recently used (with usage access), then A–Z, fixed while
+  you flip switches.
+- **Locked again after a reinstall:** a locked app uninstalled with its data and installed again
+  within 30 days is locked again in its profile (same developer) or offered (anyone else).
+- **"Lock this app" Quick Settings tile:** locks the app you're in, without opening BioKey.
+- **No screen lock:** locked apps open without a check rather than never, recorded and shown on
+  home until a screen lock is set again.
+- Home suggests adding a face or fingerprint where none is set up; setup's last step names how
+  your phone checks it's you; Settings links to Android 17's own App lock (and private space,
+  where allowed).
 - Self-protection is gone from the Google Play version: Play's Accessibility API policy doesn't
   allow an app to stop you switching it off or uninstalling it, outside parental-control and
   enterprise apps. If you had it on, it's off. Builds from source can still include it (see the

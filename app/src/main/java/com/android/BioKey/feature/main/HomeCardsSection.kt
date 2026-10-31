@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.NoEncryption
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -22,6 +24,7 @@ import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
+import com.android.BioKey.core.security.UnlockMethods
 import com.android.BioKey.ui.disclosure.Disclosure
 import com.android.BioKey.ui.disclosure.DisclosureGate
 import com.android.BioKey.ui.disclosure.NotificationPermission
@@ -32,9 +35,9 @@ import com.android.BioKey.ui.theme.GroupRow
 
 /**
  * The cards between home's header and its search bar, most urgent first: alerts off, nothing
- * protecting, hiding without access, an alert channel muted, the one-time attempts question, what
- * happened while the owner was away, apps unlocked now, and the calm Lock Settings suggestion.
- * Only one is urgent at a time.
+ * protecting, no screen lock, hiding without access, an alert channel muted, the one-time attempts
+ * question, what happened while the owner was away, apps unlocked now, and the calm suggestions
+ * (add a face or fingerprint, lock Settings). Only one is urgent at a time.
  */
 internal fun LazyListScope.homeCards(
     mode: ProtectionEngine.Mode,
@@ -57,7 +60,9 @@ internal fun LazyListScope.homeCards(
     onReview: () -> Unit,
     onLockOne: (AppItem) -> Unit,
     onChooseUnlocked: () -> Unit,
-    onLockAll: () -> Unit
+    onLockAll: () -> Unit,
+    /** The phone's screen lock is gone, so locked apps open without a check ([ScreenLockWatch]). */
+    screenLockMissing: Boolean = false
 ) {
     if (!notifications.allowed) {
         item(key = "alerts_off") {
@@ -83,7 +88,8 @@ internal fun LazyListScope.homeCards(
         paused = ProtectionEngine.isProtecting(mode) && !globalLockEnabled,
         activityUrgent = securityActivityUrgent(attempts, gaps, seenUpTo),
         notificationsShowing = home.shieldWithoutAccess && vault.isSetupCompleted(),
-        alertsMuted = home.alertsMuted && notifications.allowed
+        alertsMuted = home.alertsMuted && notifications.allowed,
+        noScreenLock = screenLockMissing && vault.isSetupCompleted()
     )
 
     // Nothing locking right now: the most serious state gets the clearest card, with its one action.
@@ -126,6 +132,26 @@ internal fun LazyListScope.homeCards(
                     }
                     UrgentButton(look.action, onProtectionAction)
                 }
+            }
+        }
+    }
+
+    // No screen lock: nothing can check who opens a locked app, so they open without one (and
+    // that's being recorded). Setting one again is the fix, and BioKey can only point to it.
+    if (screenLockMissing && vault.isSetupCompleted()) {
+        item(key = "no_screen_lock") {
+            val context = LocalContext.current
+            val urgentHere = urgent == UrgentCard.NO_SCREEN_LOCK
+            ActionCard(
+                icon = Icons.Default.NoEncryption,
+                title = stringResource(R.string.home_no_screen_lock_title),
+                subtitle = stringResource(R.string.home_no_screen_lock_text),
+                urgent = urgentHere,
+                modifier = Modifier.animateItem()
+            ) {
+                val add: () -> Unit = { IntentNavigationHelper.openScreenLockSetup(context) }
+                if (urgentHere) UrgentButton(stringResource(R.string.home_no_screen_lock_action), onClick = add)
+                else FilledTonalButton(onClick = add) { Text(stringResource(R.string.home_no_screen_lock_action)) }
             }
         }
     }
@@ -216,8 +242,27 @@ internal fun LazyListScope.homeCards(
         }
     }
 
-    // Calm cards after the urgent ones. With your PIN, someone could add their own fingerprint
-    // in Settings: lock it.
+    // Calm cards after the urgent ones. No face or fingerprint set up where the phone has the
+    // sensor: locked apps take the PIN every time, and Face or fingerprint only can't be used.
+    // Put away, it comes back if the screen lock is removed (every face and fingerprint goes with it).
+    if (home.canAddBiometric && home.addBiometricDismissed == false && !screenLockMissing && vault.isSetupCompleted()) {
+        item(key = "add_biometric") {
+            val context = LocalContext.current
+            ActionCard(
+                icon = Icons.Default.Fingerprint,
+                title = stringResource(UnlockMethods.addBiometricTitle(context)),
+                subtitle = stringResource(R.string.card_add_biometric_text),
+                modifier = Modifier.animateItem()
+            ) {
+                TextButton(onClick = { homeViewModel.dismissAddBiometric() }) { Text(stringResource(R.string.card_add_biometric_no_thanks)) }
+                FilledTonalButton(onClick = { IntentNavigationHelper.openBiometricEnroll(context) }) {
+                    Text(stringResource(R.string.card_add_biometric_action))
+                }
+            }
+        }
+    }
+
+    // With your PIN, someone could add their own fingerprint in Settings: lock it.
     if (biometricOnlyOn && home.hasStrongBiometric && look.action == null && SETTINGS_PACKAGE !in lockedApps && home.lockSettingsDismissed == false) {
         item(key = "lock_settings") {
             val res = LocalResources.current
@@ -238,22 +283,24 @@ internal fun LazyListScope.homeCards(
 }
 
 /** Home's cards that can be urgent, most serious first. */
-internal enum class UrgentCard { NOT_PROTECTING, ACTIVITY, NOTIFICATIONS_SHOWING, ALERTS_MUTED, NONE }
+internal enum class UrgentCard { NOT_PROTECTING, NO_SCREEN_LOCK, ACTIVITY, NOTIFICATIONS_SHOWING, ALERTS_MUTED, NONE }
 
 /**
  * The one card on home shown as urgent: the most serious of those showing. Not protecting comes
  * first, unless it's a pause the owner chose (never an emergency, and then the next one is);
- * then security activity not yet reviewed, notifications showing in full under the shield, and
- * BioKey's alerts silenced.
+ * then no screen lock (locked apps open without a check), security activity not yet reviewed,
+ * notifications showing in full under the shield, and BioKey's alerts silenced.
  */
 internal fun urgentCard(
     notProtecting: Boolean,
     paused: Boolean,
     activityUrgent: Boolean,
     notificationsShowing: Boolean,
-    alertsMuted: Boolean
+    alertsMuted: Boolean,
+    noScreenLock: Boolean = false
 ): UrgentCard = when {
     notProtecting && !paused -> UrgentCard.NOT_PROTECTING
+    noScreenLock -> UrgentCard.NO_SCREEN_LOCK
     activityUrgent -> UrgentCard.ACTIVITY
     notificationsShowing -> UrgentCard.NOTIFICATIONS_SHOWING
     alertsMuted -> UrgentCard.ALERTS_MUTED

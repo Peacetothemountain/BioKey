@@ -321,6 +321,29 @@ class DesignScreenshotTest {
         }
     }
 
+    /** What locking a gallery does, the first time: notifications, widgets, access, and the other apps that see photos. */
+    @Test fun explainLock() = shoot("explain_lock") {
+        val gallery = com.android.BioKey.feature.main.AppItem("com.example.gallery", "Gallery", com.android.BioKey.core.data.AppCategory.PRIVACY)
+        val others = listOf("Camera", "Drive", "Editor", "Scanner").map {
+            com.android.BioKey.feature.main.AppItem("com.example.${it.lowercase()}", it, com.android.BioKey.core.data.AppCategory.GENERAL)
+        }
+        androidx.compose.material3.Surface(
+            color = androidx.compose.material3.MaterialTheme.colorScheme.surfaceContainerLow,
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            modifier = androidx.compose.ui.Modifier.padding(top = 48.dp)
+        ) {
+            com.android.BioKey.feature.main.LockExplainContent(
+                app = gallery,
+                explanation = com.android.BioKey.feature.main.LockExplainer.Explanation(
+                    gallery.packageName, "Use your fingerprint or screen lock to continue",
+                    com.android.BioKey.feature.main.LockExplainer.Notifications.SHIELD_OFF, hasWidgets = true,
+                    dataKind = com.android.BioKey.feature.main.LockExplainer.DataKind.PHOTOS, otherApps = others
+                ),
+                justLocked = true, onDontShowAgain = {}, onDone = {}
+            )
+        }
+    }
+
     /** Review opened with the screen lock, no hold: Mark reviewed, and Clear. */
     @Test fun reviewScreenLock() {
         val at = reviewAt

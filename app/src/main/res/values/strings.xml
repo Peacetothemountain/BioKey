@@ -37,6 +37,16 @@
     <string name="lock_all_tile_paused">Paused · tap to resume and lock</string>
     <string name="lock_all_tile_not_protecting">Not protecting</string>
 
+    <!-- Quick Settings "Lock this app" (LockThisAppTileService). Over the phone's lock screen, no app is named. -->
+    <string name="lock_app_tile_label">Lock this app</string>
+    <string name="lock_app_tile_nothing">No app to lock here</string>
+    <string name="lock_app_tile_profile_off">Turn on %1$s in BioKey to lock it</string>
+    <string name="lock_app_tile_not_locked">Not locked: its profile is off</string>
+    <string name="lock_app_tile_locked">%1$s is locked</string>
+    <string name="lock_app_tile_locked_unnamed">Locked</string>
+    <string name="lock_app_tile_paused">Locked · protection is paused</string>
+    <string name="lock_app_tile_not_protecting">Locked · BioKey isn\'t protecting apps now</string>
+
     <!-- Protection alerts: app locking stopped. -->
     <string name="alerts_channel_name">Protection alerts</string>
     <string name="alerts_channel_description">Warns when app locking stops working</string>
@@ -81,6 +91,9 @@
     <string name="new_app_channel_description">Offers to lock an app you just installed</string>
     <string name="new_app_title">Lock %1$s?</string>
     <string name="new_app_text">Ask for your face, fingerprint or screen lock when it opens.</string>
+    <!-- A locked app uninstalled and installed again, signed by someone else (ReinstallMemory). -->
+    <string name="new_app_title_again">Lock %1$s again?</string>
+    <string name="new_app_text_again">It was locked before it was uninstalled. This copy is signed by a different developer, so BioKey didn\'t lock it by itself.</string>
     <string name="new_app_public_title">New app installed</string>
     <string name="new_app_lock">Lock</string>
     <plurals name="new_apps_summary">
@@ -311,6 +324,50 @@
     <string name="home_not_protected_now">not protected now</string>
     <string name="home_paused_lower">paused</string>
     <string name="home_choose_apps">Choose apps to lock</string>
+    <!-- An app Android's own App lock locks too. -->
+    <string name="home_row_also_locked_by_android">Also locked by Android</string>
+
+    <!-- Home: no screen lock (ScreenLockWatch), and adding a face or fingerprint. -->
+    <string name="home_no_screen_lock_title">No screen lock</string>
+    <string name="home_no_screen_lock_text">Your phone\'s screen lock was removed, so nothing can check who opens a locked app: they open without a check until you set one again. This is recorded.</string>
+    <string name="home_no_screen_lock_action">Set a screen lock</string>
+    <string name="card_add_biometric_title_fingerprint">Add a fingerprint</string>
+    <string name="card_add_biometric_title_face">Add your face</string>
+    <string name="card_add_biometric_title_both">Add a face or fingerprint</string>
+    <string name="card_add_biometric_text">Open locked apps with a touch or a glance instead of your screen lock, and use Face or fingerprint only.</string>
+    <string name="card_add_biometric_no_thanks">No thanks</string>
+    <string name="card_add_biometric_action">Add</string>
+    <string name="card_gap_no_screen_lock">%1$s · No screen lock: locked apps opened without a check</string>
+    <string name="card_gap_no_screen_lock_since">Since %1$s · No screen lock: locked apps open without a check</string>
+    <string name="card_gap_no_screen_lock_hint">The phone\'s screen lock was removed, so nothing could check who opened them. If it wasn\'t you, someone who knew it did</string>
+
+    <!-- What locking an app does (LockExplainSheet): the first time it's locked by hand, and from its options. -->
+    <string name="explain_title_locked">%1$s is locked</string>
+    <string name="explain_title">Locking %1$s</string>
+    <string name="explain_opens_fallback">Opening it asks for your face, fingerprint or screen lock.</string>
+    <string name="explain_still_section">What a lock doesn\'t cover</string>
+    <string name="explain_notifications_title">Notifications</string>
+    <string name="explain_notifications_hidden">Hidden until you unlock it: they only say that something arrived</string>
+    <string name="explain_notifications_shield_off">Still shown in full. Turn on Hide notification content in Settings to hide them</string>
+    <string name="explain_notifications_no_access">Still shown in full: Hide notification content is on, but BioKey\'s notification access is off</string>
+    <string name="explain_widgets_title">Home-screen widgets</string>
+    <string name="explain_widgets_text">Its widgets still show their content without a check. Remove them from your home screen if that matters</string>
+    <string name="explain_access_title">Assistants and apps with access</string>
+    <string name="explain_access_text">AI assistants, and apps you\'ve let into %1$s\'s data (through sharing, accounts or permissions), keep that access: a lock covers the app, not its data</string>
+    <string name="explain_photos_title">Your photos may still show in other apps</string>
+    <string name="explain_files_title">Your files may still show in other apps</string>
+    <string name="explain_messages_title">Your messages may still show in other apps</string>
+    <string name="explain_photos_text">These apps are allowed to see photos and videos on this phone:</string>
+    <string name="explain_files_text">These apps are allowed to see all files on this phone:</string>
+    <string name="explain_messages_text">These apps are allowed to read, send or receive text messages:</string>
+    <plurals name="explain_view_all">
+        <item quantity="one">View all %d app</item>
+        <item quantity="other">View all %d apps</item>
+    </plurals>
+    <string name="explain_dont_show_again">Don\'t show again</string>
+    <string name="explain_done">Got it</string>
+    <string name="explain_row_title">What locking does</string>
+    <string name="explain_row_text">What still shows, and which other apps can see its data</string>
 
     <!-- BioKey's own lock and setup's final check (MainActivity). -->
     <string name="activity_locked_trip">Locked after you were away from BioKey for a while</string>
@@ -600,6 +657,10 @@
     <string name="settings_keyguard_camera_off">Off: a locked camera or phone app is covered over the lock screen too</string>
     <string name="settings_new_apps_title">Offer to lock new apps</string>
     <string name="settings_new_apps_summary">After you install an app that auto-sort doesn\'t lock</string>
+    <string name="settings_android_app_lock_title">Android\'s App lock</string>
+    <string name="settings_android_app_lock_summary">Android can lock apps too, and always takes your screen lock. BioKey adds Face or fingerprint only, re-lock delays, profiles, failed unlock alerts, and work profile apps</string>
+    <string name="settings_private_space_title">Hide apps\' icons</string>
+    <string name="settings_private_space_summary">To hide an app\'s icon from someone using your phone, use private space</string>
     <string name="settings_alerts_on">Tells you if app locking stops, and afterwards when it was off</string>
     <string name="settings_alerts_off">Off: BioKey can\'t tell you if app locking stops · tap to allow notifications</string>
 

@@ -74,7 +74,12 @@ object ProtectionGaps {
          * BioKey's storage was cleared in Android's settings ([checkStorageCleared]): every lock and
          * record went with it. A span, from then until BioKey was set up again.
          */
-        DATA_CLEARED;
+        DATA_CLEARED,
+        /**
+         * The phone had no screen lock ([ScreenLockWatch]): nothing could check who opened a locked
+         * app, so they opened without one. A span, from when BioKey noticed until it was back.
+         */
+        NO_SCREEN_LOCK;
 
         /**
          * Starts a day's hold ([UnlockAttempts.heldUntil]) and can't be cleared, only aged out: after

@@ -29,6 +29,7 @@ import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
+import com.android.BioKey.core.security.ScreenLockWatch
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 import com.android.BioKey.ui.security.WindowProtection
@@ -631,6 +632,14 @@ class LockScreenActivity : ComponentActivity() {
             packageName = pkg,
             onSuccess = { onAuthenticated(pkg, selfProtection, generation, others) },
             onError = { code, message ->
+                // No screen lock on the phone any more: nothing can check who this is, so the app
+                // opens (recorded as a gap and said on home) rather than stay shut for good.
+                if ((code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL || code == SecurityEngine.ERROR_NO_BIOMETRICS) &&
+                    ScreenLockWatch.letThroughWithoutScreenLock(this, pkg)
+                ) {
+                    InstantShieldOverlay.onPrompt(pkg, showing = false)
+                    return@showBiometricPrompt onAuthenticated(pkg, selfProtection, generation, others)
+                }
                 if (!SecurityEngine.isUserCancel(code)) DiagnosticLog.log("Unlock prompt for $pkg: error $code")
                 isPermanentLockout = code == SecurityEngine.ERROR_LOCKOUT_PERMANENT
                 val text = when {

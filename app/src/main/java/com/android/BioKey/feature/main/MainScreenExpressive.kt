@@ -88,6 +88,7 @@ import com.android.BioKey.core.security.LockAllNow
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
+import com.android.BioKey.core.security.ScreenLockWatch
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.feature.lock.AppInfoCache
@@ -129,9 +130,10 @@ private const val CONTENT_HEADER = "header"
  * protection is on (with the one action that matters), then the apps. Search and profile chips
  * stay pinned while the list scrolls.
  *
- * "All apps" shows locked apps first, then the rest; every switch works. A profile is a page of
- * its own: its card holds everything about it, so a profile is edited inside the profile.
- * Tapping an app opens its options (lock, which profile).
+ * "All apps" shows locked apps first, then the rest, each recently used first then A–Z
+ * ([AppOrder]), in an order fixed until BioKey is left (a row stays put as its switch is flipped);
+ * every switch works. A profile is a page of its own: its card holds everything about it, so a
+ * profile is edited inside the profile. Tapping an app opens its options (lock, which profile).
  */
 @Composable
 fun MainScreenExpressive(
@@ -143,7 +145,13 @@ fun MainScreenExpressive(
     /** Home's state from outside the vault, and Review's. */
     homeViewModel: HomeViewModel = viewModel(),
     /** Settings open as home opens (screenshots of the tablet's two panes). */
-    settingsOpenAtStart: Boolean = false
+    settingsOpenAtStart: Boolean = false,
+    /**
+     * HOOK for the lock engine: apps Android's own App lock (Android 17) was seen locking, which
+     * BioKey can't ask Android about. Their rows say "Also locked by Android". Empty until the
+     * engine supplies it.
+     */
+    lockedByAndroid: Set<String> = emptySet()
 ) {
     val context = LocalContext.current
     val res = LocalResources.current
@@ -294,14 +302,31 @@ fun MainScreenExpressive(
 
     BackHandler(enabled = filter != FILTER_ALL && !showSettings) { filter = FILTER_ALL }
 
-    val matching = remember(installedApps, searchQuery, filter, profiles) {
-        installedApps.filter { app ->
+    /**
+     * Which apps were locked, and when each was last used, as the list was read or BioKey came
+     * back (or a page was chosen, or Settings closed): the list's order and groups go by these,
+     * not by switches flipped since, so a row never moves under the finger ([AppOrder]). Null
+     * before the first look: the live state then.
+     */
+    var lockedAtLoad by remember { mutableStateOf<Set<String>?>(null) }
+    var lastUsed by remember { mutableStateOf(AppOrder.lastRead) }
+    LifecycleResumeEffect(installedApps, filter, showSettings) {
+        lockedAtLoad = installedApps.mapNotNullTo(HashSet()) { app -> app.packageName.takeIf { isLocked(it) } }
+        val job = scope.launch { lastUsed = withContext(Dispatchers.IO) { AppOrder.recentUse(context) } }
+        onPauseOrDispose { job.cancel() }
+    }
+    fun wasLocked(pkg: String) = lockedAtLoad?.let { pkg in it } ?: isLocked(pkg)
+    val ordered = remember(installedApps, lockedAtLoad, lastUsed) { AppOrder.order(installedApps, ::wasLocked, lastUsed) }
+
+    val matching = remember(ordered, searchQuery, filter, profiles) {
+        ordered.filter { app ->
             (currentProfile == null || profileOf(app.packageName)?.id == currentProfile.id) &&
                 (searchQuery.isBlank() || app.label.contains(searchQuery.trim(), ignoreCase = true))
         }
     }
-    // Grouped by what actually happens: an app in a profile that's off is under "Not locked".
-    val (lockedShown, unlockedShown) = remember(matching, lockedApps, profiles) { matching.partition { isLocked(it.packageName) } }
+    // Grouped by what actually happened as the list was read: an app in a profile that's off is
+    // under "Not locked". A switch flipped since moves nothing until BioKey is next opened.
+    val (lockedShown, unlockedShown) = remember(matching, lockedAtLoad, lockedApps, profiles) { matching.partition { wasLocked(it.packageName) } }
     val appCountByProfile = remember(installedApps, profiles) {
         installedApps.mapNotNull { profileOf(it.packageName)?.id }.groupingBy { it }.eachCount()
     }
@@ -314,6 +339,7 @@ fun MainScreenExpressive(
         !isHomeScreen(app.packageName)
     val unwatchedCount = remember(installedApps, lockedApps, profiles, mode, homeScreens) { installedApps.count(::isUnwatched) }
     val homeState by homeViewModel.state.collectAsStateWithLifecycle()
+    val screenLockMissing by ScreenLockWatch.missing.collectAsStateWithLifecycle()
     val shieldOn by vault.notificationShieldFlow.collectAsStateWithLifecycle()
     // Hiding switched off in Settings (or by a restore) meanwhile: its warning goes now, not at
     // home's next resume.
@@ -402,6 +428,17 @@ fun MainScreenExpressive(
         }
     }
 
+    /**
+     * [pkg] was just locked by the owner here (its switch, or a profile chosen in its options):
+     * the first time, and only if it's actually locked now (not in a profile that's off), what
+     * locking does is explained ([LockExplainer]).
+     */
+    fun explainIfFirst(pkg: String) {
+        if (!lockedInVault(pkg) || !LockExplainer.shouldExplain(context, pkg)) return
+        overlays.explainJustLocked = true
+        overlays.explainPackage = pkg
+    }
+
     /** Ends one app's session: the others stay open. */
     fun lockOne(app: AppItem) {
         Haptics.confirm(view)
@@ -413,6 +450,8 @@ fun MainScreenExpressive(
     fun toggleLock(app: AppItem, locked: Boolean) {
         Haptics.toggle(view, locked)
         vault.setAppLock(app.packageName, locked)
+        // Locked by hand for the first time: what that does and doesn't do, once.
+        if (locked) explainIfFirst(app.packageName)
         if (!locked) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.LOCK_OFF, app.label)
         if (!locked) {
             // "Unlocked" is kept for an app open right now: this is its lock taken off.
@@ -424,7 +463,8 @@ fun MainScreenExpressive(
 
     /**
      * A group of app rows in the list. Keyed by package alone (the groups split one list without
-     * repeats), so a row whose lock is switched moves to its new group rather than being rebuilt.
+     * repeats), so a row that changes group when the list is next looked at moves rather than
+     * being rebuilt.
      */
     fun LazyListScope.appGroup(apps: List<AppItem>, showProfile: Boolean) {
         itemsIndexed(apps, key = { _, app -> app.packageName }, contentType = { _, _ -> CONTENT_APP }) { i, app ->
@@ -460,6 +500,10 @@ fun MainScreenExpressive(
                         if (unlockedColor != null) withStyle(SpanStyle(color = unlockedColor)) { append(unlocked) } else append(unlocked)
                     }
                     if (app.isWorkProfile) append(SEPARATOR + stringResource(R.string.home_row_work))
+                    if (app.packageName in lockedByAndroid) {
+                        val also = stringResource(R.string.home_row_also_locked_by_android)
+                        append(if (length == 0) also else SEPARATOR + also.replaceFirstChar { it.lowercase() })
+                    }
                     if (homeScreen) {
                         append(SEPARATOR + stringResource(R.string.home_screen_note))
                     } else if (unwatched) {
@@ -565,7 +609,8 @@ fun MainScreenExpressive(
                     onReview = ::openReview,
                     onLockOne = ::lockOne,
                     onChooseUnlocked = { overlays.showUnlocked = true },
-                    onLockAll = { lockAllNow(includeOwnApp = false) }
+                    onLockAll = { lockAllNow(includeOwnApp = false) },
+                    screenLockMissing = screenLockMissing
                 )
 
                 stickyHeader(key = "controls") {
@@ -751,6 +796,7 @@ fun MainScreenExpressive(
             disclosures.request(Disclosure.NOTIFICATIONS) { IntentNavigationHelper.openNotificationListenerSettings(context) }
         },
         onPauseRequested = onPauseRequested,
-        onFilterChange = { filter = it }
+        onFilterChange = { filter = it },
+        onLockedByHand = ::explainIfFirst
     )
 }

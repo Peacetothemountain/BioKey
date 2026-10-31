@@ -51,6 +51,17 @@
         <intent>
             <action android:name="android.settings.SECURITY_SETTINGS" />
         </intent>
+        <!-- Adding a face or fingerprint (home's card), Android 17's own App lock page, and
+             private space's page where Settings lets other apps open it (Settings). -->
+        <intent>
+            <action android:name="android.settings.BIOMETRIC_ENROLL" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.APP_LOCK_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="com.android.settings.action.OPEN_PRIVATE_SPACE_SETTINGS" />
+        </intent>
         <intent>
             <action android:name="android.settings.ACCESSIBILITY_SETTINGS" />
         </intent>
@@ -251,6 +262,19 @@
             android:exported="true"
             android:icon="@drawable/ic_tile_lock_all"
             android:label="@string/lock_all_tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- Quick Settings "Lock this app": locks the app the shade came down over; only ever
+             adds a lock, so a tap needs no authentication. -->
+        <service
+            android:name=".feature.tile.LockThisAppTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_lock_app"
+            android:label="@string/lock_app_tile_label"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
