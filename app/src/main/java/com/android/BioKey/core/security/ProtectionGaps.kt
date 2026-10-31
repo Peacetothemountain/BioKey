@@ -334,7 +334,14 @@ object ProtectionGaps {
         synchronized(lock) {
             save(p, (listOf(Gap(now, now, kind, seq, detail).stamped(context)) + _gaps.value).fresh(context))
         }
-        DiagnosticLog.log("Security activity: ${kind.name.lowercase().replace('_', ' ')}")
+        // A change made during a hold is recorded under the screen-lock kind whatever opened
+        // BioKey (nothing proves the owner then): the log says which it was.
+        val what = when {
+            kind == Kind.CHANGED_WITH_SCREEN_LOCK && Change.duringReset(detail) -> "changed within a day of BioKey being reset"
+            kind == Kind.CHANGED_WITH_SCREEN_LOCK && Change.duringHold(detail) -> "changed within a day of a face or fingerprint change"
+            else -> kind.name.lowercase().replace('_', ' ')
+        }
+        DiagnosticLog.log("Security activity: $what")
         UnlockAttempts.onActivity(context)
         return seq
     }

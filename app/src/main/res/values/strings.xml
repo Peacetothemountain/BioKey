@@ -243,7 +243,6 @@
     <string name="home_paused_body">Locked apps open without a check until you resume.</string>
     <string name="home_resume_protection">Resume protection</string>
     <string name="home_protected">Protected</string>
-    <string name="home_apps_locked_short">Apps locked</string>
     <string name="home_protected_compat">Running in compatibility mode, which works with Advanced Protection.</string>
     <plurals name="home_unwatched">
         <item quantity="one">%d locked app isn\'t protected in your work profile: compatibility mode can\'t see apps there.</item>
