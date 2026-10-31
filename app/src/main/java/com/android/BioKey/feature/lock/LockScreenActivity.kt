@@ -316,7 +316,8 @@ class LockScreenActivity : ComponentActivity() {
             val cached = AppInfoCache.get(pkg)
             // The icon's colour comes worked out with it: nothing is computed here on the way to the prompt.
             val label = AppInfoCache.cachedLabel(pkg)
-            cover.bind(label.orEmpty(), cached?.icon, isBioKey = false, accent = cached?.accent)
+            // Light or dark as the app's own launch screen is, when known already (never looked up here).
+            cover.bind(label.orEmpty(), cached?.icon, isBioKey = false, accent = cached?.accent, dark = cached?.dark)
             // Never load on the way to the prompt: the name and icon follow as soon as they're ready.
             if (cached == null) AppInfoCache.load(this, pkg) { info ->
                 if (!isFinishing && lockedPackage == pkg) {
@@ -326,14 +327,17 @@ class LockScreenActivity : ComponentActivity() {
             }
         }
         cover.setActionsVisible(false)
+        if (::cover.isInitialized && window != null) applyBarAppearance()
     }
 
     /**
      * Dark or light status and navigation bar icons to match the cover. The theme sets them at
-     * launch; this screen handles dark-mode switches itself (configChanges), so it sets them again.
+     * launch; this screen handles dark-mode switches itself (configChanges), and the cover can be
+     * dark or light as the locked app is, so it sets them again.
      */
     private fun applyBarAppearance() {
-        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val night = if (::cover.isInitialized) cover.isDark
+        else (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         WindowCompat.getInsetsController(window, window.decorView).run {
             isAppearanceLightStatusBars = !night
             isAppearanceLightNavigationBars = !night

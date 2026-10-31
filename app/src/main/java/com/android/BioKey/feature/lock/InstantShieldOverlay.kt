@@ -395,7 +395,7 @@ class InstantShieldOverlay(
         }
         val cached = AppInfoCache.get(target)
         if (cached != null) {
-            cover.bind(cached.label, cached.icon, isBioKey = false, accent = cached.accent)
+            cover.bind(cached.label, cached.icon, isBioKey = false, accent = cached.accent, dark = cached.dark)
             return
         }
         // Nothing is asked of the package manager before the first frame: the name, when it isn't
