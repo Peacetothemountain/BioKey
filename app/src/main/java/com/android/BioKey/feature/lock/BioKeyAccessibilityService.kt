@@ -1321,6 +1321,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
      */
     private fun onSystemLockCover(windowId: Int) {
         val now = SystemClock.elapsedRealtime()
+        val before = systemLock.appsFor(now).takeIf { systemLock.isPending(now) }
         systemLock.onCover(windowId, now)
         val tapped = shield.targetPackage?.takeIf { shield.isPredicted }
         if (tapped != null) {
@@ -1330,7 +1331,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
         }
         val forApps = systemLock.appsFor(now)
         for (pkg in forApps) AlsoLockedByAndroid.note(this, pkg)
-        DiagnosticLog.log(
+        // Once per cover (it sends several events as it comes), or once it's known which app it's for.
+        if (before == null || before != forApps) DiagnosticLog.log(
             if (forApps.isEmpty()) "Android's App lock is asking for an app"
             else "Android's App lock is asking for ${forApps.joinToString()}"
         )
