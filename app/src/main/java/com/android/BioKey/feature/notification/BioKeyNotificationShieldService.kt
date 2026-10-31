@@ -31,11 +31,13 @@ import kotlinx.coroutines.launch
 
 /**
  * Non-destructive notification shield: while a locked app is locked, its notifications are
- * snoozed in the shade and replaced by one neutral "N hidden notifications" entry per app.
+ * snoozed in the shade and replaced by one stand-in per app, worded as Android's own App lock
+ * words a locked app's notification: the app's name, and "New message" or "New notification"
+ * ("3 new messages" for several).
  *
  * Tapping the entry opens BioKey's lock and then launches the preserved content Intent.
  * When the app is unlocked from launcher or recents, the stand-in notification is automatically
- * dismissed and snoozed notifications are restored.
+ * dismissed and snoozed notifications are restored, without sounding again ([QuietRestore]).
  *
  * Everything runs on the main thread: listener callbacks arrive there, and session changes
  * (which come from any thread, often in the middle of covering an app) are posted there, so the
@@ -137,6 +139,30 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             Notification.CATEGORY_SERVICE,
             Notification.CATEGORY_NAVIGATION
         )
+
+        /**
+         * A call styled as one (an incoming, ongoing or screening call) always shows, whatever
+         * category its app gave it, or left out. Android's own App lock leaves these alone too.
+         */
+        private val NEVER_HIDDEN_TEMPLATES = setOf(
+            Notification.CallStyle::class.java.name,
+            "androidx.core.app.NotificationCompat\$CallStyle"
+        )
+
+        /** Styles that make a notification a message, for its stand-in's wording. */
+        private val MESSAGE_TEMPLATES = setOf(
+            Notification.MessagingStyle::class.java.name,
+            "androidx.core.app.NotificationCompat\$MessagingStyle"
+        )
+
+        /** The style [notification] was built with: Android's own name for it, and AndroidX's. */
+        private fun templatesOf(notification: Notification): List<String> {
+            val extras = notification.extras ?: return emptyList()
+            return listOfNotNull(
+                extras.getString(Notification.EXTRA_TEMPLATE),
+                extras.getString(NotificationCompat.EXTRA_COMPAT_TEMPLATE)
+            )
+        }
     }
 
     data class CachedPendingIntent(
@@ -162,12 +188,28 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     private val restoringKeys = HashMap<String, RestoringEntry>()
 
     /**
-     * The count each locked app's stand-in was last posted with. A hidden notification that leaves
-     * it as it was (an app updating its message) posts nothing: each post makes the shade redraw
-     * the stand-in. Forgotten whenever the stand-in goes (cancelled, or dismissed by the user), at
-     * every lock-all and on disconnecting, so a stand-in that may be gone is always posted again.
+     * Which of each package's hidden notifications (not summaries) are messages, so its stand-in
+     * says "New message" only when every one is. Pruned to the hidden keys at each stand-in post,
+     * and dropped with the stand-in.
      */
-    private val standInCounts = HashMap<String, Int>()
+    private val hiddenMessageKeys = HashMap<String, MutableSet<String>>()
+
+    /**
+     * The text each locked app's stand-in was last posted with (it carries the count and whether
+     * they're messages). A hidden notification that leaves it as it was (an app updating its
+     * message) posts nothing: each post makes the shade redraw the stand-in. Forgotten whenever
+     * the stand-in goes (cancelled, or dismissed by the user), at every lock-all and on
+     * disconnecting, so a stand-in that may be gone is always posted again.
+     */
+    private val standInTexts = HashMap<String, String>()
+
+    private val quietRestore = QuietRestore { quiet ->
+        // Not bound (disconnecting): nothing to ask, and Android has dropped the hint already.
+        runCatching { requestListenerHints(if (quiet) HINT_HOST_DISABLE_NOTIFICATION_EFFECTS else 0) }
+    }
+
+    /** Lifts [quietRestore]'s hold, should what it waits for not all come back. */
+    private val endQuietRestore = Runnable { quietRestore.end() }
 
     private val lockAllSweeps = LockAllSweeps(SWEEP_SKIP_WINDOW_MS)
 
@@ -224,7 +266,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         activeService = this
         connected = true
         // Nothing seen while unbound is known: the stand-ins are posted afresh, the next lock-all sweeps.
-        standInCounts.clear()
+        standInTexts.clear()
         lockAllSweeps.onShowing()
         LockStateTracker.addLockAllListener(onLockAll)
         LockStateTracker.addAppUnlockListener(onAppUnlocked)
@@ -266,6 +308,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             val isSummary = sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0
             val keys = if (isSummary) hiddenSummaryKeys else hiddenNotificationKeys
             keys.getOrPut(pkg) { HashSet() }.add(sbn.key)
+            if (!isSummary && isMessage(sbn)) hiddenMessageKeys.getOrPut(pkg) { HashSet() }.add(sbn.key)
             sbn.notification.contentIntent?.let {
                 cachedPendingIntents.computeIfAbsent(pkg) { ConcurrentHashMap() }[sbn.key] =
                     CachedPendingIntent(it, sbn.postTime, isSummary)
@@ -294,7 +337,10 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         Handler(Looper.getMainLooper()).postDelayed({ ShieldAccessWatch.checkSoon(app) }, ACCESS_RECHECK_MS)
         connected = false
         activeService = null
-        standInCounts.clear()
+        standInTexts.clear()
+        // Android drops a listener's hints as it unbinds it.
+        main.removeCallbacks(endQuietRestore)
+        quietRestore.forget()
         scope?.cancel()
         scope = null
         LockStateTracker.removeLockAllListener(onLockAll)
@@ -310,6 +356,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         scope?.cancel()
         scope = null
         main.removeCallbacksAndMessages(null)
+        quietRestore.forget()
         LockStateTracker.removeLockAllListener(onLockAll)
         LockStateTracker.removeAppUnlockListener(onAppUnlocked)
         LockStateTracker.removeAppsLockListener(onAppsLocked)
@@ -318,6 +365,8 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        // Android has alerted for it (or kept quiet) before telling listeners.
+        quietRestore.onPosted(sbn.key)
         if (shouldHide(sbn) && hide(sbn)) {
             updateStandIn(sbn.packageName)
         } else if (mayHideLater(sbn)) {
@@ -329,7 +378,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         // One of BioKey's stand-ins, gone however it went (dismissed, snoozed by the user): the
         // next hidden notification posts it again, even with the same count.
         if (sbn.packageName == packageName) {
-            sbn.tag?.takeIf { it.startsWith(TAG_PREFIX) }?.let { standInCounts.remove(it.removePrefix(TAG_PREFIX)) }
+            sbn.tag?.takeIf { it.startsWith(TAG_PREFIX) }?.let { standInTexts.remove(it.removePrefix(TAG_PREFIX)) }
         }
         if (reason == REASON_SNOOZED) {
             // Ignored: triggered by our own snoozeNotification(sbn.key, SNOOZE_24_HOURS_MS) call.
@@ -374,7 +423,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
      */
     private fun onAllSessionsEnded() {
         restoringKeys.clear()
-        standInCounts.clear()
+        standInTexts.clear()
         if (!connected) return
         extendSnoozes(force = false)
         if (lockAllSweeps.needsSweep(SystemClock.elapsedRealtime())) requestSweep()
@@ -462,8 +511,23 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         if (!sbn.isClearable || sbn.isOngoing) return false
         if (notif.flags and (Notification.FLAG_FOREGROUND_SERVICE or Notification.FLAG_ONGOING_EVENT) != 0) return false
         if (notif.category in NEVER_HIDDEN_CATEGORIES) return false
+        if (templatesOf(notif).any { it in NEVER_HIDDEN_TEMPLATES }) return false
         if (notif.extras?.containsKey(Notification.EXTRA_MEDIA_SESSION) == true) return false
         return notif.fullScreenIntent == null
+    }
+
+    /**
+     * Whether [sbn] is a message, for its stand-in's wording: its style, its category, or Android
+     * counting it as a conversation says so. A notification Android's own App lock has already
+     * redacted for a listener ("New message", no style) still has the last two.
+     */
+    private fun isMessage(sbn: StatusBarNotification): Boolean {
+        val notif = sbn.notification
+        if (notif.category == Notification.CATEGORY_MESSAGE) return true
+        if (templatesOf(notif).any { it in MESSAGE_TEMPLATES }) return true
+        val ranking = Ranking()
+        return runCatching { currentRanking?.getRanking(sbn.key, ranking) == true && ranking.isConversation }
+            .getOrDefault(false)
     }
 
     /** Snoozes [sbn] and keeps track of it; false if it couldn't be snoozed. The caller updates the stand-in. */
@@ -478,6 +542,8 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
 
         val keys = if (isSummary) hiddenSummaryKeys else hiddenNotificationKeys
         keys.getOrPut(pkg) { HashSet() }.add(sbn.key)
+        val messages = hiddenMessageKeys.getOrPut(pkg) { HashSet() }
+        if (!isSummary && isMessage(sbn)) messages += sbn.key else messages -= sbn.key
 
         try {
             // Non-destructive snooze: snooze notification for 24h so user messages and OTPs are preserved
@@ -486,6 +552,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             Log.w(TAG, "Couldn't snooze notification: ${e.javaClass.simpleName}")
             hiddenSummaryKeys[pkg]?.remove(sbn.key)
             hiddenNotificationKeys[pkg]?.remove(sbn.key)
+            hiddenMessageKeys[pkg]?.remove(sbn.key)
             cachedPendingIntents[pkg]?.remove(sbn.key)
             return false
         }
@@ -557,11 +624,18 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         unsnooze(pkg, childKeys + summaryKeys)
     }
 
-    /** Brings [keys] back into the shade; they aren't hidden again for [RESTORE_WINDOW_MS]. */
+    /**
+     * Brings [keys] back into the shade; they aren't hidden again for [RESTORE_WINDOW_MS]. They
+     * come back without sound or vibration ([QuietRestore]): they made theirs when they came in.
+     */
     private fun unsnooze(pkg: String, keys: Collection<String>) {
         if (keys.isEmpty()) return
         // They show again: the next lock-all must sweep.
         lockAllSweeps.onShowing()
+        // Asked before the first un-snooze: Android decides on the alert as it posts each one.
+        quietRestore.begin(keys)
+        main.removeCallbacks(endQuietRestore)
+        main.postDelayed(endQuietRestore, RESTORE_WINDOW_MS)
         val expiry = SystemClock.elapsedRealtime() + RESTORE_WINDOW_MS
         for (key in keys) {
             restoringKeys[key] = RestoringEntry(pkg, expiry)
@@ -585,13 +659,42 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     }
 
     private fun cancelStandIn(pkg: String) {
-        standInCounts.remove(pkg)
+        standInTexts.remove(pkg)
+        hiddenMessageKeys.remove(pkg)
         NotificationManagerCompat.from(this).cancel(TAG_PREFIX + pkg, SUMMARY_ID)
     }
 
-    /** Posts [lockedPackage]'s stand-in with [count], unless it is showing with that count already. */
+    /**
+     * What [pkg]'s stand-in says for [count] hidden notifications, as Android's own App lock words
+     * one: "New message" when every one hidden is a message, else "New notification", and with
+     * the count when there are several. Never anything of theirs, so a notification Android's
+     * lock already redacted to "New message" isn't worded twice.
+     */
+    private fun standInText(pkg: String, count: Int): String {
+        val hidden = hiddenNotificationKeys[pkg].orEmpty()
+        val messages = hiddenMessageKeys[pkg]?.apply { retainAll(hidden) }.orEmpty()
+        val allMessages = hidden.isNotEmpty() && messages.size == hidden.size
+        return when {
+            count == 1 && allMessages -> getString(R.string.shield_stand_in_message)
+            count == 1 -> getString(R.string.shield_stand_in_notification)
+            allMessages -> resources.getQuantityString(R.plurals.shield_stand_in_messages, count, count)
+            else -> resources.getQuantityString(R.plurals.shield_stand_in_notifications, count, count)
+        }
+    }
+
+    /**
+     * Posts [lockedPackage]'s stand-in for [count] hidden notifications, unless it is showing with
+     * the same text already.
+     *
+     * One per app rather than one per hidden notification: the count stays exact, a tap opens the
+     * newest, and BioKey's notifications stay few: Android lets one app show 50 at most, and the
+     * protection alert must never be the one turned away. Its small icon stays BioKey's: the
+     * lock screen and always-on display show a notification's own icon even when its content is
+     * hidden, so the app's icon would tell which locked app has news where today it doesn't.
+     */
     private fun postReplacement(lockedPackage: String, count: Int) {
-        if (standInCounts[lockedPackage] == count) return
+        val text = standInText(lockedPackage, count)
+        if (standInTexts[lockedPackage] == text) return
         val manager = NotificationManagerCompat.from(this)
         if (!manager.areNotificationsEnabled()) return
         ensureChannel()
@@ -615,8 +718,8 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             .setContentTitle(getString(R.string.shield_public_title))
             .setContentText(getString(R.string.shield_public_text))
             .build()
-        val text = resources.getQuantityString(R.plurals.shield_stand_in_text, count, count)
 
+        // Only alerts once, and its channel is quiet: a count that changes updates it silently.
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_biokey_mark)
             .setContentTitle(label)
@@ -632,7 +735,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             .build()
         try {
             manager.notify(TAG_PREFIX + lockedPackage, SUMMARY_ID, notification)
-            standInCounts[lockedPackage] = count
+            standInTexts[lockedPackage] = text
         } catch (_: SecurityException) {
             // POST_NOTIFICATIONS revoked between the check and notify.
         }
@@ -676,4 +779,53 @@ internal class LockAllSweeps(private val skipWindowMs: Long) {
     }
 
     fun needsSweep(now: Long): Boolean = !clean || now - cleanAt !in 0 until skipWindowMs
+}
+
+/**
+ * Keeps hidden notifications from sounding or vibrating a second time as they come back. An
+ * un-snoozed notification comes back as a new post, and Android alerts for it in full, as it did
+ * when it first came in (moments before the shield hid it). A notification listener can't post
+ * another app's notification silently, but it can ask Android to hold back notification sounds
+ * and vibration for a moment (a listener hint, as a watch asks while it alerts instead of the
+ * phone). It is asked for just before the first un-snooze, and lifted once every notification
+ * brought back has been posted again (Android decides on each alert before telling listeners), or
+ * after a few seconds should some never come back (withdrawn while hidden).
+ *
+ * Calls still ring: the hint leaves call sounds alone. Any other notification arriving in that
+ * moment is quiet too, and while it lasts the volume panel may say BioKey is silencing
+ * notifications. Android drops the hint by itself if BioKey's listener stops.
+ */
+internal class QuietRestore(private val setQuiet: (Boolean) -> Unit) {
+    private val awaited = HashSet<String>()
+
+    /** Asked of Android, and not yet lifted. */
+    var isQuiet = false
+        private set
+
+    /** [keys] are about to come back. */
+    fun begin(keys: Collection<String>) {
+        awaited += keys
+        if (isQuiet) return
+        isQuiet = true
+        setQuiet(true)
+    }
+
+    /** [key] was posted: once every one awaited has been, the hold is lifted. */
+    fun onPosted(key: String) {
+        if (awaited.remove(key) && awaited.isEmpty()) end()
+    }
+
+    /** Lifts the hold, whatever is still awaited. */
+    fun end() {
+        awaited.clear()
+        if (!isQuiet) return
+        isQuiet = false
+        setQuiet(false)
+    }
+
+    /** The listener was unbound, and Android has dropped the hint with it: nothing to ask. */
+    fun forget() {
+        awaited.clear()
+        isQuiet = false
+    }
 }
