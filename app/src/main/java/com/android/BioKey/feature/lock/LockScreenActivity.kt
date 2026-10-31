@@ -254,6 +254,8 @@ class LockScreenActivity : ComponentActivity() {
             onCancel = ::goHomeAndFinish
             onLockDevice = ::lockDeviceOrHome
             setOnClickListener { onCoverTapped() }
+            // Tappable, but never where a key press lands: the buttons are, when shown.
+            isFocusable = false
         }
         bindCover()
         setContentView(cover)
@@ -390,9 +392,13 @@ class LockScreenActivity : ComponentActivity() {
      * instead, and then at most [ENTRY_WAIT_MS].
      */
     private fun awaitEntryAgain() {
-        if (entered || awaitingEntry || !firstFrameCommitted || isFinishing || !::cover.isInitialized) return
+        if (!hiddenSinceEntered || entered || awaitingEntry || !firstFrameCommitted || isFinishing || !::cover.isInitialized) return
+        hiddenSinceEntered = false
         whenCoverDrawn()
     }
+
+    /** It had been drawn, and has been hidden since ([onStop]): only then is [awaitEntryAgain] needed. */
+    private var hiddenSinceEntered = false
 
     /**
      * A tap anywhere on the cover asks again whenever no prompt is up (Android dismissed it, a
@@ -446,6 +452,7 @@ class LockScreenActivity : ComponentActivity() {
     override fun onStop() {
         if (isCurrent) isLockScreenResumed = false
         // Hidden: it comes in again when it's next shown.
+        if (firstFrameCommitted) hiddenSinceEntered = true
         entered = false
         awaitingEntry = false
         if (::cover.isInitialized) cover.removeCallbacks(entryFallback)
@@ -699,12 +706,13 @@ class LockScreenActivity : ComponentActivity() {
                 deepLinks?.let { BioKeyNotificationShieldService.cachedPendingIntents.putIfAbsent(pkg, ConcurrentHashMap(it)) }
                 return unlockVoided()
             }
-            // The others the prompt named, still locked: unlocked by it too.
+            // The others the prompt named, still locked: unlocked by it too, but only once seen on
+            // screen (the split screen this lock screen hid forming again), never one that isn't.
             for (other in others) {
                 if (!vault.isAppLocked(other) || LockStateTracker.isAppUnlocked(other, vault.getTimeoutMode(other))) continue
-                EngineTrace.record("u.unlock", other)
-                if (LockStateTracker.onAppUnlocked(other, generation)) DiagnosticLog.log("$other unlocked with $pkg, by the same prompt")
-                LockStateTracker.clearRegularLockPending(other)
+                EngineTrace.record("u.named", other)
+                LockStateTracker.nameAlongside(other, generation)
+                DiagnosticLog.log("$other named with $pkg by the same prompt: unlocked once it's on screen")
             }
             if (launchAfterUnlock) sendPendingDeepLink(pkg, deepLinks)
         }

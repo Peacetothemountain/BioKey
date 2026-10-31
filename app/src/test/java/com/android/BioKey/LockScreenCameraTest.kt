@@ -173,6 +173,19 @@ class LockScreenCameraTest {
     }
 
     @Test
+    fun aLockScreenCameraThatCrashedIsntCoveredAsTheScreenGoesOff() {
+        cameraOpensOverTheKeyguard()
+        // It crashed: its window has gone, the keyguard is all there is.
+        onScreen(keyguardWindow())
+        idle(1_000)
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(false)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        idle()
+        assertEquals(emptyList<String>(), covered())
+        assertTrue(lockScreensStarted().isEmpty())
+    }
+
+    @Test
     fun anotherScreenOfTheCameraAppOverTheKeyguardIsCovered() {
         onScreen(appWindow(2, camera), keyguardWindow())
         windowEvent(camera, "$camera.SettingsActivity", wait = 1_500)

@@ -216,11 +216,78 @@ class OnePromptTest {
                 "onAuthenticated", String::class.java, Boolean::class.javaPrimitiveType, Int::class.javaPrimitiveType, List::class.java
             ).apply { isAccessible = true }.invoke(screen.get(), x, false, LockStateTracker.lockGeneration(), listOf(y))
             assertTrue(LockStateTracker.isAppUnlocked(x, LockTimeoutMode.IMMEDIATE))
+            // Diary only once it's seen on screen: the split forming again as the lock screen closes.
+            assertFalse(LockStateTracker.isAppUnlocked(y, LockTimeoutMode.IMMEDIATE))
+            LockScreenActivity.setStateForTests(null)
+            splitScreenOpens()
+            engine.get().onAccessibilityEvent(AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply {
+                packageName = y
+                className = "$y.MainActivity"
+            })
+            idle()
             assertTrue(LockStateTracker.isAppUnlocked(y, LockTimeoutMode.IMMEDIATE))
-            assertTrue(DiagnosticLog.entries().any { it.text == "$y unlocked with $x, by the same prompt" })
+            assertTrue(DiagnosticLog.entries().any { it.text == "$y unlocked by the prompt that named it, now that it's on screen" })
         } finally {
             runCatching { screen.pause().stop().destroy() }
         }
+    }
+
+    @Test
+    fun anAppNamedButNotOnScreenStaysLocked() {
+        splitScreenOpens()
+        lockScreenUpFor(x)
+        val screen: ActivityController<LockScreenActivity> = Robolectric.buildActivity(
+            LockScreenActivity::class.java,
+            Intent(context, LockScreenActivity::class.java).putExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE, x)
+        ).setup()
+        try {
+            LockScreenActivity::class.java.getDeclaredMethod(
+                "onAuthenticated", String::class.java, Boolean::class.javaPrimitiveType, Int::class.javaPrimitiveType, List::class.java
+            ).apply { isAccessible = true }.invoke(screen.get(), x, false, LockStateTracker.lockGeneration(), listOf(y))
+            // Diary doesn't come back on screen: only Notes, full screen.
+            LockScreenActivity.setStateForTests(null)
+            onScreen(window(2, x, whole, active = true))
+            idle(LockStateTracker.NAMED_ARRIVAL_MS + 500)
+            // Opened later, it's asked for.
+            engine.get().onAccessibilityEvent(AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply {
+                packageName = y
+                className = "$y.MainActivity"
+            })
+            idle()
+            assertFalse(LockStateTracker.isAppUnlocked(y, LockTimeoutMode.IMMEDIATE))
+        } finally {
+            runCatching { screen.pause().stop().destroy() }
+        }
+    }
+
+    @Test
+    fun anAppWhoseLockScreenWasPushedAwayIsntNamedWithTheNext() {
+        // Notes tapped and covered; Home a moment later pushes its lock screen away.
+        engine.get().onAccessibilityEvent(AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply {
+            packageName = x
+            className = "$x.MainActivity"
+        })
+        idle(50)
+        LockScreenActivity.setStateForTests(x)
+        idle(800)
+        LockScreenActivity.setStateForTests(null)
+        LockStateTracker.markLockDisplaced(x)
+        val launcher = "com.google.android.apps.nexuslauncher"
+        onScreen(window(1, launcher, whole, active = true))
+        engine.get().onAccessibilityEvent(AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply {
+            packageName = launcher
+            className = "$launcher.NexusLauncherActivity"
+        })
+        // Its cooldown over, Diary started from elsewhere within the second.
+        idle(LockStateTracker.ABANDONED_LOCK_COOLDOWN_MS + 50)
+        onScreen(window(3, y, whole, active = true))
+        engine.get().onAccessibilityEvent(AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply {
+            packageName = y
+            className = "$y.MainActivity"
+        })
+        idle(50)
+        lockScreenUpFor(y)
+        assertEquals(emptyList<String>(), BioKeyAccessibilityService.lockedAppsOnScreenWith(y))
     }
 
     @Test

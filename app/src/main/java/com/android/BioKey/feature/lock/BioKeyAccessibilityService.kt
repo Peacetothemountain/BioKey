@@ -298,7 +298,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
                         // launcher's transition) is on screen, whatever was last heard.
                         val inFrontNow = runCatching { windowList()?.let(::frontWindow)?.let(::packageOf) }.getOrNull()
                             ?.takeIf { it != SYSTEM_UI && it != packageName && it != SessionRules.UNIDENTIFIED_APP && !isLauncher(it) }
-                        val left = inFrontNow ?: appLeftOnScreen()?.takeUnless { frontIsLauncher() }
+                        // Not the lock-screen camera let open over the keyguard if its window has
+                        // gone since (it closed, or crashed): nothing of it is left to cover.
+                        val left = (inFrontNow ?: appLeftOnScreen()?.takeUnless { frontIsLauncher() })
+                            ?.takeUnless { it == keyguardLetThrough && !isOnDisplayNow(it) }
                         left?.let { mainHandler.post { coverLeftOnScreen(it) } }
                         // Sessions kept until the phone locks: once it does, the app left on
                         // screen is covered behind the keyguard then ([onLockAll]).
@@ -467,7 +470,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private val onLockAll: () -> Unit = {
         mainHandler.post {
             rules.reset()
-            // An unlock by Android's App lock from before doesn't carry over.
+            // An unlock by Android's App lock from before doesn't carry over, nor what was covered.
+            coveredAt.clear()
             systemLock.clear()
             // The phone locked with the screen on (Lockdown), say: what was on display before isn't
             // over the keyguard now.
@@ -497,6 +501,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
      * when the cooldown ends: an app re-opened meanwhile must not stay open.
      */
     private val onLockAbandoned: (String) -> Unit = { pkg ->
+        // Left, or pushed away by another screen: not on screen with the next app to be covered.
+        mainHandler.post { coveredAt.remove(pkg) }
         mainHandler.postDelayed({ onAbandonCooldownOver(pkg) }, ABANDON_TOKEN, LockStateTracker.ABANDONED_LOCK_COOLDOWN_MS + 20L)
     }
 
@@ -705,6 +711,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 val target = resolveForegroundPackage(event)
                 // Let through by Android's App lock a moment ago: unlocked now, unless BioKey must ask too.
                 if (target != null) checkSystemLockPassed(target)
+                // Named by the prompt that unlocked the app beside it moments ago: on screen now, so unlocked too.
+                if (target != null) LockStateTracker.claimNamed(target)
                 // A screensaver's window, seen before (or without) the broadcast saying it started:
                 // never an app opening, then or later (onWindowSurfaced, the visibility pass).
                 screensaverWindow = isScreensaverWindow(event, eventPkg, eventCls)
@@ -993,6 +1001,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         // Its own window, known from its events (never one only taken to be its): Android's App lock
         // cover inside its task may have just gone, its prompt passed.
         if (windowPackages[w.id] == pkg) checkSystemLockPassed(pkg)
+        LockStateTracker.claimNamed(pkg)
         if (!isSystemOrOverlay(pkg, "") && isCoverableByVisibility(pkg) && needsCover(pkg) && !isExitTransition(pkg)) {
             lock(pkg, "came to the front", w.displayId)
         }
@@ -1251,6 +1260,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (!ownPromptOnly && !LockScreenActivity.isLockScreenResumed) {
             lockedOnScreen = visible.filterTo(LinkedHashSet()) { vault.isAppLocked(it) }
         }
+        // Apps a prompt named beside its own a moment ago, on screen now: unlocked by it.
+        for (pkg in visible) LockStateTracker.claimNamed(pkg)
         val outcome = rules.reconcile(
             SessionRules.Screen(
                 visible = visible,
@@ -1663,6 +1674,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (isLauncher && !isRecents) {
             val shieldPkg = shield.targetPackage
             if (shield.isShowing && shieldPkg != null && LockStateTracker.isRegularLockPending(shieldPkg)) return
+            // Home in front: whatever was covered isn't on screen any more.
+            coveredAt.clear()
         }
 
         // Swiping to Overview from a lock that was never passed: don't leave the app a tap away.

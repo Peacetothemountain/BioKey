@@ -495,7 +495,11 @@ class CompatibilityEngineTest {
             event(ACTIVITY_RESUMED, bank)
             event(ACTIVITY_RESUMED, chat)
             step()
-            // The screen times out; the phone locks a moment later, the screen still off.
+            // The screen times out: it dims first, and both halves pause.
+            event(ACTIVITY_PAUSED, bank)
+            event(ACTIVITY_PAUSED, chat)
+            step()
+            // The phone locks a moment after the screen goes off.
             val keyguard = shadowOf(context.getSystemService(KeyguardManager::class.java))
             val power = shadowOf(context.getSystemService(PowerManager::class.java))
             keyguard.setIsDeviceLocked(false)

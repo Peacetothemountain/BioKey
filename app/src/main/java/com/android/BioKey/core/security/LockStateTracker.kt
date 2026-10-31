@@ -271,6 +271,47 @@ object LockStateTracker {
         return true
     }
 
+    /**
+     * How long an app a prompt named beside its own ([nameAlongside]) has to be seen on screen to
+     * be unlocked by it: a split screen the lock screen hid takes about a second to form again.
+     */
+    const val NAMED_ARRIVAL_MS = 3_000L
+
+    /** Apps a prompt named beside its own, with when and the [generation] then ([nameAlongside]). */
+    private val namedAlongside = ConcurrentHashMap<String, Pair<Long, Int>>()
+
+    /**
+     * A lock screen's prompt, which named [packageName] beside the app it was for (the other half
+     * of a split screen), succeeded, [generation] being [lockGeneration] as it started. It isn't
+     * unlocked yet: only once an engine sees it on screen, within [NAMED_ARRIVAL_MS] ([claimNamed]),
+     * so a name that turns out not to be on screen (it was left meanwhile) unlocks nothing.
+     */
+    fun nameAlongside(packageName: String, generation: Int) {
+        if (generation != this.generation) return
+        val entry = now() to generation
+        for (pkg in PasswordManager.aliasesOf(packageName)) namedAlongside[pkg] = entry
+        timerScope.launch {
+            delay(NAMED_ARRIVAL_MS)
+            val left = PasswordManager.aliasesOf(packageName).any { namedAlongside.remove(it, entry) }
+            if (left) DiagnosticLog.log("$packageName wasn't on screen after the prompt that named it; still locked")
+        }
+    }
+
+    /**
+     * [packageName] is on screen now, as an engine sees it. If a prompt named it beside its own app
+     * moments ago ([nameAlongside]), its session starts. Returns whether it did.
+     */
+    fun claimNamed(packageName: String): Boolean {
+        if (namedAlongside.isEmpty()) return false
+        val aliases = PasswordManager.aliasesOf(packageName)
+        val (at, generation) = aliases.firstNotNullOfOrNull { namedAlongside[it] } ?: return false
+        for (pkg in aliases) namedAlongside.remove(pkg)
+        if (now() - at >= NAMED_ARRIVAL_MS) return false
+        return onAppUnlocked(packageName, generation).also { started ->
+            if (started) DiagnosticLog.log("$packageName unlocked by the prompt that named it, now that it's on screen")
+        }
+    }
+
     private fun staleUnlock(packageName: String): Boolean {
         Log.i(TAG, "Unlock of $packageName arrived after a lock-all; ignored")
         DiagnosticLog.log("Unlock of $packageName ignored: the phone was locked meanwhile")
@@ -465,6 +506,7 @@ object LockStateTracker {
         generation++
         // Nothing is waiting for the phone to lock any more: it's all locked.
         awaitingPhoneLock = false
+        namedAlongside.clear()
         expiryJobs.values.forEach { it.cancel() }
         expiryJobs.clear()
         sessions.clear()

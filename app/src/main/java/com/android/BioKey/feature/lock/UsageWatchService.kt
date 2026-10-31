@@ -338,7 +338,8 @@ class UsageWatchService : Service() {
                     val waiting = LockStateTracker.awaitingPhoneLock
                     leftAtScreenOff = appInFront()?.takeIf { waiting }
                     // And what showed with it (a split screen's other half): asked for with it then.
-                    onScreenAtScreenOff = if (waiting) activities.resumedApps() + listOfNotNull(appInFront()) else emptySet()
+                    // Paused ones too: as the screen times out, it dims first, and the apps on it pause.
+                    onScreenAtScreenOff = if (waiting) activities.visibleApps() + listOfNotNull(appInFront()) else emptySet()
                     forgetScreen(keepFront = waiting)
                     shield.hide()
                     if (waiting) checkPhoneLockInTheDark()
@@ -828,6 +829,8 @@ class UsageWatchService : Service() {
         // with that app, which may well be the newer resume, and mustn't have its hop ended, as
         // if it had gone elsewhere, by that app coming to the front first.
         for (pkg in resumed) {
+            // Named by the prompt that unlocked the app beside it moments ago: on screen now, so unlocked too.
+            if (activities.isResumed(pkg)) LockStateTracker.claimNamed(pkg)
             if (vault.isAppLocked(pkg) && activities.isResumed(pkg) && LockStateTracker.isAppUnlocked(pkg, vault.getTimeoutMode(pkg))) {
                 LockStateTracker.onAppVisible(pkg)
             }

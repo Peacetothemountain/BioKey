@@ -256,6 +256,7 @@ internal class EngineReplay(private val context: Application) {
             "p.up" -> setPrompt(f[0])
             "p.down" -> setPrompt(null)
             "u.unlock" -> LockStateTracker.onAppUnlocked(f[0])
+            "u.named" -> LockStateTracker.nameAlongside(f[0], LockStateTracker.lockGeneration())
             "u.abandon" -> LockStateTracker.markLockAbandoned(f[0])
             "u.displaced" -> LockStateTracker.markLockDisplaced(f[0])
             "s.tap" -> shieldCover()?.onUnlock?.invoke()
