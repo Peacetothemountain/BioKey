@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.ScreenLockPortrait
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -183,6 +184,7 @@ fun SettingsScreenExpressive(
     val screenLockUnlocks by UnlockAttempts.screenLockUnlocks.collectAsStateWithLifecycle()
     val biometricOnly by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
     val keyguardCamera by vault.keyguardCameraFlow.collectAsStateWithLifecycle()
+    val relockAtPhoneLock by vault.relockAtPhoneLockFlow.collectAsStateWithLifecycle()
     val lockedApps by vault.lockedAppsFlow.collectAsStateWithLifecycle()
     // Seeded with what's already known (no call into Android on the main thread), then read afresh.
     var strongBiometric by remember { mutableStateOf(SecurityEngine.lastKnownStrongBiometric() ?: biometricOnlyAtOpen(vault)) }
@@ -316,6 +318,19 @@ fun SettingsScreenExpressive(
                 title = stringResource(R.string.settings_relock_title),
                 subtitle = stringResource(R.string.settings_relock_summary, stringResource(defaultTimeout.shortLabelRes)),
                 onClick = { showRelockSheet = true }
+            )
+        )
+        add(
+            SettingItem(
+                icon = Icons.Default.ScreenLockPortrait,
+                title = stringResource(R.string.settings_relock_at_phone_lock_title),
+                subtitle = stringResource(if (relockAtPhoneLock) R.string.settings_relock_at_phone_lock_on else R.string.settings_relock_at_phone_lock_off),
+                checked = relockAtPhoneLock,
+                onChange = { on ->
+                    // Locked later: recorded when it's maybe someone who only knows the PIN.
+                    if (on) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.RELOCK_AT_PHONE_LOCK)
+                    vault.setRelockAtPhoneLock(on)
+                }
             )
         )
         add(

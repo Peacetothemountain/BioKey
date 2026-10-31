@@ -1,5 +1,6 @@
 package com.android.BioKey.feature.lock
 
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -15,7 +16,8 @@ import com.android.BioKey.feature.notification.ShieldAccessWatch
 
 /**
  * Ends every unlock session the moment the display turns off or a screensaver starts, so a
- * phone that's picked up again always starts locked. Registered dynamically and not exported,
+ * phone that's picked up again always starts locked (or, with "when the phone locks" chosen, as
+ * soon as Android has locked it: [LockStateTracker.onScreenTurnedOff]). Registered dynamically and not exported,
  * so other apps can't spoof these broadcasts; the phone being unlocked, which SystemUI sends, see
  * [registerForUnlocks].
  */
@@ -46,11 +48,16 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
                 if (intent.action == Intent.ACTION_DREAMING_STARTED) LockStateTracker.screensaverShowing = true
                 // Always: ending sessions twice is harmless, missing a lock is not (a screensaver
                 // never turns the screen off, so the engines' own screen-off handling misses it).
-                LockStateTracker.onScreenTurnedOff()
+                // The screen going off, with "when the phone locks" chosen, waits for the phone to.
+                LockStateTracker.onScreenTurnedOff(
+                    phoneLocked = if (intent.action == Intent.ACTION_SCREEN_OFF) context.isPhoneLocked() else null
+                )
             }
             // The phone was unlocked: whoever had it has likely handed it back, so this is when
             // failed unlocks and times app locking was off are told.
             Intent.ACTION_USER_PRESENT -> {
+                // Sessions waiting for the phone to lock, which may have happened unseen: see there.
+                LockStateTracker.onUserPresent()
                 LockStateTracker.screensaverShowing = false
                 // Off the main thread: right after a restart, this may be the first read of BioKey's storage.
                 val pending: PendingResult? = goAsync()
@@ -75,6 +82,9 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
         }
     }
 }
+
+/** Whether Android has locked the phone (its keyguard secured), or null if that can't be asked. */
+internal fun Context.isPhoneLocked(): Boolean? = runCatching { getSystemService(KeyguardManager::class.java)?.isDeviceLocked }.getOrNull()
 
 /**
  * Registers [receiver] for the phone being unlocked (ACTION_USER_PRESENT). The keyguard sends it,

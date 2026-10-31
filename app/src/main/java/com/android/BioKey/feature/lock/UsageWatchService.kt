@@ -111,6 +111,8 @@ class UsageWatchService : Service() {
         private const val LOCKED_AT_LOCK_MS = 60_000L
         /** With no cover up to check, how long a lock screen has to come up before its app is sent Home ([checkLockScreenSoon]). */
         private const val LOCK_SCREEN_CHECK_MS = 1_000L
+        /** With sessions kept through a screen-off, how often the phone is asked whether it has locked ([checkPhoneLockInTheDark]). */
+        private const val PHONE_LOCK_CHECK_MS = 2_000L
         private val LOCK_SCREEN_CLASS = LockScreenActivity::class.java.name
 
         @Volatile
@@ -328,12 +330,26 @@ class UsageWatchService : Service() {
             stir()
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> {
+                    // Whatever order the broadcast reaches BioKey's receivers in: sessions end now,
+                    // or, with "when the phone locks" chosen, wait for it.
+                    LockStateTracker.onScreenTurnedOff(phoneLocked = runCatching { deviceLockedNow() }.getOrNull())
                     stopPolling()
-                    forgetScreen()
+                    // Waiting: the app in front is still there once the phone locks, and covered then.
+                    val waiting = LockStateTracker.awaitingPhoneLock
+                    leftAtScreenOff = appInFront()?.takeIf { waiting }
+                    forgetScreen(keepFront = waiting)
                     shield.hide()
+                    if (waiting) checkPhoneLockInTheDark()
                 }
                 Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
                     dreaming = false
+                    // Sessions kept through the screen-off: the phone locked meanwhile (or, unlocked
+                    // again unseen, maybe) ends them; the first look then covers the app behind the keyguard.
+                    if (intent.action == Intent.ACTION_SCREEN_ON) {
+                        LockStateTracker.onScreenOn(runCatching { deviceLockedNow() }.getOrDefault(true))
+                    } else {
+                        LockStateTracker.onUserPresent()
+                    }
                     if (checkPermissions()) wake()
                     // Unlocked from inside the lock-screen camera, say: it's covered now, not at the next look.
                     if (intent.action == Intent.ACTION_USER_PRESENT) keyguardLetThrough?.let { app ->
@@ -377,6 +393,14 @@ class UsageWatchService : Service() {
         // the keyguard up, where nothing shows and the lock screen would only end up over them.
         handler.post {
             stir()
+            // Sessions kept through a screen-off end as the phone locks, the screen still off: the
+            // app left on screen gets its lock screen behind the keyguard now, as a screensaver's does.
+            val leftThen = leftAtScreenOff
+            leftAtScreenOff = null
+            if (isRunning && !dreaming && !isInteractive()) {
+                leftThen?.let { coverBehindKeyguard(it, "on screen as the phone locked") }
+                return@post
+            }
             if (!isRunning || !polling || dreaming) return@post
             if (keyguardLocked()) {
                 // The phone locked with the screen on: the app on screen gets its lock screen
@@ -613,6 +637,29 @@ class UsageWatchService : Service() {
         polling = false
         epoch++
         workerHandler.removeCallbacks(pollTask)
+    }
+
+    /**
+     * The app in front as the screen went off with sessions kept until the phone locks
+     * ([LockStateTracker.awaitingPhoneLock]): covered behind the keyguard once it does ([onLockAll]).
+     */
+    private var leftAtScreenOff: String? = null
+
+    /**
+     * With sessions kept through a screen-off until the phone locks, asks every
+     * [PHONE_LOCK_CHECK_MS] (of the phone awake: none in deep sleep, as Android's own lock wakes
+     * it) whether it has, while the screen stays off (no polls run then): locked, every session
+     * ends and the app left in front is covered behind the keyguard ([onLockAll]).
+     */
+    private fun checkPhoneLockInTheDark() {
+        handler.removeCallbacks(phoneLockCheck)
+        handler.postDelayed(phoneLockCheck, PHONE_LOCK_CHECK_MS)
+    }
+
+    private val phoneLockCheck: Runnable = Runnable {
+        if (!isRunning || !LockStateTracker.awaitingPhoneLock || isInteractive()) return@Runnable
+        LockStateTracker.onDeviceLockState(deviceLockedNow()) { !isInteractive() && keyguardLocked() }
+        if (LockStateTracker.awaitingPhoneLock) handler.postDelayed(phoneLockCheck, PHONE_LOCK_CHECK_MS)
     }
 
     /** The screen is back (on, unlocked, out of a screensaver): look now, at what happened shortly before too. */

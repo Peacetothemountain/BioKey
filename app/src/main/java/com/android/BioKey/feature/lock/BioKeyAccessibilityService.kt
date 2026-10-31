@@ -102,6 +102,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         /** With no cover up to check, how long a lock screen has to come up before its app is sent Home ([raiseShield]). */
         private const val LOCK_SCREEN_CHECK_MS = 1_000L
 
+        /** With sessions kept through a screen-off, how often the phone is asked whether it has locked ([checkPhoneLockInTheDark]). */
+        private const val PHONE_LOCK_CHECK_MS = 2_000L
+
         /** Android's App lock prompt is looked for again this long after its cover came ([readSystemLockPrompt]). */
         private const val SYSTEM_PROMPT_READ_DELAY_MS = 400L
         /** At most this many looks at a cover's prompt, and this many of its nodes each time: it has a handful. */
@@ -271,7 +274,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
             // First, and whatever goes wrong below: the screen going off ends every session.
             // A screensaver too: its cover below needs the sessions ended first, whatever order the
             // broadcast reaches BioKey's receivers in.
-            if (intent.action == Intent.ACTION_SCREEN_OFF || intent.action == Intent.ACTION_DREAMING_STARTED) {
+            // (With "when the phone locks" chosen, a screen going off waits for the phone to lock.)
+            if (intent.action == Intent.ACTION_SCREEN_OFF) {
+                LockStateTracker.onScreenTurnedOff(phoneLocked = keyguard?.isDeviceLocked?.also { EngineTrace.answer("deviceLocked", it) })
+            } else if (intent.action == Intent.ACTION_DREAMING_STARTED) {
                 LockStateTracker.onScreenTurnedOff()
             }
             if (!isRunning) return
@@ -285,7 +291,13 @@ class BioKeyAccessibilityService : AccessibilityService() {
                         // launcher's transition) is on screen, whatever was last heard.
                         val inFrontNow = runCatching { windowList()?.let(::frontWindow)?.let(::packageOf) }.getOrNull()
                             ?.takeIf { it != SYSTEM_UI && it != packageName && it != SessionRules.UNIDENTIFIED_APP && !isLauncher(it) }
-                        (inFrontNow ?: appLeftOnScreen()?.takeUnless { frontIsLauncher() })?.let { left -> mainHandler.post { coverLeftOnScreen(left) } }
+                        val left = inFrontNow ?: appLeftOnScreen()?.takeUnless { frontIsLauncher() }
+                        left?.let { mainHandler.post { coverLeftOnScreen(it) } }
+                        // Sessions kept until the phone locks: once it does, the app left on
+                        // screen is covered behind the keyguard then ([onLockAll]).
+                        val waiting = LockStateTracker.awaitingPhoneLock
+                        leftAtScreenOff = left.takeIf { waiting }
+                        if (waiting) checkPhoneLockInTheDark()
                         onDisplayAt.clear()
                         watchLauncher(false)
                         foregroundPackage = null
@@ -294,7 +306,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
                         recentUnlock = null
                         systemLock.clear()
                         keyguardLetThrough = null
-                        rules.reset()
+                        // Sessions that went on, still on screen, are noticed leaving as before.
+                        if (!waiting) rules.reset()
                         isConfirmingDeviceCredential = false
                         maskControl.arm()
                     }
@@ -317,12 +330,19 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     // Sessions ended with the screen, and it may come back on without a keyguard (it
                     // timed out moments ago): whatever is on screen is checked again.
                     Intent.ACTION_SCREEN_ON -> {
+                        // Sessions kept through the screen-off: the phone locked meanwhile ends them
+                        // now, the app left on screen covered behind the keyguard before it's unlocked.
+                        LockStateTracker.onScreenOn(isDeviceLocked())
+                        // Back without a keyguard: what's on screen now is what counts from here.
+                        if (!isKeyguardLocked()) leftAtScreenOff = null
                         reevaluateForeground()
                         scheduleReconcile(0L)
                     }
                     // The keyguard just went away: whatever is on screen must be re-checked even if
                     // no window event arrives (e.g. a locked app was left open when the screen went off).
                     Intent.ACTION_USER_PRESENT -> {
+                        // Sessions waiting for the phone to lock, which may have happened unseen.
+                        LockStateTracker.onUserPresent()
                         // The phone unlocked: no screensaver is showing, whatever its broadcast said.
                         LockStateTracker.screensaverShowing = false
                         // Nothing is let open over the keyguard any more: covered as usual below.
@@ -443,10 +463,16 @@ class BioKeyAccessibilityService : AccessibilityService() {
             // The phone locked with the screen on (Lockdown), say: what was on display before isn't
             // over the keyguard now.
             onDisplayAt.clear()
+            // Sessions kept through a screen-off ([LockStateTracker.relockAtPhoneLock]) end as the
+            // phone locks: the app left on screen then gets its lock screen behind the keyguard,
+            // as at a screen-off, whether the screen is still off or has just come back on.
+            val leftThen = leftAtScreenOff
+            leftAtScreenOff = null
+            if (isRunning && ::vault.isInitialized && !isInteractive()) leftThen?.let { coverLeftOnScreen(it) }
             if (isRunning && ::vault.isInitialized && isInteractive()) {
                 // The phone locked with the screen on (Lockdown, a foldable folded): the app left on
                 // screen gets its lock screen behind the keyguard, as at a screen-off.
-                if (isKeyguardLocked()) appLeftOnScreen()?.takeUnless { frontIsLauncher() }?.let(::coverLeftOnScreen)
+                if (isKeyguardLocked()) (appLeftOnScreen()?.takeUnless { frontIsLauncher() } ?: leftThen)?.let(::coverLeftOnScreen)
                 // A locked app in picture-in-picture is masked at once.
                 guarded("Masks after lock-all") { windowList()?.let { maskControl.update(it, full = false) } }
                 if (launcherInFront) watchLauncher(true)
@@ -911,7 +937,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         // The lock screen coming up (Lockdown, a lock with the screen on) adds and focuses a
         // window; moves and resizes can't lock the phone. [reconcile] asks every time too.
         if (changes and (surfaced or AccessibilityEvent.WINDOWS_CHANGE_REMOVED) != 0) {
-            LockStateTracker.onDeviceLockState(isDeviceLocked())
+            // With the screen off too: the keyguard coming up in the dark is the phone locking (or,
+            // not locked under it, Smart Lock keeping it unlocked).
+            LockStateTracker.onDeviceLockState(isDeviceLocked(), ::isKeyguardUpInTheDark)
             // The keyguard going away (unlocked from inside the lock-screen camera) moves windows too.
             onKeyguardMaybeGone()
         }
@@ -1753,6 +1781,34 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private val awaitingOverKeyguard = HashSet<String>()
 
     /**
+     * The app on screen as the screen went off with sessions kept until the phone locks
+     * ([LockStateTracker.awaitingPhoneLock]): covered behind the keyguard once it does ([onLockAll]).
+     */
+    private var leftAtScreenOff: String? = null
+
+    private fun isKeyguardUpInTheDark() = !isInteractive() && isKeyguardLocked()
+
+    /**
+     * With sessions kept through a screen-off until the phone locks, looks every
+     * [PHONE_LOCK_CHECK_MS] (of the phone awake: none in deep sleep, as Android's own lock wakes
+     * it) whether it has, while the screen stays off: locked, every session ends and the app left
+     * on screen is covered behind the keyguard ([onLockAll]). Window changes in the dark say so
+     * too; this is for a lock they missed.
+     */
+    private fun checkPhoneLockInTheDark() {
+        mainHandler.removeCallbacks(phoneLockCheck)
+        mainHandler.postDelayed(phoneLockCheck, PHONE_LOCK_CHECK_MS)
+    }
+
+    private val phoneLockCheck: Runnable = Runnable {
+        guarded("Phone lock check") {
+            if (!isRunning || !LockStateTracker.awaitingPhoneLock || isInteractive()) return@guarded
+            LockStateTracker.onDeviceLockState(isDeviceLocked(), ::isKeyguardUpInTheDark)
+            if (LockStateTracker.awaitingPhoneLock) mainHandler.postDelayed(phoneLockCheck, PHONE_LOCK_CHECK_MS)
+        }
+    }
+
+    /**
      * The lock-screen camera or emergency dialer let open over the keyguard ([letsThroughOverKeyguard]),
      * until the phone is unlocked: then it's covered like any app.
      */
@@ -2227,6 +2283,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         mainHandler.removeCallbacks(trailingSelfProtectionRunnable)
         mainHandler.removeCallbacks(revokeSelfProtectionAfterExitRunnable)
         mainHandler.removeCallbacks(readSystemLockPromptLater)
+        mainHandler.removeCallbacks(phoneLockCheck)
         systemLock.clear()
         if (::maskControl.isInitialized) maskControl.stop()
         mainHandler.removeCallbacksAndMessages(ABANDON_TOKEN)

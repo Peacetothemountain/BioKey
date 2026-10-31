@@ -188,6 +188,8 @@ internal class EngineReplay(private val context: Application) {
         if (env.any { it.fields[0] == "protection" && it.fields[1] == "0" }) vault.setGlobalLockEnabled(false)
         // A trace from before the lock-screen camera could open uncovered: it was covered then.
         vault.setKeyguardCameraAllowed(env.any { it.fields[0] == "keyguardCamera" && it.fields[1] == "1" })
+        // Likewise, apps locked when the screen turned off then.
+        vault.setRelockAtPhoneLock(env.any { it.fields[0] == "relockAtPhoneLock" && it.fields[1] == "1" })
         // Screensavers as they were set (off, with none chosen, in a trace from before they were recorded).
         val screensaver = env.firstOrNull { it.fields[0] == "screensaver" }?.fields
         Settings.Secure.putInt(context.contentResolver, "screensaver_enabled", screensaver?.getOrNull(1)?.toIntOrNull() ?: 0)
