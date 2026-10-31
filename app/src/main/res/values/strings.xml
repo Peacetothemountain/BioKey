@@ -319,6 +319,22 @@
     <string name="home_profile_empty">No apps in %1$s yet</string>
     <string name="home_no_apps">No apps found</string>
     <string name="home_apps_in_profile">Apps in %1$s</string>
+    <!-- Picking several apps on a profile's page, to take them out of it together. -->
+    <string name="home_pick_start">Select</string>
+    <!-- Read out for a long press on an app in a profile. -->
+    <string name="home_pick_start_label">Select apps</string>
+    <string name="home_pick_stop">Stop selecting</string>
+    <plurals name="home_picked_count">
+        <item quantity="one">%d selected</item>
+        <item quantity="other">%d selected</item>
+    </plurals>
+    <string name="home_pick_all">Select all</string>
+    <string name="home_pick_none">Select none</string>
+    <string name="home_pick_remove">Remove</string>
+    <plurals name="home_removed_apps_from_profile">
+        <item quantity="one">Removed %1$d app from %2$s</item>
+        <item quantity="other">Removed %1$d apps from %2$s</item>
+    </plurals>
     <string name="home_section_locked">Locked</string>
     <!-- Lower case: follow " · " in the Locked header. -->
     <string name="home_not_protected_now">not protected now</string>

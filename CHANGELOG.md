@@ -2,6 +2,12 @@
 
 BioKey's releases, newest first. The version is the `versionName` in `app/build.gradle.kts`.
 
+## Unreleased
+
+- **Take several apps out of a profile at once:** on a profile's page, tap "Select" (or long-press
+  an app), pick the apps, then "Remove". One Undo puts them all back; each keeps its own lock
+  switch, and each is recorded as taking one out is.
+
 ## 1.0.3 (30 October 2026)
 
 - **What locking does:** the first time you lock an app, a sheet says what the lock doesn't cover

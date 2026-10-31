@@ -9,39 +9,55 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.RemoveCircleOutline
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -50,11 +66,14 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -68,8 +87,11 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -84,6 +106,7 @@ import com.android.BioKey.R
 import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.data.SecurityProfile
+import com.android.BioKey.core.data.openFor
 import com.android.BioKey.core.security.LockAllNow
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionEngine
@@ -267,6 +290,16 @@ fun MainScreenExpressive(
     LaunchedEffect(filter, currentProfile == null) {
         if (filter != FILTER_ALL && currentProfile == null) filter = FILTER_ALL
     }
+    /**
+     * Apps picked on a profile's page, to take out of it together: picking starts with a long
+     * press on an app or "Select", and belongs to that page ([pickingIn] is its profile), so
+     * leaving it, by a chip or Back, ends it. Kept through a rotation.
+     */
+    var pickingIn by rememberSaveable { mutableStateOf<String?>(null) }
+    val picked = rememberSaveable(saver = listSaver(save = { it.toList() }, restore = { it.toMutableStateList() })) {
+        mutableStateListOf<String>()
+    }
+    val picking = currentProfile != null && pickingIn == currentProfile.id
     // An app's options close if it's uninstalled; not while the list is still loading (after
     // the process was restarted, say), or the sheet the user had open would be lost.
     LaunchedEffect(isLoadingApps, installedApps) {
@@ -301,6 +334,8 @@ fun MainScreenExpressive(
     fun isHomeScreen(pkg: String) = pkg in homeScreens
 
     BackHandler(enabled = filter != FILTER_ALL && !showSettings) { filter = FILTER_ALL }
+    // Composed after the page's own, so while apps are being picked Back ends that first.
+    BackHandler(enabled = picking && !showSettings) { pickingIn = null }
 
     /**
      * Which apps were locked, and when each was last used, as the list was read or BioKey came
@@ -461,12 +496,54 @@ fun MainScreenExpressive(
         }
     }
 
+    /** Picking starts on this profile's page, with [first] picked if it began on an app. */
+    fun startPicking(profile: SecurityProfile, first: String? = null) {
+        Haptics.confirm(view)
+        picked.clear()
+        if (first != null) picked += first
+        pickingIn = profile.id
+    }
+
+    fun togglePicked(pkg: String) {
+        Haptics.toggle(view, pkg !in picked)
+        if (pkg in picked) picked.remove(pkg) else picked += pkg
+    }
+
+    /**
+     * The picked apps still in [profile] taken out of it at once, each as "Remove from …" does it
+     * alone: its own switch kept, recorded where that leaves it locked less. One Undo puts them
+     * all back.
+     */
+    fun removePicked(profile: SecurityProfile) {
+        val apps = installedApps.filter { it.packageName in picked && profileOf(it.packageName)?.id == profile.id }
+        pickingIn = null
+        picked.clear()
+        if (apps.isEmpty()) return
+        Haptics.confirm(view)
+        for (app in apps) {
+            val pkg = app.packageName
+            val wasLocked = lockedInVault(pkg)
+            val delayBefore = vault.getTimeoutMode(pkg).openFor
+            vault.removeAppFromProfile(pkg)
+            // Out of a strict profile, it follows the default delay: maybe a longer one.
+            if (wasLocked && (!lockedInVault(pkg) || vault.getTimeoutMode(pkg).openFor > delayBefore)) {
+                ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.TAKEN_OUT, app.label, profile.name)
+            }
+        }
+        val message = apps.singleOrNull()?.let { res.getString(R.string.home_removed_from_profile, it.label, profile.name) }
+            ?: res.getQuantityString(R.plurals.home_removed_apps_from_profile, apps.size, apps.size, profile.name)
+        BioKeyMessages.show(message, Icons.Default.RemoveCircleOutline, actionLabel = res.getString(R.string.common_undo)) {
+            for (app in apps) vault.moveAppToProfile(app.packageName, profile.id, switchOn = false)
+        }
+    }
+
     /**
      * A group of app rows in the list. Keyed by package alone (the groups split one list without
      * repeats), so a row that changes group when the list is next looked at moves rather than
-     * being rebuilt.
+     * being rebuilt. On a profile's page ([pickableIn]) a long press starts picking apps there,
+     * and while they're being picked a row is a checkbox: a tap picks it, its switch stands aside.
      */
-    fun LazyListScope.appGroup(apps: List<AppItem>, showProfile: Boolean) {
+    fun LazyListScope.appGroup(apps: List<AppItem>, showProfile: Boolean, pickableIn: SecurityProfile? = null) {
         itemsIndexed(apps, key = { _, app -> app.packageName }, contentType = { _, _ -> CONTENT_APP }) { i, app ->
             // An app whose profile is off always says so: it's why its switch is off.
             val profile = profileOf(app.packageName)?.takeIf { showProfile || !it.enabled }
@@ -522,12 +599,26 @@ fun MainScreenExpressive(
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
                 leading = { AppIcon(app) },
-                onClick = { overlays.optionsForPackage = app.packageName },
+                // Outside a profile's page the row opens the app's options, as it always has.
+                onClick = if (pickableIn == null) ({ overlays.optionsForPackage = app.packageName }) else null,
+                interaction = when {
+                    pickableIn == null -> Modifier
+                    picking -> Modifier.toggleable(value = app.packageName in picked, role = Role.Checkbox) { togglePicked(app.packageName) }
+                    else -> Modifier.combinedClickable(
+                        onLongClickLabel = stringResource(R.string.home_pick_start_label),
+                        onLongClick = { startPicking(pickableIn, app.packageName) }
+                    ) { overlays.optionsForPackage = app.packageName }
+                },
                 modifier = Modifier
                     .animateItem()
                     .padding(horizontal = GroupInset)
                     .padding(top = if (i == 0) 0.dp else GroupGap)
             ) {
+                if (pickableIn != null && picking) {
+                    // The row says picked or not, and a tap anywhere on it picks: the box only shows it.
+                    Checkbox(checked = app.packageName in picked, onCheckedChange = null)
+                    return@GroupRow
+                }
                 // Its own TalkBack stop, so it says which app it locks. A home screen's can only
                 // be turned off. While its profile is off it shows off and can't be changed (the
                 // subtitle says why); its own choice comes back with the profile.
@@ -710,8 +801,19 @@ fun MainScreenExpressive(
                         )
                     }
                     currentProfile != null -> {
-                        item(key = "h_profile", contentType = CONTENT_HEADER) { SectionHeader(stringResource(R.string.home_apps_in_profile, currentProfile.name)) }
-                        appGroup(matching, showProfile = false)
+                        item(key = "h_profile", contentType = CONTENT_HEADER) {
+                            Row {
+                                SectionHeader(stringResource(R.string.home_apps_in_profile, currentProfile.name), Modifier.weight(1f).alignByBaseline())
+                                // A long press on an app does the same: this says it can be done.
+                                if (!picking) {
+                                    TextButton(
+                                        onClick = { startPicking(currentProfile) },
+                                        modifier = Modifier.alignByBaseline().padding(end = GroupInset + 4.dp)
+                                    ) { Text(stringResource(R.string.home_pick_start)) }
+                                }
+                            }
+                        }
+                        appGroup(matching, showProfile = false, pickableIn = currentProfile)
                     }
                     else -> {
                         if (lockedShown.isNotEmpty()) {
@@ -743,6 +845,47 @@ fun MainScreenExpressive(
                 }
             }
 
+            // While apps are picked on a profile's page: how many, all or none, and taking them out.
+            val pageApps = if (currentProfile != null) matching.map { it.packageName } else emptyList()
+            val pickedHere = picked.count { it in pageApps }
+            AnimatedVisibility(
+                visible = picking,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                enter = slideInVertically { it } + fadeIn(),
+                exit = slideOutVertically { it } + fadeOut()
+            ) {
+                val profile = currentProfile ?: return@AnimatedVisibility
+                Surface(
+                    shape = RoundedCornerShape(28.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shadowElevation = 6.dp,
+                    modifier = Modifier
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .padding(horizontal = GroupInset, vertical = 12.dp)
+                        .widthIn(max = MaxContentWidth)
+                        .fillMaxWidth()
+                ) {
+                    Row(Modifier.padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { pickingIn = null }) {
+                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.home_pick_stop))
+                        }
+                        Text(
+                            pluralStringResource(R.plurals.home_picked_count, pickedHere, pickedHere),
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite }
+                        )
+                        val all = pageApps.isNotEmpty() && pickedHere == pageApps.size
+                        TextButton(onClick = {
+                            picked.removeAll(pageApps)
+                            if (!all) picked += pageApps
+                        }) { Text(stringResource(if (all) R.string.home_pick_none else R.string.home_pick_all)) }
+                        Spacer(Modifier.width(4.dp))
+                        Button(onClick = { removePicked(profile) }, enabled = pickedHere > 0) {
+                            Text(stringResource(R.string.home_pick_remove))
+                        }
+                    }
+                }
+            }
         }
 
         // Settings slides in over the home screen, which stays composed underneath so the
