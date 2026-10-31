@@ -130,6 +130,22 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             return changed
         }
 
+        /**
+         * The keys in [snoozed] that are [pkg]'s, not [known] already, and on its trail: one of
+         * [trailKeys], or in one of [trailGroups] (a group key, so one profile's copy of an app
+         * never brings back the other's).
+         */
+        internal fun stillSnoozedOnTrail(
+            pkg: String,
+            trailKeys: Set<String>,
+            trailGroups: Set<String>,
+            known: Collection<String>,
+            snoozed: List<StatusBarNotification>
+        ): List<String> = snoozed.filter { sbn ->
+            sbn.packageName == pkg && sbn.key !in known &&
+                (sbn.key in trailKeys || (sbn.isGroup && sbn.groupKey in trailGroups))
+        }.map { it.key }
+
         /** Calls, alarms, media, navigation etc. must always show. */
         private val NEVER_HIDDEN_CATEGORIES = setOf(
             Notification.CATEGORY_CALL,
@@ -193,6 +209,24 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
      * and dropped with the stand-in.
      */
     private val hiddenMessageKeys = HashMap<String, MutableSet<String>>()
+
+    /**
+     * Per package, every key and group the shield has hidden since the app's notifications were
+     * last brought back, kept even when the bookkeeping above forgets one (withdrawn). Android
+     * snoozes more than it is asked to, and doesn't always say so: snoozing a group's summary
+     * snoozes every child posted with it (one still on its way to the shade too, which listeners
+     * then never hear of), and its last child takes the summary with it; a key the app withdraws
+     * and posts again within the 24 h is snoozed again as it's posted. Bringing the summary back
+     * doesn't bring those children back (Android looks a group's snoozed notifications up by the
+     * wrong name), so they'd stay hidden for a day. At a restore, whatever of the app's is still
+     * snoozed under one of these keys or groups comes back too ([trailingSnoozes]).
+     */
+    private val hiddenTrails = HashMap<String, HiddenTrail>()
+
+    private class HiddenTrail {
+        val keys = HashSet<String>()
+        val groups = HashSet<String>()
+    }
 
     /**
      * The text each locked app's stand-in was last posted with (it carries the count and whether
@@ -305,14 +339,7 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             val pkg = sbn.packageName ?: continue
             if (pkg == packageName || pkg in IGNORED_PACKAGES) continue
             if (!vault.isAppLocked(pkg) && pkg !in standIns) continue
-            val isSummary = sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0
-            val keys = if (isSummary) hiddenSummaryKeys else hiddenNotificationKeys
-            keys.getOrPut(pkg) { HashSet() }.add(sbn.key)
-            if (!isSummary && isMessage(sbn)) hiddenMessageKeys.getOrPut(pkg) { HashSet() }.add(sbn.key)
-            sbn.notification.contentIntent?.let {
-                cachedPendingIntents.computeIfAbsent(pkg) { ConcurrentHashMap() }[sbn.key] =
-                    CachedPendingIntent(it, sbn.postTime, isSummary)
-            }
+            keepTrack(sbn)
             touched += pkg
         }
         // Stand-ins whose notifications are all gone are stale.
@@ -381,10 +408,25 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
             sbn.tag?.takeIf { it.startsWith(TAG_PREFIX) }?.let { standInTexts.remove(it.removePrefix(TAG_PREFIX)) }
         }
         if (reason == REASON_SNOOZED) {
-            // Ignored: triggered by our own snoozeNotification(sbn.key, SNOOZE_24_HOURS_MS) call.
+            // Ours, or one Android snoozed along with it (see [hiddenTrails]).
+            adoptSnoozedAlong(sbn)
             return
         }
         handleNotificationRemoved(sbn)
+    }
+
+    /**
+     * [sbn] was snoozed. One the shield snoozed itself is known already. One Android snoozed with
+     * it, in the same group of the same app, is hidden from now on as the shield's own: counted
+     * on the stand-in, and brought back with the rest. Anything else snoozed is the owner's.
+     */
+    private fun adoptSnoozedAlong(sbn: StatusBarNotification) {
+        val pkg = sbn.packageName ?: return
+        if (pkg == packageName || !sbn.isGroup) return
+        if (sbn.groupKey !in hiddenTrails[pkg]?.groups.orEmpty()) return
+        if (sbn.key in hiddenNotificationKeys[pkg].orEmpty() || sbn.key in hiddenSummaryKeys[pkg].orEmpty()) return
+        keepTrack(sbn)
+        updateStandIn(pkg)
     }
 
     private fun handleNotificationRemoved(sbn: StatusBarNotification) {
@@ -406,7 +448,8 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
                 cancelStandIn(pkg)
                 cachedPendingIntents.remove(pkg)
                 hiddenNotificationKeys.remove(pkg)
-                unsnooze(pkg, hiddenSummaryKeys.remove(pkg).orEmpty())
+                val summaries = hiddenSummaryKeys.remove(pkg).orEmpty()
+                unsnooze(pkg, summaries + trailingSnoozes(pkg, summaries))
             } else {
                 // Update stand-in notification with the remaining count
                 postReplacement(pkg, remainingCount)
@@ -519,10 +562,12 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     /**
      * Whether [sbn] is a message, for its stand-in's wording: its style, its category, or Android
      * counting it as a conversation says so. A notification Android's own App lock has already
-     * redacted for a listener ("New message", no style) still has the last two.
+     * redacted for a listener ("New message", no style) still has the last two. A call, missed or
+     * not, never is, even styled as a conversation (Google's Phone app words missed calls so).
      */
     private fun isMessage(sbn: StatusBarNotification): Boolean {
         val notif = sbn.notification
+        if (notif.category == Notification.CATEGORY_CALL || notif.category == Notification.CATEGORY_MISSED_CALL) return false
         if (notif.category == Notification.CATEGORY_MESSAGE) return true
         if (templatesOf(notif).any { it in MESSAGE_TEMPLATES }) return true
         val ranking = Ranking()
@@ -533,17 +578,8 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
     /** Snoozes [sbn] and keeps track of it; false if it couldn't be snoozed. The caller updates the stand-in. */
     private fun hide(sbn: StatusBarNotification): Boolean {
         val pkg = sbn.packageName
-        val isSummary = sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0
-        // Cache deep link intent before snoozing: child notifications take precedence over group summaries
-        sbn.notification.contentIntent?.let { intent ->
-            val pkgIntents = cachedPendingIntents.computeIfAbsent(pkg) { ConcurrentHashMap() }
-            pkgIntents[sbn.key] = CachedPendingIntent(intent, sbn.postTime, isSummary)
-        }
-
-        val keys = if (isSummary) hiddenSummaryKeys else hiddenNotificationKeys
-        keys.getOrPut(pkg) { HashSet() }.add(sbn.key)
-        val messages = hiddenMessageKeys.getOrPut(pkg) { HashSet() }
-        if (!isSummary && isMessage(sbn)) messages += sbn.key else messages -= sbn.key
+        // Before snoozing: what Android snoozes along with it is told of as it's done.
+        keepTrack(sbn)
 
         try {
             // Non-destructive snooze: snooze notification for 24h so user messages and OTPs are preserved
@@ -560,6 +596,43 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
         // younger one runs out too.
         if (!snoozeAlarmSet) scheduleSnoozeAlarm()
         return true
+    }
+
+    /**
+     * Counts [sbn] as hidden: under its app's hidden notifications or summaries, as a message or
+     * not, with its link kept for a stand-in tap (a child's comes before a summary's), and on the
+     * app's [hiddenTrails].
+     */
+    private fun keepTrack(sbn: StatusBarNotification) {
+        val pkg = sbn.packageName
+        val isSummary = sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0
+        sbn.notification.contentIntent?.let { intent ->
+            cachedPendingIntents.computeIfAbsent(pkg) { ConcurrentHashMap() }[sbn.key] =
+                CachedPendingIntent(intent, sbn.postTime, isSummary)
+        }
+        val keys = if (isSummary) hiddenSummaryKeys else hiddenNotificationKeys
+        keys.getOrPut(pkg) { HashSet() }.add(sbn.key)
+        val messages = hiddenMessageKeys.getOrPut(pkg) { HashSet() }
+        if (!isSummary && isMessage(sbn)) messages += sbn.key else messages -= sbn.key
+        val trail = hiddenTrails.getOrPut(pkg) { HiddenTrail() }
+        trail.keys += sbn.key
+        if (sbn.isGroup) trail.groups += sbn.groupKey
+    }
+
+    /**
+     * What else of [pkg]'s is still snoozed on its [hiddenTrails] (one of its keys or groups),
+     * besides [known], to come back with them. The trail is done with. Only looked up (the whole
+     * snoozed list) when the app has one; [snoozed] is a list already fetched.
+     */
+    private fun trailingSnoozes(
+        pkg: String,
+        known: Collection<String>,
+        snoozed: List<StatusBarNotification>? = null
+    ): List<String> {
+        val trail = hiddenTrails.remove(pkg) ?: return emptyList()
+        if (trail.keys.all { it in known } && trail.groups.isEmpty()) return emptyList()
+        val list = snoozed ?: runCatching { snoozedNotifications?.toList() }.getOrNull() ?: return emptyList()
+        return stillSnoozedOnTrail(pkg, trail.keys, trail.groups, known, list)
     }
 
     /**
@@ -602,26 +675,29 @@ class BioKeyNotificationShieldService : NotificationListenerService() {
 
     private fun restoreAll() {
         if (!connected) return
-        val pkgs = (hiddenNotificationKeys.keys + hiddenSummaryKeys.keys + cachedPendingIntents.keys).toSet()
-        for (pkg in pkgs) {
-            restoreNotificationsForPackage(pkg)
-        }
+        val pkgs = (hiddenNotificationKeys.keys + hiddenSummaryKeys.keys + cachedPendingIntents.keys + hiddenTrails.keys).toSet()
+        restoreEach(pkgs)
     }
 
     private fun restorePackages(packages: Collection<String>) {
         if (!connected) return
-        for (pkg in packages) {
-            restoreNotificationsForPackage(pkg)
-        }
+        restoreEach(packages)
     }
 
-    private fun restoreNotificationsForPackage(pkg: String) {
+    /** One look at the snoozed list for them all, where any has a trail to follow. */
+    private fun restoreEach(packages: Collection<String>) {
+        val snoozed = if (packages.any { it in hiddenTrails }) runCatching { snoozedNotifications?.toList() }.getOrNull() else null
+        for (pkg in packages) restoreNotificationsForPackage(pkg, snoozed)
+    }
+
+    private fun restoreNotificationsForPackage(pkg: String, snoozed: List<StatusBarNotification>? = null) {
         // Dismiss stand-in notification immediately
         cancelStandIn(pkg)
         cachedPendingIntents.remove(pkg)
         val childKeys = hiddenNotificationKeys.remove(pkg).orEmpty()
         val summaryKeys = hiddenSummaryKeys.remove(pkg).orEmpty()
-        unsnooze(pkg, childKeys + summaryKeys)
+        val keys = childKeys + summaryKeys
+        unsnooze(pkg, keys + trailingSnoozes(pkg, keys, snoozed))
     }
 
     /**

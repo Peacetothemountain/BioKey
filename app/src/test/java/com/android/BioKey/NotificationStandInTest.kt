@@ -10,7 +10,9 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.os.Looper
+import android.os.Process
 import android.service.notification.NotificationListenerService
+import android.service.notification.StatusBarNotification
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.security.LockStateTracker
@@ -156,6 +158,74 @@ class NotificationStandInTest {
         // A call it redacted keeps its category, and shows: the stand-in doesn't count it.
         post(chat, builder().setContentTitle("Chat").setContentText("New notification").setCategory(Notification.CATEGORY_CALL).build())
         assertEquals("New message", standIn(chat)?.text())
+    }
+
+    @Test
+    fun missedCallsAreNotificationsEvenStyledAsMessages() {
+        // Google's Phone app posts missed calls in a messaging style.
+        val missed = { builder().setCategory(Notification.CATEGORY_MISSED_CALL).setStyle(
+            Notification.MessagingStyle(Person.Builder().setName("Me").build())
+                .addMessage("Missed call", 1L, Person.Builder().setName("Ann").build())
+        ).build() }
+        post(chat, missed())
+        assertEquals("New notification", standIn(chat)?.text())
+        post(chat, missed())
+        assertEquals("2 new notifications", standIn(chat)?.text())
+    }
+
+    /** A notification [pkg] has posted in [group], whose posting the shield never hears of. */
+    private fun unseen(pkg: String, group: String, summary: Boolean = false): StatusBarNotification {
+        val notification = builder().setGroup(group).setGroupSummary(summary).setContentTitle("Missed call").build()
+        val key = shadowOf(shield).addActiveNotification(pkg, ++nextId, notification)
+        return shield.activeNotifications.single { it.key == key }
+    }
+
+    @Test
+    fun notificationsAndroidSnoozesWithAHiddenSummaryAreCountedAndComeBackWithIt() {
+        // The summary is hidden: Android snoozes the group's children with it, and only says
+        // they were snoozed.
+        val summaryKey = post(chat, builder().setGroup("missed").setGroupSummary(true).setContentTitle("2 missed calls").build())
+        assertEquals("New notification", standIn(chat)?.text())
+        val first = unseen(chat, "missed")
+        val second = unseen(chat, "missed")
+        shield.onNotificationRemoved(first, null, NotificationListenerService.REASON_SNOOZED)
+        shield.onNotificationRemoved(second, null, NotificationListenerService.REASON_SNOOZED)
+        assertEquals("2 new notifications", standIn(chat)?.text())
+        // The owner's own snooze, of another group (shown while the app was unlocked, say): not the shield's.
+        shield.onNotificationRemoved(unseen(chat, "other"), null, NotificationListenerService.REASON_SNOOZED)
+        assertEquals("2 new notifications", standIn(chat)?.text())
+        // Unlocked: all three are brought back, and the hold on sounds lasts until all three are.
+        LockStateTracker.onAppUnlocked(chat)
+        idle()
+        assertNull(standIn(chat))
+        for (key in listOf(summaryKey, first.key)) {
+            shield.onNotificationPosted(shield.activeNotifications.single { it.key == key })
+            assertEquals(NotificationListenerService.HINT_HOST_DISABLE_NOTIFICATION_EFFECTS, shield.currentListenerHints)
+        }
+        shield.onNotificationPosted(second)
+        assertEquals(0, shield.currentListenerHints)
+    }
+
+    @Test
+    fun whatIsStillSnoozedOnAnAppsTrailComesBack() {
+        val user = Process.myUserHandle()
+        fun sbn(pkg: String, id: Int, group: String?) = StatusBarNotification(
+            pkg, pkg, id, null, Process.myUid(), 0, 0,
+            builder().setGroup(group).build(), user, 0L
+        )
+        val known = sbn(chat, 1, "missed")
+        val snoozedWithIt = sbn(chat, 2, "missed")
+        val postedAgain = sbn(chat, 3, null)
+        val ownersOwn = sbn(chat, 4, "other")
+        val anotherApp = sbn(bank, 5, "missed")
+        val found = BioKeyNotificationShieldService.stillSnoozedOnTrail(
+            chat,
+            trailKeys = setOf(known.key, postedAgain.key),
+            trailGroups = setOf(known.groupKey),
+            known = listOf(known.key),
+            snoozed = listOf(known, snoozedWithIt, postedAgain, ownersOwn, anotherApp)
+        )
+        assertEquals(listOf(snoozedWithIt.key, postedAgain.key), found)
     }
 
     @Test
