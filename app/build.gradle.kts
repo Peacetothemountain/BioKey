@@ -35,8 +35,8 @@ android {
         applicationId = "com.nbdesigns.biokey"
         minSdk = 31
         targetSdk = 37
-        versionCode = 4
-        versionName = "1.0.2"
+        versionCode = 5
+        versionName = "1.0.3"
     }
 
     signingConfigs {
@@ -61,6 +61,10 @@ android {
             buildConfigField("boolean", "SELF_PROTECTION", "$selfProtectionInRelease")
             isMinifyEnabled = true
             isShrinkResources = true
+            // Symbol tables for native code in the bundle, so Play can read native crash reports.
+            // AndroidX's graphics library comes stripped, so for it there are none to take: Play
+            // gets a zip of the libraries themselves (see README, Release builds).
+            ndk { debugSymbolLevel = "FULL" }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

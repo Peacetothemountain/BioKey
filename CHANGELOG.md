@@ -2,7 +2,7 @@
 
 BioKey's releases, newest first. The version is the `versionName` in `app/build.gradle.kts`.
 
-## Unreleased
+## 1.0.3 (30 October 2026)
 
 - **What locking does:** the first time you lock an app, a sheet says what the lock doesn't cover
   (notifications without the shield, its widgets, assistants and apps with access) and, for a

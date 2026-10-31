@@ -205,7 +205,7 @@ On Android 13 and later, Android can block an APK installed from a file from tur
 
 ### Release builds
 
-Release builds use R8 (minify and resource shrinking). `Log.v/d/i/w` calls are stripped, since their messages can name locked apps; `Log.e` stays for diagnosis, so its messages must not name an app. Keep `app/build/outputs/mapping/release/mapping.txt` from every release you publish: it's the only way to read that build's stack traces.
+Release builds use R8 (minify and resource shrinking). `Log.v/d/i/w` calls are stripped, since their messages can name locked apps; `Log.e` stays for diagnosis, so its messages must not name an app. Keep `app/build/outputs/mapping/release/mapping.txt` from every release you publish: it's the only way to read that build's stack traces. (The bundle carries it to Play too.) BioKey's only native code is AndroidX's graphics library, which comes stripped, so the build has no native symbol tables of its own to add; for Play's "debug symbols" upload, zip the libraries from `app/build/intermediates/merged_native_libs/release/mergeReleaseNativeLibs/out/lib/` (one folder per ABI) as `native-debug-symbols.zip`.
 
 Lint errors fail `:app:lintDebug`, which CI runs; warnings don't. The quick check inside `assembleRelease` fails the release build on the most serious ones: API calls newer than Android 12 without a version check, and components or intents other apps could reach.
 
