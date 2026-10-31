@@ -137,6 +137,10 @@ class SecurityVault private constructor(private val context: Context) {
         /** The next [getInstance] reads storage afresh, as after a restart. */
         @VisibleForTesting
         internal fun resetForTests() {
+            // Start-up's work asks for the vault as it goes (ProtectionGaps.checkStorageCleared):
+            // still running, it would make one of its own after this reset, from whatever storage
+            // the test hasn't written yet, and that one's first write would wipe the test's.
+            com.android.BioKey.BioKeyApplication.awaitInitForTests()
             // Its writes still queued would otherwise land in the next test's storage.
             INSTANCE?.awaitPendingWrites()
             INSTANCE = null
