@@ -72,10 +72,18 @@ object BiometricEnrollment {
         runCatching { check(context.applicationContext) }
     }
 
-    /** Looks off the main thread (the Keystore is slow), and records what changed. */
+    /**
+     * Looks off the main thread (the Keystore is slow), and records what changed. The screen lock
+     * is looked at too ([ScreenLockWatch]): removing it takes every face and fingerprint with it.
+     */
     fun checkSoon(context: Context) {
         val app = context.applicationContext
-        worker.execute { if (backgroundChecks) runCatching { check(app) } }
+        worker.execute {
+            if (backgroundChecks) {
+                runCatching { check(app) }
+                runCatching { ScreenLockWatch.check(app) }
+            }
+        }
     }
 
     /** What changed since last time, recorded in security activity. */

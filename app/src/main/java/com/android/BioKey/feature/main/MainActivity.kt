@@ -41,6 +41,7 @@ import com.android.BioKey.core.security.NewAppSuggestions
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
+import com.android.BioKey.core.security.ScreenLockWatch
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
@@ -392,6 +393,16 @@ class MainActivity : ComponentActivity() {
                 onAuthenticated()
             },
             onError = { code, message ->
+                // The phone's screen lock was removed: nothing can check, and the owner isn't
+                // locked out of BioKey, which says so on home (recorded, [ScreenLockWatch]).
+                val noScreenLock = code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL || code == SecurityEngine.ERROR_NO_BIOMETRICS
+                if (noScreenLock && ScreenLockWatch.letThroughWithoutScreenLock(this, packageName)) {
+                    LockStateTracker.onOwnAppUnlocked()
+                    isAuthenticated = true
+                    lockReason = null
+                    onAuthenticated()
+                    return@showBiometricPrompt
+                }
                 if (code == SecurityEngine.ERROR_LOCKOUT_PERMANENT) {
                     isPermanentLockout = true
                     lockMessage = getString(R.string.prompt_lockout_permanent)

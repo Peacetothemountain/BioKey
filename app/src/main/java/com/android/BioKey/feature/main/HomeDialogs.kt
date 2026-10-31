@@ -64,6 +64,8 @@ import com.android.BioKey.ui.security.ProtectDialogWindow
 import com.android.BioKey.ui.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.scaledWithText
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Which of home's sheets and dialogs is open. Each is kept as it was on its own: across a rotation
@@ -79,7 +81,9 @@ internal class HomeOverlays(
     showEditProfile: MutableState<Boolean>,
     showRelock: MutableState<Boolean>,
     showActivity: MutableState<Boolean>,
-    showUnlocked: MutableState<Boolean>
+    showUnlocked: MutableState<Boolean>,
+    explainPackage: MutableState<String?>,
+    explainJustLocked: MutableState<Boolean>
 ) {
     var showProtectionSheet by showProtectionSheet
     /** The app whose options are open. */
@@ -93,6 +97,10 @@ internal class HomeOverlays(
     /** Review. */
     var showActivity by showActivity
     var showUnlocked by showUnlocked
+    /** The app whose "what locking does" sheet is open ([LockExplainSheet]). */
+    var explainPackage by explainPackage
+    /** ... brought up by its lock being switched on, rather than opened from its options. */
+    var explainJustLocked by explainJustLocked
 }
 
 @Composable
@@ -106,10 +114,12 @@ internal fun rememberHomeOverlays(): HomeOverlays {
     val showRelock = rememberSaveable { mutableStateOf(false) }
     val showActivity = rememberSaveable { mutableStateOf(false) }
     val showUnlocked = rememberSaveable { mutableStateOf(false) }
+    val explainPackage = rememberSaveable { mutableStateOf<String?>(null) }
+    val explainJustLocked = rememberSaveable { mutableStateOf(false) }
     return remember {
         HomeOverlays(
             showProtectionSheet, optionsForPackage, showAddApps, showNewProfile, newProfileForPackage,
-            showEditProfile, showRelock, showActivity, showUnlocked
+            showEditProfile, showRelock, showActivity, showUnlocked, explainPackage, explainJustLocked
         )
     }
 }
@@ -145,7 +155,9 @@ internal fun HomeDialogs(
     /** Notification access, explained first: for "Hide notification content" without it. */
     onAllowNotifications: () -> Unit,
     onPauseRequested: () -> Unit,
-    onFilterChange: (String) -> Unit
+    onFilterChange: (String) -> Unit,
+    /** An app's lock just switched on by the owner, other than by its switch: what locking does may be explained. */
+    onLockedByHand: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val res = LocalResources.current
@@ -214,8 +226,11 @@ internal fun HomeDialogs(
                 onMoveToProfile = move@{ profileId ->
                     if (profileId == null) return@move removeFromProfile()
                     val wasLocked = lockedInVault(pkg)
+                    val wasOn = isOn(pkg)
                     val delayBefore = vault.getTimeoutMode(pkg).openFor
                     vault.moveAppToProfile(pkg, profileId)
+                    // Choosing a profile switched its lock on.
+                    if (!wasOn) onLockedByHand(pkg)
                     when {
                         // Into a profile that's off: no longer locked.
                         wasLocked && !lockedInVault(pkg) ->
@@ -230,6 +245,10 @@ internal fun HomeDialogs(
                     overlays.newProfileForPackage = pkg
                     overlays.optionsForPackage = null
                     overlays.showNewProfile = true
+                },
+                onExplain = {
+                    overlays.explainJustLocked = false
+                    overlays.explainPackage = pkg
                 },
                 onDismiss = { overlays.optionsForPackage = null }
             )
@@ -393,6 +412,33 @@ internal fun HomeDialogs(
             },
             onDismiss = { overlays.showAddApps = false }
         )
+    }
+
+    // Last, so it's over an app's options when opened from them.
+    overlays.explainPackage?.let { pkg ->
+        val app = installedApps.firstOrNull { it.packageName == pkg }
+        val close = { overlays.explainPackage = null }
+        var explanation by remember(pkg) { mutableStateOf<LockExplainer.Explanation?>(null) }
+        LaunchedEffect(pkg, app != null) {
+            // Gone meanwhile (uninstalled): nothing to say.
+            if (app == null) return@LaunchedEffect close()
+            // Worked out first (Android's services, the package manager), then shown as it stays.
+            explanation = withContext(Dispatchers.IO) { LockExplainer.explain(context, app, installedApps) }
+            if (overlays.explainJustLocked) LockExplainer.markExplained(context, pkg)
+        }
+        val shown = explanation
+        if (app != null && shown != null) {
+            LockExplainSheet(
+                app = app,
+                explanation = shown,
+                justLocked = overlays.explainJustLocked,
+                onDontShowAgain = {
+                    LockExplainer.switchOff(context)
+                    close()
+                },
+                onDismiss = close
+            )
+        }
     }
 }
 

@@ -108,4 +108,35 @@ class SettingsLinkPinningTest {
         IntentNavigationHelper.pinToSystemHandler(context, intent)
         assertNull(intent.component)
     }
+
+    @Test
+    fun androidsAppLockIsOfferedOnlyWhereItsPageAnswers() {
+        assertFalse(IntentNavigationHelper.hasAndroidAppLock(context))
+        shadowOf(context.packageManager).addResolveInfoForIntent(
+            Intent("android.settings.APP_LOCK_SETTINGS"),
+            handler("com.android.settings", "com.android.settings.safetycenter.ui.applock.AppLockAuthenticationActivity", system = true)
+        )
+        assertTrue(IntentNavigationHelper.hasAndroidAppLock(context))
+        IntentNavigationHelper.openAndroidAppLock(context)
+        assertEquals("com.android.settings", nextStarted().component?.packageName)
+    }
+
+    @Test
+    fun addingAFingerprintAsksForAStrongOne() {
+        val enroll = Intent(Settings.ACTION_BIOMETRIC_ENROLL)
+        shadowOf(context.packageManager).addResolveInfoForIntent(enroll, handler("com.android.settings", "com.android.settings.biometrics.BiometricEnrollActivity", system = true))
+        IntentNavigationHelper.openBiometricEnroll(context)
+        val started = nextStarted()
+        assertEquals(Settings.ACTION_BIOMETRIC_ENROLL, started.action)
+        assertEquals(
+            android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG,
+            started.getIntExtra(Settings.EXTRA_BIOMETRIC_AUTHENTICATORS_ALLOWED, 0)
+        )
+    }
+
+    @Test
+    fun privateSpaceIsOfferedOnlyWhereItsPageAnswers() {
+        // Pixel's Settings doesn't let other apps open it: nothing answers, nothing is offered.
+        assertFalse(IntentNavigationHelper.hasPrivateSpacePage(context))
+    }
 }

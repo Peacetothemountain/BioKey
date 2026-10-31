@@ -563,7 +563,8 @@ object UnlockAttempts {
         val res = app.resources
         // Everything not yet reviewed, not just what's new: a later miss doesn't hide an earlier gap.
         val offs = gaps.filter {
-            it.kind == ProtectionGaps.Kind.SWITCHED_OFF || it.kind == ProtectionGaps.Kind.FORCE_STOPPED || it.kind == ProtectionGaps.Kind.DATA_CLEARED
+            it.kind == ProtectionGaps.Kind.SWITCHED_OFF || it.kind == ProtectionGaps.Kind.FORCE_STOPPED || it.kind == ProtectionGaps.Kind.DATA_CLEARED ||
+                it.kind == ProtectionGaps.Kind.NO_SCREEN_LOCK
         }
         val title = when {
             gaps.isEmpty() -> res.getQuantityString(R.plurals.attempts_title, attempts.size, attempts.size)

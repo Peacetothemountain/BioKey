@@ -320,6 +320,8 @@ object LockStateTracker {
         timeoutModeOf: (String) -> LockTimeoutMode,
         continuesHop: (String) -> Boolean = { false }
     ) {
+        // What the "Lock this app" tile locks.
+        FrontApp.onFront(foregroundPackage)
         if (foregroundPackage != OWN_PACKAGE) {
             val front = PasswordManager.aliasesOf(foregroundPackage)
             displacedCovers.keys.removeAll { it !in front }

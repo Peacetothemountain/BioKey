@@ -283,9 +283,10 @@ internal fun UnlockedNowCard(
     }
 }
 
-/** Times app locking was off, as against changes that happened at one moment. */
+/** Times app locking was off (or opened apps without a check), as against changes that happened at one moment. */
 internal val ProtectionGaps.Gap.isOff get() =
-    kind == ProtectionGaps.Kind.SWITCHED_OFF || kind == ProtectionGaps.Kind.FORCE_STOPPED || kind == ProtectionGaps.Kind.DATA_CLEARED
+    kind == ProtectionGaps.Kind.SWITCHED_OFF || kind == ProtectionGaps.Kind.FORCE_STOPPED || kind == ProtectionGaps.Kind.DATA_CLEARED ||
+        kind == ProtectionGaps.Kind.NO_SCREEN_LOCK
 
 internal val ProtectionGaps.Gap.isBiometricChange get() = kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED || kind == ProtectionGaps.Kind.BIOMETRICS_REMOVED
 
@@ -318,6 +319,11 @@ internal fun gapLine(context: Context, gap: ProtectionGaps.Gap): String {
                 )
             }
         }
+    }
+    if (gap.kind == ProtectionGaps.Kind.NO_SCREEN_LOCK) {
+        // Still without one (or only just noticed): since when; once it's back, from and to.
+        return if (gap.to - gap.from < 60_000L) context.getString(R.string.card_gap_no_screen_lock_since, attemptTime(context, gap.from))
+        else context.getString(R.string.card_gap_no_screen_lock, timeRange(context, gap))
     }
     if (gap.kind == ProtectionGaps.Kind.DATA_CLEARED) {
         return if (gap.unknownStart) context.getString(R.string.card_gap_storage_cleared_unknown, attemptTime(context, gap.to))
@@ -524,13 +530,17 @@ internal fun SecurityActivityDialog(
                                     Spacer(Modifier.height(4.dp))
                                     Text(stringResource(R.string.card_gap_reset_note), style = MaterialTheme.typography.bodySmall, color = note)
                                 } else {
-                                    Text(stringResource(R.string.card_gap_hint), style = MaterialTheme.typography.bodyMedium, color = note)
+                                    Text(
+                                        stringResource(if (gap.kind == ProtectionGaps.Kind.NO_SCREEN_LOCK) R.string.card_gap_no_screen_lock_hint else R.string.card_gap_hint),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = note
+                                    )
                                 }
                             }
                         }
                     }
-                    // What switches it off: for those, not for a reset (which says so itself).
-                    if (offs.any { it.kind != ProtectionGaps.Kind.DATA_CLEARED }) {
+                    // What switches it off: for those, not for a reset or a missing screen lock (which say so themselves).
+                    if (offs.any { it.kind == ProtectionGaps.Kind.SWITCHED_OFF || it.kind == ProtectionGaps.Kind.FORCE_STOPPED }) {
                         Text(
                             stringResource(R.string.card_gaps_note),
                             style = MaterialTheme.typography.bodySmall,

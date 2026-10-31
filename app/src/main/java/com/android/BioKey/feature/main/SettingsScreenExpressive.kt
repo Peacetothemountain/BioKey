@@ -28,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AddModerator
 import androidx.compose.material.icons.filled.AdminPanelSettings
+import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Close
@@ -45,6 +46,7 @@ import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -197,6 +199,10 @@ fun SettingsScreenExpressive(
     /** An accessibility shortcut switches BioKey's service off without passing any screen self-protection guards. */
     var shortcutAssigned by remember { mutableStateOf(false) }
     var showRelockSheet by remember { mutableStateOf(false) }
+    /** Android 17's own App lock is on this phone (its settings page answers). */
+    var androidAppLock by remember { mutableStateOf(false) }
+    /** Private space's page can be opened from here (Android 15+, where Settings allows it). */
+    var privateSpace by remember { mutableStateOf(false) }
     val activity = LocalActivity.current as ComponentActivity
     val notificationAccessTrip = remember(activity) { ViewModelProvider(activity)[NotificationAccessTrip::class.java] }
     val disclosures = rememberDisclosureGate()
@@ -230,6 +236,8 @@ fun SettingsScreenExpressive(
                 strongBiometric = SecurityEngine.hasStrongBiometric(context)
                 notifListenerActive = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
                 shortcutAssigned = SelfProtectionDetector.isShortcutAssigned(context)
+                androidAppLock = IntentNavigationHelper.hasAndroidAppLock(context)
+                privateSpace = IntentNavigationHelper.hasPrivateSpacePage(context)
             }
             afterNotificationAccessTrip()
         }
@@ -337,6 +345,26 @@ fun SettingsScreenExpressive(
                 onClick = if (notifications.allowed) {
                     { IntentNavigationHelper.openChannelSettings(context, ProtectionAlerts.CHANNEL_ID); Unit }
                 } else notifications::requestOrOpenSettings,
+                goes = Goes.OUT
+            )
+        )
+        // Android 17's own App lock, where the phone has it: what it is beside BioKey, and its page.
+        if (androidAppLock) add(
+            SettingItem(
+                icon = Icons.Default.Android,
+                title = stringResource(R.string.settings_android_app_lock_title),
+                subtitle = stringResource(R.string.settings_android_app_lock_summary),
+                onClick = { IntentNavigationHelper.openAndroidAppLock(context); Unit },
+                goes = Goes.OUT
+            )
+        )
+        // A lock covers an app; it doesn't hide its icon. Private space does, where it can be opened from here.
+        if (privateSpace) add(
+            SettingItem(
+                icon = Icons.Default.VisibilityOff,
+                title = stringResource(R.string.settings_private_space_title),
+                subtitle = stringResource(R.string.settings_private_space_summary),
+                onClick = { IntentNavigationHelper.openPrivateSpace(context); Unit },
                 goes = Goes.OUT
             )
         )

@@ -472,6 +472,8 @@ class SecurityVault private constructor(private val context: Context) {
         if (state.has("unlockAttemptAlerts") && state.optBoolean("unlockAttemptAlertsChosen", true)) UnlockAttempts.setEnabled(context, state.optBoolean("unlockAttemptAlerts"), keepRecords = true)
         if (state.has("screenLockUnlocks")) UnlockAttempts.setScreenLockUnlocks(context, state.optBoolean("screenLockUnlocks"))
         if (state.has("newAppOffers")) NewAppSuggestions.setEnabled(context, state.optBoolean("newAppOffers"))
+        // The backup says afresh what's locked: apps uninstalled before it aren't locked again on a reinstall.
+        ReinstallMemory.forget(context)
         DiagnosticLog.log("Settings restored from a backup")
         // Last, so a log switched off by the restore isn't left holding that line.
         if (state.has("diagnosticLog") && state.optBoolean("diagnosticLog") != DiagnosticLog.isEnabled()) {

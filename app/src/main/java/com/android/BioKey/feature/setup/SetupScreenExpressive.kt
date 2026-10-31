@@ -63,6 +63,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.android.BioKey.R
 import com.android.BioKey.core.security.AdvancedProtection
 import com.android.BioKey.core.security.ProtectionEngine
+import com.android.BioKey.core.security.UnlockMethods
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.ui.brand.BioKeyLogo
@@ -118,6 +119,8 @@ fun SetupScreenExpressive(
     var overlay by remember { mutableStateOf(false) }
     var restrictedSettingsBlocked by remember { mutableStateOf(false) }
     var hasAutoPrompted by remember { mutableStateOf(false) }
+    /** Android's words for the check, naming what's set up ("Use your fingerprint or screen lock…"); null for BioKey's own. */
+    var howItOpens by remember { mutableStateOf<String?>(null) }
     val ready = a11yActive || (compatibilityMode && usageAccess && overlay)
 
     // Advance by itself once BioKey can see apps; don't loop if the user cancels the prompt.
@@ -128,6 +131,7 @@ fun SetupScreenExpressive(
         compatibilityMode = !a11yActive && AdvancedProtection.blocksBioKey(context)
         usageAccess = ProtectionEngine.hasUsageAccess(context)
         overlay = ProtectionEngine.canDrawOverlays(context)
+        howItOpens = UnlockMethods.promptMessage(context)
         restrictedSettingsBlocked = !a11yActive && !compatibilityMode && RestrictedSettingsHelper.isRestrictedSettingsEnforced(context)
         val nowReady = a11yActive || (compatibilityMode && usageAccess && overlay)
         if (nowReady && !hasAutoPrompted && currentAuthError == null) {
@@ -225,7 +229,8 @@ fun SetupScreenExpressive(
         add(
             Step(
                 Icons.Default.Fingerprint, stringResource(R.string.setup_confirm_title),
-                stringResource(R.string.setup_confirm_text),
+                // Without a screen lock yet, Android's words would name nothing worth reading.
+                howItOpens?.takeIf { !needsScreenLock } ?: stringResource(R.string.setup_confirm_text),
                 done = false,
                 opensExternally = false,
                 onClick = if (ready && !isAuthenticating) finish else null

@@ -20,6 +20,7 @@ import com.android.BioKey.core.security.NewAppSuggestions
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
+import com.android.BioKey.core.security.ReinstallMemory
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.feature.lock.AppInfoCache
@@ -80,6 +81,8 @@ class BioKeyApplication : Application() {
         )
         // Before the vault first loads: the lock and the notification shield follow its changes.
         SecurityVault.addListener(VaultReactions)
+        // Locked apps' certificates, noted while they're installed: a reinstall is told by them.
+        SecurityVault.addListener(ReinstallMemory.VaultListener)
         ScreenReceiver.register(this)
 
         if (isUserUnlocked()) {
@@ -176,7 +179,10 @@ class BioKeyApplication : Application() {
                             val vault = SecurityVault.getInstance(this@BioKeyApplication)
                             when (intent.action) {
                                 Intent.ACTION_PACKAGE_ADDED -> {
-                                    if (!replacing && vault.isAutoSortProfilesEnabled()) {
+                                    // A locked app uninstalled and back: locked again (same developer)
+                                    // or offered (another), before auto-sort and the offer have their turn.
+                                    val again = if (replacing) ReinstallMemory.Outcome.NOTHING else ReinstallMemory.onInstalled(this@BioKeyApplication, pkg)
+                                    if (!replacing && again != ReinstallMemory.Outcome.LOCKED_AGAIN && vault.isAutoSortProfilesEnabled()) {
                                         val pm = packageManager
                                         val info = runCatching { pm.getApplicationInfo(pkg, 0) }.getOrNull()
                                         val label = info?.let { runCatching { pm.getApplicationLabel(it).toString() }.getOrNull() } ?: pkg
@@ -186,13 +192,16 @@ class BioKeyApplication : Application() {
                                     if (!replacing) {
                                         val pm = packageManager
                                         val label = runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }.getOrDefault(pkg)
-                                        NewAppSuggestions.onInstalled(this@BioKeyApplication, pkg, label)
+                                        NewAppSuggestions.onInstalled(
+                                            this@BioKeyApplication, pkg, label, lockedBefore = again == ReinstallMemory.Outcome.OFFER
+                                        )
                                     }
                                     if (pkg in vault.getLockedPackages()) {
                                         AppInfoCache.preWarm(this@BioKeyApplication, listOf(pkg))
                                     }
                                 }
                                 Intent.ACTION_PACKAGE_REPLACED -> {
+                                    ReinstallMemory.onReplaced(this@BioKeyApplication, pkg)
                                     if (pkg in vault.getLockedPackages()) {
                                         AppInfoCache.preWarm(this@BioKeyApplication, listOf(pkg))
                                     }
@@ -210,6 +219,8 @@ class BioKeyApplication : Application() {
                                                 DiagnosticLog.log("Kept the lock on $pkg: its data is still on the phone")
                                             }
                                         } else {
+                                            // Before it's dropped: its profile is read now.
+                                            ReinstallMemory.onUninstalled(this@BioKeyApplication, pkg)
                                             vault.onPackageUninstalled(pkg)
                                         }
                                     }

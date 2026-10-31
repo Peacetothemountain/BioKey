@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Photo
@@ -377,7 +378,9 @@ internal fun AppOptionsSheet(
     onMoveToProfile: (String?) -> Unit,
     onRemoveFromProfile: () -> Unit,
     onNewProfile: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** Opens what locking this app does ([LockExplainSheet]): offered while its lock is on. */
+    onExplain: (() -> Unit)? = null
 ) {
     // Open all the way at once: dragged open from half-way, a sheet about as tall as the screen
     // (an app in no profile) can stay mid-settle, its rows' taps taken to stop it.
@@ -413,15 +416,29 @@ internal fun AppOptionsSheet(
                         )
                     }
                     Spacer(Modifier.height(20.dp))
-                    Group(count = 1) {
-                        // While its profile is off the switch shows what happens (off) and waits:
-                        // the app's own choice comes back with the profile.
-                        val offProfile = currentProfile?.takeIf { !it.enabled }
-                        val locked = isLocked && offProfile == null
+                    // While its profile is off the switch shows what happens (off) and waits:
+                    // the app's own choice comes back with the profile.
+                    val offProfile = currentProfile?.takeIf { !it.enabled }
+                    val locked = isLocked && offProfile == null
+                    // What a lock does and doesn't cover, to read again, while it's locked.
+                    val explain = onExplain?.takeIf { locked && !isHomeScreen }
+                    val rows = if (explain != null) 2 else 1
+                    Group(count = rows) { row ->
+                        if (row == 1 && explain != null) {
+                            GroupRow(
+                                index = 1,
+                                count = rows,
+                                title = stringResource(R.string.explain_row_title),
+                                subtitle = stringResource(R.string.explain_row_text),
+                                icon = Icons.Default.Info,
+                                onClick = explain
+                            )
+                            return@Group
+                        }
                         val canChange = offProfile == null && (!isHomeScreen || isLocked)
                         GroupRow(
                             index = 0,
-                            count = 1,
+                            count = rows,
                             title = stringResource(R.string.profile_lock_app),
                             subtitle = when {
                                 isHomeScreen -> stringResource(R.string.profile_lock_app_home_screen)
