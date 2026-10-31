@@ -34,10 +34,11 @@ class SettingsLinkPinningTest {
     @Before
     fun reset() = LockStateTracker.lockAll()
 
-    private fun handler(pkg: String, cls: String, system: Boolean) = ResolveInfo().apply {
+    private fun handler(pkg: String, cls: String, system: Boolean, exported: Boolean = true) = ResolveInfo().apply {
         activityInfo = ActivityInfo().apply {
             packageName = pkg
             name = cls
+            this.exported = exported
             applicationInfo = ApplicationInfo().apply {
                 packageName = pkg
                 if (system) flags = ApplicationInfo.FLAG_SYSTEM
@@ -132,6 +133,19 @@ class SettingsLinkPinningTest {
             android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG,
             started.getIntExtra(Settings.EXTRA_BIOMETRIC_AUTHENTICATORS_ALLOWED, 0)
         )
+    }
+
+    @Test
+    fun aPageSettingsKeepsToItselfIsNeitherOfferedNorOpened() {
+        // Pixel's private space page: listed by the package manager, but not exported, so opening
+        // it fails with "Permission Denial". It isn't offered, and the cascade goes on past it.
+        val appLock = Intent("android.settings.APP_LOCK_SETTINGS")
+        val pm = shadowOf(context.packageManager)
+        pm.addResolveInfoForIntent(appLock, handler("com.android.settings", "com.android.settings.Hidden", system = true, exported = false))
+        assertFalse(IntentNavigationHelper.hasAndroidAppLock(context))
+        pm.addResolveInfoForIntent(Intent(Settings.ACTION_SETTINGS), handler("com.android.settings", "com.android.settings.Settings", system = true))
+        assertTrue(IntentNavigationHelper.launchFallbackCascade(context, listOf(Intent("android.settings.APP_LOCK_SETTINGS"), Intent(Settings.ACTION_SETTINGS))))
+        assertEquals("com.android.settings.Settings", nextStarted().component?.className)
     }
 
     @Test

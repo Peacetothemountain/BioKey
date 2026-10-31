@@ -80,6 +80,25 @@ class LockExplainerTest {
     }
 
     @Test
+    fun aFilesAppThatAlsoPicksPhotosIsAFilesApp() {
+        // A files app picks images for other apps too: what it says it is wins.
+        launchable("com.example.files", Intent.CATEGORY_APP_FILES)
+        pickImages("com.example.files")
+        assertEquals(LockExplainer.DataKind.FILES, LockExplainer.dataKindOf(context, "com.example.files"))
+        // An app that says nothing is judged by what it picks.
+        launchable("com.example.photos")
+        pickImages("com.example.photos")
+        assertEquals(LockExplainer.DataKind.PHOTOS, LockExplainer.dataKindOf(context, "com.example.photos"))
+    }
+
+    private fun pickImages(pkg: String) {
+        shadowOf(context.packageManager).addIntentFilterForActivity(
+            ComponentName(pkg, "$pkg.Main"),
+            IntentFilter(Intent.ACTION_PICK).apply { addCategory(Intent.CATEGORY_DEFAULT); addDataType("image/*") }
+        )
+    }
+
+    @Test
     fun theSmsAppIsTheHomeOfMessages() {
         launchable("com.example.sms")
         LockExplainer.defaultSmsApp = { "com.example.sms" }

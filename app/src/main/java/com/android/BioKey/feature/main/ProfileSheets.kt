@@ -379,7 +379,7 @@ internal fun AppOptionsSheet(
     onRemoveFromProfile: () -> Unit,
     onNewProfile: () -> Unit,
     onDismiss: () -> Unit,
-    /** Opens what locking this app does ([LockExplainSheet]): offered while its lock is on. */
+    /** Opens what locking this app does ([LockExplainSheet]), locked or not (not for a home screen). */
     onExplain: (() -> Unit)? = null
 ) {
     // Open all the way at once: dragged open from half-way, a sheet about as tall as the screen
@@ -420,8 +420,8 @@ internal fun AppOptionsSheet(
                     // the app's own choice comes back with the profile.
                     val offProfile = currentProfile?.takeIf { !it.enabled }
                     val locked = isLocked && offProfile == null
-                    // What a lock does and doesn't cover, to read again, while it's locked.
-                    val explain = onExplain?.takeIf { locked && !isHomeScreen }
+                    // What a lock does and doesn't cover: before locking it as much as after.
+                    val explain = onExplain?.takeIf { !isHomeScreen }
                     val rows = if (explain != null) 2 else 1
                     Group(count = rows) { row ->
                         if (row == 1 && explain != null) {

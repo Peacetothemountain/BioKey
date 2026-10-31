@@ -143,9 +143,9 @@ internal object LockExplainer {
 
     /**
      * Whose data [pkg] is the home of, as Android's own App lock decides it: the phone's SMS app
-     * (or one that says it's a messaging app), a gallery (it says so, or picks photos for other
-     * apps: what BioKey already counts as a photo picker, [ForegroundRules.PICKER_INTENTS]), or a
-     * files app (it says so, or opens documents for other apps). Null for any other app.
+     * (or one that says it's a messaging app), a files app or a gallery, by what it says it is;
+     * failing that, by what it picks for other apps (photos: what BioKey already counts as a photo
+     * picker, [ForegroundRules.PICKER_INTENTS]; documents). Null for any other app.
      */
     @VisibleForTesting
     internal fun dataKindOf(context: Context, pkg: String): DataKind? {
@@ -153,12 +153,14 @@ internal object LockExplainer {
         fun answers(intent: Intent) = runCatching { pm.queryIntentActivities(Intent(intent).setPackage(pkg), 0).isNotEmpty() }.getOrDefault(false)
         fun hasCategory(category: String) = answers(Intent(Intent.ACTION_MAIN).addCategory(category))
         val pickers = ForegroundRules.PICKER_INTENTS
+        // What the app says it is wins: a files app picks images for other apps too, and isn't a
+        // gallery for it. Only an app that says nothing is judged by what it picks.
         return when {
             defaultSmsApp(context) == pkg || hasCategory(Intent.CATEGORY_APP_MESSAGING) -> DataKind.MESSAGES
-            hasCategory(Intent.CATEGORY_APP_GALLERY) ||
-                pickers.any { (it.action == ACTION_PICK_IMAGES || it.type == "image/*") && answers(it) } -> DataKind.PHOTOS
-            hasCategory(Intent.CATEGORY_APP_FILES) ||
-                pickers.any { it.action == Intent.ACTION_OPEN_DOCUMENT && answers(it) } -> DataKind.FILES
+            hasCategory(Intent.CATEGORY_APP_FILES) -> DataKind.FILES
+            hasCategory(Intent.CATEGORY_APP_GALLERY) -> DataKind.PHOTOS
+            pickers.any { (it.action == ACTION_PICK_IMAGES || it.type == "image/*") && answers(it) } -> DataKind.PHOTOS
+            pickers.any { it.action == Intent.ACTION_OPEN_DOCUMENT && answers(it) } -> DataKind.FILES
             else -> null
         }
     }

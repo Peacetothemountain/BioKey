@@ -367,7 +367,7 @@
     <string name="explain_dont_show_again">Don\'t show again</string>
     <string name="explain_done">Got it</string>
     <string name="explain_row_title">What locking does</string>
-    <string name="explain_row_text">What still shows, and which other apps can see its data</string>
+    <string name="explain_row_text">What a lock covers and what it doesn\'t, and which other apps can see its data</string>
 
     <!-- BioKey's own lock and setup's final check (MainActivity). -->
     <string name="activity_locked_trip">Locked after you were away from BioKey for a while</string>

@@ -63,8 +63,7 @@ object ReinstallMemory {
 
     /**
      * Where certificates are read as apps are locked: off the caller's thread (the main one, from a
-     * switch), and never on it: the vault tells its listeners as it loads, before it can be asked
-     * for, and [note] asks for it.
+     * switch).
      */
     private val worker: ExecutorService = Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-reinstall").apply { isDaemon = true } }
 
@@ -80,17 +79,18 @@ object ReinstallMemory {
     }
 
     /**
-     * Notes the certificates of [packages] not noted yet, and forgets those of apps whose lock
-     * switch is off now: the list stays as long as the locked apps.
+     * Notes the certificates of [packages] (just locked) not noted yet. Doesn't ask for the vault:
+     * it's told of locks as it loads, before it can be asked for, and asking then (from another
+     * thread) would only wait for it, or in tests, make another. Those of apps whose lock switch
+     * is off are forgotten at the next uninstall ([onUninstalled]).
      */
     @Synchronized
     fun note(context: Context, packages: Collection<String>) {
         val app = context.applicationContext
-        val selected = SecurityVault.getInstance(app).selectedAppsFlow.value
         val signers = readSignerMap(app)
-        var changed = signers.keys.retainAll(selected)
+        var changed = false
         for (pkg in packages) {
-            if (pkg in signers || pkg !in selected || pkg in PasswordManager.ALIASES || pkg == app.packageName) continue
+            if (pkg in signers || pkg in PasswordManager.ALIASES || pkg == app.packageName) continue
             val read = signersOf(app, pkg)?.takeIf { it.isNotEmpty() } ?: continue
             signers[pkg] = read
             changed = true
@@ -121,8 +121,11 @@ object ReinstallMemory {
         if (pkg in PasswordManager.ALIASES || !vault.isSetupCompleted()) return
         val signers = readSignerMap(app)
         val noted = signers.remove(pkg)
-        if (noted != null) writeSignerMap(app, signers)
-        if (pkg !in vault.selectedAppsFlow.value) return
+        // The list stays as long as the locked apps: those switched off since go too.
+        val selected = vault.selectedAppsFlow.value
+        signers.keys.retainAll(selected)
+        writeSignerMap(app, signers)
+        if (pkg !in selected) return
         val kept = fresh(readRemembered(app)).filterNot { it.pkg == pkg }
         val entry = Remembered(pkg, noted.orEmpty(), vault.profileOf(pkg)?.id, now())
         writeRemembered(app, (kept + entry).takeLast(MAX_REMEMBERED))

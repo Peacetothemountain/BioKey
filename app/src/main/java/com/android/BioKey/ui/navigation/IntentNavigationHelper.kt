@@ -55,14 +55,16 @@ object IntentNavigationHelper {
      * claims the same action can't be offered in a chooser and pose as Settings (to fish for the
      * screen lock, say) while BioKey's leave pass is open. Every page BioKey opens is declared in
      * its manifest's queries, so the system's handler is always seen. Where several system apps
-     * answer, Settings itself is preferred. Returns whether it was pinned (false: no system app
+     * answer, Settings itself is preferred. Only pages the system app lets other apps open count:
+     * the package manager also lists ones it keeps to itself (Pixel's private space page), which
+     * would only fail with "Permission Denial". Returns whether it was pinned (false: no system app
      * answers, and it isn't opened).
      */
     internal fun pinToSystemHandler(context: Context, intent: Intent): Boolean {
         if (intent.component != null) return true
         val handlers = context.packageManager.queryIntentActivities(intent, PackageManager.MATCH_SYSTEM_ONLY)
             .mapNotNull { it.activityInfo }
-            .filter { it.packageName != "android" }
+            .filter { it.packageName != "android" && it.exported }
         val handler = handlers.firstOrNull { it.packageName == SETTINGS_PACKAGE } ?: handlers.firstOrNull() ?: return false
         intent.setClassName(handler.packageName, handler.name)
         return true

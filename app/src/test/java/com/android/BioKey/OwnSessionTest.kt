@@ -229,7 +229,12 @@ class OwnSessionTest {
                 flags = android.content.pm.ApplicationInfo.FLAG_SYSTEM
             }
         })
-        pm.addActivityIfNotPresent(page)
+        // Exported, as a page other apps open is: one Settings keeps to itself is never opened.
+        pm.addOrUpdateActivity(android.content.pm.ActivityInfo().apply {
+            packageName = page.packageName
+            name = page.className
+            exported = true
+        })
         pm.addIntentFilterForActivity(page, IntentFilter("com.example.SETTINGS_PAGE").apply { addCategory(Intent.CATEGORY_DEFAULT) })
         shadowOf(context as Application).checkActivities(true)
         LockStateTracker.onOwnAppUnlocked()
