@@ -144,6 +144,14 @@ class BioKeyAccessibilityService : AccessibilityService() {
          */
         fun hasScreenShowing(pkg: String): Boolean? = activeService?.isOnDisplay(pkg)
 
+        /**
+         * The other locked apps on screen with [pkg], none of them unlocked: the other half of a
+         * split screen (hidden under [pkg]'s lock screen, or patched beside it), windows on another
+         * display. [pkg]'s lock screen asks for them all at once. Null while the service isn't
+         * running. Main thread only.
+         */
+        fun lockedAppsOnScreenWith(pkg: String): List<String>? = activeService?.lockedOnScreenWith(pkg)
+
         fun dismissSelfProtection(): Boolean {
             val svc = activeService ?: return false
             svc.navigateBackFromGuardedSelfProtection()
@@ -206,6 +214,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     /** The apps on screen at the last visibility pass. */
     private var lastAppsOnScreen: List<String> = emptyList()
+
+    /**
+     * The locked apps on screen at the last visibility pass made with no lock screen of BioKey's
+     * up: what a lock screen, once up, hides under it ([lockedOnScreenWith]).
+     */
+    private var lockedOnScreen: Set<String> = emptySet()
 
     /**
      * Accessibility window id -> owning package, learned from window events. Google Password
@@ -1192,6 +1206,11 @@ class BioKeyAccessibilityService : AccessibilityService() {
         ) foregroundPackage = packageName
         // What the prompt hides is still there: the last real look stands.
         if (!ownPromptOnly) lastAppsOnScreen = visible.toList()
+        // So does what a lock screen hides: the locked apps under it are asked for with it (their
+        // sessions may end meanwhile, as the screen goes off: looked at as the prompt asks).
+        if (!ownPromptOnly && !LockScreenActivity.isLockScreenResumed) {
+            lockedOnScreen = visible.filterTo(LinkedHashSet()) { vault.isAppLocked(it) }
+        }
         val outcome = rules.reconcile(
             SessionRules.Screen(
                 visible = visible,
@@ -1420,6 +1439,26 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
     /** Locked apps whose windows are patched: never covered by a full-screen cover too. */
     private fun maskedApps(): Set<String> = if (::maskControl.isInitialized) maskControl.maskedApps else emptySet()
+
+    /**
+     * See [lockedAppsOnScreenWith]: the locked apps without a session that were on screen as
+     * [pkg]'s lock screen came up (under it now), are patched (beside it, or on another display),
+     * or are on screen now, each a coverable app other than [pkg] and BioKey. Read as the prompt
+     * asks, so one unlocked or gone meanwhile isn't named.
+     */
+    private fun lockedOnScreenWith(pkg: String): List<String> {
+        if (!::vault.isInitialized) return emptyList()
+        val found = LinkedHashSet<String>(lockedOnScreen)
+        found += maskedApps()
+        windowList()?.forEach { w ->
+            if (w.type == AccessibilityWindowInfo.TYPE_APPLICATION && w.id !in screensaverWindows) packageOf(w)?.let(found::add)
+        }
+        val same = PasswordManager.aliasesOf(pkg)
+        return found.filter {
+            it !in same && it != SessionRules.UNIDENTIFIED_APP && isCoverableByVisibility(it) && !isLauncher(it) &&
+                needsCover(it, ignoreAbandoned = true)
+        }
+    }
 
     /** What [MaskController] asks of the service. */
     private val maskHost = object : MaskController.Host {

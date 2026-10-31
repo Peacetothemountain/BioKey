@@ -107,6 +107,8 @@ class UsageWatchService : Service() {
         private const val RECHECK_SETTLE_MS = 300L
         /** Play Store's review and update sheets float, see-through, over the app that asked for them. */
         private const val PKG_PLAY_STORE = "com.android.vending"
+        /** What was on screen as a lock screen was asked for counts for its prompt this long ([lockedOnScreenWith]). */
+        private const val LOCKED_AT_LOCK_MS = 60_000L
         private val LOCK_SCREEN_CLASS = LockScreenActivity::class.java.name
 
         @Volatile
@@ -120,6 +122,16 @@ class UsageWatchService : Service() {
 
         @Volatile
         private var stopRequested = false
+
+        /** The running service, for [lockedAppsOnScreenWith]. Main thread. */
+        private var instance: UsageWatchService? = null
+
+        /**
+         * The other locked apps on screen with [pkg], none of them unlocked (the other half of a
+         * split screen, an app held covered in picture-in-picture), as last seen: [pkg]'s lock
+         * screen asks for them all at once. Null while compatibility mode isn't running. Main thread.
+         */
+        fun lockedAppsOnScreenWith(pkg: String): List<String>? = instance?.lockedOnScreenWith(pkg)
 
         fun start(context: Context) {
             // A stop still on its way (onDestroy hasn't run yet) mustn't swallow this start, or
@@ -493,6 +505,7 @@ class UsageWatchService : Service() {
             appOps.startWatchingMode(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW, packageName, opListener)
         }
         isRunning = true
+        instance = this
         pauseWatch.launch {
             // Paused, resumed, or the pause's end set (just after protection goes off).
             val vault = SecurityVault.getInstance(this@UsageWatchService)
@@ -523,6 +536,7 @@ class UsageWatchService : Service() {
     override fun onDestroy() {
         val wasRunning = isRunning
         isRunning = false
+        if (instance === this) instance = null
         pauseWatch.cancel()
         startPending = false
         stopRequested = false
@@ -609,6 +623,7 @@ class UsageWatchService : Service() {
         deferred = null
         frontSeeThrough = false
         keyguardLetThrough = null
+        lockedAtLock = emptySet()
     }
 
     // -------------------------------------------------------------------------------------------
@@ -1218,6 +1233,30 @@ class UsageWatchService : Service() {
         if (lockScreenUp || !isExposed(pkg)) shield.hide()
     }
 
+    /** The apps on screen as the last lock screen was asked for ([lock]): the ones it then hides. */
+    private var lockedAtLock: Set<String> = emptySet()
+    private var lockedAtLockAt = 0L
+
+    /**
+     * See [lockedAppsOnScreenWith]: the locked apps without a session on screen as [pkg]'s lock
+     * screen was asked for (within the last [LOCKED_AT_LOCK_MS]), or on screen now (beside the app
+     * in front, or held covered), other than [pkg] and BioKey. Read as the prompt asks, so one
+     * unlocked meanwhile isn't named.
+     */
+    private fun lockedOnScreenWith(pkg: String): List<String> {
+        if (!isRunning) return emptyList()
+        if (SystemClock.elapsedRealtime() - lockedAtLockAt >= LOCKED_AT_LOCK_MS) lockedAtLock = emptySet()
+        val found = LinkedHashSet<String>(lockedAtLock)
+        foreground?.let(found::add)
+        found += sideVisible.keys
+        held?.first?.let(found::add)
+        val same = PasswordManager.aliasesOf(pkg)
+        return found.filter {
+            it !in same && lockedWithoutSession(it) && !ForegroundRules.isLauncher(this, it) &&
+                (it in lockedAtLock || activities.isVisible(it) || isHeldOpen(it))
+        }
+    }
+
     /** Nothing is already covering or asking for [pkg], and it wasn't just walked away from. */
     private fun mayCover(pkg: String): Boolean =
         !LockStateTracker.isRecentlyAbandoned(pkg) &&
@@ -1245,6 +1284,10 @@ class UsageWatchService : Service() {
         DiagnosticLog.log("Covered $pkg ($why)")
         LockStateTracker.setRegularLockPending(pkg)
         pausedBehind -= pkg
+        // On screen with it now (the other half of a split screen): its lock screen hides them too,
+        // and they stop under it, so they're kept as they are now for its prompt.
+        lockedAtLock = activities.resumedApps() + pkg
+        lockedAtLockAt = SystemClock.elapsedRealtime()
         // The cover is held over another app's window (see isHeldOpen), and already hides this
         // one: its lock screen comes up under it, its prompt over it, and the cover stays.
         val heldFor = held?.first

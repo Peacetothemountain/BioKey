@@ -484,6 +484,21 @@ class CompatibilityEngineTest {
         assertFalse(starts.single().getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false))
     }
 
+    @Test
+    fun bothHalvesOfASplitScreenAreAskedForInOnePrompt() {
+        vault.setAppLock(chat, true)
+        // A pair opened from Recents: both resume.
+        event(ACTIVITY_RESUMED, bank)
+        event(ACTIVITY_RESUMED, chat)
+        step()
+        val asked = listOf(bank, chat).associateWith { UsageWatchService.lockedAppsOnScreenWith(it) }
+        assertEquals(listOf(chat), asked[bank])
+        assertEquals(listOf(bank), asked[chat])
+        // One of them unlocked meanwhile: no longer named.
+        LockStateTracker.onAppUnlocked(chat)
+        assertEquals(emptyList<String>(), UsageWatchService.lockedAppsOnScreenWith(bank))
+    }
+
     /** The bank's [cls] is the phone's lock-screen camera (it answers the secure camera intent). */
     private fun bankIsTheLockScreenCamera(cls: String) {
         val secure = ComponentName(bank, cls)

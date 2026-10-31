@@ -13,6 +13,14 @@
 
     <!-- Android's unlock prompt, as BioKey fills it in. -->
     <string name="prompt_unlock">Unlock %1$s</string>
+    <!-- Several locked apps on screen at once (split screen, another display), one prompt for them all: their names. -->
+    <string name="prompt_apps_two">%1$s and %2$s</string>
+    <string name="prompt_apps_three">%1$s, %2$s and %3$s</string>
+    <!-- %4$d: how many more apps beside the three named. -->
+    <plurals name="prompt_apps_more">
+        <item quantity="one">%1$s, %2$s, %3$s and %4$d other app</item>
+        <item quantity="other">%1$s, %2$s, %3$s and %4$d other apps</item>
+    </plurals>
     <string name="prompt_verify">Verify it\'s you</string>
     <string name="prompt_use_biometric">Use your face or fingerprint</string>
     <string name="prompt_cancel">Cancel</string>
