@@ -91,6 +91,9 @@ object LockStateTracker {
      */
     private const val SCREEN_BACK_UNLOCK_MS = 5_000L
 
+    /** Smart Lock is taken to keep the phone unlocked once seen so twice at least this far apart ([trustedKeyguardSeen]). */
+    private const val TRUSTED_KEYGUARD_MS = 1_000L
+
     /** How long a successful self-protection challenge lets the user stay in BioKey's settings pages. */
     private const val SELF_PROTECTION_LEASE_MS = 120_000L
 
@@ -510,9 +513,13 @@ object LockStateTracker {
 
     /**
      * While [awaitingPhoneLock]: the keyguard was seen up, with the screen off, and the phone not
-     * locked (Smart Lock keeps it unlocked): its being dismissed later is no lock missed.
+     * locked under it (Smart Lock keeps it unlocked), twice at least [TRUSTED_KEYGUARD_MS] apart:
+     * its being dismissed later is no lock missed. Once isn't enough: as the keyguard comes up to
+     * lock the phone, it's up a moment before the phone counts as locked.
      */
     @Volatile private var trustedKeyguardSeen = false
+    /** When the keyguard was first seen up in the dark with the phone not locked, or 0 ([trustedKeyguardSeen]). */
+    @Volatile private var trustedKeyguardFirstAt = 0L
 
     /** When the screen last came back on while [awaitingPhoneLock] ([onScreenOn]), or 0. */
     @Volatile private var screenBackAt = 0L
@@ -534,6 +541,7 @@ object LockStateTracker {
             DiagnosticLog.log("Screen off: apps stay unlocked until the phone locks")
         }
         trustedKeyguardSeen = false
+        trustedKeyguardFirstAt = 0L
         screenBackAt = 0L
         deviceLocked = false
         clearSelfProtection()
@@ -546,22 +554,32 @@ object LockStateTracker {
      * The device's locked state, as last seen. Locking the device (screen off, screensaver, the
      * power menu's Lockdown, a lock with the screen still on) ends every session, every time.
      * [keyguardUpInTheDark]: asked only while [awaitingPhoneLock] and the phone isn't locked,
-     * whether the keyguard is up with the screen off, which then can only be Android keeping the
-     * phone unlocked under it (Smart Lock): see [onUserPresent].
+     * whether the keyguard is up with the screen off, which, seen so twice a moment apart, can
+     * only be Android keeping the phone unlocked under it (Smart Lock): see [onUserPresent].
      */
     fun onDeviceLockState(locked: Boolean, keyguardUpInTheDark: (() -> Boolean)? = null) {
         if (locked && !deviceLocked) lockAll(reason = "phone locked")
         if (!locked && deviceLocked) phoneUnlocks++
         deviceLocked = locked
-        if (!locked && awaitingPhoneLock && !trustedKeyguardSeen && keyguardUpInTheDark?.invoke() == true) trustedKeyguardSeen = true
+        if (!locked && awaitingPhoneLock && !trustedKeyguardSeen && keyguardUpInTheDark != null) {
+            if (!keyguardUpInTheDark()) {
+                trustedKeyguardFirstAt = 0L
+            } else {
+                val t = now()
+                val first = trustedKeyguardFirstAt
+                if (first == 0L) trustedKeyguardFirstAt = t else if (t - first >= TRUSTED_KEYGUARD_MS) trustedKeyguardSeen = true
+            }
+        }
     }
 
     /**
      * The screen came back on, [phoneLocked] or not. Locked: every session ends, and the app left
      * on screen is covered behind the keyguard before the phone is unlocked. Not: the screen came
-     * back within Android's own lock delay, as far as can be told yet ([onUserPresent]).
+     * back within Android's own lock delay, as far as can be told yet ([onUserPresent]). Only
+     * while sessions wait for the phone to lock: otherwise every one ended with the screen.
      */
     fun onScreenOn(phoneLocked: Boolean) {
+        if (!awaitingPhoneLock) return
         onDeviceLockState(phoneLocked)
         if (awaitingPhoneLock) screenBackAt = now()
     }

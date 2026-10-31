@@ -135,11 +135,34 @@ class PhoneLockRelockTest {
         vault.setRelockAtPhoneLock(true)
         LockStateTracker.onAppUnlocked(x)
         LockStateTracker.onScreenTurnedOff(phoneLocked = false)
-        // In the dark: the keyguard up, the phone not locked under it.
+        // In the dark: the keyguard up, the phone not locked under it, seen so twice a moment apart.
+        LockStateTracker.onDeviceLockState(false) { true }
+        ShadowSystemClock.advanceBy(Duration.ofMillis(1_200))
         LockStateTracker.onDeviceLockState(false) { true }
         LockStateTracker.onScreenOn(phoneLocked = false)
         LockStateTracker.onUserPresent()
         assertTrue(LockStateTracker.isAppUnlocked(x, mode))
+    }
+
+    @Test
+    fun theKeyguardSeenUpOnceIsNoTrust() {
+        // As the keyguard comes up to lock the phone, it's up a moment before the phone counts as
+        // locked: one look then mustn't vouch for it, should a fingerprint unlock it unseen.
+        vault.setRelockAtPhoneLock(true)
+        LockStateTracker.onAppUnlocked(x)
+        LockStateTracker.onScreenTurnedOff(phoneLocked = false)
+        LockStateTracker.onDeviceLockState(false) { true }
+        LockStateTracker.onScreenOn(phoneLocked = false)
+        LockStateTracker.onUserPresent()
+        assertFalse(LockStateTracker.isAppUnlocked(x, mode))
+    }
+
+    @Test
+    fun byDefaultTheScreenComingOnEndsNothingMore() {
+        LockStateTracker.onScreenTurnedOff(phoneLocked = true)
+        DiagnosticLog.clear()
+        LockStateTracker.onScreenOn(phoneLocked = true)
+        assertTrue(DiagnosticLog.entries().none { it.text.startsWith("All sessions ended") })
     }
 
     @Test
