@@ -103,6 +103,8 @@ object ProtectionGaps {
         /** Argument: the [com.android.BioKey.core.data.LockTimeoutMode] name. */
         DEFAULT_DELAY_LONGER(R.string.change_default_delay_longer),
         SHIELD_OFF(R.string.change_shield_off),
+        /** "Let the camera open over the lock screen" switched (back) on. */
+        KEYGUARD_CAMERA_ON(R.string.change_keyguard_camera_on),
         BIOMETRIC_ONLY_OFF(R.string.change_biometric_only_off),
         REMINDERS_STOPPED(R.string.change_reminders_stopped),
         LOG_SHARED(R.string.change_log_shared),

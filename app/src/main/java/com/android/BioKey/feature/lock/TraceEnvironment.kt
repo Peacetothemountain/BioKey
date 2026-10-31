@@ -7,8 +7,9 @@ import com.android.BioKey.core.security.SecurityVault
 
 /**
  * What an engine trace starts with ([EngineTrace.start]): which engine is running, whether
- * protection is on, each locked app with its re-lock delay and name, the phone's home screens,
- * helper apps and keyboards ([ForegroundRules.traceEnvironment]), and its screensaver settings
+ * protection is on, whether the lock-screen camera opens over the keyguard, each locked app with
+ * its re-lock delay and name, the phone's home screens, helper apps, keyboards and lock-screen
+ * camera and emergency apps ([ForegroundRules.traceEnvironment]), and its screensaver settings
  * (whether they're on, the chosen one, Android's default). A replay sets the same up before it
  * feeds the engine anything. Debug builds only (it asks for app names).
  */
@@ -17,6 +18,7 @@ internal fun startEngineTrace(context: Context, vault: SecurityVault, engine: St
     val env = buildList {
         add(EngineTrace.line("env", "engine", engine))
         add(EngineTrace.line("env", "protection", if (vault.isProtectionActive()) 1 else 0))
+        add(EngineTrace.line("env", "keyguardCamera", if (vault.isKeyguardCameraAllowed()) 1 else 0))
         for (pkg in vault.getLockedPackages()) {
             add(EngineTrace.line("env", "locked", pkg, vault.getTimeoutMode(pkg).name, AppInfoCache.quickLabel(context, pkg)))
         }

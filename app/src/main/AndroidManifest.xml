@@ -107,6 +107,32 @@
         <intent>
             <action android:name="android.media.action.VIDEO_CAPTURE" />
         </intent>
+        <!-- The lock-screen camera and the emergency dialer: they open over the phone's lock
+             screen uncovered, as Android's own App lock lets them (ForegroundRules.KEYGUARD_INTENTS). -->
+        <intent>
+            <action android:name="android.media.action.STILL_IMAGE_CAMERA_SECURE" />
+        </intent>
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE_SECURE" />
+        </intent>
+        <intent>
+            <action android:name="android.media.action.MOTION_PHOTO_CAPTURE_SECURE" />
+        </intent>
+        <intent>
+            <action android:name="android.provider.action.REVIEW_SECURE" />
+            <data android:mimeType="image/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.DIAL_EMERGENCY" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.DIAL_EMERGENCY" />
+            <data android:scheme="tel" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.CALL_EMERGENCY" />
+            <data android:scheme="tel" />
+        </intent>
         <!-- Keyboards: an IME window must never count as leaving a locked app. -->
         <intent>
             <action android:name="android.view.InputMethod" />

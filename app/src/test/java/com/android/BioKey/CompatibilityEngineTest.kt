@@ -484,6 +484,57 @@ class CompatibilityEngineTest {
         assertFalse(starts.single().getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false))
     }
 
+    /** The bank's [cls] is the phone's lock-screen camera (it answers the secure camera intent). */
+    private fun bankIsTheLockScreenCamera(cls: String) {
+        val secure = ComponentName(bank, cls)
+        shadowOf(context.packageManager).apply {
+            addActivityIfNotPresent(secure)
+            addIntentFilterForActivity(secure, IntentFilter(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE).apply { addCategory(Intent.CATEGORY_DEFAULT) })
+        }
+        ForegroundRules.resetSystemLists()
+    }
+
+    @Test
+    fun theLockScreenCameraOpensOverTheKeyguardUncoveredAndIsCoveredOnceThePhoneIsUnlocked() {
+        val secure = "$bank.SecureCameraActivity"
+        bankIsTheLockScreenCamera(secure)
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(true)
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        started()
+        event(ACTIVITY_RESUMED, bank, secure)
+        repeat(8) { step(150) }
+        assertTrue(started().none { it.component?.className == lockScreen })
+        assertEquals(emptyList<String>(), covered(bank))
+        // Unlocked from inside the camera, which stays in front.
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(false)
+        context.sendBroadcast(Intent(Intent.ACTION_USER_PRESENT))
+        step()
+        assertEquals(listOf("Covered $bank (opened)"), covered(bank))
+        assertTrue(started().any { it.component?.className == lockScreen })
+    }
+
+    @Test
+    fun withTheSettingOffTheLockScreenCameraIsCoveredOverTheKeyguard() {
+        vault.setKeyguardCameraAllowed(false)
+        val secure = "$bank.SecureCameraActivity"
+        bankIsTheLockScreenCamera(secure)
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(true)
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        started()
+        event(ACTIVITY_RESUMED, bank, secure)
+        repeat(9) { step(150) }
+        assertEquals(listOf("Covered $bank (opened)"), covered(bank))
+        assertTrue(started().any { it.component?.className == lockScreen })
+    }
+
+    @Test
+    fun anotherScreenOfTheCameraAppOverTheKeyguardIsCoveredAsBefore() {
+        bankIsTheLockScreenCamera("$bank.SecureCameraActivity")
+        // Its ordinary screen, still on screen over the keyguard: not the lock-screen camera.
+        val starts = bankComesForwardOnTheKeyguard { }
+        assertEquals(1, starts.size)
+    }
+
     @Test
     fun aTripToAPlayPageAndStraightBackKeepsTheSession() {
         unlockBank()

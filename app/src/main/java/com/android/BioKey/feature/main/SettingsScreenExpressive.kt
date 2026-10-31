@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Password
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
@@ -181,6 +182,7 @@ fun SettingsScreenExpressive(
     val attemptAlerts by UnlockAttempts.enabled.collectAsStateWithLifecycle()
     val screenLockUnlocks by UnlockAttempts.screenLockUnlocks.collectAsStateWithLifecycle()
     val biometricOnly by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
+    val keyguardCamera by vault.keyguardCameraFlow.collectAsStateWithLifecycle()
     val lockedApps by vault.lockedAppsFlow.collectAsStateWithLifecycle()
     // Seeded with what's already known (no call into Android on the main thread), then read afresh.
     var strongBiometric by remember { mutableStateOf(SecurityEngine.lastKnownStrongBiometric() ?: biometricOnlyAtOpen(vault)) }
@@ -314,6 +316,19 @@ fun SettingsScreenExpressive(
                 title = stringResource(R.string.settings_relock_title),
                 subtitle = stringResource(R.string.settings_relock_summary, stringResource(defaultTimeout.shortLabelRes)),
                 onClick = { showRelockSheet = true }
+            )
+        )
+        add(
+            SettingItem(
+                icon = Icons.Default.PhotoCamera,
+                title = stringResource(R.string.settings_keyguard_camera_title),
+                subtitle = stringResource(if (keyguardCamera) R.string.settings_keyguard_camera_on else R.string.settings_keyguard_camera_off),
+                checked = keyguardCamera,
+                onChange = { on ->
+                    // Less locked: recorded when it's maybe someone who only knows the PIN.
+                    if (on) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.KEYGUARD_CAMERA_ON)
+                    vault.setKeyguardCameraAllowed(on)
+                }
             )
         )
         add(

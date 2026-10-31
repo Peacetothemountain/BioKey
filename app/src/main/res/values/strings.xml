@@ -381,6 +381,7 @@
     <string name="change_profile_delay_longer">%1$s re-lock delay made longer</string>
     <string name="change_default_delay_longer">Default re-lock delay made longer: %1$s</string>
     <string name="change_shield_off">Hide notification content switched off</string>
+    <string name="change_keyguard_camera_on">Camera over the lock screen switched on</string>
     <string name="change_biometric_unavailable">Face or fingerprint couldn\'t be used, so the screen lock was allowed</string>
     <string name="card_gap_switched_off">%1$s · App locking stopped</string>
     <string name="card_gap_force_stopped">%1$s · BioKey was force-stopped</string>
@@ -574,6 +575,9 @@
     <string name="settings_relock_title">Default re-lock delay</string>
     <!-- %1$s: the delay's short label. -->
     <string name="settings_relock_summary">%1$s · profiles can set their own</string>
+    <string name="settings_keyguard_camera_title">Let the camera open over the lock screen</string>
+    <string name="settings_keyguard_camera_on">And emergency calls, as Android\'s own App lock lets them. Once your phone is unlocked, they\'re locked as usual</string>
+    <string name="settings_keyguard_camera_off">Off: a locked camera or phone app is covered over the lock screen too</string>
     <string name="settings_new_apps_title">Offer to lock new apps</string>
     <string name="settings_new_apps_summary">After you install an app that auto-sort doesn\'t lock</string>
     <string name="settings_alerts_on">Tells you if app locking stops, and afterwards when it was off</string>

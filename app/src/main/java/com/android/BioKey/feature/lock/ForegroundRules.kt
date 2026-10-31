@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.inputmethod.InputMethodManager
@@ -258,6 +259,41 @@ object ForegroundRules {
         } - context.packageName
     }
 
+    /**
+     * What may open over the phone's lock screen without its app lock, as Android's own App lock
+     * lets it (AppLockOverlayController's permitted secure actions): the lock-screen camera
+     * (still, capture and motion-photo, and reviewing what it just took) and the emergency dialer
+     * and calls. Each needs a `<queries>` entry in the manifest, or Android hides its handlers.
+     */
+    internal val KEYGUARD_INTENTS = listOf(
+        Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE),
+        Intent(MediaStore.ACTION_IMAGE_CAPTURE_SECURE),
+        Intent("android.media.action.MOTION_PHOTO_CAPTURE_SECURE"),
+        Intent("android.provider.action.REVIEW_SECURE").setType("image/*"),
+        Intent("android.intent.action.DIAL_EMERGENCY"),
+        Intent("android.intent.action.DIAL_EMERGENCY", Uri.parse("tel:")),
+        Intent("android.intent.action.CALL_EMERGENCY", Uri.parse("tel:"))
+    )
+
+    /** The apps handling [KEYGUARD_INTENTS] on this phone, each with those of its activities (read again at most every 5 min). */
+    private val keyguardApps = SystemList(5 * 60_000L, emptyMap<String, Set<String>>()) { context ->
+        val pm = context.packageManager
+        val found = HashMap<String, MutableSet<String>>()
+        for (intent in KEYGUARD_INTENTS) {
+            for (info in pm.queryIntentActivities(intent, PackageManager.MATCH_ALL)) {
+                val activity = info.activityInfo ?: continue
+                found.getOrPut(activity.packageName) { HashSet() } += activity.name
+            }
+        }
+        found - context.packageName
+    }
+
+    /** Whether [pkg] is the phone's lock-screen camera or emergency dialer ([KEYGUARD_INTENTS]). */
+    fun isKeyguardApp(context: Context, pkg: String): Boolean = pkg in keyguardApps.get(context)
+
+    /** [pkg]'s activities that handle [KEYGUARD_INTENTS] (none for any other app). */
+    fun keyguardActivities(context: Context, pkg: String): Set<String> = keyguardApps.get(context)[pkg].orEmpty()
+
     /** Enabled keyboards (read again at most every 30 s, and at once after [onInputMethodsChanged]). */
     private val keyboards = SystemList(30_000L, emptySet<String>()) { context ->
         context.getSystemService(InputMethodManager::class.java).enabledInputMethodList.mapTo(HashSet()) { it.packageName }
@@ -278,6 +314,7 @@ object ForegroundRules {
         homes.refresh(context)
         pickers.refresh(context)
         keyboards.refresh(context)
+        keyguardApps.refresh(context)
     }
 
     /** Forgets every list read so far (tests register apps between cases). */
@@ -286,25 +323,35 @@ object ForegroundRules {
         homes.reset()
         pickers.reset()
         keyboards.reset()
+        keyguardApps.reset()
     }
 
     /**
      * The lists as a trace records them (EngineTrace's `env` records): home screens (whether each
-     * is a system app, and the one in use), helper apps and keyboards, as last read.
+     * is a system app, and the one in use), helper apps, keyboards, and what opens over the lock
+     * screen (each app with an activity), as last read.
      */
     internal fun traceEnvironment(context: Context): List<String> = buildList {
         val h = homes.get(context)
         for ((pkg, system) in h.apps) add(EngineTrace.line("env", "home", pkg, if (system) 1 else 0, if (pkg == h.default) 1 else 0))
         for (pkg in pickers.get(context)) add(EngineTrace.line("env", "picker", pkg))
         for (pkg in keyboards.get(context)) add(EngineTrace.line("env", "keyboard", pkg))
+        for ((pkg, activities) in keyguardApps.get(context)) for (cls in activities) add(EngineTrace.line("env", "keyguardApp", pkg, cls))
     }
 
     /** A replay's lists, from its trace's `env` records, in place of the system's until [resetSystemLists]. */
     @VisibleForTesting
-    internal fun pinSystemLists(homeApps: Map<String, Boolean>, defaultHome: String?, helpers: Set<String>, inputMethods: Set<String>) {
+    internal fun pinSystemLists(
+        homeApps: Map<String, Boolean>,
+        defaultHome: String?,
+        helpers: Set<String>,
+        inputMethods: Set<String>,
+        overKeyguard: Map<String, Set<String>> = emptyMap()
+    ) {
         homes.pin(Homes(homeApps, defaultHome))
         pickers.pin(helpers)
         keyboards.pin(inputMethods)
+        keyguardApps.pin(overKeyguard)
     }
 
     /**

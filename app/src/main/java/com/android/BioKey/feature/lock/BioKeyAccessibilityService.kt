@@ -241,7 +241,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         override fun isLauncher(pkg: String) = this@BioKeyAccessibilityService.isLauncher(pkg)
         override fun isHopTarget(pkg: String) = this@BioKeyAccessibilityService.isHopTarget(pkg)
         override fun mayCover(pkg: String) = isCoverableByVisibility(pkg) && !isLauncher(pkg) && pkg !in maskedApps() &&
-            needsCover(pkg) && !LockStateTracker.isRegularLockPending(pkg)
+            needsCover(pkg) && !LockStateTracker.isRegularLockPending(pkg) && !letsThroughOverKeyguard(pkg)
         override fun appTitled(title: String) = labels.appTitled(title, vault.getLockedPackages())?.takeIf { it != packageName }
         // App names and the screen titles apps declare (from the package manager) only: what a
         // window's own events say about it is never kept, as the disclosure promises.
@@ -276,6 +276,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                         expectedLaunch = null
                         recentUnlock = null
                         systemLock.clear()
+                        keyguardLetThrough = null
                         rules.reset()
                         isConfirmingDeviceCredential = false
                         maskControl.arm()
@@ -307,6 +308,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     Intent.ACTION_USER_PRESENT -> {
                         // The phone unlocked: no screensaver is showing, whatever its broadcast said.
                         LockStateTracker.screensaverShowing = false
+                        // Nothing is let open over the keyguard any more: covered as usual below.
+                        keyguardLetThrough = null
                         // Cleared and not set up again: said at every unlock until it is.
                         ProtectionAlerts.remindIfStorageCleared(this@BioKeyAccessibilityService)
                         windowList()?.let { maskControl.update(it, full = false) }
@@ -657,7 +660,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 // one (its screensaver's window may come before the broadcast): lock() sees to those.
                 if (target != null && !isSystemOrOverlay(target, eventCls) && needsCover(target) &&
                     !LockStateTracker.screensaverShowing && !screensaverWindow && target !in screensaverApps() &&
-                    !(isKeyguardLocked() && !isEventWindowOnDisplay(event))
+                    !(isKeyguardLocked() && !isEventWindowOnDisplay(event)) &&
+                    !(isPhoneScreen(display) && letsThroughOverKeyguard(target))
                 ) {
                     exitTransition = isExitTransition(target)
                     if (exitTransition == false && isPhoneScreen(display)) LatencyMarks.trigger("accessibility", target, event.eventTime)
@@ -891,6 +895,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
         // window; moves and resizes can't lock the phone. [reconcile] asks every time too.
         if (changes and (surfaced or AccessibilityEvent.WINDOWS_CHANGE_REMOVED) != 0) {
             LockStateTracker.onDeviceLockState(isDeviceLocked())
+            // The keyguard going away (unlocked from inside the lock-screen camera) moves windows too.
+            onKeyguardMaybeGone()
         }
         // A window we already know came (back) to the front, e.g. a locked app resumed from
         // Recents: cover it now instead of waiting for its state event.
@@ -1564,6 +1570,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 awaitOverKeyguard(target, "opened")
                 return
             }
+            // Its lock screen from when the phone locked waits behind the keyguard; opened over it
+            // now (the lock-screen camera, say), it's left there uncovered, if allowed.
+            if (isPhoneScreen(displayId) && letsThroughOverKeyguard(target)) return
             if (!LockScreenActivity.isLockScreenResumed || LockScreenActivity.activeLockedTarget != target) {
                 if (isPhoneScreen(displayId)) shield.show(target) { launchLockScreen(target, isSelfProtection = false) }
                 launchLockScreen(target, isSelfProtection = false, displayId)
@@ -1630,6 +1639,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
             awaitOverKeyguard(target, why)
             return
         }
+        // Over it: the lock-screen camera or emergency dialer opens there uncovered, if allowed.
+        if (isPhoneScreen(displayId) && letsThroughOverKeyguard(target)) return
         if (LockStateTracker.isRegularLockPending(target) &&
             LockScreenActivity.isLockScreenResumed &&
             LockScreenActivity.activeLockedTarget == target
@@ -1698,6 +1709,38 @@ class BioKeyAccessibilityService : AccessibilityService() {
         }, OVER_KEYGUARD_CHECK_MS)
     }
     private val awaitingOverKeyguard = HashSet<String>()
+
+    /**
+     * The lock-screen camera or emergency dialer let open over the keyguard ([letsThroughOverKeyguard]),
+     * until the phone is unlocked: then it's covered like any app.
+     */
+    private var keyguardLetThrough: String? = null
+
+    /**
+     * Whether [pkg], over the keyguard on the phone's own screen, is left uncovered there: it's
+     * the phone's lock-screen camera or emergency dialer ([ForegroundRules.isKeyguardApp]) and the
+     * owner lets those open over the lock screen (on by default, as Android's own App lock does).
+     * Whoever holds the locked phone can take photos and make emergency calls, and see only what
+     * the camera took meanwhile, as with no app lock at all. Only while the phone stays locked:
+     * once it's unlocked with [pkg] still in front, it's covered and asked for as usual
+     * ([onKeyguardMaybeGone]). An app started behind the keyguard rather than over it is covered
+     * there as before ([awaitOverKeyguard]), as is everything with the setting off.
+     */
+    private fun letsThroughOverKeyguard(pkg: String): Boolean {
+        if (!vault.isKeyguardCameraAllowed() || !ForegroundRules.isKeyguardApp(this, pkg)) return false
+        if (!isKeyguardLocked() || !isInteractive() || !isOnDisplay(pkg)) return false
+        if (keyguardLetThrough != pkg) DiagnosticLog.log("$pkg opened over the lock screen (its camera or emergency calls): covered once the phone is unlocked")
+        keyguardLetThrough = pkg
+        return true
+    }
+
+    /** The keyguard may have gone: an app let open over it ([letsThroughOverKeyguard]) is looked at now, not at the next event. */
+    private fun onKeyguardMaybeGone() {
+        if (keyguardLetThrough == null || isKeyguardLocked()) return
+        keyguardLetThrough = null
+        reevaluateForeground()
+        scheduleReconcile(0L)
+    }
 
     /** Whether [event]'s own window is on display (not behind the keyguard): read without asking the app. */
     private fun isEventWindowOnDisplay(event: AccessibilityEvent): Boolean {
