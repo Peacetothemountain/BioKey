@@ -5,6 +5,7 @@ import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.res.Configuration
+import android.content.res.Resources
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
@@ -86,6 +87,22 @@ class LockScreenActivity : ComponentActivity() {
          */
         internal fun coversDisplay(inMultiWindow: Boolean, window: Rect, display: Rect): Boolean =
             !inMultiWindow || window.contains(display)
+
+        /**
+         * Apps' [names] as one prompt names them: "X", "X and Y", "X, Y and Z", or "X, Y, Z and 2
+         * other apps" (the rest counted, not named, so the title stays short).
+         */
+        internal fun appsNamed(res: Resources, names: List<String>): String = when (names.size) {
+            0 -> ""
+            1 -> names[0]
+            2 -> res.getString(R.string.prompt_apps_two, names[0], names[1])
+            3 -> res.getString(R.string.prompt_apps_three, names[0], names[1], names[2])
+            else -> res.getQuantityString(R.plurals.prompt_apps_more, names.size - 3, names[0], names[1], names[2], names.size - 3)
+        }
+
+        /** The other locked apps on screen with [pkg], as the engine running sees them: see [BioKeyAccessibilityService.lockedAppsOnScreenWith]. */
+        private fun lockedAppsOnScreenWith(pkg: String): List<String> =
+            BioKeyAccessibilityService.lockedAppsOnScreenWith(pkg) ?: UsageWatchService.lockedAppsOnScreenWith(pkg) ?: emptyList()
 
         // Both are what the engines are told about the lock screen: recorded for a replay
         // (EngineTrace), unless a test sets them as a replay does ([setStateForTests]).
@@ -299,7 +316,8 @@ class LockScreenActivity : ComponentActivity() {
             val cached = AppInfoCache.get(pkg)
             // The icon's colour comes worked out with it: nothing is computed here on the way to the prompt.
             val label = AppInfoCache.cachedLabel(pkg)
-            cover.bind(label.orEmpty(), cached?.icon, isBioKey = false, accent = cached?.accent)
+            // Light or dark as the app's own launch screen is, when known already (never looked up here).
+            cover.bind(label.orEmpty(), cached?.icon, isBioKey = false, accent = cached?.accent, dark = cached?.dark)
             // Never load on the way to the prompt: the name and icon follow as soon as they're ready.
             if (cached == null) AppInfoCache.load(this, pkg) { info ->
                 if (!isFinishing && lockedPackage == pkg) {
@@ -309,14 +327,17 @@ class LockScreenActivity : ComponentActivity() {
             }
         }
         cover.setActionsVisible(false)
+        if (::cover.isInitialized && window != null) applyBarAppearance()
     }
 
     /**
      * Dark or light status and navigation bar icons to match the cover. The theme sets them at
-     * launch; this screen handles dark-mode switches itself (configChanges), so it sets them again.
+     * launch; this screen handles dark-mode switches itself (configChanges), and the cover can be
+     * dark or light as the locked app is, so it sets them again.
      */
     private fun applyBarAppearance() {
-        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val night = if (::cover.isInitialized) cover.isDark
+        else (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         WindowCompat.getInsetsController(window, window.decorView).run {
             isAppearanceLightStatusBars = !night
             isAppearanceLightNavigationBars = !night
@@ -595,15 +616,20 @@ class LockScreenActivity : ComponentActivity() {
         val selfProtection = isSelfProtection
         // A device lock while the prompt is up ends every session, this one included.
         val generation = LockStateTracker.lockGeneration()
+        // Other locked apps on screen with this one (split screen, another display): one prompt
+        // names them all and unlocks them all, rather than one prompt after another. Its misses
+        // and its unlock are recorded under all their names.
+        val others = if (selfProtection) emptyList() else lockedAppsOnScreenWith(pkg)
+        val name = if (selfProtection) getString(R.string.brand_name) else appsNamed(resources, (listOf(pkg) + others).map { AppInfoCache.quickLabel(this, it) })
         cover.setStatus(null, permanentLockout = false)
         cover.setActionsVisible(false)
         // A cover held over this screen (picture-in-picture in compatibility mode) follows suit.
         InstantShieldOverlay.onPrompt(pkg, showing = true)
         engine.showBiometricPrompt(
             activity = this,
-            appName = if (selfProtection) getString(R.string.brand_name) else AppInfoCache.quickLabel(this, pkg),
+            appName = name,
             packageName = pkg,
-            onSuccess = { onAuthenticated(pkg, selfProtection, generation) },
+            onSuccess = { onAuthenticated(pkg, selfProtection, generation, others) },
             onError = { code, message ->
                 if (!SecurityEngine.isUserCancel(code)) DiagnosticLog.log("Unlock prompt for $pkg: error $code")
                 isPermanentLockout = code == SecurityEngine.ERROR_LOCKOUT_PERMANENT
@@ -621,7 +647,7 @@ class LockScreenActivity : ComponentActivity() {
         )
     }
 
-    private fun onAuthenticated(pkg: String, selfProtection: Boolean, generation: Int) {
+    private fun onAuthenticated(pkg: String, selfProtection: Boolean, generation: Int, others: List<String> = emptyList()) {
         if (selfProtection) {
             if (LockStateTracker.lockGeneration() != generation) return unlockVoided()
             LockStateTracker.setSelfProtectionGranted(granted = true, visitedGuardedScreen = true)
@@ -633,6 +659,13 @@ class LockScreenActivity : ComponentActivity() {
                 // Still hidden: the stand-in keeps its links for the next unlock.
                 deepLinks?.let { BioKeyNotificationShieldService.cachedPendingIntents.putIfAbsent(pkg, ConcurrentHashMap(it)) }
                 return unlockVoided()
+            }
+            // The others the prompt named, still locked: unlocked by it too.
+            for (other in others) {
+                if (!vault.isAppLocked(other) || LockStateTracker.isAppUnlocked(other, vault.getTimeoutMode(other))) continue
+                EngineTrace.record("u.unlock", other)
+                if (LockStateTracker.onAppUnlocked(other, generation)) DiagnosticLog.log("$other unlocked with $pkg, by the same prompt")
+                LockStateTracker.clearRegularLockPending(other)
             }
             if (launchAfterUnlock) sendPendingDeepLink(pkg, deepLinks)
         }

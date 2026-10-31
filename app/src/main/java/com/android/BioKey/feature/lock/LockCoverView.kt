@@ -54,11 +54,13 @@ import com.android.BioKey.ui.security.WindowProtection
 @SuppressLint("ViewConstructor", "SetTextI18n")
 class LockCoverView(context: Context) : FrameLayout(context) {
 
-    /** Material You roles, the same dynamic scheme as BioKey's own screens (Android 12+). */
-    class Palette(context: Context) {
-        private val scheme = if (
-            (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        ) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+    /**
+     * Material You roles, the same dynamic scheme as BioKey's own screens (Android 12+): [dark]
+     * as the locked app's own launch screen is ([CachedAppInfo.dark]), or as the phone is set.
+     */
+    class Palette(context: Context, dark: Boolean? = null) {
+        val isDark = dark ?: isNight(context)
+        private val scheme = if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
 
         val surface = scheme.surface.toArgb()
         val onSurface = scheme.onSurface.toArgb()
@@ -72,6 +74,10 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     }
 
     private companion object {
+        /** The phone's own light or dark mode. */
+        fun isNight(context: Context) =
+            (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
         const val ICON_DP = AppInfoCache.ICON_DP
         /** Room kept under the icon and name, for the small mark (or the buttons, on a tall screen). */
         const val IDENTITY_BOTTOM_DP = 96
@@ -192,6 +198,11 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     /** The icon is BioKey's key, padded inside the circle, as no app icon was loaded. */
     private var placeholderIcon = false
     private var palette = Palette(context)
+    /** The locked app's own scheme ([bind]'s dark), or null to follow the phone's mode. */
+    private var appDark: Boolean? = null
+
+    /** Whether the cover is drawn dark now: the status and navigation bar icons go light over it. */
+    val isDark: Boolean get() = palette.isDark
 
     init {
         // Not clickable in itself, or screen readers would offer a double-tap that does nothing on
@@ -306,8 +317,21 @@ class LockCoverView(context: Context) : FrameLayout(context) {
 
     /** Re-resolves colours, e.g. after a dark-mode switch. */
     fun refreshPalette() {
-        palette = Palette(context)
+        palette = Palette(context, appDark)
         applyPalette()
+    }
+
+    /**
+     * Light or dark as the locked app's own launch screen is ([dark]; null: as the phone is set).
+     * The design and the icon's glow stay; only the scheme changes, and only if it has to.
+     */
+    private fun followScheme(dark: Boolean?) {
+        appDark = dark
+        if ((dark ?: isNight(context)) == palette.isDark) return
+        palette = Palette(context, dark)
+        applyPalette()
+        // The placeholder key is tinted with the scheme's colour.
+        if (placeholderIcon) icon.drawable?.setTint(palette.primary)
     }
 
     private fun applyPalette() {
@@ -345,14 +369,17 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     /**
      * Shows a locked app's icon (or BioKey's logo when [isBioKey]); [label] is for screen readers.
      * [accent] is the icon's glow colour, ready-made from [AppInfoCache]; worked out here (on the
-     * main thread, on the way to the cover) only when not passed.
+     * main thread, on the way to the cover) only when not passed. [dark]: the app's own launch
+     * screen is ([CachedAppInfo.dark]), and the cover follows it; null, as the phone is set.
      */
     fun bind(
         label: String,
         appIcon: Drawable?,
         isBioKey: Boolean,
-        accent: Int? = appIcon?.let { AppInfoCache.accentOf(it, resources) }
+        accent: Int? = appIcon?.let { AppInfoCache.accentOf(it, resources) },
+        dark: Boolean? = null
     ) {
+        followScheme(if (isBioKey) null else dark)
         logo.visibility = if (isBioKey) VISIBLE else GONE
         icon.visibility = if (isBioKey) GONE else VISIBLE
         name.visibility = icon.visibility

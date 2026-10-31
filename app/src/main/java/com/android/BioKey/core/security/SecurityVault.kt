@@ -104,6 +104,10 @@ class SecurityVault private constructor(private val context: Context) {
         private const val KEY_AUTO_SORT = "auto_sort_profiles_enabled"
         private const val KEY_AUTO_SORT_EXCLUDED = "auto_sort_excluded_packages"
         private const val KEY_SELF_PROTECTION = "accessibility_self_protection_enabled"
+        /** The lock-screen camera and the emergency dialer open over the keyguard uncovered, as Android's App lock lets them. */
+        private const val KEY_KEYGUARD_CAMERA = "keyguard_camera_allowed"
+        /** Sessions end when the phone locks rather than when the screen turns off. */
+        private const val KEY_RELOCK_AT_PHONE_LOCK = "relock_at_phone_lock"
         /** 2: profile membership no longer implies locked; [KEY_LOCKED] holds each app's own switch. */
         private const val KEY_MODEL_VERSION = "lock_model_version"
         private const val MODEL_VERSION = 3
@@ -181,6 +185,23 @@ class SecurityVault private constructor(private val context: Context) {
     private val _accessibilitySelfProtectionFlow = MutableStateFlow(false)
     val accessibilitySelfProtectionFlow: StateFlow<Boolean> = _accessibilitySelfProtectionFlow.asStateFlow()
 
+    private val _keyguardCameraFlow = MutableStateFlow(true)
+    /**
+     * "Let the camera open over the lock screen": while the phone is locked, the phone's lock-screen
+     * camera and its emergency dialer open over the keyguard uncovered, locked apps or not, as
+     * Android's own App lock lets them; once the phone is unlocked with one in front, it's covered.
+     * On by default, as in Android's. Off, they're covered over the keyguard too.
+     */
+    val keyguardCameraFlow: StateFlow<Boolean> = _keyguardCameraFlow.asStateFlow()
+
+    private val _relockAtPhoneLockFlow = MutableStateFlow(false)
+    /**
+     * "Lock apps when the phone locks": sessions survive a screen-off that Android doesn't follow
+     * with a lock (its "lock after" delay, Smart Lock), and end once the phone is seen locked
+     * ([LockStateTracker.relockAtPhoneLock]). Off by default: they end when the screen turns off.
+     */
+    val relockAtPhoneLockFlow: StateFlow<Boolean> = _relockAtPhoneLockFlow.asStateFlow()
+
     /** Apps the owner took out of a profile by hand, which auto-sort must leave alone. Written under [lock]. */
     @Volatile private var autoSortExcluded: Set<String> = emptySet()
 
@@ -236,6 +257,13 @@ class SecurityVault private constructor(private val context: Context) {
     fun isAccessibilitySelfProtectionEnabled(): Boolean = _accessibilitySelfProtectionFlow.value
     fun isSetupCompleted(): Boolean = _setupCompletedFlow.value
     fun isAutoSortProfilesEnabled(): Boolean = _autoSortProfilesFlow.value
+    fun isKeyguardCameraAllowed(): Boolean = _keyguardCameraFlow.value
+    fun setKeyguardCameraAllowed(allowed: Boolean) = setPreference { _keyguardCameraFlow.value = allowed }
+    fun isRelockAtPhoneLock(): Boolean = _relockAtPhoneLockFlow.value
+    fun setRelockAtPhoneLock(on: Boolean) = setPreference {
+        _relockAtPhoneLockFlow.value = on
+        LockStateTracker.relockAtPhoneLock = on
+    }
 
     // ---------------------------------------------------------------------------------------
     // Locking apps and profiles
@@ -420,6 +448,8 @@ class SecurityVault private constructor(private val context: Context) {
             .put("biometricOnly", _biometricOnlyFlow.value)
             .put("selfProtection", _accessibilitySelfProtectionFlow.value)
             .put("autoSort", _autoSortProfilesFlow.value)
+            .put("keyguardCamera", _keyguardCameraFlow.value)
+            .put("relockAtPhoneLock", _relockAtPhoneLockFlow.value)
             .put("autoSortExcluded", JSONArray(autoSortExcluded.sorted()))
             // The two switches kept beside the vault: their choices, not what they recorded.
             .put("unlockAttemptAlerts", UnlockAttempts.enabled.value)
@@ -464,6 +494,10 @@ class SecurityVault private constructor(private val context: Context) {
             _biometricOnlyFlow.value = state.optBoolean("biometricOnly", _biometricOnlyFlow.value)
             _accessibilitySelfProtectionFlow.value = selfProtection
             _autoSortProfilesFlow.value = state.optBoolean("autoSort", true)
+            // Older backups don't say: what's set on this phone stays.
+            _keyguardCameraFlow.value = state.optBoolean("keyguardCamera", _keyguardCameraFlow.value)
+            _relockAtPhoneLockFlow.value = state.optBoolean("relockAtPhoneLock", _relockAtPhoneLockFlow.value)
+            LockStateTracker.relockAtPhoneLock = _relockAtPhoneLockFlow.value
         }
         // As their own switches would.
         if (!shield) listeners.forEach { it.onNotificationShieldOff() }
@@ -688,6 +722,9 @@ class SecurityVault private constructor(private val context: Context) {
         // Off in a build without it, even if an earlier build saved it on.
         _accessibilitySelfProtectionFlow.value = prefs.getBoolean(KEY_SELF_PROTECTION, false) && selfProtectionAvailable
         _autoSortProfilesFlow.value = prefs.getBoolean(KEY_AUTO_SORT, true)
+        _keyguardCameraFlow.value = prefs.getBoolean(KEY_KEYGUARD_CAMERA, true)
+        _relockAtPhoneLockFlow.value = prefs.getBoolean(KEY_RELOCK_AT_PHONE_LOCK, false)
+        LockStateTracker.relockAtPhoneLock = _relockAtPhoneLockFlow.value
 
         // A timed pause survives a restart only while its time is left.
         val enabled = prefs.getBoolean(KEY_GLOBAL, true)
@@ -753,6 +790,8 @@ class SecurityVault private constructor(private val context: Context) {
         val selfProtection = _accessibilitySelfProtectionFlow.value
         val setup = _setupCompletedFlow.value
         val autoSort = _autoSortProfilesFlow.value
+        val keyguardCamera = _keyguardCameraFlow.value
+        val relockAtPhoneLock = _relockAtPhoneLockFlow.value
         return io.submit {
             prefs.edit(commit = true) {
                 putStringSet(KEY_LOCKED, selected)
@@ -770,6 +809,8 @@ class SecurityVault private constructor(private val context: Context) {
                 putBoolean(KEY_SELF_PROTECTION, selfProtection)
                 putBoolean(KEY_SETUP_COMPLETED, setup)
                 putBoolean(KEY_AUTO_SORT, autoSort)
+                putBoolean(KEY_KEYGUARD_CAMERA, keyguardCamera)
+                putBoolean(KEY_RELOCK_AT_PHONE_LOCK, relockAtPhoneLock)
             }
         }
     }

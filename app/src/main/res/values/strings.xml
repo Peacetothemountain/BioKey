@@ -13,6 +13,14 @@
 
     <!-- Android's unlock prompt, as BioKey fills it in. -->
     <string name="prompt_unlock">Unlock %1$s</string>
+    <!-- Several locked apps on screen at once (split screen, another display), one prompt for them all: their names. -->
+    <string name="prompt_apps_two">%1$s and %2$s</string>
+    <string name="prompt_apps_three">%1$s, %2$s and %3$s</string>
+    <!-- %4$d: how many more apps beside the three named. -->
+    <plurals name="prompt_apps_more">
+        <item quantity="one">%1$s, %2$s, %3$s and %4$d other app</item>
+        <item quantity="other">%1$s, %2$s, %3$s and %4$d other apps</item>
+    </plurals>
     <string name="prompt_verify">Verify it\'s you</string>
     <string name="prompt_use_biometric">Use your face or fingerprint</string>
     <string name="prompt_cancel">Cancel</string>
@@ -98,6 +106,7 @@
     <string name="disclosure_accessibility_reads_tap_labels">The label of what you tap on the home screen, in its search or in Recents</string>
     <string name="disclosure_accessibility_reads_recents_names">The names of apps on Recents cards, while Recents is open and an app you\'ve locked is unlocked</string>
     <string name="disclosure_accessibility_reads_window_titles">The title Android gives each new window, to tell Google Password Manager\'s screens from sign-in sheets over other apps</string>
+    <string name="disclosure_accessibility_reads_app_lock_prompt">The app named on Android\'s own App lock prompt (Android 17), while it\'s up, so an app you\'ve locked there too asks you only once</string>
     <string name="disclosure_accessibility_reads_settings_pages">The text of system Settings pages about BioKey itself (App info, Accessibility, notification access, uninstall)</string>
     <string name="disclosure_accessibility_used_covering">Covering apps you\'ve locked until you authenticate, even before they open</string>
     <string name="disclosure_accessibility_used_home_back">Pressing Home or Back for you, to leave a locked app you didn\'t unlock</string>
@@ -380,6 +389,8 @@
     <string name="change_profile_delay_longer">%1$s re-lock delay made longer</string>
     <string name="change_default_delay_longer">Default re-lock delay made longer: %1$s</string>
     <string name="change_shield_off">Hide notification content switched off</string>
+    <string name="change_keyguard_camera_on">Camera over the lock screen switched on</string>
+    <string name="change_relock_at_phone_lock">Apps lock when the phone locks, not when the screen turns off</string>
     <string name="change_biometric_unavailable">Face or fingerprint couldn\'t be used, so the screen lock was allowed</string>
     <string name="card_gap_switched_off">%1$s · App locking stopped</string>
     <string name="card_gap_force_stopped">%1$s · BioKey was force-stopped</string>
@@ -573,6 +584,12 @@
     <string name="settings_relock_title">Default re-lock delay</string>
     <!-- %1$s: the delay's short label. -->
     <string name="settings_relock_summary">%1$s · profiles can set their own</string>
+    <string name="settings_relock_at_phone_lock_title">Lock apps when the phone locks</string>
+    <string name="settings_relock_at_phone_lock_on">Not when the screen turns off, while Android keeps the phone unlocked (its own lock delay, Smart Lock)</string>
+    <string name="settings_relock_at_phone_lock_off">Off: every app locks when the screen turns off</string>
+    <string name="settings_keyguard_camera_title">Let the camera open over the lock screen</string>
+    <string name="settings_keyguard_camera_on">And emergency calls, as Android\'s own App lock lets them. Once your phone is unlocked, they\'re locked as usual</string>
+    <string name="settings_keyguard_camera_off">Off: a locked camera or phone app is covered over the lock screen too</string>
     <string name="settings_new_apps_title">Offer to lock new apps</string>
     <string name="settings_new_apps_summary">After you install an app that auto-sort doesn\'t lock</string>
     <string name="settings_alerts_on">Tells you if app locking stops, and afterwards when it was off</string>

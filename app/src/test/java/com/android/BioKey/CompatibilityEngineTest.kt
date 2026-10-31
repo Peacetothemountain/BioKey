@@ -485,6 +485,86 @@ class CompatibilityEngineTest {
     }
 
     @Test
+    fun withNoCoverAndNoLockScreenTheAppGoesHome() {
+        // The cover's window can't be shown, and Android refuses the lock screen without a word.
+        (UsageWatchService::class.java.getDeclaredField("shield").apply { isAccessible = true }.get(engine.get()) as InstantShieldOverlay).destroy()
+        step()
+        started()
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        assertTrue(started().none { it.hasCategory(Intent.CATEGORY_HOME) })
+        repeat(6) { step() }
+        assertTrue(started().any { it.hasCategory(Intent.CATEGORY_HOME) })
+        assertTrue(DiagnosticLog.entries().any { it.text == "Lock screen for $bank didn't appear; went Home" })
+    }
+
+    @Test
+    fun bothHalvesOfASplitScreenAreAskedForInOnePrompt() {
+        vault.setAppLock(chat, true)
+        // A pair opened from Recents: both resume.
+        event(ACTIVITY_RESUMED, bank)
+        event(ACTIVITY_RESUMED, chat)
+        step()
+        val asked = listOf(bank, chat).associateWith { UsageWatchService.lockedAppsOnScreenWith(it) }
+        assertEquals(listOf(chat), asked[bank])
+        assertEquals(listOf(bank), asked[chat])
+        // One of them unlocked meanwhile: no longer named.
+        LockStateTracker.onAppUnlocked(chat)
+        assertEquals(emptyList<String>(), UsageWatchService.lockedAppsOnScreenWith(bank))
+    }
+
+    /** The bank's [cls] is the phone's lock-screen camera (it answers the secure camera intent). */
+    private fun bankIsTheLockScreenCamera(cls: String) {
+        val secure = ComponentName(bank, cls)
+        shadowOf(context.packageManager).apply {
+            addActivityIfNotPresent(secure)
+            addIntentFilterForActivity(secure, IntentFilter(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE).apply { addCategory(Intent.CATEGORY_DEFAULT) })
+        }
+        ForegroundRules.resetSystemLists()
+    }
+
+    @Test
+    fun theLockScreenCameraOpensOverTheKeyguardUncoveredAndIsCoveredOnceThePhoneIsUnlocked() {
+        val secure = "$bank.SecureCameraActivity"
+        bankIsTheLockScreenCamera(secure)
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(true)
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        started()
+        event(ACTIVITY_RESUMED, bank, secure)
+        repeat(8) { step(150) }
+        assertTrue(started().none { it.component?.className == lockScreen })
+        assertEquals(emptyList<String>(), covered(bank))
+        // Unlocked from inside the camera, which stays in front.
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(false)
+        context.sendBroadcast(Intent(Intent.ACTION_USER_PRESENT))
+        step()
+        assertEquals(listOf("Covered $bank (opened)"), covered(bank))
+        assertTrue(started().any { it.component?.className == lockScreen })
+    }
+
+    @Test
+    fun withTheSettingOffTheLockScreenCameraIsCoveredOverTheKeyguard() {
+        vault.setKeyguardCameraAllowed(false)
+        val secure = "$bank.SecureCameraActivity"
+        bankIsTheLockScreenCamera(secure)
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(true)
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        started()
+        event(ACTIVITY_RESUMED, bank, secure)
+        repeat(9) { step(150) }
+        assertEquals(listOf("Covered $bank (opened)"), covered(bank))
+        assertTrue(started().any { it.component?.className == lockScreen })
+    }
+
+    @Test
+    fun anotherScreenOfTheCameraAppOverTheKeyguardIsCoveredAsBefore() {
+        bankIsTheLockScreenCamera("$bank.SecureCameraActivity")
+        // Its ordinary screen, still on screen over the keyguard: not the lock-screen camera.
+        val starts = bankComesForwardOnTheKeyguard { }
+        assertEquals(1, starts.size)
+    }
+
+    @Test
     fun aTripToAPlayPageAndStraightBackKeepsTheSession() {
         unlockBank()
         // "Rate us" opens the bank's Play listing: a page of its own, so the bank stops.

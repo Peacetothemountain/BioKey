@@ -43,6 +43,7 @@
 5665	o.launch	com.twitter.android	0	0
 6130	a.ev	32	com.google.android.apps.nexuslauncher	com.google.android.apps.nexuslauncher.NexusLauncherActivity	-1	-1	0	0	%00
 6280	a.win	1%2C1%2C0%2Caf%2C-1%2C0 0 320 470%2C%2Ccom.google.android.apps.nexuslauncher
+6365	o.log	Lock screen for com.twitter.android didn't appear; went Home
 6365	o.home
 6630	a.ev	32	com.twitter.android	com.twitter.android.MainActivity	-1	-1	0	0	%00
 6645	o.launch	com.twitter.android	0	0

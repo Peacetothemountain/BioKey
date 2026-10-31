@@ -186,6 +186,10 @@ internal class EngineReplay(private val context: Application) {
             for (r in apps) vault.moveAppToProfile(r.fields[1], profile.id)
         }
         if (env.any { it.fields[0] == "protection" && it.fields[1] == "0" }) vault.setGlobalLockEnabled(false)
+        // A trace from before the lock-screen camera could open uncovered: it was covered then.
+        vault.setKeyguardCameraAllowed(env.any { it.fields[0] == "keyguardCamera" && it.fields[1] == "1" })
+        // Likewise, apps locked when the screen turned off then.
+        vault.setRelockAtPhoneLock(env.any { it.fields[0] == "relockAtPhoneLock" && it.fields[1] == "1" })
         // Screensavers as they were set (off, with none chosen, in a trace from before they were recorded).
         val screensaver = env.firstOrNull { it.fields[0] == "screensaver" }?.fields
         Settings.Secure.putInt(context.contentResolver, "screensaver_enabled", screensaver?.getOrNull(1)?.toIntOrNull() ?: 0)
@@ -196,7 +200,8 @@ internal class EngineReplay(private val context: Application) {
             homeApps = homes.associate { it.fields[1] to (it.fields[2] == "1") },
             defaultHome = homes.firstOrNull { it.fields[3] == "1" }?.fields?.get(1),
             helpers = env.filter { it.fields[0] == "picker" }.mapTo(HashSet()) { it.fields[1] },
-            inputMethods = env.filter { it.fields[0] == "keyboard" }.mapTo(HashSet()) { it.fields[1] }
+            inputMethods = env.filter { it.fields[0] == "keyboard" }.mapTo(HashSet()) { it.fields[1] },
+            overKeyguard = env.filter { it.fields[0] == "keyguardApp" }.groupBy({ it.fields[1] }, { it.fields[2] }).mapValues { it.value.toSet() }
         )
         shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
         shadowOf(context.getSystemService(KeyguardManager::class.java)).apply {

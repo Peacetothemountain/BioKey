@@ -61,6 +61,9 @@ internal class ActivityStates {
 
     fun isResumed(app: String): Boolean = byActivity.values.any { it.app == app && it.type == RESUMED }
 
+    /** The apps with an activity resumed: on screen, in front or beside the one in front. */
+    fun resumedApps(): Set<String> = byActivity.values.filter { it.type == RESUMED }.mapTo(HashSet()) { it.app }
+
     /** Whether some activity of [app] other than [except] ([UsageEvent.activity]) is resumed. */
     fun isResumed(app: String, except: String): Boolean = byActivity.any { (activity, s) -> activity != except && s.app == app && s.type == RESUMED }
 

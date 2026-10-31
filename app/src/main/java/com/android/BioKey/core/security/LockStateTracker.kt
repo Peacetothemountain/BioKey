@@ -84,6 +84,13 @@ object LockStateTracker {
     /** How long after an app left the screen its window may still flicker back during the exit animation. */
     private const val JUST_LEFT_MS = 2_000L
 
+    /**
+     * With sessions waiting for the phone to lock ([awaitingPhoneLock]), a phone-unlocked
+     * broadcast this soon after the screen came back on is the unlock that woke it (a fingerprint
+     * on a dark screen): see [onUserPresent].
+     */
+    private const val SCREEN_BACK_UNLOCK_MS = 5_000L
+
     /** How long a successful self-protection challenge lets the user stay in BioKey's settings pages. */
     private const val SELF_PROTECTION_LEASE_MS = 120_000L
 
@@ -451,6 +458,8 @@ object LockStateTracker {
     fun lockAll(includeOwnApp: Boolean = true, reason: String? = null) {
         // First, so an unlock racing this from another thread sees it ([onAppUnlocked]).
         generation++
+        // Nothing is waiting for the phone to lock any more: it's all locked.
+        awaitingPhoneLock = false
         expiryJobs.values.forEach { it.cancel() }
         expiryJobs.clear()
         sessions.clear()
@@ -479,18 +488,97 @@ object LockStateTracker {
         DiagnosticLog.log("All sessions ended ($reason)")
     }
 
-    fun onScreenTurnedOff() = lockAll(reason = "screen off")
+    /**
+     * "Lock apps when the phone locks" (off by default: they lock when the screen turns off). On,
+     * a screen-off that Android doesn't follow with a lock (its own "lock after" delay, Smart Lock
+     * keeping it unlocked) leaves sessions running; they end once the phone is seen locked. Set
+     * from the vault as it loads and changes.
+     */
+    @Volatile
+    var relockAtPhoneLock = false
+
+    /**
+     * The screen went off with every session kept ([relockAtPhoneLock]): waiting to see the phone
+     * lock ([onDeviceLockState]), or be unlocked without having been seen not locked with its
+     * keyguard up ([onUserPresent]). Over at the next lock-all.
+     */
+    @Volatile
+    var awaitingPhoneLock = false
+        private set
+
+    /**
+     * While [awaitingPhoneLock]: the keyguard was seen up, with the screen off, and the phone not
+     * locked (Smart Lock keeps it unlocked): its being dismissed later is no lock missed.
+     */
+    @Volatile private var trustedKeyguardSeen = false
+
+    /** When the screen last came back on while [awaitingPhoneLock] ([onScreenOn]), or 0. */
+    @Volatile private var screenBackAt = 0L
+
+    /**
+     * The screen turned off (or a screensaver started, or the phone is shutting down: then
+     * [phoneLocked] is null). Every session ends, the default; with [relockAtPhoneLock] on, only
+     * if Android has locked the phone already ([phoneLocked]), and otherwise they wait for it
+     * ([awaitingPhoneLock]). Can't tell (null): they end, failing toward locking. BioKey's own
+     * session ends either way.
+     */
+    fun onScreenTurnedOff(phoneLocked: Boolean? = null) {
+        if (!relockAtPhoneLock || phoneLocked != false) {
+            lockAll(reason = "screen off")
+            return
+        }
+        if (!awaitingPhoneLock) {
+            awaitingPhoneLock = true
+            DiagnosticLog.log("Screen off: apps stay unlocked until the phone locks")
+        }
+        trustedKeyguardSeen = false
+        screenBackAt = 0L
+        deviceLocked = false
+        clearSelfProtection()
+        lockOwnApp()
+    }
 
     @Volatile private var deviceLocked = false
 
     /**
      * The device's locked state, as last seen. Locking the device (screen off, screensaver, the
      * power menu's Lockdown, a lock with the screen still on) ends every session, every time.
+     * [keyguardUpInTheDark]: asked only while [awaitingPhoneLock] and the phone isn't locked,
+     * whether the keyguard is up with the screen off, which then can only be Android keeping the
+     * phone unlocked under it (Smart Lock): see [onUserPresent].
      */
-    fun onDeviceLockState(locked: Boolean) {
+    fun onDeviceLockState(locked: Boolean, keyguardUpInTheDark: (() -> Boolean)? = null) {
         if (locked && !deviceLocked) lockAll(reason = "phone locked")
         if (!locked && deviceLocked) phoneUnlocks++
         deviceLocked = locked
+        if (!locked && awaitingPhoneLock && !trustedKeyguardSeen && keyguardUpInTheDark?.invoke() == true) trustedKeyguardSeen = true
+    }
+
+    /**
+     * The screen came back on, [phoneLocked] or not. Locked: every session ends, and the app left
+     * on screen is covered behind the keyguard before the phone is unlocked. Not: the screen came
+     * back within Android's own lock delay, as far as can be told yet ([onUserPresent]).
+     */
+    fun onScreenOn(phoneLocked: Boolean) {
+        onDeviceLockState(phoneLocked)
+        if (awaitingPhoneLock) screenBackAt = now()
+    }
+
+    /**
+     * The phone was just unlocked (the keyguard dismissed). While [awaitingPhoneLock], a keyguard
+     * that went away means the phone may have locked and been unlocked again in the dark, a
+     * fingerprint on a dark screen racing the screen coming on, unseen; unless the keyguard was
+     * seen up with the phone not locked (Smart Lock), BioKey can't tell, and every session ends.
+     * Either way the wait is over: the phone is in use.
+     */
+    fun onUserPresent() {
+        if (!awaitingPhoneLock) return
+        val recent = screenBackAt == 0L || now() - screenBackAt < SCREEN_BACK_UNLOCK_MS
+        if (!trustedKeyguardSeen && recent) {
+            lockAll(reason = "phone unlocked; couldn't tell whether it had locked")
+        } else {
+            awaitingPhoneLock = false
+        }
     }
 
     /**

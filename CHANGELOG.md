@@ -105,6 +105,22 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
   mid-word.
 - The Play version's Accessibility service no longer asks Android for screen elements' view IDs:
   only self-protection used them.
+- **Android 17's own App lock:** an app locked in both asks once. BioKey lowers its cover so
+  Android's prompt shows, and once Android lets the app through it doesn't ask again (it still does
+  with face or fingerprint only, or with screen-lock openings noted). It knows which app Android's
+  prompt is for from the prompt itself or your tap. Apps seen locked by Android are remembered for
+  30 days. An app only Android locks is left alone.
+- **Let the camera open over the lock screen** (on, as in Android's own App lock): the lock-screen
+  camera and the emergency dialer aren't covered while the phone is locked, and are covered once
+  it's unlocked with them in front. Off, they're covered as before.
+- **One prompt for every locked app on screen:** two locked apps in split screen (or one on
+  another display) are asked for together ("Notes and Diary") and unlocked together.
+- **Lock apps when the phone locks** (optional): apps stay unlocked through a screen-off that
+  Android doesn't follow with a lock (its lock delay, Smart Lock). The default is unchanged: they
+  lock when the screen turns off.
+- The cover is light or dark as the locked app's own launch screen is.
+- If the cover can't go up and Android refuses the lock screen without a word, the app is sent
+  Home, and the diagnostic log says so.
 
 ## 1.0.2 (26 October 2026)
 
