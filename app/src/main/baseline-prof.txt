@@ -3,7 +3,6 @@
 # get it from ProfileInstaller on first launch, and it takes effect at the next background
 # optimisation (usually while the phone is idle and charging). It covers the lock path of both
 # engines (accessibility events, compatibility mode, the cover and what it draws with, the lock
-# screen), the notification shield, and the session and settings state they read on every
 # event. Compose and the other libraries bring their own profiles.
 #
 # Written by hand, with wildcards. The generator (baselineprofile/, ./gradlew
@@ -15,7 +14,6 @@
 HSPLcom/android/BioKey/BioKeyApplication**->**(**)**
 Lcom/android/BioKey/BioKeyApplication**;
 
-# The lock path: BioKeyAccessibilityService, UsageWatchService, InstantShieldOverlay,
 # LockCoverView, LockLauncher, LockScreenActivity and the rules they apply.
 HSPLcom/android/BioKey/feature/lock/**->**(**)**
 Lcom/android/BioKey/feature/lock/**;
@@ -51,7 +49,6 @@ Lcom/android/BioKey/ui/AppIcons**;
 HSPLcom/android/BioKey/ui/theme/BioKeyThemeKt;->animationsEnabled(Landroid/content/Context;)Z
 Lcom/android/BioKey/ui/theme/BioKeyThemeKt;
 
-# The notification shield: it hides a locked app's notifications as they arrive, and at every
 # lock-all.
 HSPLcom/android/BioKey/feature/notification/**->**(**)**
 Lcom/android/BioKey/feature/notification/**;

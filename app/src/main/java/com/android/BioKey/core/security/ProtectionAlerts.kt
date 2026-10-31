@@ -84,6 +84,22 @@ object ProtectionAlerts {
                 description = context.getString(R.string.alerts_channel_description)
             }
         )
+        retireHiddenNotificationStandIns(nm)
+    }
+
+    /**
+     * The channel of "Hide notification content" (gone since 1.0.4): its stand-ins for hidden
+     * notifications, left in the shade by the version before, are taken down with it. The
+     * notifications it hid come back by themselves, as their snooze runs out (a day at most).
+     */
+    private const val RETIRED_STAND_IN_CHANNEL = "biokey_privacy_shield_channel"
+
+    private fun retireHiddenNotificationStandIns(nm: NotificationManager) {
+        if (nm.getNotificationChannel(RETIRED_STAND_IN_CHANNEL) == null) return
+        runCatching {
+            for (n in nm.activeNotifications) if (n.notification.channelId == RETIRED_STAND_IN_CHANNEL) nm.cancel(n.tag, n.id)
+            nm.deleteNotificationChannel(RETIRED_STAND_IN_CHANNEL)
+        }
     }
 
     /** [silent]: a reminder ([remindIfOff]) brings the alert back without a sound. */

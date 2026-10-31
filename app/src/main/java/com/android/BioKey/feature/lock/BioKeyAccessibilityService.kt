@@ -281,7 +281,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             // First, and whatever goes wrong below: the screen going off ends every session.
             // A screensaver too: its cover below needs the sessions ended first, whatever order the
             // broadcast reaches BioKey's receivers in.
-            // (With "when the phone locks" chosen, a screen going off waits for the phone to lock.)
+            // (A screen going off with the phone not locked yet waits for it to lock.)
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
                 LockStateTracker.onScreenTurnedOff(phoneLocked = keyguard?.isDeviceLocked?.also { EngineTrace.answer("deviceLocked", it) })
             } else if (intent.action == Intent.ACTION_DREAMING_STARTED) {
@@ -476,7 +476,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
             // The phone locked with the screen on (Lockdown), say: what was on display before isn't
             // over the keyguard now.
             onDisplayAt.clear()
-            // Sessions kept through a screen-off ([LockStateTracker.relockAtPhoneLock]) end as the
+            // Sessions kept through a screen-off ([LockStateTracker.awaitingPhoneLock]) end as the
             // phone locks: the app left on screen then gets its lock screen behind the keyguard,
             // as at a screen-off, whether the screen is still off or has just come back on.
             val leftThen = leftAtScreenOff

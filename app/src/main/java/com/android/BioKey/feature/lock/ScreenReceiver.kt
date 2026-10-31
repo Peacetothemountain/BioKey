@@ -12,12 +12,11 @@ import com.android.BioKey.core.security.BiometricEnrollment
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.UnlockAttempts
-import com.android.BioKey.feature.notification.ShieldAccessWatch
 
 /**
- * Ends every unlock session the moment the display turns off or a screensaver starts, so a
- * phone that's picked up again always starts locked (or, with "when the phone locks" chosen, as
- * soon as Android has locked it: [LockStateTracker.onScreenTurnedOff]). Registered dynamically and not exported,
+ * Ends every unlock session the moment a screensaver starts, or the display turns off with the
+ * phone locked (otherwise as soon as Android locks it: [LockStateTracker.onScreenTurnedOff]), so
+ * a phone that's picked up again always starts locked. Registered dynamically and not exported,
  * so other apps can't spoof these broadcasts; the phone being unlocked, which SystemUI sends, see
  * [registerForUnlocks].
  */
@@ -48,7 +47,7 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
                 if (intent.action == Intent.ACTION_DREAMING_STARTED) LockStateTracker.screensaverShowing = true
                 // Always: ending sessions twice is harmless, missing a lock is not (a screensaver
                 // never turns the screen off, so the engines' own screen-off handling misses it).
-                // The screen going off, with "when the phone locks" chosen, waits for the phone to.
+                // The screen going off with the phone not locked yet waits for it to lock.
                 LockStateTracker.onScreenTurnedOff(
                     phoneLocked = if (intent.action == Intent.ACTION_SCREEN_OFF) context.isPhoneLocked() else null
                 )
@@ -69,8 +68,7 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
                         listOf(
                             { UnlockAttempts.onUserPresent(app) },
                             { ProtectionAlerts.remindIfOff(app) },
-                            { BiometricEnrollment.checkSoon(app) },
-                            { ShieldAccessWatch.checkSoon(app).get() }
+                            { BiometricEnrollment.checkSoon(app) }
                         ).forEach { step ->
                             runCatching(step).onFailure { DiagnosticLog.log("Unlock check failed: ${it.javaClass.simpleName}") }
                         }

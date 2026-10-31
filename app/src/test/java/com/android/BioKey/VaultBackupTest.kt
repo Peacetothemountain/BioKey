@@ -138,24 +138,6 @@ class VaultBackupTest {
     }
 
     @Test
-    fun aRestoreDoesntSwitchTheShieldOnWithoutItsExplanation() {
-        val vault = freshVault()
-        vault.setNotificationShield(true)
-        val file = VaultBackup.seal(vault.exportState(), password)
-
-        // A new phone, where the owner hasn't agreed to the shield's explanation yet.
-        clear()
-        val fresh = freshVault()
-        fresh.restoreState(VaultBackup.open(file, password))
-        assertFalse(fresh.isNotificationShieldEnabled())
-
-        // Agreed to here already: the backup's choice stands.
-        fresh.setNotificationShield(true)
-        fresh.restoreState(VaultBackup.open(file, password))
-        assertTrue(fresh.isNotificationShieldEnabled())
-    }
-
-    @Test
     fun theFileDoesNotGiveAwayWhichAppsAreLocked() {
         val vault = freshVault()
         vault.setAppLock("com.example.secretapp", true)

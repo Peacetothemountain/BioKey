@@ -11,7 +11,6 @@ import com.android.BioKey.R
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockMethods
 import com.android.BioKey.feature.lock.ForegroundRules
-import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 
 /**
  * What locking an app does and doesn't do, said honestly the first time the owner locks it by hand
@@ -53,15 +52,11 @@ internal object LockExplainer {
         )
     }
 
-    /** Whether "Hide notification content" hides this app's notifications. */
-    enum class Notifications { HIDDEN, SHIELD_OFF, NO_ACCESS }
-
     /** Everything the sheet says about one app. */
     data class Explanation(
         val packageName: String,
         /** Android's words for how it opens now, or BioKey's own. */
         val howItOpens: String,
-        val notifications: Notifications,
         val hasWidgets: Boolean,
         val dataKind: DataKind?,
         /** Other apps on the list that hold [dataKind]'s permissions, A–Z. */
@@ -118,12 +113,6 @@ internal object LockExplainer {
      * that can read its data are looked for (they're launchable, so visible to BioKey).
      */
     fun explain(context: Context, app: AppItem, installedApps: List<AppItem>): Explanation {
-        val vault = SecurityVault.getInstance(context)
-        val notifications = when {
-            !vault.isNotificationShieldEnabled() -> Notifications.SHIELD_OFF
-            !BioKeyNotificationShieldService.isNotificationAccessGranted(context) -> Notifications.NO_ACCESS
-            else -> Notifications.HIDDEN
-        }
         val kind = dataKindOf(context, app.packageName)
         val others = if (kind == null) emptyList() else {
             val holders = holdersOf(context, kind.permissions)
@@ -134,7 +123,6 @@ internal object LockExplainer {
         return Explanation(
             packageName = app.packageName,
             howItOpens = UnlockMethods.howLockedAppsOpen(context, context.getString(R.string.explain_opens_fallback)),
-            notifications = notifications,
             hasWidgets = hasWidgets(context, app),
             dataKind = kind,
             otherApps = others

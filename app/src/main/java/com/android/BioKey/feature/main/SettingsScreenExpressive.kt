@@ -28,7 +28,6 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AddModerator
 import androidx.compose.material.icons.filled.AdminPanelSettings
-import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Close
@@ -46,7 +45,6 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.ScreenLockPortrait
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
@@ -87,8 +85,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.core.net.toUri
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
@@ -105,8 +101,6 @@ import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.feature.lock.SelfProtectionDetector
-import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
-import com.android.BioKey.feature.notification.ShieldAccessWatch
 import com.android.BioKey.ui.disclosure.Disclosure
 import com.android.BioKey.ui.disclosure.rememberDisclosureGate
 import com.android.BioKey.ui.disclosure.rememberNotificationPermission
@@ -147,16 +141,6 @@ private class SettingItem(
 private enum class Goes { ON, OUT, NOWHERE }
 
 /**
- * Settings' trip to Android's notification access page, kept with the activity rather than the
- * screen: a message's "Open settings" can be tapped after a rotation, once the screen that raised
- * it is gone, and the screen on view then must still know to check on coming back.
- */
-internal class NotificationAccessTrip : ViewModel() {
-    /** Sent to Android's notification access page: on coming back, say if it's still off. */
-    var awaiting = false
-}
-
-/**
  * BioKey's settings, over the home screen. [mode] is the engine protecting apps, as the home
  * screen has it (MainActivity refreshes it on every resume).
  */
@@ -180,13 +164,11 @@ fun SettingsScreenExpressive(
     val pausedUntil by vault.pausedUntilFlow.collectAsStateWithLifecycle()
     val defaultTimeout by vault.timeoutModeFlow.collectAsStateWithLifecycle()
     val selfProtectionEnabled by vault.accessibilitySelfProtectionFlow.collectAsStateWithLifecycle()
-    val notificationShieldEnabled by vault.notificationShieldFlow.collectAsStateWithLifecycle()
     val autoSortProfiles by vault.autoSortProfilesFlow.collectAsStateWithLifecycle()
     val attemptAlerts by UnlockAttempts.enabled.collectAsStateWithLifecycle()
     val screenLockUnlocks by UnlockAttempts.screenLockUnlocks.collectAsStateWithLifecycle()
     val biometricOnly by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
     val keyguardCamera by vault.keyguardCameraFlow.collectAsStateWithLifecycle()
-    val relockAtPhoneLock by vault.relockAtPhoneLockFlow.collectAsStateWithLifecycle()
     val lockedApps by vault.lockedAppsFlow.collectAsStateWithLifecycle()
     // Seeded with what's already known (no call into Android on the main thread), then read afresh.
     var strongBiometric by remember { mutableStateOf(SecurityEngine.lastKnownStrongBiometric() ?: biometricOnlyAtOpen(vault)) }
@@ -199,37 +181,15 @@ fun SettingsScreenExpressive(
         }
     }
 
-    var notifListenerActive by remember { mutableStateOf(ShieldAccessWatch.lastKnownAccess ?: BioKeyNotificationShieldService.isBound) }
     /** An accessibility shortcut switches BioKey's service off without passing any screen self-protection guards. */
     var shortcutAssigned by remember { mutableStateOf(false) }
     var showRelockSheet by remember { mutableStateOf(false) }
-    /** Android 17's own App lock is on this phone (its settings page answers). */
-    var androidAppLock by remember { mutableStateOf(false) }
     /** Private space's page can be opened from here (Android 15+, where Settings allows it). */
     var privateSpace by remember { mutableStateOf(false) }
     val activity = LocalActivity.current as ComponentActivity
-    val notificationAccessTrip = remember(activity) { ViewModelProvider(activity)[NotificationAccessTrip::class.java] }
     val disclosures = rememberDisclosureGate()
     val notifications = rememberNotificationPermission()
     val protecting = ProtectionEngine.isProtecting(mode)
-
-    fun afterNotificationAccessTrip() {
-        if (notificationAccessTrip.awaiting) {
-            notificationAccessTrip.awaiting = false
-            if (!notifListenerActive) {
-                // The action may run after a rotation, once this screen and its activity are gone.
-                val appContext = context.applicationContext
-                BioKeyMessages.show(res.getString(R.string.settings_notification_access_still_off), Icons.Default.NotificationsOff, actionLabel = res.getString(R.string.settings_open_settings)) {
-                    notificationAccessTrip.awaiting = true
-                    IntentNavigationHelper.openNotificationListenerSettings(if (activity.isDestroyed) appContext else activity)
-                }
-            } else {
-                // Just switched on: without BioKey's own notifications it can hide notifications but
-                // can't stand in for them.
-                notifications.request()
-            }
-        }
-    }
 
     // Read on every visit (back from the system pages that change them), off the main thread:
     // each is a call into Android's services.
@@ -238,12 +198,9 @@ fun SettingsScreenExpressive(
         lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
             withContext(Dispatchers.IO) {
                 strongBiometric = SecurityEngine.hasStrongBiometric(context)
-                notifListenerActive = BioKeyNotificationShieldService.isNotificationAccessGranted(context)
                 shortcutAssigned = SelfProtectionDetector.isShortcutAssigned(context)
-                androidAppLock = IntentNavigationHelper.hasAndroidAppLock(context)
                 privateSpace = IntentNavigationHelper.hasPrivateSpacePage(context)
             }
-            afterNotificationAccessTrip()
         }
     }
 
@@ -330,19 +287,6 @@ fun SettingsScreenExpressive(
         )
         add(
             SettingItem(
-                icon = Icons.Default.ScreenLockPortrait,
-                title = stringResource(R.string.settings_relock_at_phone_lock_title),
-                subtitle = stringResource(if (relockAtPhoneLock) R.string.settings_relock_at_phone_lock_on else R.string.settings_relock_at_phone_lock_off),
-                checked = relockAtPhoneLock,
-                onChange = { on ->
-                    // Locked later: recorded when it's maybe someone who only knows the PIN.
-                    if (on) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.RELOCK_AT_PHONE_LOCK)
-                    vault.setRelockAtPhoneLock(on)
-                }
-            )
-        )
-        add(
-            SettingItem(
                 icon = Icons.Default.PhotoCamera,
                 title = stringResource(R.string.settings_keyguard_camera_title),
                 subtitle = stringResource(if (keyguardCamera) R.string.settings_keyguard_camera_on else R.string.settings_keyguard_camera_off),
@@ -378,16 +322,6 @@ fun SettingsScreenExpressive(
                 goes = Goes.OUT
             )
         )
-        // Android 17's own App lock, where the phone has it: what it is beside BioKey, and its page.
-        if (androidAppLock) add(
-            SettingItem(
-                icon = Icons.Default.Android,
-                title = stringResource(R.string.settings_android_app_lock_title),
-                subtitle = stringResource(R.string.settings_android_app_lock_summary),
-                onClick = { IntentNavigationHelper.openAndroidAppLock(context); Unit },
-                goes = Goes.OUT
-            )
-        )
         // A lock covers an app; it doesn't hide its icon. Private space does, where it can be opened from here.
         if (privateSpace) add(
             SettingItem(
@@ -399,53 +333,8 @@ fun SettingsScreenExpressive(
             )
         )
     }
-    // Always the explanation first, even with notification access already granted some other way.
-    // Saved only on Agree: "Not now" leaves it off.
-    fun turnShieldOn() {
-        disclosures.request(Disclosure.NOTIFICATIONS) {
-            vault.setNotificationShield(true)
-            if (!notifListenerActive) {
-                notificationAccessTrip.awaiting = true
-                IntentNavigationHelper.openNotificationListenerSettings(context)
-            } else {
-                notifications.request()
-            }
-        }
-    }
     val serviceLabel = stringResource(R.string.accessibility_service_label)
-    val privacy = listOfNotNull(
-        SettingItem(
-            icon = Icons.Default.NotificationsOff,
-            title = stringResource(R.string.settings_hide_notifications_title),
-            subtitle = when {
-                !notificationShieldEnabled -> stringResource(R.string.settings_hide_notifications_off)
-                !notifListenerActive -> stringResource(R.string.settings_hide_notifications_needs_access)
-                !notifications.allowed -> stringResource(R.string.settings_hide_notifications_no_stand_in)
-                else -> stringResource(R.string.settings_hide_notifications_on)
-            },
-            // The setting itself: on but without access, it can still be switched off here.
-            checked = notificationShieldEnabled,
-            onChange = { on ->
-                if (!on) {
-                    switchShieldOff(context, vault)
-                } else {
-                    turnShieldOn()
-                }
-            }
-        ),
-        if (notificationShieldEnabled && !notifListenerActive) SettingItem(
-            icon = Icons.Default.Warning,
-            title = stringResource(R.string.home_shield_no_access_title),
-            subtitle = stringResource(R.string.settings_shield_allow_access),
-            warning = true,
-            goes = Goes.OUT,
-            onClick = {
-                disclosures.request(Disclosure.NOTIFICATIONS) {
-                    notificationAccessTrip.awaiting = true
-                    IntentNavigationHelper.openNotificationListenerSettings(context)
-                }
-            }
-        ) else null,
+    val activity_ = listOfNotNull(
         SettingItem(
             icon = Icons.Default.GppBad,
             title = stringResource(R.string.settings_failed_alerts_title),
@@ -640,16 +529,7 @@ fun SettingsScreenExpressive(
                 contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = 32.dp + navBottom)
             ) {
                 item { SettingsSection(stringResource(R.string.settings_section_app_lock), appLock) { Haptics.toggle(view, it) } }
-                item {
-                    SettingsSection(
-                        stringResource(R.string.settings_section_privacy),
-                        privacy,
-                        // Snoozed notifications can only be brought back while BioKey still has access.
-                        footer = if (notificationShieldEnabled && notifListenerActive) {
-                            stringResource(R.string.settings_hide_notifications_footer)
-                        } else null
-                    ) { Haptics.toggle(view, it) }
-                }
+                item { SettingsSection(stringResource(R.string.settings_section_activity), activity_) { Haptics.toggle(view, it) } }
                 item { SettingsSection(stringResource(R.string.settings_section_profiles), profiles) { Haptics.toggle(view, it) } }
                 item { SettingsSection(stringResource(R.string.settings_section_backup), backup) { Haptics.toggle(view, it) } }
                 item { SettingsSection(stringResource(R.string.settings_section_diagnostics), diagnostics) { Haptics.toggle(view, it) } }

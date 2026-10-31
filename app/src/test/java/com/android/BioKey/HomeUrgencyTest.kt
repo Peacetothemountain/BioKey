@@ -12,27 +12,25 @@ class HomeUrgencyTest {
         notProtecting: Boolean = false,
         paused: Boolean = false,
         activity: Boolean = false,
-        showing: Boolean = false,
         muted: Boolean = false,
         noScreenLock: Boolean = false
-    ) = urgentCard(notProtecting, paused, activity, showing, muted, noScreenLock)
+    ) = urgentCard(notProtecting, paused, activity, muted, noScreenLock)
 
     @Test
     fun notProtectingOutranksEverything() {
-        assertEquals(UrgentCard.NOT_PROTECTING, card(notProtecting = true, activity = true, showing = true, muted = true))
+        assertEquals(UrgentCard.NOT_PROTECTING, card(notProtecting = true, activity = true, muted = true))
     }
 
     @Test
     fun aPauseIsNeverUrgentAndTheNextOneIs() {
         assertEquals(UrgentCard.NONE, card(notProtecting = true, paused = true))
         assertEquals(UrgentCard.ACTIVITY, card(notProtecting = true, paused = true, activity = true))
-        assertEquals(UrgentCard.NOTIFICATIONS_SHOWING, card(notProtecting = true, paused = true, showing = true))
+        assertEquals(UrgentCard.ALERTS_MUTED, card(notProtecting = true, paused = true, muted = true))
     }
 
     @Test
-    fun activityThenNotificationsShowingThenAlertsMuted() {
-        assertEquals(UrgentCard.ACTIVITY, card(activity = true, showing = true, muted = true))
-        assertEquals(UrgentCard.NOTIFICATIONS_SHOWING, card(showing = true, muted = true))
+    fun activityThenAlertsMuted() {
+        assertEquals(UrgentCard.ACTIVITY, card(activity = true, muted = true))
         assertEquals(UrgentCard.ALERTS_MUTED, card(muted = true))
         assertEquals(UrgentCard.NONE, card())
     }
@@ -41,6 +39,6 @@ class HomeUrgencyTest {
     fun noScreenLockComesRightAfterNotProtecting() {
         assertEquals(UrgentCard.NOT_PROTECTING, card(notProtecting = true, noScreenLock = true))
         assertEquals(UrgentCard.NO_SCREEN_LOCK, card(notProtecting = true, paused = true, noScreenLock = true, activity = true))
-        assertEquals(UrgentCard.NO_SCREEN_LOCK, card(noScreenLock = true, activity = true, showing = true, muted = true))
+        assertEquals(UrgentCard.NO_SCREEN_LOCK, card(noScreenLock = true, activity = true, muted = true))
     }
 }

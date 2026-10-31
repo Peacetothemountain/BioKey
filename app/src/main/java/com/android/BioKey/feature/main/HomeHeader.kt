@@ -249,11 +249,7 @@ internal data class ProtectionLook(
     val title: String,
     val body: String,
     /** Primary action, or null when protecting normally (then the sheet offers Pause). */
-    val action: String?,
-    /** While protecting: something to put right first in the sheet, above Lock all and Pause. */
-    val fix: String? = null,
-    /** [fix]'s icon, beside the line in the sheet that says what's wrong (its body's second line). */
-    val fixIcon: ImageVector? = null
+    val action: String?
 )
 
 @Composable
@@ -264,9 +260,7 @@ internal fun protectionLook(
     lockedCount: Int,
     /** Locked apps with a copy in another profile, which compatibility mode can't see. */
     unwatchedCount: Int,
-    defaultTimeout: LockTimeoutMode,
-    /** "Hide notification content" is on without notification access: locked apps' notifications show in full. */
-    notificationsShowing: Boolean = false
+    defaultTimeout: LockTimeoutMode
 ): ProtectionLook {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
@@ -297,19 +291,6 @@ internal fun protectionLook(
             } else stringResource(R.string.home_protection_paused),
             stringResource(R.string.home_paused_body),
             stringResource(R.string.home_resume_protection)
-        )
-        // Apps lock, but what the owner asked hidden shows: "Protected" would overstate it.
-        notificationsShowing -> ProtectionLook(
-            colors.errorContainer, colors.onErrorContainer, Icons.Default.GppMaybe, stringResource(R.string.home_apps_locked_short),
-            stringResource(R.string.home_notifications_showing_title),
-            // What shows now first; then, as when protected, how it's running and what that can't see.
-            apps + SEPARATOR + stringResource(defaultTimeout.relockPhraseRes).lowercase() + "\n" +
-                stringResource(R.string.home_notifications_showing_body) +
-                (if (mode == ProtectionEngine.Mode.COMPATIBILITY) "\n" + stringResource(R.string.home_protected_compat) else "") +
-                (if (unwatchedCount == 0) "" else "\n" + pluralStringResource(R.plurals.home_unwatched, unwatchedCount, unwatchedCount)),
-            null,
-            fix = stringResource(R.string.home_shield_no_access_action),
-            fixIcon = Icons.Default.NotificationsOff
         )
         else -> ProtectionLook(
             colors.primaryContainer, colors.onPrimaryContainer, Icons.Default.VerifiedUser, stringResource(R.string.home_protected),

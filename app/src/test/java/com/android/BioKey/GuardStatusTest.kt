@@ -9,7 +9,6 @@ import android.content.pm.PackageInstaller.PACKAGE_SOURCE_LOCAL_FILE
 import android.content.pm.PackageInstaller.PACKAGE_SOURCE_OTHER
 import android.content.pm.PackageInstaller.PACKAGE_SOURCE_UNSPECIFIED
 import com.android.BioKey.core.security.ProtectionEngine
-import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 import com.android.BioKey.feature.setup.RestrictedSettingsHelper
 import com.android.BioKey.feature.tile.BioKeyTileService
 import com.android.BioKey.feature.tile.BioKeyTileService.Status
@@ -67,18 +66,5 @@ class GuardStatusTest {
             assertTrue(RestrictedSettingsHelper.isRestricted(sdk, MODE_IGNORED, PACKAGE_SOURCE_UNSPECIFIED))
             assertFalse(RestrictedSettingsHelper.isRestricted(sdk, MODE_ALLOWED, PACKAGE_SOURCE_DOWNLOADED_FILE))
         }
-    }
-
-    @Test
-    fun theShieldForgetsNotificationsTheirAppWithdrew() {
-        val hidden = hashMapOf<String, MutableSet<String>>(
-            "chat" to hashSetOf("chat|1", "chat|2", "chat|3"),
-            "bank" to hashSetOf("bank|1")
-        )
-        val changed = BioKeyNotificationShieldService.forgetWithdrawn(hidden, present = setOf("chat|3", "bank|1", "other|1"))
-        assertEquals(setOf("chat"), changed)
-        assertEquals(setOf("chat|3"), hidden["chat"])
-        assertEquals(setOf("bank|1"), hidden["bank"])
-        assertEquals(emptySet<String>(), BioKeyNotificationShieldService.forgetWithdrawn(hidden, present = setOf("chat|3", "bank|1")))
     }
 }

@@ -64,6 +64,19 @@ class RecentsGestureTest {
     }
 
     @Test
+    fun anAppShrinkingIntoItsIconOnTheWayHomeIsNotClosed() {
+        // Swiping up to go Home scales the app's card down into its icon on the home screen,
+        // which can be near the top: the card ends up there smaller, not slid up whole. (Seen on
+        // a Pixel: a session ended as "closed from Recents" a second after the app was opened.)
+        val card17 = Rect(175, 304, 905, 1940)
+        assertFalse(RecentsWatcher.sweptAway(card17, Rect(430, 120, 650, 610), 2424, 1080))
+        assertFalse(RecentsWatcher.sweptAway(card17, Rect(300, 40, 780, 1100), 2424, 1080))
+        assertFalse(RecentsWatcher.sweptAway(card17, Rect(500, 200, 580, 380), 2424, 1080))
+        // Leaving Recents for the home screen scales every card down where it is.
+        assertFalse(RecentsWatcher.sweptAway(card17, Rect(320, 700, 760, 1680), 2424, 1080))
+    }
+
+    @Test
     fun scrolledSidewaysIsNotClosed() {
         assertFalse(RecentsWatcher.sweptAway(card, moved(-1100, 0), h, w))
         assertFalse(RecentsWatcher.sweptAway(card, moved(900, -20), h, w))

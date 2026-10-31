@@ -256,22 +256,6 @@ class DesignScreenshotTest {
         RuntimeEnvironment.setFontScale(1f)
     }
 
-    /** Hide notification content on, its access taken away: the calm card, with Turn off and Allow access. */
-    @Test fun mainShieldNoAccess() {
-        SecurityVault.getInstance(context).setSetupCompletedSync(true)
-        SecurityVault.getInstance(context).setNotificationShield(true)
-        com.android.BioKey.feature.notification.ShieldAccessWatch.hasAccess = { false }
-        // As BioKey's start does: the home screen opens with what it found.
-        com.android.BioKey.feature.notification.ShieldAccessWatch.check(context)
-        try {
-            shoot("main_shield_no_access") { MainScreenExpressive(mode = ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) }
-        } finally {
-            com.android.BioKey.feature.notification.ShieldAccessWatch.hasAccess =
-                com.android.BioKey.feature.notification.BioKeyNotificationShieldService::isNotificationAccessGranted
-            SecurityVault.getInstance(context).setNotificationShield(false)
-        }
-    }
-
     private val reviewAt get() = java.util.Calendar.getInstance().apply { set(java.util.Calendar.HOUR_OF_DAY, 15); set(java.util.Calendar.MINUTE, 2) }.timeInMillis
 
     /** Review during a hold: a fingerprint change, a change made since, and Close as the only way out. */
@@ -313,10 +297,8 @@ class DesignScreenshotTest {
             modifier = androidx.compose.ui.Modifier.padding(top = 48.dp)
         ) {
             com.android.BioKey.feature.main.ProtectionSheetContent(
-                look = com.android.BioKey.feature.main.protectionLook(
-                    ProtectionEngine.Mode.COMPATIBILITY, true, 0L, 5, 1, LockTimeoutMode.IMMEDIATE, notificationsShowing = true
-                ),
-                onAction = {}, onFix = {}, onTurnOffFix = {}, onPause = {}, onLockAll = {}
+                look = com.android.BioKey.feature.main.protectionLook(ProtectionEngine.Mode.COMPATIBILITY, true, 0L, 5, 1, LockTimeoutMode.IMMEDIATE),
+                onAction = {}, onPause = {}, onLockAll = {}
             )
         }
     }
@@ -335,8 +317,7 @@ class DesignScreenshotTest {
             com.android.BioKey.feature.main.LockExplainContent(
                 app = gallery,
                 explanation = com.android.BioKey.feature.main.LockExplainer.Explanation(
-                    gallery.packageName, "Use your fingerprint or screen lock to continue",
-                    com.android.BioKey.feature.main.LockExplainer.Notifications.SHIELD_OFF, hasWidgets = true,
+                    gallery.packageName, "Use your fingerprint or screen lock to continue", hasWidgets = true,
                     dataKind = com.android.BioKey.feature.main.LockExplainer.DataKind.PHOTOS, otherApps = others
                 ),
                 justLocked = true, onDontShowAgain = {}, onDone = {}

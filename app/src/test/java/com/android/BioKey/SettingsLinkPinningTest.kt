@@ -111,18 +111,6 @@ class SettingsLinkPinningTest {
     }
 
     @Test
-    fun androidsAppLockIsOfferedOnlyWhereItsPageAnswers() {
-        assertFalse(IntentNavigationHelper.hasAndroidAppLock(context))
-        shadowOf(context.packageManager).addResolveInfoForIntent(
-            Intent("android.settings.APP_LOCK_SETTINGS"),
-            handler("com.android.settings", "com.android.settings.safetycenter.ui.applock.AppLockAuthenticationActivity", system = true)
-        )
-        assertTrue(IntentNavigationHelper.hasAndroidAppLock(context))
-        IntentNavigationHelper.openAndroidAppLock(context)
-        assertEquals("com.android.settings", nextStarted().component?.packageName)
-    }
-
-    @Test
     fun addingAFingerprintAsksForAStrongOne() {
         val enroll = Intent(Settings.ACTION_BIOMETRIC_ENROLL)
         shadowOf(context.packageManager).addResolveInfoForIntent(enroll, handler("com.android.settings", "com.android.settings.biometrics.BiometricEnrollActivity", system = true))
@@ -139,12 +127,12 @@ class SettingsLinkPinningTest {
     fun aPageSettingsKeepsToItselfIsNeitherOfferedNorOpened() {
         // Pixel's private space page: listed by the package manager, but not exported, so opening
         // it fails with "Permission Denial". It isn't offered, and the cascade goes on past it.
-        val appLock = Intent("android.settings.APP_LOCK_SETTINGS")
+        val privateSpace = Intent("com.android.settings.action.OPEN_PRIVATE_SPACE_SETTINGS").setPackage("com.android.settings")
         val pm = shadowOf(context.packageManager)
-        pm.addResolveInfoForIntent(appLock, handler("com.android.settings", "com.android.settings.Hidden", system = true, exported = false))
-        assertFalse(IntentNavigationHelper.hasAndroidAppLock(context))
+        pm.addResolveInfoForIntent(privateSpace, handler("com.android.settings", "com.android.settings.Hidden", system = true, exported = false))
+        assertFalse(IntentNavigationHelper.hasPrivateSpacePage(context))
         pm.addResolveInfoForIntent(Intent(Settings.ACTION_SETTINGS), handler("com.android.settings", "com.android.settings.Settings", system = true))
-        assertTrue(IntentNavigationHelper.launchFallbackCascade(context, listOf(Intent("android.settings.APP_LOCK_SETTINGS"), Intent(Settings.ACTION_SETTINGS))))
+        assertTrue(IntentNavigationHelper.launchFallbackCascade(context, listOf(Intent(privateSpace), Intent(Settings.ACTION_SETTINGS))))
         assertEquals("com.android.settings.Settings", nextStarted().component?.className)
     }
 

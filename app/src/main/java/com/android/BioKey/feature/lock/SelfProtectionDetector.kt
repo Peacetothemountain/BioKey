@@ -226,15 +226,13 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
 
     private val appName = service.getString(R.string.app_name)
     private val a11yLabel = service.getString(R.string.accessibility_service_label)
-    private val notifLabel = service.getString(R.string.notification_shield_label)
     private val pkgName = service.packageName
 
     private val labels: List<String> = listOf(
         appName,
         "BioKey",
         pkgName,
-        a11yLabel,
-        notifLabel
+        a11yLabel
     ).filter { it.isNotBlank() }.distinct()
 
     private val names = namePattern(labels)

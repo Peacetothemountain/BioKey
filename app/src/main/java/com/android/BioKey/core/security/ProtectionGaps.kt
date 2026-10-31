@@ -62,7 +62,7 @@ object ProtectionGaps {
         BIOMETRICS_CHANGED,
         /** The phone has no strong face or fingerprint any more. */
         BIOMETRICS_REMOVED,
-        /** Notification access taken away while "Hide notification content" was on. */
+        /** Notification access taken away while "Hide notification content" was on: no longer recorded (hiding is gone); kept to word old records. */
         SHIELD_ACCESS_REVOKED,
         /**
          * Protection weakened (paused, an app's lock off, a profile off or deleted, the notification
@@ -107,10 +107,11 @@ object ProtectionGaps {
         PROFILE_DELAY_LONGER(R.string.change_profile_delay_longer),
         /** Argument: the [com.android.BioKey.core.data.LockTimeoutMode] name. */
         DEFAULT_DELAY_LONGER(R.string.change_default_delay_longer),
+        /** No longer recorded (hiding notifications is gone); kept to word old records. */
         SHIELD_OFF(R.string.change_shield_off),
         /** "Let the camera open over the lock screen" switched (back) on. */
         KEYGUARD_CAMERA_ON(R.string.change_keyguard_camera_on),
-        /** Apps lock when the phone locks, not when the screen turns off. */
+        /** No longer recorded (apps always lock when the phone locks now); kept to word old records. */
         RELOCK_AT_PHONE_LOCK(R.string.change_relock_at_phone_lock),
         BIOMETRIC_ONLY_OFF(R.string.change_biometric_only_off),
         REMINDERS_STOPPED(R.string.change_reminders_stopped),

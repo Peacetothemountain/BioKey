@@ -27,7 +27,6 @@ class VaultListenerTest {
         override fun onLocked(context: Context, packages: Collection<String>) { heard += "locked ${packages.sorted()}" }
         override fun onUnlocked(packages: Collection<String>) { heard += "unlocked ${packages.sorted()}" }
         override fun onPaused() { heard += "paused" }
-        override fun onNotificationShieldOff() { heard += "shield off" }
     }
 
     @Before
@@ -60,26 +59,10 @@ class VaultListenerTest {
     }
 
     @Test
-    fun hidingSwitchedOffIsHeard() {
-        vault.setNotificationShield(true)
-        vault.setNotificationShield(false)
-        assertTrue(heard.toString(), "shield off" in heard)
-    }
-
-    @Test
-    fun theLockAndShieldAreRegisteredAsBioKeyStarts() {
+    fun theLockIsRegisteredAsBioKeyStarts() {
         // BioKeyApplication did it, before this test (or anything) read the vault.
         assertTrue(SecurityVault.isListening(VaultReactions))
         assertTrue(FeatureLinks.engines === com.android.BioKey.feature.lock.LockEngines)
-    }
-
-    @Test
-    fun aRestoreWithHidingOffIsHeard() {
-        vault.setNotificationShield(true)
-        val state = vault.exportState().put("notificationShield", false)
-        heard.clear()
-        vault.restoreState(state)
-        assertTrue(heard.toString(), "shield off" in heard)
     }
 
     @Test

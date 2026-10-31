@@ -87,7 +87,6 @@ internal fun LazyListScope.homeCards(
         notProtecting = notProtecting,
         paused = ProtectionEngine.isProtecting(mode) && !globalLockEnabled,
         activityUrgent = securityActivityUrgent(attempts, gaps, seenUpTo),
-        notificationsShowing = home.shieldWithoutAccess && vault.isSetupCompleted(),
         alertsMuted = home.alertsMuted && notifications.allowed,
         noScreenLock = screenLockMissing && vault.isSetupCompleted()
     )
@@ -152,34 +151,6 @@ internal fun LazyListScope.homeCards(
                 val add: () -> Unit = { IntentNavigationHelper.openScreenLockSetup(context) }
                 if (urgentHere) UrgentButton(stringResource(R.string.home_no_screen_lock_action), onClick = add)
                 else FilledTonalButton(onClick = add) { Text(stringResource(R.string.home_no_screen_lock_action)) }
-            }
-        }
-    }
-
-    // The shield is on but its access was taken away: notifications show in full right now.
-    // Switching the shield off stays offered beside it: the owner may have meant it.
-    val shieldUrgent = urgent == UrgentCard.NOTIFICATIONS_SHOWING
-    if (home.shieldWithoutAccess && vault.isSetupCompleted()) {
-        item(key = "shield_no_access") {
-            val context = LocalContext.current
-            ActionCard(
-                icon = Icons.Default.NotificationsOff,
-                title = stringResource(R.string.home_shield_no_access_title),
-                subtitle = stringResource(R.string.home_shield_no_access_text),
-                urgent = shieldUrgent,
-                modifier = Modifier.animateItem()
-            ) {
-                // Revoked on purpose: switching the shield off ends it (and is recorded like any switch-off).
-                TextButton(onClick = {
-                    // As the switch in Settings does: recorded from a screen-lock session, with Undo.
-                    homeViewModel.switchShieldOff(vault)
-                }) { Text(stringResource(R.string.home_shield_turn_off_hiding)) }
-                // The explanation first, as everywhere notification access is asked for.
-                val allow: () -> Unit = {
-                    disclosures.request(Disclosure.NOTIFICATIONS) { IntentNavigationHelper.openNotificationListenerSettings(context) }
-                }
-                if (shieldUrgent) UrgentButton(stringResource(R.string.home_shield_no_access_action), onClick = allow)
-                else FilledTonalButton(onClick = allow) { Text(stringResource(R.string.home_shield_no_access_action)) }
             }
         }
     }
@@ -283,7 +254,7 @@ internal fun LazyListScope.homeCards(
 }
 
 /** Home's cards that can be urgent, most serious first. */
-internal enum class UrgentCard { NOT_PROTECTING, NO_SCREEN_LOCK, ACTIVITY, NOTIFICATIONS_SHOWING, ALERTS_MUTED, NONE }
+internal enum class UrgentCard { NOT_PROTECTING, NO_SCREEN_LOCK, ACTIVITY, ALERTS_MUTED, NONE }
 
 /**
  * The one card on home shown as urgent: the most serious of those showing. Not protecting comes
@@ -295,14 +266,12 @@ internal fun urgentCard(
     notProtecting: Boolean,
     paused: Boolean,
     activityUrgent: Boolean,
-    notificationsShowing: Boolean,
     alertsMuted: Boolean,
     noScreenLock: Boolean = false
 ): UrgentCard = when {
     notProtecting && !paused -> UrgentCard.NOT_PROTECTING
     noScreenLock -> UrgentCard.NO_SCREEN_LOCK
     activityUrgent -> UrgentCard.ACTIVITY
-    notificationsShowing -> UrgentCard.NOTIFICATIONS_SHOWING
     alertsMuted -> UrgentCard.ALERTS_MUTED
     else -> UrgentCard.NONE
 }

@@ -30,8 +30,6 @@ import com.android.BioKey.feature.lock.LockEngines
 import com.android.BioKey.feature.lock.ScreenReceiver
 import com.android.BioKey.feature.lock.VaultReactions
 import com.android.BioKey.feature.main.MainActivity
-import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
-import com.android.BioKey.feature.notification.ShieldAccessWatch
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -76,11 +74,8 @@ class BioKeyApplication : Application() {
         // A process starting knows of no screensaver (ScreenReceiver hears the next one start).
         LockStateTracker.screensaverShowing = false
         // Before anything in core/ can ask: the engines and the main screen it opens.
-        FeatureLinks.install(
-            LockEngines, MainActivity::class.java,
-            BioKeyAccessibilityService::class.java, BioKeyNotificationShieldService::class.java
-        )
-        // Before the vault first loads: the lock and the notification shield follow its changes.
+        FeatureLinks.install(LockEngines, MainActivity::class.java, BioKeyAccessibilityService::class.java)
+        // Before the vault first loads: the lock follows its changes.
         SecurityVault.addListener(VaultReactions)
         // Locked apps' certificates, noted while they're installed: a reinstall is told by them.
         SecurityVault.addListener(ReinstallMemory.VaultListener)
@@ -123,7 +118,6 @@ class BioKeyApplication : Application() {
                 // Early, before anything else is written: a cleared storage is told from an empty one here.
                 ProtectionGaps.checkStorageCleared(app)
                 BiometricEnrollment.checkSoon(app)
-                ShieldAccessWatch.checkSoon(app).get()
                 // Channel names and descriptions as this version words them, before any is posted.
                 ProtectionAlerts.ensureChannels(app)
                 UnlockAttempts.ensureChannel(app)

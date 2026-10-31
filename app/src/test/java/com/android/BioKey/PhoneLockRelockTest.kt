@@ -35,9 +35,9 @@ import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowSystemClock
 
 /**
- * "Lock apps when the phone locks": sessions go on through a screen-off Android doesn't follow
+ * Apps lock when the phone locks: sessions go on through a screen-off Android doesn't follow
  * with a lock, end once it's seen locked (the app left on screen covered behind the keyguard), and
- * end whenever BioKey can't tell. Off (the default), the screen turning off ends them, as always.
+ * end whenever BioKey can't tell.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -64,21 +64,12 @@ class PhoneLockRelockTest {
 
     @After
     fun stop() {
-        vault.setRelockAtPhoneLock(false)
         vault.setSetupCompletedSync(false)
         LockScreenActivity.setStateForTests(null)
     }
 
     @Test
-    fun byDefaultTheScreenTurningOffLocksEverything() {
-        LockStateTracker.onAppUnlocked(x)
-        LockStateTracker.onScreenTurnedOff(phoneLocked = false)
-        assertFalse(LockStateTracker.isAppUnlocked(x, mode))
-    }
-
-    @Test
     fun aScreenOffWithoutALockKeepsSessionsUntilThePhoneLocks() {
-        vault.setRelockAtPhoneLock(true)
         LockStateTracker.onAppUnlocked(x)
         LockStateTracker.onScreenTurnedOff(phoneLocked = false)
         assertTrue(LockStateTracker.isAppUnlocked(x, mode))
@@ -92,7 +83,6 @@ class PhoneLockRelockTest {
 
     @Test
     fun aPhoneAlreadyLockedOrOneThatCantBeAskedLocksEverything() {
-        vault.setRelockAtPhoneLock(true)
         LockStateTracker.onAppUnlocked(x)
         LockStateTracker.onScreenTurnedOff(phoneLocked = true)
         assertFalse(LockStateTracker.isAppUnlocked(x, mode))
@@ -104,7 +94,6 @@ class PhoneLockRelockTest {
 
     @Test
     fun aScreensaverStillLocksEverything() {
-        vault.setRelockAtPhoneLock(true)
         LockStateTracker.onAppUnlocked(x)
         LockStateTracker.onScreenTurnedOff()
         assertFalse(LockStateTracker.isAppUnlocked(x, mode))
@@ -112,7 +101,6 @@ class PhoneLockRelockTest {
 
     @Test
     fun backOnBeforeThePhoneLockedTheSessionGoesOn() {
-        vault.setRelockAtPhoneLock(true)
         LockStateTracker.onAppUnlocked(x)
         LockStateTracker.onScreenTurnedOff(phoneLocked = false)
         LockStateTracker.onScreenOn(phoneLocked = false)
@@ -122,7 +110,6 @@ class PhoneLockRelockTest {
     @Test
     fun unlockedWithoutBeingSeenNotLockedFailsTowardLocking() {
         // A fingerprint on the dark screen: the phone locked and was unlocked again, unseen.
-        vault.setRelockAtPhoneLock(true)
         LockStateTracker.onAppUnlocked(x)
         LockStateTracker.onScreenTurnedOff(phoneLocked = false)
         LockStateTracker.onScreenOn(phoneLocked = false)
@@ -132,7 +119,6 @@ class PhoneLockRelockTest {
 
     @Test
     fun smartLockKeepingThePhoneUnlockedUnderItsKeyguardKeepsTheSession() {
-        vault.setRelockAtPhoneLock(true)
         LockStateTracker.onAppUnlocked(x)
         LockStateTracker.onScreenTurnedOff(phoneLocked = false)
         // In the dark: the keyguard up, the phone not locked under it, seen so twice a moment apart.
@@ -148,7 +134,6 @@ class PhoneLockRelockTest {
     fun theKeyguardSeenUpOnceIsNoTrust() {
         // As the keyguard comes up to lock the phone, it's up a moment before the phone counts as
         // locked: one look then mustn't vouch for it, should a fingerprint unlock it unseen.
-        vault.setRelockAtPhoneLock(true)
         LockStateTracker.onAppUnlocked(x)
         LockStateTracker.onScreenTurnedOff(phoneLocked = false)
         LockStateTracker.onDeviceLockState(false) { true }
@@ -158,7 +143,7 @@ class PhoneLockRelockTest {
     }
 
     @Test
-    fun byDefaultTheScreenComingOnEndsNothingMore() {
+    fun theScreenComingOnWithThePhoneLockedEndsNothingMore() {
         LockStateTracker.onScreenTurnedOff(phoneLocked = true)
         DiagnosticLog.clear()
         LockStateTracker.onScreenOn(phoneLocked = true)
@@ -167,7 +152,6 @@ class PhoneLockRelockTest {
 
     @Test
     fun theAccessibilityEngineCoversTheAppLeftOnScreenOnceThePhoneLocksInTheDark() {
-        vault.setRelockAtPhoneLock(true)
         ForegroundRules.resetSystemLists()
         val engine: ServiceController<BioKeyAccessibilityService> = Robolectric.buildService(BioKeyAccessibilityService::class.java).create()
         try {

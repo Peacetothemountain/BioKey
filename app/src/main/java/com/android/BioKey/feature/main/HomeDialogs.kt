@@ -152,8 +152,6 @@ internal fun HomeDialogs(
     onLockOne: (AppItem) -> Unit,
     onLockAll: (includeOwnApp: Boolean) -> Unit,
     onProtectionAction: () -> Unit,
-    /** Notification access, explained first: for "Hide notification content" without it. */
-    onAllowNotifications: () -> Unit,
     onPauseRequested: () -> Unit,
     onFilterChange: (String) -> Unit,
     /** An app's lock just switched on by the owner, other than by its switch: what locking does may be explained. */
@@ -170,14 +168,6 @@ internal fun HomeDialogs(
             onAction = {
                 overlays.showProtectionSheet = false
                 onProtectionAction()
-            },
-            onFix = {
-                overlays.showProtectionSheet = false
-                onAllowNotifications()
-            },
-            onTurnOffFix = {
-                overlays.showProtectionSheet = false
-                homeViewModel.switchShieldOff(vault)
             },
             onPause = {
                 overlays.showProtectionSheet = false
@@ -448,15 +438,13 @@ internal fun HomeDialogs(
 private fun ProtectionSheet(
     look: ProtectionLook,
     onAction: () -> Unit,
-    onFix: () -> Unit,
-    onTurnOffFix: () -> Unit,
     onPause: () -> Unit,
     onLockAll: () -> Unit,
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         ProtectDialogWindow()
-        ProtectionSheetContent(look, onAction, onFix, onTurnOffFix, onPause, onLockAll)
+        ProtectionSheetContent(look, onAction, onPause, onLockAll)
     }
 }
 
@@ -465,8 +453,6 @@ private fun ProtectionSheet(
 internal fun ProtectionSheetContent(
     look: ProtectionLook,
     onAction: () -> Unit,
-    onFix: () -> Unit,
-    onTurnOffFix: () -> Unit,
     onPause: () -> Unit,
     onLockAll: () -> Unit
 ) {
@@ -511,18 +497,8 @@ internal fun ProtectionSheetContent(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    lines.drop(1).forEachIndexed { i, line ->
-                        // With something to put right, the first is it: in the error colour, as its button is.
-                        val fixIcon = look.fixIcon
-                        if (i == 0 && look.fix != null && fixIcon != null) {
-                            Row {
-                                Icon(
-                                    fixIcon, contentDescription = null, tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.padding(top = 1.dp, end = 8.dp).size(18.dp.scaledWithText())
-                                )
-                                Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-                            }
-                        } else Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    lines.drop(1).forEach { line ->
+                        Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -531,28 +507,13 @@ internal fun ProtectionSheetContent(
         if (look.action != null) {
             Button(onClick = onAction, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text(look.action) }
         } else {
-            // Something to put right first (notifications showing in full): its button leads.
-            if (look.fix != null) {
-                Button(
-                    onClick = onFix,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError)
-                ) { Text(look.fix) }
-                // Or, if it was meant, stop hiding (as on home's card: recorded, with Undo).
-                TextButton(onClick = onTurnOffFix, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.home_shield_turn_off_hiding))
-                }
-                Spacer(Modifier.height(8.dp))
-            }
             // Before handing the phone over, say: every locked app asks again, without waiting
-            // for the screen to turn off.
-            val lockAllContent: @Composable RowScope.() -> Unit = {
+            // for the phone to lock.
+            Button(onClick = onLockAll, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                 Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(stringResource(R.string.shortcut_lock_all_long))
             }
-            if (look.fix != null) FilledTonalButton(onClick = onLockAll, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), content = lockAllContent)
-            else Button(onClick = onLockAll, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), content = lockAllContent)
             Spacer(Modifier.height(8.dp))
             OutlinedButton(onClick = onPause, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                 Icon(Icons.Default.PauseCircle, contentDescription = null, modifier = Modifier.size(18.dp))

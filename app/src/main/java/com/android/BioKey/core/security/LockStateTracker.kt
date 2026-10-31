@@ -169,7 +169,7 @@ object LockStateTracker {
     fun addLockAllListener(listener: () -> Unit) { lockAllListeners += listener }
     fun removeLockAllListener(listener: () -> Unit) { lockAllListeners -= listener }
 
-    /** Notified whenever an app is unlocked, e.g. for notification shield stand-in dismissal. */
+    /** Notified whenever an app is unlocked. */
     fun addAppUnlockListener(listener: (String) -> Unit) { appUnlockListeners += listener }
     fun removeAppUnlockListener(listener: (String) -> Unit) { appUnlockListeners -= listener }
 
@@ -179,8 +179,8 @@ object LockStateTracker {
 
     /**
      * Like [addAppLockListener], but told once per batch ([lockPackages]): turning on 40 locks
-     * from a backup is one call, so a listener that rescans everything (the notification shield)
-     * does it once rather than 40 times.
+     * from a backup is one call, so a listener that rescans everything does it once rather than
+     * 40 times.
      */
     fun addAppsLockListener(listener: (Set<String>) -> Unit) { appsLockListeners += listener }
     fun removeAppsLockListener(listener: (Set<String>) -> Unit) { appsLockListeners -= listener }
@@ -329,7 +329,7 @@ object LockStateTracker {
     /** [mode] as the diagnostic log says it: "after 30 s", "at screen off". */
     private fun relockLabel(mode: LockTimeoutMode) = when (mode) {
         LockTimeoutMode.IMMEDIATE -> "immediately"
-        LockTimeoutMode.ON_SCREEN_OFF -> "at screen off"
+        LockTimeoutMode.ON_SCREEN_OFF -> "when the phone locks"
         else -> if (mode.durationMillis < 60_000L) "after ${mode.durationMillis / 1000} s" else "after ${mode.durationMillis / 60_000} min"
     }
 
@@ -536,18 +536,10 @@ object LockStateTracker {
     }
 
     /**
-     * "Lock apps when the phone locks" (off by default: they lock when the screen turns off). On,
-     * a screen-off that Android doesn't follow with a lock (its own "lock after" delay, Smart Lock
-     * keeping it unlocked) leaves sessions running; they end once the phone is seen locked. Set
-     * from the vault as it loads and changes.
-     */
-    @Volatile
-    var relockAtPhoneLock = false
-
-    /**
-     * The screen went off with every session kept ([relockAtPhoneLock]): waiting to see the phone
-     * lock ([onDeviceLockState]), or be unlocked without having been seen not locked with its
-     * keyguard up ([onUserPresent]). Over at the next lock-all.
+     * The screen went off with every session kept (apps lock when the phone locks, not when the
+     * screen turns off while Android keeps the phone unlocked: its own "lock after" delay, Smart
+     * Lock): waiting to see the phone lock ([onDeviceLockState]), or be unlocked without having
+     * been seen not locked with its keyguard up ([onUserPresent]). Over at the next lock-all.
      */
     @Volatile
     var awaitingPhoneLock = false
@@ -568,13 +560,14 @@ object LockStateTracker {
 
     /**
      * The screen turned off (or a screensaver started, or the phone is shutting down: then
-     * [phoneLocked] is null). Every session ends, the default; with [relockAtPhoneLock] on, only
-     * if Android has locked the phone already ([phoneLocked]), and otherwise they wait for it
-     * ([awaitingPhoneLock]). Can't tell (null): they end, failing toward locking. BioKey's own
-     * session ends either way.
+     * [phoneLocked] is null). Every session ends if Android has locked the phone already
+     * ([phoneLocked]); otherwise they wait for it ([awaitingPhoneLock]): apps lock when the phone
+     * locks, and a screen-off Android doesn't follow with a lock (its own "lock after" delay,
+     * Smart Lock keeping it unlocked) is no lock. Can't tell (null): they end, failing toward
+     * locking. BioKey's own session ends either way.
      */
     fun onScreenTurnedOff(phoneLocked: Boolean? = null) {
-        if (!relockAtPhoneLock || phoneLocked != false) {
+        if (phoneLocked != false) {
             lockAll(reason = "screen off")
             return
         }

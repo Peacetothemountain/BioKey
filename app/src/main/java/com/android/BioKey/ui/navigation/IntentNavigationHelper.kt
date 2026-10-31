@@ -104,9 +104,6 @@ object IntentNavigationHelper {
         )
     )
 
-    /** Android's own App lock page (Android 17 QPR3 and later); not an SDK constant. */
-    private const val APP_LOCK_SETTINGS = "android.settings.APP_LOCK_SETTINGS"
-
     /**
      * Private space's page, as Android's App lock page opens it. Settings may not let other apps
      * open it (Pixel's doesn't export it): then it doesn't resolve, and BioKey doesn't offer it.
@@ -118,11 +115,6 @@ object IntentNavigationHelper {
     /** Whether a system app answers [intent] (a copy is looked up: [pinToSystemHandler] sets its target). */
     private fun hasSystemPage(context: Context, intent: Intent): Boolean =
         runCatching { pinToSystemHandler(context, Intent(intent)) }.getOrDefault(false)
-
-    /** Android's own App lock exists on this phone: its settings page answers. Blocking: off the main thread. */
-    fun hasAndroidAppLock(context: Context): Boolean = hasSystemPage(context, Intent(APP_LOCK_SETTINGS))
-
-    fun openAndroidAppLock(context: Context) = launchFallbackCascade(context, listOf(Intent(APP_LOCK_SETTINGS)))
 
     /**
      * Private space (Android 15 and later) can be opened from here: only where its page answers
@@ -149,15 +141,12 @@ object IntentNavigationHelper {
         listOf(accessibilitySettingsIntent(context), Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), appDetails(context))
     )
 
-    fun openNotificationListenerSettings(context: Context) = launchFallbackCascade(
+    /** [pkg]'s notification settings in Android (its switch, its channels), else its App info page. */
+    fun openAppNotificationSettings(context: Context, pkg: String) = launchFallbackCascade(
         context,
         listOf(
-            Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).putExtra(
-                Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
-                FeatureLinks.notificationListenerName(context)
-            ),
-            Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS),
-            appDetails(context)
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, pkg),
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null))
         )
     )
 

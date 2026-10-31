@@ -106,18 +106,23 @@ internal class RecentsWatcher(
         }
 
         /**
-         * Slid up, whole, in its column: its bottom rose, and either it kept its size or it ran
-         * into the top of the screen. There only what's still on screen is reported: the top stops
-         * at the edge and the height shrinks, below zero once it's off (Android 17's launcher).
-         * Sideways is a scroll; growing (the bottom going down) is opening it.
+         * Slid up, whole, in its column: its bottom rose, its width held, and either it kept its
+         * height or it ran into the top of the screen. There only what's still on screen is
+         * reported: the top stops at the edge and the height shrinks, below zero once it's off
+         * (Android 17's launcher), but the width holds. A card that shrinks as it goes wasn't
+         * swiped away: going Home scales the app's card down into its icon on the home screen
+         * (which can sit near the top, so the card ends up there, smaller), and leaving Recents
+         * scales every card down. Sideways is a scroll; growing (the bottom going down) is
+         * opening it.
          */
         fun sweptAway(first: Rect, last: Rect, screenHeight: Int, screenWidth: Int): Boolean {
             val rise = screenHeight * MIN_RISE
             if (abs(last.left - first.left) >= screenWidth * 0.15f) return false
             if (first.bottom - last.bottom <= rise) return false
-            val keptSize = abs(last.height() - first.height()) < first.height() * 0.15f
+            if (abs(last.width() - first.width()) >= first.width() * 0.15f) return false
+            val keptHeight = abs(last.height() - first.height()) < first.height() * 0.15f
             val ranIntoTheTop = last.top <= rise && last.top < first.top
-            return (keptSize && first.top - last.top > rise) || ranIntoTheTop
+            return (keptHeight && first.top - last.top > rise) || ranIntoTheTop
         }
     }
 
@@ -240,7 +245,10 @@ internal class RecentsWatcher(
             val recentlyTapped = tapped.takeIf { SystemClock.elapsedRealtime() - tappedAt < TAP_GRACE_MS }
             for ((name, card) in cards) {
                 if (name in now || name == recentlyTapped) continue
-                if (sweptAway(card.first, card.last, metrics.heightPixels, metrics.widthPixels)) onClosed(name)
+                val swept = sweptAway(card.first, card.last, metrics.heightPixels, metrics.widthPixels)
+                // Debug builds only (release strips it): how a card went, to tell a swipe from a gesture.
+                Log.d(TAG, "Card gone: $name rested at ${card.first.toShortString()}, last at ${card.last.toShortString()} → ${if (swept) "closed" else "not closed"}")
+                if (swept) onClosed(name)
             }
             cards.keys.retainAll(now.keys)
             for ((name, rect) in now) cards.getOrPut(name) { Card(rect) }.moveTo(rect)

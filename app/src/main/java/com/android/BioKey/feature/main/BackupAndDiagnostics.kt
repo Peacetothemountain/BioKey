@@ -294,13 +294,7 @@ internal fun rememberBackupActions(): BackupActions {
                         if (restored) {
                             // Let auto-sort go through the restored profiles on the next unlock.
                             InstalledAppsCache.autoSortedVersion = -1
-                            // The shield waits for its explanation on this phone: say so, or the owner
-                            // would think locked apps' notifications are hidden.
-                            if (current.state.optBoolean("notificationShield", false) && !vault.isNotificationShieldEnabled()) {
-                                BioKeyMessages.show(res.getString(R.string.backup_restored_turn_on_shield), Icons.Default.CheckCircle)
-                            } else {
-                                BioKeyMessages.show(res.getString(R.string.backup_restored), Icons.Default.CheckCircle)
-                            }
+                            BioKeyMessages.show(res.getString(R.string.backup_restored), Icons.Default.CheckCircle)
                         } else {
                             BioKeyMessages.show(res.getString(R.string.backup_restore_failed), Icons.Default.ErrorOutline)
                         }

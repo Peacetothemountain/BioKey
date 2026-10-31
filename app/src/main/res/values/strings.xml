@@ -7,7 +7,6 @@
     <string name="accessibility_service_description">BioKey uses this service to see which app is on screen, so it can cover apps you\'ve chosen to lock until you authenticate. When you tap something on the home screen, in its search or in Recents, it reads its label, so a locked app is covered before it opens. While Recents is open and a locked app is unlocked, it reads the app names on the Recents cards, so closing that app there locks it again. It reads the title of each new window, to tell Google Password Manager\'s screens from sign-in sheets over other apps. It can press Home or Back for you to leave a locked app you didn\'t unlock, lock the screen when you ask after too many failed attempts, and open a locked app\'s picture-in-picture window full screen so it can be covered.\n\nBioKey does not read what you type, does not record the screen, and has no internet access. Nothing it observes leaves your device, unless you share BioKey\'s diagnostic log.</string>
     <string name="brand_name">BioKey</string>
     <string name="tile_label">@string/brand_name</string>
-    <string name="notification_shield_label">BioKey notification shield</string>
     <string name="shortcut_lock_all_short">Lock all now</string>
     <string name="shortcut_lock_all_long">Lock all apps now</string>
 
@@ -131,10 +130,6 @@
     <string name="disclosure_compatibility_reads">Which app was just opened, and whether a locked app is still on screen (app usage events on this phone)</string>
     <string name="disclosure_compatibility_used_covering">Covering apps you\'ve locked until you authenticate, without the Accessibility service</string>
     <string name="disclosure_compatibility_used_drawing">Drawing BioKey\'s lock cover over a locked app as it opens</string>
-    <string name="disclosure_notifications_title">BioKey uses notification access</string>
-    <string name="disclosure_notifications_reads">Android hands BioKey every new notification, content included. BioKey looks only at which app posted it and what kind it is (calls, alarms, media and navigation are never hidden), and never keeps or reads out its content</string>
-    <string name="disclosure_notifications_used">Hiding their content until you unlock the app, then putting them back</string>
-    <string name="disclosure_notifications_turning_off">You can turn this off at any time in Android settings. To bring hidden notifications back, switch off “Hide notification content” in BioKey\'s settings first: revoking notification access instead can leave them hidden for up to a day.</string>
     <string name="disclosure_keeps_log">A log of its own lock decisions about your locked apps, pauses, and security activity as it\'s recorded, on this phone for 3 days, at most 500 entries (after a restart with no network time, the last 500 until it\'s back). You can turn it off in Settings</string>
     <string name="disclosure_keeps_security_activity">Security activity: times app locking was off (BioKey\'s storage being cleared included), faces or fingerprints added or removed, notification access switched off while Hide notification content was on (and whether BioKey had it), changes made from BioKey opened with your screen lock, or within a day of a face or fingerprint change or a reset (naming the app or profile changed), reminders stopped within that day, the diagnostic log shared from such a session, the times a face or fingerprint couldn\'t be used so the screen lock was allowed, and, if you turn them on, failed unlocks. Each until you\'ve seen it (a face or fingerprint change or a reset, at least a day), then 7 days; at most 50 failed unlocks and 20 other records once seen</string>
     <string name="disclosure_never_leaves_phone">Nothing BioKey sees leaves this phone unless you share its diagnostic log or save a backup: it has no internet access.</string>
@@ -162,7 +157,6 @@
     <string name="backup_not_a_backup">That file isn\'t a BioKey backup</string>
     <string name="backup_confirm_restore_title">Restore this backup?</string>
     <string name="backup_confirm_restore_text">Your locked apps, profiles and BioKey settings will be replaced with the backup\'s.</string>
-    <string name="backup_restored_turn_on_shield">Backup restored. To hide notifications on this phone too, turn on Hide notification content in Settings</string>
     <string name="backup_restored">Backup restored</string>
     <string name="backup_restore_failed">That backup couldn\'t be restored</string>
     <!-- Title of the face or fingerprint prompt before a restore. -->
@@ -250,8 +244,6 @@
     <string name="home_resume_protection">Resume protection</string>
     <string name="home_protected">Protected</string>
     <string name="home_apps_locked_short">Apps locked</string>
-    <string name="home_notifications_showing_title">Apps locked, notifications showing</string>
-    <string name="home_notifications_showing_body">Locked apps\' notifications show in full: BioKey\'s notification access is off.</string>
     <string name="home_protected_compat">Running in compatibility mode, which works with Advanced Protection.</string>
     <plurals name="home_unwatched">
         <item quantity="one">%d locked app isn\'t protected in your work profile: compatibility mode can\'t see apps there.</item>
@@ -261,7 +253,7 @@
 
     <!-- Home: cards above the list. -->
     <string name="home_alerts_off_title">Alerts are off</string>
-    <string name="home_alerts_off_text">BioKey can\'t tell you if app locking stops, or stand in for hidden notifications · tap to allow</string>
+    <string name="home_alerts_off_text">BioKey can\'t tell you if app locking stops · tap to allow</string>
     <!-- %1$s: the card's usual text. -->
     <string name="home_reminders_off_body">%1$s Reminders are off until it\'s back on.</string>
     <string name="home_remind_me">Remind me</string>
@@ -363,9 +355,7 @@
     <string name="explain_opens_fallback">Opening it asks for your face, fingerprint or screen lock.</string>
     <string name="explain_still_section">What a lock doesn\'t cover</string>
     <string name="explain_notifications_title">Notifications</string>
-    <string name="explain_notifications_hidden">Hidden until you unlock it: they only say that something arrived</string>
-    <string name="explain_notifications_shield_off">Still shown in full. Turn on Hide notification content in Settings to hide them</string>
-    <string name="explain_notifications_no_access">Still shown in full: Hide notification content is on, but BioKey\'s notification access is off</string>
+    <string name="explain_notifications_shown">Still shown in full · tap to turn this app\'s notifications off in Android\'s settings</string>
     <string name="explain_widgets_title">Home-screen widgets</string>
     <string name="explain_widgets_text">Its widgets still show their content without a check. Remove them from your home screen if that matters</string>
     <string name="explain_access_title">Assistants and apps with access</string>
@@ -492,11 +482,6 @@
     <string name="card_gap_shield_access_revoked">%1$s · Notification access switched off while Hide notification content was on</string>
     <string name="card_change_shield_access_hint">Locked apps\' notifications show in full until it\'s back on</string>
     <string name="shield_access_notification_text">Notification access was switched off, so locked apps\' notifications show in full. Open BioKey to turn it back on.</string>
-    <string name="home_shield_no_access_title">Notifications aren\'t hidden</string>
-    <string name="home_shield_no_access_text">Hide notification content is on, but BioKey\'s notification access is off, so locked apps\' notifications show in full.</string>
-    <string name="home_shield_no_access_action">Allow access</string>
-    <string name="home_shield_turn_off_hiding">Turn off hiding</string>
-    <string name="home_shield_turned_off">Hide notification content is off</string>
     <string name="activity_held_intro">Until then nothing proves it\'s you here, so:</string>
     <string-array name="activity_held_refused">
         <item>records can\'t be marked seen or cleared</item>
@@ -518,21 +503,8 @@
     <string name="profile_default_name">New profile</string>
     <!-- Outside BioKey's screens: stand-ins, the compatibility notification, the cover. -->
     <string name="shield_public_title">Locked app</string>
-    <string name="shield_public_text">Notification hidden by BioKey</string>
     <!-- A stand-in's text, as Android's own App lock words a locked app's notification. One hidden: -->
-    <string name="shield_stand_in_message">New message</string>
-    <string name="shield_stand_in_notification">New notification</string>
     <!-- Several hidden (never fewer than 2). -->
-    <plurals name="shield_stand_in_messages">
-        <item quantity="one">%1$d new message</item>
-        <item quantity="other">%1$d new messages</item>
-    </plurals>
-    <plurals name="shield_stand_in_notifications">
-        <item quantity="one">%1$d new notification</item>
-        <item quantity="other">%1$d new notifications</item>
-    </plurals>
-    <string name="shield_channel_name">Hidden notifications</string>
-    <string name="shield_channel_description">Stand-ins for notifications from locked apps</string>
     <string name="compat_channel_name">Compatibility mode</string>
     <string name="compat_channel_description">Shown while BioKey locks apps without the accessibility service</string>
     <string name="compat_notification_title">BioKey is protecting your apps</string>
@@ -551,7 +523,6 @@
     <string name="permission_usage_access">usage access</string>
     <string name="permission_overlay">display over other apps</string>
     <string name="permission_both">%1$s and %2$s</string>
-    <string name="settings_shield_allow_access">Locked apps\' notifications show in full · tap to allow notification access</string>
     <string name="card_change_screen_lock_hint">If it wasn\'t you, someone knows your screen lock</string>
     <string name="card_change_during_hold_hint">If it wasn\'t you, whoever added or removed the face or fingerprint may have done it</string>
     <string name="card_change_during_reset_hint">If it wasn\'t you, whoever reset BioKey may have done it</string>
@@ -577,19 +548,19 @@
 
     <!-- Re-lock delays. A number never parts from its unit at a line break. -->
     <string name="profile_relock_immediately">Immediately</string>
-    <string name="profile_relock_screen_off">When screen turns off</string>
+    <string name="profile_relock_screen_off">When the phone locks</string>
     <string name="profile_relock_30_seconds">After 30&#160;seconds</string>
     <string name="profile_relock_1_minute">After 1&#160;minute</string>
     <string name="profile_relock_5_minutes">After 5&#160;minutes</string>
     <string name="profile_relock_15_minutes">After 15&#160;minutes</string>
     <string name="profile_relocks_immediately">Re-locks immediately</string>
-    <string name="profile_relocks_screen_off">Re-locks when screen turns off</string>
+    <string name="profile_relocks_screen_off">Re-locks when the phone locks</string>
     <string name="profile_relocks_30_seconds">Re-locks after 30&#160;seconds</string>
     <string name="profile_relocks_1_minute">Re-locks after 1&#160;minute</string>
     <string name="profile_relocks_5_minutes">Re-locks after 5&#160;minutes</string>
     <string name="profile_relocks_15_minutes">Re-locks after 15&#160;minutes</string>
     <string name="profile_relock_immediately_explanation">As soon as you go Home, open Recents or switch app</string>
-    <string name="profile_relock_screen_off_explanation">Stays unlocked until the screen turns off</string>
+    <string name="profile_relock_screen_off_explanation">Stays unlocked until the phone locks</string>
 
     <!-- Profiles: create, edit, delete. -->
     <string name="profile_delete_title">Delete “%1$s”?</string>
@@ -640,20 +611,20 @@
 
     <!-- Settings: section headers. -->
     <string name="settings_section_app_lock">App lock</string>
-    <string name="settings_section_privacy">Privacy &amp; protection</string>
+    <string name="settings_section_activity">Security activity</string>
     <string name="settings_section_profiles">Profiles</string>
     <string name="settings_section_backup">Backup</string>
     <string name="settings_section_diagnostics">Diagnostics</string>
     <string name="settings_section_about">About</string>
 
     <!-- Settings: App lock. -->
-    <string name="settings_lock_apps_title">Lock apps</string>
+    <string name="settings_lock_apps_title">Protection</string>
     <string name="settings_lock_apps_needs_compat_setup">Advanced Protection is on · tap to set up compatibility mode</string>
     <string name="settings_lock_apps_not_running">Not running · BioKey\'s accessibility service is on but stopped: turn it off and on again</string>
     <string name="settings_lock_apps_off">Off · turn on BioKey in Accessibility settings</string>
     <string name="settings_lock_apps_compat">On · compatibility mode (works with Advanced Protection)</string>
-    <string name="settings_lock_apps_biometric_only">Locked apps need your face or fingerprint</string>
-    <string name="settings_lock_apps_any">Locked apps need your face, fingerprint or screen lock</string>
+    <string name="settings_lock_apps_biometric_only">On · locked apps need your face or fingerprint</string>
+    <string name="settings_lock_apps_any">On · locked apps need your face, fingerprint or screen lock</string>
     <string name="settings_biometric_only_title">Face or fingerprint only</string>
     <string name="settings_biometric_only_none_set_up">On, but no face or fingerprint is set up: your screen lock works meanwhile</string>
     <string name="settings_biometric_only_summary">Locked apps and BioKey won\'t take your screen lock, so someone who knows it can\'t open them</string>
@@ -665,31 +636,18 @@
     <string name="settings_relock_title">Default re-lock delay</string>
     <!-- %1$s: the delay's short label. -->
     <string name="settings_relock_summary">%1$s · profiles can set their own</string>
-    <string name="settings_relock_at_phone_lock_title">Lock apps when the phone locks</string>
-    <string name="settings_relock_at_phone_lock_on">Not when the screen turns off, while Android keeps the phone unlocked (its own lock delay, Smart Lock)</string>
-    <string name="settings_relock_at_phone_lock_off">Off: every app locks when the screen turns off</string>
     <string name="settings_keyguard_camera_title">Let the camera open over the lock screen</string>
     <string name="settings_keyguard_camera_on">And emergency calls, as Android\'s own App lock lets them. Once your phone is unlocked, they\'re locked as usual</string>
     <string name="settings_keyguard_camera_off">Off: a locked camera or phone app is covered over the lock screen too</string>
     <string name="settings_new_apps_title">Offer to lock new apps</string>
     <string name="settings_new_apps_summary">After you install an app that auto-sort doesn\'t lock</string>
-    <string name="settings_android_app_lock_title">Android\'s App lock</string>
-    <string name="settings_android_app_lock_summary">Android can lock apps too, and always takes your screen lock. BioKey adds Face or fingerprint only, re-lock delays, profiles, failed unlock alerts, and work profile apps</string>
     <string name="settings_private_space_title">Hide apps\' icons</string>
     <string name="settings_private_space_summary">To hide an app\'s icon from someone using your phone, use private space</string>
     <string name="settings_alerts_on">Tells you if app locking stops, and afterwards when it was off</string>
     <string name="settings_alerts_off">Off: BioKey can\'t tell you if app locking stops · tap to allow notifications</string>
 
     <!-- Settings: Privacy & protection. -->
-    <string name="settings_notification_access_still_off">Notification access is still off</string>
-    <string name="settings_open_settings">Open settings</string>
-    <string name="settings_hide_notifications_title">Hide notification content</string>
-    <string name="settings_hide_notifications_off">When on, locked apps\' notifications show only that something arrived, until you unlock the app</string>
-    <string name="settings_hide_notifications_needs_access">On, but it can\'t work until you allow notification access</string>
     <string name="settings_lock_action">Lock Settings</string>
-    <string name="settings_hide_notifications_no_stand_in">Locked apps\' notifications are hidden, with no stand-in until you allow BioKey\'s notifications</string>
-    <string name="settings_hide_notifications_on">Locked apps\' notifications only say that something arrived</string>
-    <string name="settings_hide_notifications_footer">To bring hidden notifications back, switch off “Hide notification content” here. Revoking notification access instead can leave them hidden for up to a day.</string>
     <string name="settings_failed_alerts_title">Failed unlock alerts</string>
     <string name="settings_failed_alerts_summary">When a face or fingerprint fails on a locked app. Kept until you\'ve seen them, then 7 days; off deletes them</string>
     <string name="settings_failed_alerts_deleted">Failed unlocks deleted</string>

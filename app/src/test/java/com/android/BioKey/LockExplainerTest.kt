@@ -118,7 +118,6 @@ class LockExplainerTest {
         assertTrue(android.Manifest.permission.READ_MEDIA_IMAGES in asked)
         assertEquals(listOf("Drive", "Scanner"), explanation.otherApps.map { it.label })
         assertTrue(explanation.hasWidgets)
-        assertEquals(LockExplainer.Notifications.SHIELD_OFF, explanation.notifications)
     }
 
     @Test
@@ -134,7 +133,7 @@ class LockExplainerTest {
     @Test
     fun threeOtherAppsShowThenViewAllShowsTheRest() {
         val explanation = LockExplainer.Explanation(
-            gallery.packageName, "Opening it asks for your face, fingerprint or screen lock.", LockExplainer.Notifications.HIDDEN,
+            gallery.packageName, "Opening it asks for your face, fingerprint or screen lock.",
             hasWidgets = true, dataKind = LockExplainer.DataKind.PHOTOS, otherApps = others
         )
         var dontShow = 0

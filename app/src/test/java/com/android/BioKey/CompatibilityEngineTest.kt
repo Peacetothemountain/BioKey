@@ -119,6 +119,23 @@ class CompatibilityEngineTest {
         startEngine()
     }
 
+    /**
+     * The screen turns off and the phone locks with it (Android's usual lock delay): every session
+     * ends. (A screen-off Android doesn't follow with a lock keeps them: see the phone-lock tests.)
+     */
+    private fun screenOffPhoneLocks() {
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setIsDeviceLocked(true)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        step()
+    }
+
+    /** The phone is unlocked again and the screen comes back. */
+    private fun screenOnPhoneUnlocked() {
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setIsDeviceLocked(false)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
+        step()
+    }
+
     /** Compatibility mode starts (BioKey set up, or the accessibility engine handing over). */
     private fun startEngine() {
         engine = Robolectric.buildService(UsageWatchService::class.java).create()
@@ -487,8 +504,7 @@ class CompatibilityEngineTest {
     @Test
     fun aSplitLeftOnScreenAsThePhoneLocksIsAskedForInOnePrompt() {
         vault.setAppLock(chat, true)
-        vault.setRelockAtPhoneLock(true)
-        try {
+        run {
             // Both halves of a split screen, unlocked.
             LockStateTracker.onAppUnlocked(bank)
             LockStateTracker.onAppUnlocked(chat)
@@ -515,8 +531,6 @@ class CompatibilityEngineTest {
             val target = behind.single().getStringExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE)!!
             // Its prompt, once the phone is unlocked, names the other half too.
             assertEquals(listOf(if (target == bank) chat else bank), UsageWatchService.lockedAppsOnScreenWith(target))
-        } finally {
-            vault.setRelockAtPhoneLock(false)
         }
     }
 
@@ -627,12 +641,10 @@ class CompatibilityEngineTest {
         repeat(3) { step() }
         assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
         // The phone locks: every session ends, and the keyguard stops the window.
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
-        step()
+        screenOffPhoneLocks()
         event(ACTIVITY_STOPPED, bank)
         event(ACTIVITY_STOPPED, chat)
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
-        step()
+        screenOnPhoneUnlocked()
         // Unlocked: the window is back, paused (it never resumes), over the app that was in front.
         event(ACTIVITY_RESUMED, chat)
         event(ACTIVITY_PAUSED, bank)
@@ -654,11 +666,9 @@ class CompatibilityEngineTest {
     @Test
     fun aWindowThatComesBackPausedAndThenStopsIsNotCovered() {
         // Under something that hid it after all (it stopped within the settle time): nothing showed.
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
-        step()
+        screenOffPhoneLocks()
         event(ACTIVITY_STOPPED, bank)
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
-        step()
+        screenOnPhoneUnlocked()
         event(ACTIVITY_RESUMED, chat)
         event(ACTIVITY_PAUSED, bank)
         step()
@@ -727,13 +737,11 @@ class CompatibilityEngineTest {
         event(ACTIVITY_PAUSED, bank)
         event(ACTIVITY_RESUMED, front)
         repeat(3) { step() }
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
-        step()
+        screenOffPhoneLocks()
         if (frontLocked) vault.setAppLock(front, true)
         event(ACTIVITY_STOPPED, bank)
         event(ACTIVITY_STOPPED, front)
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
-        step()
+        screenOnPhoneUnlocked()
         event(ACTIVITY_RESUMED, front)
         event(ACTIVITY_PAUSED, bank)
         step()
@@ -1057,13 +1065,11 @@ class CompatibilityEngineTest {
         event(ACTIVITY_PAUSED, bank)
         event(ACTIVITY_RESUMED, chat)
         repeat(3) { step() }
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
-        step()
+        screenOffPhoneLocks()
         event(ACTIVITY_STOPPED, bank)
         event(ACTIVITY_STOPPED, chat)
         shadowOf(context.getSystemService(UsageStatsManager::class.java)).simulateTimeChange(-60_000)
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
-        step()
+        screenOnPhoneUnlocked()
         event(ACTIVITY_RESUMED, chat)
         event(ACTIVITY_PAUSED, bank)
         step()
@@ -1123,12 +1129,10 @@ class CompatibilityEngineTest {
         event(ACTIVITY_PAUSED, bank)
         event(ACTIVITY_RESUMED, context.packageName, bioKeysScreen)
         repeat(3) { step() }
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
-        step()
+        screenOffPhoneLocks()
         event(ACTIVITY_STOPPED, bank)
         event(ACTIVITY_STOPPED, context.packageName, bioKeysScreen)
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
-        step()
+        screenOnPhoneUnlocked()
         assertFalse(LockStateTracker.isOwnAppUnlocked())
         // BioKey is back, asking for itself; the bank's window floats over it.
         promptUpFor(context.packageName)
@@ -1404,14 +1408,12 @@ class CompatibilityEngineTest {
         event(ACTIVITY_RESUMED, chat)
         event(ACTIVITY_RESUMED, notes)
         repeat(3) { step() }
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
-        step()
+        screenOffPhoneLocks()
         vault.setAppLock(chat, true)
         event(ACTIVITY_STOPPED, bank)
         event(ACTIVITY_STOPPED, chat)
         event(ACTIVITY_STOPPED, notes)
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
-        step()
+        screenOnPhoneUnlocked()
         // Unlocked: the pair is back, the notes app's resume the newer, the bank's window paused.
         event(ACTIVITY_RESUMED, chat)
         event(ACTIVITY_RESUMED, notes)
@@ -1458,13 +1460,11 @@ class CompatibilityEngineTest {
         event(ACTIVITY_RESUMED, context.packageName, bioKeysScreen)
         event(ACTIVITY_RESUMED, notes)
         repeat(3) { step() }
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
-        step()
+        screenOffPhoneLocks()
         event(ACTIVITY_STOPPED, bank)
         event(ACTIVITY_STOPPED, context.packageName, bioKeysScreen)
         event(ACTIVITY_STOPPED, notes)
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
-        step()
+        screenOnPhoneUnlocked()
         promptUpFor(context.packageName)
         event(ACTIVITY_RESUMED, context.packageName, bioKeysScreen)
         event(ACTIVITY_RESUMED, notes)

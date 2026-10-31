@@ -55,8 +55,6 @@ class SecurityVault private constructor(private val context: Context) {
         fun onUnlocked(packages: Collection<String>) {}
         /** Protection paused: nothing should stay covered. */
         fun onPaused() {}
-        /** "Hide notification content" off (switched, or restored off): nothing stays hidden. */
-        fun onNotificationShieldOff() {}
     }
 
     companion object {
@@ -91,7 +89,6 @@ class SecurityVault private constructor(private val context: Context) {
         private const val KEY_LOCKED = "locked_apps_set"
         private const val KEY_GLOBAL = "global_lock_enabled"
         private const val KEY_TIMEOUT = "timeout_mode"
-        private const val KEY_NOTIFICATION_SHIELD = "notification_shield_enabled"
         /** Locked apps and BioKey ask for a face or fingerprint only, never the screen lock. */
         private const val KEY_BIOMETRIC_ONLY = "biometric_only"
         private const val KEY_SETUP_COMPLETED = "setup_completed"
@@ -106,8 +103,6 @@ class SecurityVault private constructor(private val context: Context) {
         private const val KEY_SELF_PROTECTION = "accessibility_self_protection_enabled"
         /** The lock-screen camera and the emergency dialer open over the keyguard uncovered, as Android's App lock lets them. */
         private const val KEY_KEYGUARD_CAMERA = "keyguard_camera_allowed"
-        /** Sessions end when the phone locks rather than when the screen turns off. */
-        private const val KEY_RELOCK_AT_PHONE_LOCK = "relock_at_phone_lock"
         /** 2: profile membership no longer implies locked; [KEY_LOCKED] holds each app's own switch. */
         private const val KEY_MODEL_VERSION = "lock_model_version"
         private const val MODEL_VERSION = 3
@@ -174,8 +169,6 @@ class SecurityVault private constructor(private val context: Context) {
     private val _timeoutModeFlow = MutableStateFlow(LockTimeoutMode.IMMEDIATE)
     val timeoutModeFlow: StateFlow<LockTimeoutMode> = _timeoutModeFlow.asStateFlow()
 
-    private val _notificationShieldFlow = MutableStateFlow(false)
-    val notificationShieldFlow: StateFlow<Boolean> = _notificationShieldFlow.asStateFlow()
     private val _biometricOnlyFlow = MutableStateFlow(false)
     /** The owner's choice; [SecurityEngine] applies it only while a strong face or fingerprint is set up. */
     val biometricOnlyFlow: StateFlow<Boolean> = _biometricOnlyFlow.asStateFlow()
@@ -199,14 +192,6 @@ class SecurityVault private constructor(private val context: Context) {
      * keyguard too.
      */
     val keyguardCameraFlow: StateFlow<Boolean> = _keyguardCameraFlow.asStateFlow()
-
-    private val _relockAtPhoneLockFlow = MutableStateFlow(false)
-    /**
-     * "Lock apps when the phone locks": sessions survive a screen-off that Android doesn't follow
-     * with a lock (its "lock after" delay, Smart Lock), and end once the phone is seen locked
-     * ([LockStateTracker.relockAtPhoneLock]). Off by default: they end when the screen turns off.
-     */
-    val relockAtPhoneLockFlow: StateFlow<Boolean> = _relockAtPhoneLockFlow.asStateFlow()
 
     /** Apps the owner took out of a profile by hand, which auto-sort must leave alone. Written under [lock]. */
     @Volatile private var autoSortExcluded: Set<String> = emptySet()
@@ -255,7 +240,6 @@ class SecurityVault private constructor(private val context: Context) {
     fun profileOf(packageName: String): SecurityProfile? =
         _profilesFlow.value.firstOrNull { packageName in it.packages }
 
-    fun isNotificationShieldEnabled(): Boolean = _notificationShieldFlow.value
 
     fun isBiometricOnly(): Boolean = _biometricOnlyFlow.value
 
@@ -265,11 +249,6 @@ class SecurityVault private constructor(private val context: Context) {
     fun isAutoSortProfilesEnabled(): Boolean = _autoSortProfilesFlow.value
     fun isKeyguardCameraAllowed(): Boolean = _keyguardCameraFlow.value
     fun setKeyguardCameraAllowed(allowed: Boolean) = setPreference { _keyguardCameraFlow.value = allowed }
-    fun isRelockAtPhoneLock(): Boolean = _relockAtPhoneLockFlow.value
-    fun setRelockAtPhoneLock(on: Boolean) = setPreference {
-        _relockAtPhoneLockFlow.value = on
-        LockStateTracker.relockAtPhoneLock = on
-    }
 
     // ---------------------------------------------------------------------------------------
     // Locking apps and profiles
@@ -450,12 +429,10 @@ class SecurityVault private constructor(private val context: Context) {
             .put("profiles", JSONArray().apply { _profilesFlow.value.forEach { put(it.toJson()) } })
             .put("defaultTimeout", _timeoutModeFlow.value.name)
             .put("modelVersion", MODEL_VERSION)
-            .put("notificationShield", _notificationShieldFlow.value)
             .put("biometricOnly", _biometricOnlyFlow.value)
             .put("selfProtection", _accessibilitySelfProtectionFlow.value)
             .put("autoSort", _autoSortProfilesFlow.value)
             .put("keyguardCamera", _keyguardCameraFlow.value)
-            .put("relockAtPhoneLock", _relockAtPhoneLockFlow.value)
             .put("autoSortExcluded", JSONArray(autoSortExcluded.sorted()))
             // The two switches kept beside the vault: their choices, not what they recorded.
             .put("unlockAttemptAlerts", UnlockAttempts.enabled.value)
@@ -483,9 +460,6 @@ class SecurityVault private constructor(private val context: Context) {
         } ?: throw IllegalArgumentException("No profiles in backup")
         val selected = validPackages(strings("selected"))
         val excluded = PasswordManager.expand(validPackages(strings("autoSortExcluded")))
-        // On only if the backup says so and it's already agreed to on this phone (the explanation
-        // comes before notification access, here, not on the phone the backup came from).
-        val shield = state.optBoolean("notificationShield", false) && _notificationShieldFlow.value
         val selfProtection = state.optBoolean("selfProtection", false) && selfProtectionAvailable
         mutate { sel, profs ->
             sel.clear()
@@ -493,20 +467,15 @@ class SecurityVault private constructor(private val context: Context) {
             profs.clear()
             // A backup from before profiles followed Settings: its untouched built-in profiles do now.
             profs += sanitizeProfiles(profiles).let { if (state.optInt("modelVersion", 2) < 3) followSettings(it) else it }
-            // Set with the locks, so what reacts to them (the notification shield) follows these.
             autoSortExcluded = excluded
             _timeoutModeFlow.value = LockTimeoutMode.fromName(state.optString("defaultTimeout"))
-            _notificationShieldFlow.value = shield
             _biometricOnlyFlow.value = state.optBoolean("biometricOnly", _biometricOnlyFlow.value)
             _accessibilitySelfProtectionFlow.value = selfProtection
             _autoSortProfilesFlow.value = state.optBoolean("autoSort", true)
             // Older backups don't say: what's set on this phone stays.
             _keyguardCameraFlow.value = state.optBoolean("keyguardCamera", _keyguardCameraFlow.value)
-            _relockAtPhoneLockFlow.value = state.optBoolean("relockAtPhoneLock", _relockAtPhoneLockFlow.value)
-            LockStateTracker.relockAtPhoneLock = _relockAtPhoneLockFlow.value
         }
-        // As their own switches would.
-        if (!shield) listeners.forEach { it.onNotificationShieldOff() }
+        // As its own switch would.
         if (!selfProtection) LockStateTracker.clearSelfProtection()
         // Older backups don't say: what's set on this phone stays. Records here are never deleted by a restore.
         if (state.has("unlockAttemptAlerts") && state.optBoolean("unlockAttemptAlertsChosen", true)) UnlockAttempts.setEnabled(context, state.optBoolean("unlockAttemptAlerts"), keepRecords = true)
@@ -624,11 +593,6 @@ class SecurityVault private constructor(private val context: Context) {
 
     fun setTimeoutMode(mode: LockTimeoutMode) = setPreference { _timeoutModeFlow.value = mode }
 
-    fun setNotificationShield(enabled: Boolean) {
-        setPreference { _notificationShieldFlow.value = enabled }
-        if (!enabled) listeners.forEach { it.onNotificationShieldOff() }
-    }
-
     fun setAccessibilitySelfProtectionEnabled(enabled: Boolean) {
         val on = enabled && selfProtectionAvailable
         setPreference { _accessibilitySelfProtectionFlow.value = on }
@@ -722,8 +686,6 @@ class SecurityVault private constructor(private val context: Context) {
         rebuildProfileTimeouts()
 
         _timeoutModeFlow.value = LockTimeoutMode.fromName(prefs.getString(KEY_TIMEOUT, null))
-        // Off until the owner agrees to it in BioKey: granting notification access elsewhere doesn't switch it on.
-        _notificationShieldFlow.value = prefs.getBoolean(KEY_NOTIFICATION_SHIELD, false)
         _biometricOnlyFlow.value = prefs.getBoolean(KEY_BIOMETRIC_ONLY, false)
         _setupCompletedFlow.value = prefs.getBoolean(KEY_SETUP_COMPLETED, false)
         // Opt-in (Play policy: no blocking of uninstall/disable unless the user chose it).
@@ -733,8 +695,6 @@ class SecurityVault private constructor(private val context: Context) {
         // Never asked for before: on for a new setup; set up already, kept as it was (covered), so
         // nothing is less locked after an update without the owner choosing it.
         _keyguardCameraFlow.value = prefs.getBoolean(KEY_KEYGUARD_CAMERA, !_setupCompletedFlow.value)
-        _relockAtPhoneLockFlow.value = prefs.getBoolean(KEY_RELOCK_AT_PHONE_LOCK, false)
-        LockStateTracker.relockAtPhoneLock = _relockAtPhoneLockFlow.value
 
         // A timed pause survives a restart only while its time is left.
         val enabled = prefs.getBoolean(KEY_GLOBAL, true)
@@ -795,13 +755,11 @@ class SecurityVault private constructor(private val context: Context) {
         val pausedElapsed = pausedUntilElapsed
         val pauseDuration = pauseDurationMs
         val timeout = _timeoutModeFlow.value.name
-        val shield = _notificationShieldFlow.value
         val biometricOnly = _biometricOnlyFlow.value
         val selfProtection = _accessibilitySelfProtectionFlow.value
         val setup = _setupCompletedFlow.value
         val autoSort = _autoSortProfilesFlow.value
         val keyguardCamera = _keyguardCameraFlow.value
-        val relockAtPhoneLock = _relockAtPhoneLockFlow.value
         return io.submit {
             prefs.edit(commit = true) {
                 putStringSet(KEY_LOCKED, selected)
@@ -814,13 +772,11 @@ class SecurityVault private constructor(private val context: Context) {
                 putInt(KEY_PAUSED_BOOT, bootCount)
                 putLong(KEY_PAUSE_DURATION, pauseDuration)
                 putString(KEY_TIMEOUT, timeout)
-                putBoolean(KEY_NOTIFICATION_SHIELD, shield)
                 putBoolean(KEY_BIOMETRIC_ONLY, biometricOnly)
                 putBoolean(KEY_SELF_PROTECTION, selfProtection)
                 putBoolean(KEY_SETUP_COMPLETED, setup)
                 putBoolean(KEY_AUTO_SORT, autoSort)
                 putBoolean(KEY_KEYGUARD_CAMERA, keyguardCamera)
-                putBoolean(KEY_RELOCK_AT_PHONE_LOCK, relockAtPhoneLock)
             }
         }
     }

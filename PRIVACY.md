@@ -1,6 +1,6 @@
 # BioKey privacy policy
 
-_Effective 30 October 2026_
+_Effective 31 October 2026_
 
 BioKey is an app lock for Android, made by NB Designs. It keeps the apps you choose behind your
 face, fingerprint or screen lock. This policy explains what BioKey can see on your phone, what it
@@ -20,8 +20,7 @@ It applies to BioKey 1.0 and later, as published on Google Play
   tracking code, and no third-party services.
 - **Everything stays on your phone.** What BioKey keeps (your locked apps, profiles and
   settings, a short log of its own lock decisions, the times app locking was off, faces or
-  fingerprints added or removed, notification access switched off while Hide notification content
-  was on, a face or fingerprint that couldn't be used under "Face or fingerprint only", changes
+  fingerprints added or removed, a face or fingerprint that couldn't be used under "Face or fingerprint only", changes
   made from BioKey opened with the screen lock or within a day of a face or fingerprint change or a reset,
   reminders stopped meanwhile, the diagnostic log opened for sharing from such a session, times
   the phone had no screen lock, locked apps uninstalled in the last 30 days, and, if you turn them
@@ -56,7 +55,7 @@ called "BioKey App Lock Service". BioKey is not an accessibility tool, and says 
   Android. Nothing read there is kept.
 - Not in the Google Play version: builds made from BioKey's source code can include
   self-protection (off by default). Turned on, it reads the text of Android's Settings pages about
-  BioKey itself (its App info page, its accessibility switch, notification access and the
+  BioKey itself (its App info page, its accessibility switch and the
   uninstall dialog), so BioKey can ask for your authentication before it is switched off or
   uninstalled.
 
@@ -85,19 +84,6 @@ reserves it for accessibility tools), BioKey uses compatibility mode instead.
 - **Display over other apps** lets BioKey draw its cover over a locked app as it opens. It reads
   nothing.
 - While compatibility mode runs, Android requires BioKey to show a low-priority notification.
-
-### Notification access (optional)
-
-Used only by the notification shield ("Hide notification content" in BioKey's settings). It's off
-until you switch it on there and agree to BioKey's explanation; granting notification access some
-other way doesn't switch it on.
-
-Android passes every new notification to a service with notification access. BioKey looks at
-which app posted it and what kind it is (calls, alarms, media and navigation are never hidden).
-Notifications from apps you've locked are snoozed and replaced by one "N hidden notifications"
-entry per app. When you unlock the app they come back. BioKey doesn't store, copy or read out the
-content of any notification; what it needs to bring them back (their system keys, and what
-tapping them opens) is held only in memory.
 
 ### Face, fingerprint and screen lock
 
@@ -139,7 +125,7 @@ list of installed packages (`QUERY_ALL_PACKAGES`).
   the reminders in BioKey; on the lock screen it says only "BioKey"); security activity (failed unlocks, times app locking was off, changes),
   told the next time you unlock your phone, never naming the app and never shown on the lock
   screen, staying until you've reviewed it; the offer to lock an app you just installed (its name hidden on the lock screen if your
-  phone hides sensitive notification content there); and the notification shield's stand-ins.
+  phone hides sensitive notification content there).
 - **Start at boot** (`RECEIVE_BOOT_COMPLETED`): after a restart, BioKey starts compatibility mode
   if that is in use, or warns you if protection is off.
 - **Advanced Protection status** (`QUERY_ADVANCED_PROTECTION_MODE`): so BioKey knows to switch to
@@ -200,15 +186,13 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   from Android's record of BioKey's past process exits, read on the phone: after BioKey last ran),
   until it was set up again, which, like a face or fingerprint change, holds records for a day; when a face or fingerprint was added or removed
   on the phone; when a face or fingerprint couldn't be used while "Face or fingerprint only" was on,
-  so the screen lock was allowed; when notification access was switched off while "Hide
-  notification content" was on, and when it came back or hiding was switched off (whether BioKey
-  had that access is also remembered, for this); and, on a phone with a face or fingerprint (or
+  so the screen lock was allowed; and, on a phone with a face or fingerprint (or
   within a day of one being added or removed), each way protection was weakened from
   BioKey opened with the screen lock and not confirmed with a face or fingerprint: protection
   paused; an app's lock switched off; a locked app moved or added into a profile that's off or
   that re-locks later, or taken out of its profile so it's locked less; a profile switched off or
   deleted; a longer re-lock delay, for a
-  profile or the default; "Hide notification content" switched off; and, within a day of a face
+  profile or the default; and, within a day of a face
   or fingerprint change, "Face or fingerprint only" switched off. Those that concern an app or profile name it. Opening the diagnostic log
   for sharing from such a session is recorded too, though it changes nothing.
   (Restoring a backup, stopping the reminders, and switching off face or fingerprint only, the
@@ -260,15 +244,14 @@ BioKey can save your settings to a backup file, and restore them, from its setti
 settings, Restore from a backup). This happens only when you ask for it.
 
 - **What's in it:** which apps you've locked, your profiles and their re-lock delays, and BioKey's
-  settings (default re-lock delay, notification shield, face or fingerprint only, auto-sort and
+  settings (default re-lock delay, face or fingerprint only, auto-sort and
   the apps you've told it to leave alone, failed unlock alerts and their screen lock option,
   new-app offers, and
   the self-protection setting, which is always off in the Play version). Nothing else: no diagnostic log, no failed unlocks or
-  times protection was off, no notifications, no authentication data. Restoring a backup never
+  times protection was off, no authentication data. Restoring a backup never
   deletes the failed unlocks kept on the phone, and always asks for your face or fingerprint first
   (your screen lock where none is set up). Within a day of a face or fingerprint added or removed, it can't be done
-  at all. It doesn't switch the notification shield on unless it's
-  already on here: that waits for BioKey's explanation on this phone.
+  at all.
 - **How it's protected:** the file is sealed with a password you choose (at least 8 characters),
   using AES-256-GCM with a key derived from your password by PBKDF2-SHA256 (600,000 rounds).
   Without the password the file reveals nothing, not even which apps are locked, and any change

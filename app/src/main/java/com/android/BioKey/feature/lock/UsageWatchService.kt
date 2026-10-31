@@ -331,7 +331,7 @@ class UsageWatchService : Service() {
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     // Whatever order the broadcast reaches BioKey's receivers in: sessions end now,
-                    // or, with "when the phone locks" chosen, wait for it.
+                    // or, with the phone not locked yet, wait for it.
                     LockStateTracker.onScreenTurnedOff(phoneLocked = runCatching { deviceLockedNow() }.getOrNull())
                     stopPolling()
                     // Waiting: the app in front is still there once the phone locks, and covered then.

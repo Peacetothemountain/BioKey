@@ -109,15 +109,6 @@ enum class Disclosure(
             R.string.disclosure_compatibility_used_covering,
             R.string.disclosure_compatibility_used_drawing
         )
-    ),
-    NOTIFICATIONS(
-        Icons.Default.Notifications,
-        R.string.disclosure_notifications_title,
-        // Android hands every new notification to the listener; say so, not just the locked apps' ones.
-        reads = listOf(R.string.disclosure_notifications_reads),
-        usedFor = listOf(R.string.disclosure_notifications_used),
-        // Hidden notifications are snoozed for up to a day, and only BioKey's access can bring them back early.
-        turningOff = R.string.disclosure_notifications_turning_off
     );
 }
 

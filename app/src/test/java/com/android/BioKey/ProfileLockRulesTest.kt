@@ -267,7 +267,6 @@ class ProfileLockRulesTest {
         assertTrue(prefs.getBoolean("setup_completed", false))
         assertTrue(prefs.getBoolean("accessibility_self_protection_enabled", false))
         assertEquals("GRACE_5_MINUTES", prefs.getString("timeout_mode", null))
-        assertFalse(prefs.getBoolean("notification_shield_enabled", true))
         assertFalse(prefs.getBoolean("auto_sort_profiles_enabled", true))
         assertEquals(setOf(other), prefs.getStringSet("auto_sort_excluded_packages", null))
 
@@ -275,7 +274,6 @@ class ProfileLockRulesTest {
         assertTrue(again.isSetupCompleted())
         assertTrue(again.isAccessibilitySelfProtectionEnabled())
         assertEquals(LockTimeoutMode.GRACE_5_MINUTES, again.getTimeoutMode(chat))
-        assertFalse(again.isNotificationShieldEnabled())
         assertFalse(again.isAutoSortProfilesEnabled())
         assertTrue(again.isAppLocked(bank))
         assertTrue(again.isAppLocked(chat))

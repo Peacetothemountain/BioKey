@@ -290,15 +290,5 @@
                 android:value="App lock compatibility mode: while the screen is on, reads which app was opened and whether a locked app is still on screen (usage access) to cover apps the user has locked, on devices where the accessibility service cannot run (for example under Android Advanced Protection). Nothing leaves the device." />
         </service>
 
-        <service
-            android:name=".feature.notification.BioKeyNotificationShieldService"
-            android:exported="true"
-            android:label="@string/notification_shield_label"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-        </service>
-
     </application>
 </manifest>

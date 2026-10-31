@@ -2,8 +2,23 @@
 
 BioKey's releases, newest first. The version is the `versionName` in `app/build.gradle.kts`.
 
-## Unreleased
+## 1.0.4 (31 October 2026)
 
+- **Re-lock delays hold through the Home gesture:** on a Pixel, swiping up to go Home could count
+  as the app being swiped away in Recents, which ended its session at once whatever its re-lock
+  delay ("closed from Recents" in the diagnostic log). A Recents card now counts as swiped away
+  only if it keeps its width on the way up; one shrinking into its icon is the Home gesture.
+- **Apps lock when the phone locks:** no longer a setting, simply how BioKey works. A screen-off
+  that Android doesn't follow with a lock (its own lock delay, Smart Lock keeping the phone
+  unlocked) leaves unlocked apps as they were; they lock once the phone does. The "When screen
+  turns off" re-lock delay is now called "When the phone locks".
+- **Settings, simplified:** the master switch is now "Protection" ("Lock apps" said too little).
+  The "Android's App lock" row is gone (home still marks the apps Android locks too). "Hide
+  notification content" is gone, with BioKey's notification access: to hide a locked app's
+  notifications, turn them off in Android's settings, which "What locking does" now opens for
+  you. Notifications hidden by the previous version come back on their own within a day.
+- **Website:** the privacy policy and help pages are redesigned, and the policy no longer
+  describes notification access.
 - **Take several apps out of a profile at once:** on a profile's page, tap "Select" (or long-press
   an app), pick the apps, then "Remove". One Undo puts them all back; each keeps its own lock
   switch, and each is recorded as taking one out is.

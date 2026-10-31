@@ -16,7 +16,6 @@ import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.TrustedClock
 import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.UnlockMethods
-import com.android.BioKey.feature.notification.ShieldAccessWatch
 import com.android.BioKey.ui.theme.BioKeyMessages
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -39,8 +38,6 @@ internal data class HomeState(
     val alertsMuted: Boolean,
     /** The owner stopped the reminders that app locking is off. Read again on every visit: an engine coming back clears it. */
     val remindersStopped: Boolean,
-    /** Hiding notification content is on, but its access was taken away. */
-    val shieldWithoutAccess: Boolean,
     /** The Lock Settings card put away; null until read, so the card doesn't flash in and out. */
     val lockSettingsDismissed: Boolean?,
     /**
@@ -74,18 +71,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             hasStrongBiometric = SecurityEngine.lastKnownEnrolledStrongBiometric() ?: false,
             alertsMuted = lastAlertsMuted ?: false,
             remindersStopped = lastRemindersStopped ?: false,
-            shieldWithoutAccess = ShieldAccessWatch.lastWithoutAccess ?: false,
             lockSettingsDismissed = lastLockSettingsDismissed
         )
     )
     internal val state: StateFlow<HomeState> = _state.asStateFlow()
-
-    init {
-        // Access taken away or given back while home is open (the shield's listener unbound, say).
-        viewModelScope.launch {
-            ShieldAccessWatch.withoutAccess.collect { without -> if (without != null) _state.update { it.copy(shieldWithoutAccess = without) } }
-        }
-    }
 
     /**
      * Looked at again, off the main thread: home calls this each time it's resumed, and cancels it
@@ -97,9 +86,6 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(lockSettingsDismissed = dismissed) }
             val stopped = ProtectionAlerts.remindersStopped(app).also { lastRemindersStopped = it }
             _state.update { it.copy(remindersStopped = stopped) }
-            ShieldAccessWatch.checkSoon(app).get()
-            val withoutAccess = ShieldAccessWatch.lastWithoutAccess ?: false
-            _state.update { it.copy(shieldWithoutAccess = withoutAccess) }
         }
         launch(Dispatchers.IO) {
             val strong = UnlockAttempts.hasStrongBiometric(app)
@@ -138,14 +124,6 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         ProtectionAlerts.stopReminders(app)
         ProtectionGaps.recordIfScreenLock(app, ProtectionGaps.Change.REMINDERS_STOPPED)
         _state.update { it.copy(remindersStopped = true) }
-    }
-
-    /** Hiding switched off from its card, as the switch in Settings does: recorded from a screen-lock session, with Undo. */
-    fun switchShieldOff(vault: SecurityVault) {
-        // The Undo outlives this view model (BioKey's messages last the process): it holds the state, weakly.
-        val state = java.lang.ref.WeakReference(_state)
-        switchShieldOff(app, vault, onUndo = { withoutAccess -> state.get()?.update { it.copy(shieldWithoutAccess = withoutAccess) } })
-        _state.update { it.copy(shieldWithoutAccess = false) }
     }
 
     /** "Face or fingerprint only" turned on: the Lock Settings card comes back, even if put away before. */

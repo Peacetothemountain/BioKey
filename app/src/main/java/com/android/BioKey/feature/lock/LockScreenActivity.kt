@@ -1,8 +1,6 @@
 package com.android.BioKey.feature.lock
 
-import android.app.ActivityOptions
 import android.app.KeyguardManager
-import android.app.PendingIntent
 import android.content.Intent
 import android.content.res.Configuration
 import android.content.res.Resources
@@ -31,10 +29,8 @@ import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.ScreenLockWatch
 import com.android.BioKey.core.security.SecurityVault
-import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
 import com.android.BioKey.ui.security.WindowProtection
 import java.lang.ref.WeakReference
-import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.launch
 
 /**
@@ -54,8 +50,6 @@ class LockScreenActivity : ComponentActivity() {
         private const val TAG = "LockScreenActivity"
         const val EXTRA_LOCKED_PACKAGE = "extra_locked_package"
         const val EXTRA_SELF_PROTECTION = "extra_self_protection"
-        /** Launch the locked app after a successful unlock (used by redacted notifications). */
-        const val EXTRA_LAUNCH_AFTER_UNLOCK = "extra_launch_after_unlock"
         /**
          * The user asked for this lock again (tapped the patch over the app's picture-in-picture
          * window, or over a window beside a smaller lock screen): a prompt they dismissed comes
@@ -159,26 +153,6 @@ class LockScreenActivity : ComponentActivity() {
          * the newest may change the state above or lower the shield.
          */
         @Volatile private var current: WeakReference<LockScreenActivity>? = null
-
-        /**
-         * What to send once [pkg] is unlocked from a stand-in: the link of its newest hidden
-         * notification, if that is the app's own link to one of its screens. Null means opening
-         * the app itself: a link made by another app, or by one BioKey can't tell, is never sent,
-         * and one that starts a broadcast or a service may put nothing on screen, while the new
-         * session must reach it ([LockStateTracker.ARRIVAL_GRACE_MS]).
-         */
-        internal fun deepLinkFor(
-            pkg: String,
-            intents: Map<String, BioKeyNotificationShieldService.CachedPendingIntent>?
-        ): PendingIntent? {
-            val target = intents?.values?.filter { !it.isSummary }?.maxByOrNull { it.postTime }
-                ?: intents?.values?.maxByOrNull { it.postTime }
-            val pending = target?.pendingIntent ?: return null
-            val creator = pending.creatorPackage ?: return null
-            val ownLink = creator == PasswordManager.launchPackage(pkg) || creator == pkg ||
-                (pkg == PasswordManager.VIRTUAL_PACKAGE && creator == PasswordManager.GMS)
-            return pending.takeIf { ownLink && it.isActivity }
-        }
     }
 
     private val engine get() = SecurityEngine.INSTANCE
@@ -187,7 +161,6 @@ class LockScreenActivity : ComponentActivity() {
 
     private var lockedPackage = ""
     private var isSelfProtection = false
-    private var launchAfterUnlock = false
     /** The prompt opens by itself once per showing; after a cancel the user taps Unlock. */
     private var promptAutoLaunched = false
     private var firstFrameCommitted = false
@@ -289,15 +262,11 @@ class LockScreenActivity : ComponentActivity() {
         val pkg = intent.getStringExtra(EXTRA_LOCKED_PACKAGE).orEmpty()
         val selfProtection = intent.getBooleanExtra(EXTRA_SELF_PROTECTION, false)
         if (pkg.isBlank()) return false
-        if (!selfProtection && isTargetUnlocked(pkg)) {
-            // Nothing to unlock; still honour a tap on a hidden-notification stand-in.
-            if (intent.getBooleanExtra(EXTRA_LAUNCH_AFTER_UNLOCK, false)) sendPendingDeepLink(pkg)
-            return false
-        }
+        // Nothing to unlock.
+        if (!selfProtection && isTargetUnlocked(pkg)) return false
         lockedPackage = pkg
         activeLockedTarget = pkg
         isSelfProtection = selfProtection
-        launchAfterUnlock = intent.getBooleanExtra(EXTRA_LAUNCH_AFTER_UNLOCK, false)
         promptAutoLaunched = false
         isPermanentLockout = false
         // The shield up now is the one that brought this lock screen.
@@ -432,7 +401,6 @@ class LockScreenActivity : ComponentActivity() {
         showOverKeyguard(!heldForPhoneLock && (coversAppOverKeyguard(newPkg) || (sameTarget && showsOverKeyguard && isKeyguardLocked())))
         if (newPkg == lockedPackage && newSelfProt == isSelfProtection) {
             // Same target brought to front again (e.g. over a trampoline): keep the running prompt.
-            launchAfterUnlock = launchAfterUnlock || intent.getBooleanExtra(EXTRA_LAUNCH_AFTER_UNLOCK, false)
             // Asked for on purpose: the prompt comes up again if it isn't up (the next maybeAutoPrompt).
             if (intent.getBooleanExtra(EXTRA_REPROMPT, false)) promptAutoLaunched = false
             if (firstFrameCommitted) whenCoverDrawn()
@@ -698,14 +666,8 @@ class LockScreenActivity : ComponentActivity() {
             if (LockStateTracker.lockGeneration() != generation) return unlockVoided()
             LockStateTracker.setSelfProtectionGranted(granted = true, visitedGuardedScreen = true)
         } else {
-            // Taken first: the unlock lets the notification shield restore (and forget) them.
-            val deepLinks = if (launchAfterUnlock) BioKeyNotificationShieldService.takeDeepLinks(pkg) else null
             EngineTrace.record("u.unlock", pkg)
-            if (!LockStateTracker.onAppUnlocked(pkg, generation)) {
-                // Still hidden: the stand-in keeps its links for the next unlock.
-                deepLinks?.let { BioKeyNotificationShieldService.cachedPendingIntents.putIfAbsent(pkg, ConcurrentHashMap(it)) }
-                return unlockVoided()
-            }
+            if (!LockStateTracker.onAppUnlocked(pkg, generation)) return unlockVoided()
             // The others the prompt named, still locked: unlocked by it too, but only once seen on
             // screen (the split screen this lock screen hid forming again), never one that isn't.
             for (other in others) {
@@ -714,7 +676,6 @@ class LockScreenActivity : ComponentActivity() {
                 LockStateTracker.nameAlongside(other, generation)
                 DiagnosticLog.log("$other named with $pkg by the same prompt: unlocked once it's on screen")
             }
-            if (launchAfterUnlock) sendPendingDeepLink(pkg, deepLinks)
         }
         LockStateTracker.clearRegularLockPending(pkg)
         finishSilently()
@@ -734,38 +695,6 @@ class LockScreenActivity : ComponentActivity() {
         abandon()
         if (!BioKeyAccessibilityService.lockDevice()) goHome()
         finishSilently(abandoned = true)
-    }
-
-    private fun launchApp(pkg: String) {
-        packageManager.getLaunchIntentForPackage(PasswordManager.launchPackage(pkg))?.let { launch ->
-            runCatching { startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-        }
-    }
-
-    private fun sendPendingDeepLink(
-        pkg: String,
-        preExtractedMap: Map<String, BioKeyNotificationShieldService.CachedPendingIntent>? = null
-    ) {
-        val pending = deepLinkFor(pkg, preExtractedMap ?: BioKeyNotificationShieldService.takeDeepLinks(pkg))
-        if (pending == null) {
-            launchApp(pkg)
-            return
-        }
-        // BioKey's lock screen is on screen while it forwards the app's own link: grant the
-        // launch only while visible, never an open-ended grant.
-        val options = ActivityOptions.makeBasic().apply {
-            if (Build.VERSION.SDK_INT >= 36) {
-                pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                @Suppress("DEPRECATION")
-                pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
-            }
-        }.toBundle()
-        runCatching { pending.send(this, 0, null, null, null, null, options) }.onFailure {
-            // Not which app: logs mustn't tell which apps are locked.
-            Log.w(TAG, "Deep link failed, launching instead: ${it.javaClass.simpleName}")
-            launchApp(pkg)
-        }
     }
 
     /**

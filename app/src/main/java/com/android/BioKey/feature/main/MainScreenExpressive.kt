@@ -375,14 +375,8 @@ fun MainScreenExpressive(
     val unwatchedCount = remember(installedApps, lockedApps, profiles, mode, homeScreens) { installedApps.count(::isUnwatched) }
     val homeState by homeViewModel.state.collectAsStateWithLifecycle()
     val screenLockMissing by ScreenLockWatch.missing.collectAsStateWithLifecycle()
-    val shieldOn by vault.notificationShieldFlow.collectAsStateWithLifecycle()
-    // Hiding switched off in Settings (or by a restore) meanwhile: its warning goes now, not at
-    // home's next resume.
-    val home = if (shieldOn) homeState else homeState.copy(shieldWithoutAccess = false)
-    val look = protectionLook(
-        mode, globalLockEnabled, pausedUntil, lockedCount, unwatchedCount, defaultTimeout,
-        notificationsShowing = home.shieldWithoutAccess && vault.isSetupCompleted()
-    )
+    val home = homeState
+    val look = protectionLook(mode, globalLockEnabled, pausedUntil, lockedCount, unwatchedCount, defaultTimeout)
 
     /**
      * Locked apps open right now. Every unlock and lock (an app's re-lock delay running out
@@ -935,9 +929,6 @@ fun MainScreenExpressive(
         onLockOne = ::lockOne,
         onLockAll = ::lockAllNow,
         onProtectionAction = ::onProtectionAction,
-        onAllowNotifications = {
-            disclosures.request(Disclosure.NOTIFICATIONS) { IntentNavigationHelper.openNotificationListenerSettings(context) }
-        },
         onPauseRequested = onPauseRequested,
         onFilterChange = { filter = it },
         onLockedByHand = ::explainIfFirst

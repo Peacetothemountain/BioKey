@@ -8,15 +8,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -29,6 +31,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
@@ -36,6 +39,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.android.BioKey.R
+import com.android.BioKey.ui.navigation.IntentNavigationHelper
 import com.android.BioKey.ui.security.ProtectDialogWindow
 import com.android.BioKey.ui.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.Group
@@ -99,18 +103,23 @@ internal fun LockExplainContent(
         // What a lock doesn't cover, each on its own row: read at a glance, nothing to tap.
         val rows = buildList<@Composable (Int, Int) -> Unit> {
             add { i, n ->
+                // A lock doesn't hide them: Android's own per-app switch does, a tap away.
+                val context = LocalContext.current
                 GroupRow(
                     index = i,
                     count = n,
                     title = stringResource(R.string.explain_notifications_title),
-                    subtitle = stringResource(
-                        when (explanation.notifications) {
-                            LockExplainer.Notifications.HIDDEN -> R.string.explain_notifications_hidden
-                            LockExplainer.Notifications.SHIELD_OFF -> R.string.explain_notifications_shield_off
-                            LockExplainer.Notifications.NO_ACCESS -> R.string.explain_notifications_no_access
-                        }
-                    ),
-                    icon = if (explanation.notifications == LockExplainer.Notifications.HIDDEN) Icons.Default.NotificationsOff else Icons.Default.Notifications
+                    subtitle = stringResource(R.string.explain_notifications_shown),
+                    icon = Icons.Default.Notifications,
+                    onClick = { IntentNavigationHelper.openAppNotificationSettings(context, app.packageName) },
+                    trailing = {
+                        Icon(
+                            Icons.AutoMirrored.Filled.OpenInNew,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 )
             }
             if (explanation.hasWidgets) add { i, n ->

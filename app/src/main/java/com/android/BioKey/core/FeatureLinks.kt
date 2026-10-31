@@ -5,7 +5,6 @@ import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.service.notification.NotificationListenerService
 
 /**
  * The two engines that lock apps, as core/ needs them: whether each runs, and compatibility mode
@@ -35,27 +34,16 @@ object FeatureLinks {
     @Volatile private var installedEngines: Engines? = null
     @Volatile private var mainScreen: Class<out Activity>? = null
     @Volatile private var accessibilityService: Class<out AccessibilityService>? = null
-    @Volatile private var notificationListener: Class<out NotificationListenerService>? = null
 
-    fun install(
-        engines: Engines,
-        mainScreen: Class<out Activity>,
-        accessibilityService: Class<out AccessibilityService>,
-        notificationListener: Class<out NotificationListenerService>
-    ) {
+    fun install(engines: Engines, mainScreen: Class<out Activity>, accessibilityService: Class<out AccessibilityService>) {
         installedEngines = engines
         this.mainScreen = mainScreen
         this.accessibilityService = accessibilityService
-        this.notificationListener = notificationListener
     }
 
     /** BioKey's accessibility service, as Android's settings name it. */
     fun accessibilityServiceName(context: Context): String =
         ComponentName(context, checkNotNull(accessibilityService) { NOT_INSTALLED }).flattenToString()
-
-    /** BioKey's notification listener (the notification shield), as Android's settings name it. */
-    fun notificationListenerName(context: Context): String =
-        ComponentName(context, checkNotNull(notificationListener) { NOT_INSTALLED }).flattenToString()
 
     private const val NOT_INSTALLED = "FeatureLinks.install wasn't called (BioKeyApplication.onCreate)"
 
