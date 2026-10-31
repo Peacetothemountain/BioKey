@@ -79,11 +79,8 @@ The privacy policy, support page and landing page are served from the `docs/` fo
 
 - Repository Settings > Pages > Build and deployment: **Deploy from a branch**, branch `main`, folder `/docs`.
 - The site is at https://peacetothemountain.github.io/BioKey/, the policy at `/privacy/`, support at `/support/`.
-- `docs/privacy.md` is `PRIVACY.md` with Jekyll front matter on top. Keep them identical; this prints nothing when they are:
-
-  ```bash
-  tail -n +6 docs/privacy.md | diff - PRIVACY.md
-  ```
+- `docs/privacy.md` says what `PRIVACY.md` says, laid out for the web (an "at a glance" summary, a table of contents, HTML headings with fixed ids the table of contents relies on). The two aren't byte-identical: when one changes, change the other to match, statement for statement, and give both the new effective date.
+- The site's look is `docs/_layouts/default.html`, `docs/_includes/mark-defs.html` (the logo) and `docs/assets/css/style.css`; `docs/assets/logo.svg` is the mark on its own. No theme, no plugins, nothing loaded from another site.
 
 This file (`docs/RELEASING.md`) is excluded in `docs/_config.yml`, so it isn't part of the site.
 

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="31 22 44 49" width="176" height="196" role="img" aria-labelledby="t">
+  <!-- BioKey's mark: the key of its launcher icon, a fingerprint whose middle ridge becomes the
+       key's blade. The geometry is the icon's own (app/src/main/java/com/android/BioKey/ui/brand/KeyMark.kt),
+       on its 108-unit grid; the colours are the launcher artwork's. -->
+  <title id="t">BioKey</title>
+  <defs>
+    <linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="24" x2="0" y2="69">
+      <stop offset="0" stop-color="#4D7CF3"/>
+      <stop offset="0.36" stop-color="#9A48EC"/>
+      <stop offset="0.66" stop-color="#D0427B"/>
+      <stop offset="1" stop-color="#EE5C2A"/>
+    </linearGradient>
+  </defs>
+  <g fill="none" stroke="url(#g)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M41 46.875 V37.65 A12.875 12.875 0 0 1 66.75 37.65 V45.625"/>
+    <path d="M43.5 50.625 V37.65 A10.375 10.375 0 0 1 64.25 37.65 V53.125"/>
+    <path d="M46.25 54.375 V37.65 A7.625 7.625 0 0 1 61.5 37.65 V48.125"/>
+    <path d="M48.75 51.875 V37.65 A5.125 5.125 0 0 1 59 37.65 V50.625"/>
+    <path d="M51.25 49.375 V37.65 A2.625 2.625 0 0 1 56.5 37.65 V46.875"/>
+    <path d="M53.875 40.375 V68.625 M53.875 60.75 H58.375 M53.875 66 H56.625"/>
+  </g>
+  <path fill="#7A58EC" d="M36 31.3 Q36 34.5 39.2 34.5 Q36 34.5 36 37.7 Q36 34.5 32.8 34.5 Q36 34.5 36 31.3 Z"/>
+  <path fill="#F0803A" d="M71.1 38.75 Q71.1 40.9 73.25 40.9 Q71.1 40.9 71.1 43.05 Q71.1 40.9 68.95 40.9 Q71.1 40.9 71.1 38.75 Z"/>
+  <path fill="#5C8CF6" d="M38.9 57.8 Q38.9 59 40.1 59 Q38.9 59 38.9 60.2 Q38.9 59 37.7 59 Q38.9 59 38.9 57.8 Z"/>
+</svg>
