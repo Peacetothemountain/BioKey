@@ -212,6 +212,18 @@ class LockScreenCameraTest {
     }
 
     @Test
+    fun lockAllOverACameraThatIsntLockedSaysNothingOfIt() {
+        // The diagnostic log names only locked apps.
+        vault.setAppLock(camera, false)
+        idle()
+        cameraOpensOverTheKeyguard()
+        LockStateTracker.lockAll(reason = "test")
+        idle(1_000)
+        assertEquals(emptyList<String>(), DiagnosticLog.entries().map { it.text }.filter { camera in it })
+        assertTrue(lockScreensStarted().isEmpty())
+    }
+
+    @Test
     fun anotherScreenOfTheCameraAppOverTheKeyguardIsCovered() {
         onScreen(appWindow(2, camera), keyguardWindow())
         windowEvent(camera, "$camera.SettingsActivity", wait = 1_500)

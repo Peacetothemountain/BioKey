@@ -486,10 +486,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 // camera let through over the keyguard (every session ended from there: "Lock
                 // all", a pause running out): it stays as it is, covered once the phone is
                 // unlocked. One opened there during a pause wasn't noted then (nothing was
-                // locked), and is told now.
+                // locked), and is told now, if it is a locked app: no other is noted or logged.
                 if (isKeyguardLocked()) {
                     (appLeftOnScreen()?.takeUnless { frontIsLauncher() } ?: leftThen)
-                        ?.takeUnless { it == keyguardLetThrough || letsThroughOverKeyguard(it) }
+                        ?.takeUnless { it == keyguardLetThrough || (needsCover(it) && letsThroughOverKeyguard(it)) }
                         ?.let(::coverLeftOnScreen)
                 }
                 // A locked app in picture-in-picture is masked at once.
