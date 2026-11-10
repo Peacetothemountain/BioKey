@@ -28,8 +28,13 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
 - **After a change of language,** an app locked with Android's own App lock too still asks once,
   and "Clear all" in Recents still ends every session. An app installed in a work profile is
   recognised on Android's prompt as well.
-- **"Also locked by Android" is forgotten on the phone too** once an app hasn't been seen locked
-  by Android for 30 days, not only left off the screen.
+- **What is kept for 30 days is gone from the phone after them:** which apps Android's own App
+  lock was seen locking, and locked apps uninstalled, were only left unused once their 30 days
+  were up; they are now deleted, as BioKey starts and each time the phone is unlocked.
+- **Waking the phone doesn't lock everything a second time.** A phone that locked as its screen
+  went off was taken to lock again at BioKey's first look as the screen came back. In
+  compatibility mode that could send the lock-screen camera, or a lock screen already up over
+  the keyguard (an alarm ringing in a locked app), behind the keyguard.
 - **Settings and home:** the Protection alerts row says when one of BioKey's alert channels is
   switched off in Android's settings, and opens it; a pause sheet, or the "Unlocked now" list,
   left open no longer comes back by itself; long setting names wrap with large text instead of

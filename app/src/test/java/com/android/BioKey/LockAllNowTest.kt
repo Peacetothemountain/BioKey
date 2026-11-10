@@ -43,7 +43,7 @@ class LockAllNowTest {
         LockStateTracker.resetForTests()
     }
 
-    /** Compatibility mode, its permissions granted: an engine that counts as running. */
+    /** An engine that counts as running (the accessibility service). */
     private fun protecting() {
         ProtectionEngine.overrideModeForTests = ProtectionEngine.Mode.ACCESSIBILITY
     }

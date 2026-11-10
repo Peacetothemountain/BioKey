@@ -854,6 +854,56 @@ class CompatibilityEngineTest {
     }
 
     @Test
+    fun lockAllOverTheKeyguardDoesntSendALockScreenOnItsWayBehindItEither() {
+        // The bank has just come up over the keyguard: covered, its lock screen asked for but not
+        // up yet, when every session ends ("Lock all", a pause running out).
+        val over = bankComesForwardOnTheKeyguard { }
+        assertTrue(over.none { it.getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false) })
+        assertTrue(shield().isShowing)
+        started()
+        LockStateTracker.lockAll(reason = "test")
+        repeat(4) { step() }
+        assertTrue(started().none { it.getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false) })
+    }
+
+    @Test
+    fun anAppShowingOverTheKeyguardAsProtectionComesBackIsCovered() {
+        // Paused, with the phone locked: the bank comes up over the keyguard (navigation, a call)
+        // unseen, as nothing is read meanwhile. The pause ends with it still there.
+        vault.pauseProtection(null)
+        repeat(3) { step() }
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(true)
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        event(ACTIVITY_RESUMED, bank)
+        repeat(3) { step() }
+        assertEquals(emptyList<String>(), covered(bank))
+        started()
+        vault.resumeProtection()
+        repeat(10) { step(150) }
+        // Seen to as if it had just come forward over the keyguard: covered there.
+        assertEquals(1, covered(bank).size)
+        assertTrue(started().any { it.component?.className == lockScreen && it.getStringExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE) == bank })
+    }
+
+    @Test
+    fun anAppFromBeforeThePhoneLockedIsntCoveredAsProtectionComesBack() {
+        // The same, but the bank was left for the keyguard long ago: stopped behind it.
+        vault.pauseProtection(null)
+        repeat(3) { step() }
+        event(ACTIVITY_RESUMED, bank)
+        event(ACTIVITY_PAUSED, bank)
+        event(ACTIVITY_STOPPED, bank)
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(true)
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        repeat(3) { step() }
+        started()
+        vault.resumeProtection()
+        repeat(10) { step(150) }
+        assertEquals(emptyList<String>(), covered(bank))
+        assertTrue(started().none { it.component?.className == lockScreen })
+    }
+
+    @Test
     fun aSplitUnderALongScreensaverIsStillAskedForInOnePrompt() {
         vault.setAppLock(chat, true)
         LockStateTracker.onAppUnlocked(bank)

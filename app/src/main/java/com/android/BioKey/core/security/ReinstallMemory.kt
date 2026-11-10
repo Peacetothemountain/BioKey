@@ -165,9 +165,9 @@ object ReinstallMemory {
     }
 
     /**
-     * Drops what was remembered longer ago than [KEEP_MS]. Asked at each unlock of the phone:
-     * otherwise an entry stays on the phone until the next app is installed or uninstalled,
-     * which can be long after its 30 days.
+     * Drops what was remembered longer ago than [KEEP_MS]. Asked as BioKey starts and at each
+     * unlock of the phone: otherwise an entry stays on the phone until the next app is installed
+     * or uninstalled, which can be long after its 30 days.
      */
     @Synchronized
     fun prune(context: Context) {

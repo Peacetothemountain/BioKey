@@ -186,6 +186,17 @@ class LockScreenCameraTest {
     }
 
     @Test
+    fun lockAllOverTheKeyguardLeavesTheLockScreenCameraAlone() {
+        cameraOpensOverTheKeyguard()
+        assertEquals(emptyList<String>(), covered())
+        // "Lock all" from the tile, or a pause running out, with the camera open there.
+        LockStateTracker.lockAll(reason = "test")
+        idle(1_000)
+        assertEquals(emptyList<String>(), covered())
+        assertTrue(lockScreensStarted().isEmpty())
+    }
+
+    @Test
     fun anotherScreenOfTheCameraAppOverTheKeyguardIsCovered() {
         onScreen(appWindow(2, camera), keyguardWindow())
         windowEvent(camera, "$camera.SettingsActivity", wait = 1_500)

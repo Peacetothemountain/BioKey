@@ -97,6 +97,7 @@ enum class Disclosure(
             R.string.disclosure_accessibility_used_lock_screen,
             R.string.disclosure_accessibility_used_pip,
             R.string.disclosure_accessibility_used_recents_session,
+            R.string.disclosure_accessibility_used_lock_this_app,
             R.string.disclosure_accessibility_used_self_protection
                 .takeIf { SecurityVault.selfProtectionAvailable }
         )
@@ -107,7 +108,8 @@ enum class Disclosure(
         reads = listOf(R.string.disclosure_compatibility_reads, R.string.disclosure_compatibility_reads_recent),
         usedFor = listOf(
             R.string.disclosure_compatibility_used_covering,
-            R.string.disclosure_compatibility_used_drawing
+            R.string.disclosure_compatibility_used_drawing,
+            R.string.disclosure_compatibility_used_lock_this_app
         )
     );
 }

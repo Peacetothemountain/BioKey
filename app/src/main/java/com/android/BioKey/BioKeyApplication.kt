@@ -114,6 +114,8 @@ class BioKeyApplication : Application() {
                 UnlockAttempts.load(app)
                 NewAppSuggestions.load(app)
                 AlsoLockedByAndroid.load(app)
+                // Apps remembered for a reinstall longer than their 30 days go as BioKey starts too.
+                ReinstallMemory.prune(app)
                 ProtectionGaps.load(app)
                 // Early, before anything else is written: a cleared storage is told from an empty one here.
                 ProtectionGaps.checkStorageCleared(app)

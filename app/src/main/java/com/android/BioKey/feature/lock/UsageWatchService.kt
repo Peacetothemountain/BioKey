@@ -473,10 +473,13 @@ class UsageWatchService : Service() {
                 // behind the keyguard, so the keyguard going (a foldable unfolded) never shows it.
                 // Not one over the keyguard: the camera let through there, or an app whose lock
                 // screen is already up over it or on its way (an alarm ringing, say), which this
-                // would send behind the keyguard instead.
+                // would send behind the keyguard instead. On its way: its cover is up, or it is
+                // being watched for whether it stays over the keyguard (the tracker's own note
+                // of a lock screen asked for went with the sessions).
                 if (isInteractive()) {
                     appInFront()?.takeUnless {
-                        it == keyguardLetThrough || LockStateTracker.isRegularLockPending(it) || LockScreenActivity.activeLockedTarget == it
+                        it == keyguardLetThrough || LockScreenActivity.activeLockedTarget == it ||
+                            it in keyguardWaits || (shield.isShowing && shield.targetPackage == it)
                     }?.let { coverBehindKeyguard(it, "on screen as the phone locked") }
                 }
                 return@post
@@ -926,8 +929,13 @@ class UsageWatchService : Service() {
         activities.prune(batch.from)
         // Whether the keyguard is up is asked only once something would be covered (a binder call).
         val screenLocked = lazy(LazyThreadSafetyMode.NONE) { batch.deviceLocked || keyguardLocked() }
-        // A look back from behind the keyguard is about before the phone was locked: nothing to cover.
-        if (batch.fresh && screenLocked.value) return
+        // A look back from behind the keyguard is about before the phone was locked: nothing to
+        // cover. Except an app still resumed: nothing is, behind a keyguard, so it is showing
+        // over it (navigation, a call), and is seen to as if it had just come forward there.
+        if (batch.fresh && screenLocked.value) {
+            newest?.takeIf { e -> e.app?.let(activities::isResumed) == true }?.let(::handleForeground)
+            return
+        }
         // An unlocked app back on screen is in use before anything else is looked at: one that
         // hopped to BioKey's lock screen from beside the app in front (split screen) comes back
         // with that app, which may well be the newer resume, and mustn't have its hop ended, as

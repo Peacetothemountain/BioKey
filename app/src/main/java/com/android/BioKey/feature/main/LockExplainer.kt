@@ -70,7 +70,7 @@ internal object LockExplainer {
 
     private const val KEY_EXPLAINED = "lock_explained"
     private const val KEY_OFF = "lock_explain_off"
-    /** Apps remembered as explained, at most: the oldest are forgotten (and may be explained once more). */
+    /** Apps remembered as explained, at most: past that, one or another is forgotten (and may be explained once more). */
     private const val MAX_EXPLAINED = 300
 
     /** Whether to explain [pkg] as it's locked by hand: not explained before, and not switched off. */

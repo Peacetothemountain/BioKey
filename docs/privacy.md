@@ -155,7 +155,9 @@ Which apps are unlocked right now lives only in memory, and ends whenever the ph
 
 <h3 id="uninstalled-apps">Locked apps that were uninstalled</h3>
 
-For each app you’ve locked, the SHA-256 of its signing certificate. When one is uninstalled with its data, its package name, that certificate fingerprint, its profile and the time are kept for 30 days, so that installing the same app again locks it again (or, if someone else signed it, offers to). Not in backups; forgotten when a backup is restored. Which apps you’ve been told about when locking them ("What locking does") and whether you chose "Don’t show again" are kept too.
+For each app you’ve locked, the SHA-256 of its signing certificate. When one is uninstalled with its data, its package name, that certificate fingerprint, its profile and the time are kept for 30 days, so that installing the same app again locks it again (or, if someone else signed it, offers to). Not in backups; forgotten when a backup is restored.
+
+**"What locking does":** which apps you’ve been told about when locking them (their package names, at most 300) and whether you chose "Don’t show again", kept until BioKey’s storage is cleared, so the same app isn’t explained twice.
 
 <h3 id="androids-app-lock">Android’s own App lock</h3>
 

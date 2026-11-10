@@ -162,8 +162,10 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   certificate. When one is uninstalled with its data, its package name, that certificate
   fingerprint, its profile and the time are kept for 30 days, so that installing the same app
   again locks it again (or, if someone else signed it, offers to). Not in backups; forgotten when
-  a backup is restored. Which apps you've been told about when locking them ("What locking does")
-  and whether you chose "Don't show again" are kept too.
+  a backup is restored.
+- **"What locking does":** which apps you've been told about when locking them (their package
+  names, at most 300) and whether you chose "Don't show again", kept until BioKey's storage is
+  cleared, so the same app isn't explained twice.
 - **Android's own App lock** (Android 17): which of the apps you've locked Android's own App lock
   was seen locking too, and when it last was, so BioKey can say so. An app not seen locked by it
   for 30 days is forgotten.
