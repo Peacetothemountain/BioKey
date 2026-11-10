@@ -37,6 +37,7 @@ class ProtectionGapsTest {
     private var sinceBoot = 50_000_000L
     private var boot = 7
     private var exits = listOf<Pair<Long, Int>>()
+    private var startedStopped = false
 
     @Before
     fun reset() {
@@ -46,6 +47,7 @@ class ProtectionGapsTest {
         ProtectionGaps.elapsed = { sinceBoot }
         ProtectionGaps.bootCount = { boot }
         ProtectionGaps.exits = { exits }
+        ProtectionGaps.startedAfterForceStop = { startedStopped }
         ProtectionGaps.updatedAt = { 0L }
         ProtectionGaps.wallNow = { now }
         // A test's storage counts as new unless a test says otherwise.
@@ -62,6 +64,7 @@ class ProtectionGapsTest {
         ProtectionGaps.storageFromBefore = { true }
         ProtectionGaps.sdk = { android.os.Build.VERSION.SDK_INT }
         ProtectionGaps.clock = System::currentTimeMillis
+        ProtectionGaps.startedAfterForceStop = { false }
         ProtectionGaps.resetForTests()
     }
 
@@ -559,5 +562,77 @@ class ProtectionGapsTest {
         SecurityVault.getInstance(context).setSetupCompletedSync(true)
         ProtectionAlerts.resumeStorageClearedReminders(context)
         assertTrue(scheduler.allPendingJobs.isEmpty())
+    }
+
+    /** BioKey's process ends and a new one starts, with what was on disk. */
+    private fun newProcess(afterForceStop: Boolean) {
+        startedStopped = afterForceStop
+        ProtectionGaps.resetForTests()
+    }
+
+    @Test
+    fun aForceStopTheRestartForgotIsStillAGap() {
+        pass(60_000L)
+        // Force-stopped, then the phone restarted: Android's record of the stop went with it.
+        boot++
+        sinceBoot = 30_000L
+        pass(5 * 60_000L)
+        newProcess(afterForceStop = true)
+        ProtectionGaps.onEngineUp(context)
+        val gap = gaps.single()
+        assertEquals(ProtectionGaps.Kind.FORCE_STOPPED, gap.kind)
+        assertEquals(ProtectionGaps.RESTARTED, gap.detail)
+        assertTrue(gap.unknownStart)
+        assertEquals(now, gap.to)
+    }
+
+    @Test
+    fun aForceStopTheRestartForgotIsCountedOnce() {
+        newProcess(afterForceStop = true)
+        ProtectionGaps.onEngineUp(context)
+        pass(60_000L)
+        ProtectionGaps.onEngineUp(context)
+        assertEquals(1, gaps.size)
+    }
+
+    @Test
+    fun aRestartWithoutAForceStopIsNoGap() {
+        boot++
+        newProcess(afterForceStop = false)
+        ProtectionGaps.onEngineUp(context)
+        assertTrue(gaps.isEmpty())
+    }
+
+    @Test
+    fun aForceStopAndreopenedAtOnceIsNoGapEitherWay() {
+        // Its exit is there, too short to count: the stopped start says nothing more.
+        pass(60_000L)
+        exits = listOf(now to ApplicationExitInfo.REASON_USER_REQUESTED)
+        pass(3_000L)
+        newProcess(afterForceStop = true)
+        ProtectionGaps.onEngineUp(context)
+        assertTrue(gaps.isEmpty())
+    }
+
+    @Test
+    fun aNewInstallSetUpInThisProcessIsNoGap() {
+        // A new install starts stopped too, before it's set up.
+        SecurityVault.getInstance(context).setSetupCompletedSync(false)
+        newProcess(afterForceStop = true)
+        ProtectionGaps.onEngineUp(context)
+        SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        ProtectionGaps.onEngineUp(context)
+        assertTrue(gaps.isEmpty())
+    }
+
+    @Test
+    fun switchedOffIsToldAsSwitchedOffNotAsARestartedStop() {
+        pass(60_000L)
+        ProtectionGaps.onEngineDown(context)
+        boot++
+        pass(5 * 60_000L)
+        newProcess(afterForceStop = true)
+        ProtectionGaps.onEngineUp(context)
+        assertEquals(ProtectionGaps.Kind.SWITCHED_OFF, gaps.single().kind)
     }
 }

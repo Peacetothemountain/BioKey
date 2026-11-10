@@ -176,7 +176,7 @@ An app lock running as a regular app can't defend against everything:
 - **"Lock this app"** knows the app in front only while an engine runs; compatibility mode knows the last app opened, and can't see work-profile apps.
 - **Private space**: Pixel's Settings doesn't let other apps open its private space page (it isn't exported), so BioKey's pointer to it shows only where a phone maker allows that. Settings pages Android lists but keeps to itself are never offered or opened.
 - **Someone who knows your screen lock** can add their own face or fingerprint in Android's settings, which "Face or fingerprint only" then accepts. BioKey can't prevent it (lock Android's Settings to make it harder; BioKey suggests it while face or fingerprint only is on) but records it, and the record can't be cleared.
-- **After a force stop,** Android also stops BioKey's reminders and clears its notifications until BioKey runs again: you find out when you next open BioKey, which then shows when it was stopped.
+- **After a force stop,** Android also stops BioKey's reminders and clears its notifications until BioKey runs again: you find out when you next open BioKey, which then shows when it was stopped. If the phone was restarted after the force stop, Android can forget the stop itself; from Android 15 it still remembers that BioKey was left stopped, so the record is kept, though when it stopped can't be told. Before Android 15 such a stop isn't recorded.
 - **Whether the phone has locked** can't be told by Android: hearing of it takes a permission only system apps hold, so BioKey asks whether the phone is locked at the moments above. A phone that locks and is unlocked again with a fingerprint on the dark screen can be unlocked before BioKey has seen it locked: then it can't tell, and locks everything as the phone is unlocked, so the app left on screen can show for a moment before its cover. Smart Lock keeps apps unlocked only where BioKey saw the keyguard up, with the screen off, and the phone not locked under it, twice at least a second apart (as the keyguard comes up to lock the phone, it is up a moment before the phone counts as locked); otherwise unlocking from its keyguard locks everything, as with any keyguard BioKey can't vouch for.
 - **Apps locked by Android's App lock too** are asked for twice where BioKey can't be sure which app Android's prompt was for: in compatibility mode (it sees no windows), with the accessibility engine when Android's prompt can't be read or its name is shared with another app on the phone (a work and a personal copy among them), when the app takes more than a moment to come after the prompt is passed, and when it hides its windows from accessibility services; and always with face or fingerprint only, or failed unlock alerts, on. An app left on screen as the phone locks is asked for twice as well: BioKey's lock screen is up first, behind the keyguard, and Android's cover waits under it.
 
@@ -299,6 +299,14 @@ The profiles are Google's Android images with each phone's screen sizes and hing
 The device gantlet also reports how fast each cover goes up: per engine and scenario, the milliseconds from the launch (the tap on its icon, or its window opening; in compatibility mode, its resume) until the cover is drawn and until the prompt is asked for, as count, median, 90th percentile and slowest. The debug build logs those moments to logcat under `BioKeyLatency` (`core/diagnostics/LatencyMarks.kt`), on the phone's uptime clock; release builds never do, since the lines name locked apps.
 
 `tools/gantlet-latency-baseline.json` holds a baseline from a Pixel 11 Pro XL on Android 17. Numbers only mean something on the phone they were measured on. To record a new one, run the gantlet with `--record-latency-baseline` on that phone (every scenario must pass) and commit the file. `--latency-budget` then fails a run whose median for any engine, scenario and mark is more than 20% and at least 16 ms slower than the baseline's (`--latency-budget 30,25` for another budget).
+
+### Engine cost
+
+`tools/engine_cost.py` measures what each engine costs the battery while nothing is being locked: BioKey's CPU time (from `/proc`) per minute with the home screen in front, with another app in front, and with the screen off. On an emulator or a test phone only: it switches the accessibility service off and on to choose the engine. `--json` writes the numbers, to compare a change to either engine's polling against.
+
+```bash
+python tools/engine_cost.py --serial emulator-5554 --json tools/out/engine-cost.json
+```
 
 ### Engine traces
 

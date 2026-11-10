@@ -329,7 +329,10 @@ internal fun gapLine(context: Context, gap: ProtectionGaps.Gap): String {
         return if (gap.unknownStart) context.getString(R.string.card_gap_storage_cleared_unknown, attemptTime(context, gap.to))
         else context.getString(R.string.card_gap_storage_cleared, timeRange(context, gap))
     }
-    if (gap.unknownStart) return context.getString(R.string.card_gap_force_stopped_unknown, attemptTime(context, gap.to))
+    if (gap.unknownStart) {
+        val words = if (gap.detail == ProtectionGaps.RESTARTED) R.string.card_gap_force_stopped_restarted else R.string.card_gap_force_stopped_unknown
+        return context.getString(words, attemptTime(context, gap.to))
+    }
     return context.getString(if (gap.kind == ProtectionGaps.Kind.SWITCHED_OFF) R.string.card_gap_switched_off else R.string.card_gap_force_stopped, timeRange(context, gap))
 }
 

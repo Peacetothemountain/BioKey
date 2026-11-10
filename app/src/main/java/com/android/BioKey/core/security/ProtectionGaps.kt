@@ -161,9 +161,15 @@ object ProtectionGaps {
         val toElapsed: Long = 0L,
         val boot: Int = -1,
         val net: Boolean = true,
-        /** A force stop whose start can't be told (the phone's clock was set back since): [from] is only "by". */
+        /**
+         * A force stop whose start can't be told (the phone's clock was set back since, or the phone
+         * restarted since: [RESTARTED] in [detail]): [from] is only "by".
+         */
         val unknownStart: Boolean = false
     )
+
+    /** [Gap.detail] of a force stop the phone restarted after: Android forgot when it was. */
+    const val RESTARTED = "restarted"
 
     /** Shorter than this, a stop is an engine restarting or handing over, not a person. */
     private const val MIN_GAP_MS = 10_000L
@@ -279,6 +285,22 @@ object ProtectionGaps {
         }.getOrDefault(emptyList())
     }
 
+    /**
+     * Whether this process started with BioKey left force-stopped (Android 15+ says so; false
+     * before, or if it can't be read). Android keeps that a package is stopped across a restart of
+     * the phone, though not always its record of the stop itself.
+     */
+    @VisibleForTesting
+    internal var startedAfterForceStop: (Context) -> Boolean = { context ->
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && runCatching {
+            context.getSystemService(ActivityManager::class.java).getHistoricalProcessStartReasons(1)
+                .firstOrNull { it.pid == Process.myPid() }?.wasForceStopped() == true
+        }.getOrDefault(false)
+    }
+
+    /** This process's start has been looked at ([startedAfterForceStop]): once per process. */
+    @Volatile private var startLookedAt = false
+
     /** Null before the first unlock after a restart: BioKey's storage isn't readable yet. */
     fun load(context: Context): SharedPreferences? {
         prefs?.let { return it }
@@ -302,6 +324,7 @@ object ProtectionGaps {
             prefs = null
             _gaps.value = emptyList()
             _cleared.value = null
+            startLookedAt = false
         }
         recordedOnce.clear()
     }
@@ -418,6 +441,17 @@ object ProtectionGaps {
                     found += Gap(forceStop, now, Kind.FORCE_STOPPED, unknownStart = clockChanged || (clockMoved && converted >= now - MIN_GAP_MS))
                 switchedOffFrom != null -> found += Gap(switchedOffFrom, now, Kind.SWITCHED_OFF)
             }
+            // Force-stopped, then the phone restarted: Android can lose the stop's record with the
+            // restart (it keeps the newest exits in memory a while), but BioKey starts up still
+            // marked stopped. When it stopped can't be told, only that it was until now. Once per
+            // process, and not for a stop already accounted for: an exit just read (however
+            // short), the engine's own report, or a clearing of the storage (which stops it too).
+            if (!startLookedAt) {
+                startLookedAt = true
+                if (forceStopAt == null && stoppedAt == 0L && cleared(p) == null && startedAfterForceStop(context)) {
+                    found += Gap(now, now, Kind.FORCE_STOPPED, detail = RESTARTED, unknownStart = true)
+                }
+            }
             // Its storage was cleared ([checkStorageCleared]): nothing locked from then until set up again.
             cleared(p)?.takeIf { setUp }?.let { found += Gap(it.after.coerceAtMost(now), now, Kind.DATA_CLEARED, unknownStart = !it.known) }
             if (setUp && found.isNotEmpty()) {
@@ -519,6 +553,8 @@ object ProtectionGaps {
      * then: locked apps weren't locked until it did.
      */
     fun onSetUp(context: Context) {
+        // Set up in this process: it started stopped as a new install (or after a clearing) does.
+        startLookedAt = true
         val app = context.applicationContext
         recorder.execute {
             if (ProtectionEngine.isProtecting(app)) onEngineUp(app)
