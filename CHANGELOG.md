@@ -16,6 +16,11 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
 - **Compatibility mode coming back while the phone is locked** (starting, or a pause ending)
   covers a locked app that is showing over the lock screen (navigation, a call); it was left
   uncovered until it was next opened.
+- **"Lock all" from the lock screen's Quick Settings** (or a pause running out) leaves the
+  lock-screen camera open over the lock screen alone, as Android's own App lock does; it used to
+  put the camera's lock screen behind the keyguard, which closed the camera. In compatibility
+  mode it also no longer sends a lock screen that is up over the lock screen, or on its way
+  there (an alarm ringing in a locked app), behind it.
 - **"Lock this app" works while protection is paused, or before any app is locked**, in
   compatibility mode: the tile asks Android which app is in front, rather than saying there is
   nothing to lock.

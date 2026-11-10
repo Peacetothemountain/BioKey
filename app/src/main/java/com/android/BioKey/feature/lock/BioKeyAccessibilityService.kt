@@ -484,9 +484,13 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 // The phone locked with the screen on (Lockdown, a foldable folded): the app left on
                 // screen gets its lock screen behind the keyguard, as at a screen-off. Not the
                 // camera let through over the keyguard (every session ended from there: "Lock
-                // all", a pause running out): it stays as it is, covered once the phone is unlocked.
+                // all", a pause running out): it stays as it is, covered once the phone is
+                // unlocked. One opened there during a pause wasn't noted then (nothing was
+                // locked), and is told now.
                 if (isKeyguardLocked()) {
-                    (appLeftOnScreen()?.takeUnless { frontIsLauncher() } ?: leftThen)?.takeUnless { it == keyguardLetThrough }?.let(::coverLeftOnScreen)
+                    (appLeftOnScreen()?.takeUnless { frontIsLauncher() } ?: leftThen)
+                        ?.takeUnless { it == keyguardLetThrough || letsThroughOverKeyguard(it) }
+                        ?.let(::coverLeftOnScreen)
                 }
                 // A locked app in picture-in-picture is masked at once.
                 guarded("Masks after lock-all") { windowList()?.let { maskControl.update(it, full = false) } }

@@ -197,6 +197,21 @@ class LockScreenCameraTest {
     }
 
     @Test
+    fun aPauseEndingWithTheLockScreenCameraOpenLeavesItAlone() {
+        // Opened over the lock screen while protection was paused (nothing was locked, so nothing
+        // was noted of it); the pause ends, and every session with it.
+        val vault = SecurityVault.getInstance(context)
+        vault.pauseProtection(null)
+        idle()
+        cameraOpensOverTheKeyguard()
+        assertEquals(emptyList<String>(), covered())
+        vault.resumeProtection()
+        idle(1_000)
+        assertEquals(emptyList<String>(), covered())
+        assertTrue(lockScreensStarted().isEmpty())
+    }
+
+    @Test
     fun anotherScreenOfTheCameraAppOverTheKeyguardIsCovered() {
         onScreen(appWindow(2, camera), keyguardWindow())
         windowEvent(camera, "$camera.SettingsActivity", wait = 1_500)
