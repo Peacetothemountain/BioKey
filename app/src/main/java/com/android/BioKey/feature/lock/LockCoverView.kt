@@ -10,7 +10,11 @@ import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.text.SpannableString
+import android.text.Spanned
 import android.text.TextUtils
+import android.text.style.DynamicDrawableSpan
+import android.text.style.ImageSpan
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -28,8 +32,8 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.view.isVisible
 import com.android.BioKey.R
-import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.ui.brand.WordmarkView
+import com.android.BioKey.ui.security.WindowProtection
 
 /**
  * The lock cover, shared by [InstantShieldOverlay] (drawn the instant a locked app shows up) and
@@ -50,11 +54,13 @@ import com.android.BioKey.ui.brand.WordmarkView
 @SuppressLint("ViewConstructor", "SetTextI18n")
 class LockCoverView(context: Context) : FrameLayout(context) {
 
-    /** Material You roles, the same dynamic scheme as BioKey's own screens (Android 12+). */
-    class Palette(context: Context) {
-        private val scheme = if (
-            (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        ) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+    /**
+     * Material You roles, the same dynamic scheme as BioKey's own screens (Android 12+): [dark]
+     * as the locked app's own launch screen is ([CachedAppInfo.dark]), or as the phone is set.
+     */
+    class Palette(context: Context, dark: Boolean? = null) {
+        val isDark = dark ?: isNight(context)
+        private val scheme = if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
 
         val surface = scheme.surface.toArgb()
         val onSurface = scheme.onSurface.toArgb()
@@ -68,7 +74,24 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     }
 
     private companion object {
+        /** The phone's own light or dark mode. */
+        fun isNight(context: Context) =
+            (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
         const val ICON_DP = AppInfoCache.ICON_DP
+        /** Room kept under the icon and name, for the small mark (or the buttons, on a tall screen). */
+        const val IDENTITY_BOTTOM_DP = 96
+        /** Unlock (56), the gap (8), Cancel (48) and the margin under them (24). */
+        const val ACTIONS_DP = 136
+        /** Kept between the name or status and Unlock in a short window. */
+        const val ACTIONS_GAP_DP = 12
+        /** The smallest the icon or logo gets in a short window, as a share of its size. */
+        const val MIN_ART_SCALE = 0.5f
+        /** Round BioKey's key, shown in place of an app icon that couldn't be loaded. */
+        const val PLACEHOLDER_PADDING_DP = 26
+        /** BioKey's own logo, when BioKey itself is locked. */
+        const val LOGO_WIDTH_DP = 120
+        const val LOGO_HEIGHT_DP = 136
     }
 
     var onUnlock: (() -> Unit)? = null
@@ -151,7 +174,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     private val identity = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
-        addView(logo, LinearLayout.LayoutParams(dp(120), dp(136)))
+        addView(logo, LinearLayout.LayoutParams(dp(LOGO_WIDTH_DP), dp(LOGO_HEIGHT_DP)))
         addView(icon, LinearLayout.LayoutParams(dp(ICON_DP), dp(ICON_DP)))
         addView(name, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(22)
@@ -161,22 +184,47 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         })
     }
 
+    /**
+     * The icon, name and status, scrollable as a last resort: in a short window (a phone in
+     * landscape) at large text they must never run under Unlock, the cover's way out.
+     */
+    private val identityScroll = android.widget.ScrollView(context).apply {
+        isVerticalFadingEdgeEnabled = false
+        overScrollMode = OVER_SCROLL_NEVER
+        // A scroll view takes the window's focus first, and out of touch mode (a key pressed, input
+        // driven by a tool) Android shades the focused view: a grey band behind the icon and name.
+        // Nothing here is for a keyboard to land on; the buttons are.
+        isFocusable = false
+        defaultFocusHighlightEnabled = false
+        addView(identity, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+    }
+
     private var lockoutMode = false
+    /** The icon is BioKey's key, padded inside the circle, as no app icon was loaded. */
+    private var placeholderIcon = false
     private var palette = Palette(context)
+    /** The locked app's own scheme ([bind]'s dark), or null to follow the phone's mode. */
+    private var appDark: Boolean? = null
+
+    /** Whether the cover is drawn dark now: the status and navigation bar icons go light over it. */
+    val isDark: Boolean get() = palette.isDark
 
     init {
-        // Not clickable in itself, or screen readers would offer a double-tap that does nothing on
-        // the lock screen: [onTouchEvent] keeps touches from what's below. The shield's tap
-        // listener makes it clickable, as a tap there brings the lock screen up.
+        // Not clickable in itself, or screen readers would offer a double-tap that does nothing:
+        // [onTouchEvent] keeps touches from what's below. The shield's tap listener makes it
+        // clickable, as a tap there brings the lock screen up, and the lock screen's, as a tap
+        // there asks again.
         filterTouchesWhenObscured = true
+        // Tappable (the lock screen asks again on a tap), never shaded as focused: see identityScroll.
+        defaultFocusHighlightEnabled = false
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
         WindowProtection.hideFromNonToolAccessibilityServices(this)
 
         addView(backdrop, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        addView(identity, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply {
+        addView(identityScroll, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply {
             leftMargin = dp(32)
             rightMargin = dp(32)
-            bottomMargin = dp(96)
+            bottomMargin = dp(IDENTITY_BOTTOM_DP)
         })
         addView(brandMark, LayoutParams(dp(40), dp(44), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
             bottomMargin = dp(40)
@@ -202,7 +250,56 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         val available = MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight - dp(64)
         val width = minOf(available, dp(360)).coerceAtLeast(0)
         if (MeasureSpec.getMode(widthMeasureSpec) != MeasureSpec.UNSPECIFIED) actions.layoutParams.width = width
+        fitIdentity(widthMeasureSpec, heightMeasureSpec)
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+    }
+
+    /**
+     * Keeps the icon, name and status clear of Unlock and Cancel. As laid out for a phone held
+     * upright they're centred well above them; in a short window (landscape, large text, a
+     * lockout message) they move into the space above the buttons, the icon shrinking (to half
+     * at most) as far as they need, and scroll if even that isn't enough.
+     */
+    private fun fitIdentity(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val params = identityScroll.layoutParams as LayoutParams
+        fun setArtScale(scale: Float) {
+            logo.layoutParams.width = (dp(LOGO_WIDTH_DP) * scale).toInt()
+            logo.layoutParams.height = (dp(LOGO_HEIGHT_DP) * scale).toInt()
+            icon.layoutParams.width = (dp(ICON_DP) * scale).toInt()
+            icon.layoutParams.height = icon.layoutParams.width
+            // BioKey's key in place of a missing icon keeps its proportions.
+            if (placeholderIcon) (dp(PLACEHOLDER_PADDING_DP) * scale).toInt().let { if (it != icon.paddingTop) icon.setPadding(it, it, it, it) }
+        }
+        val artHeight = if (logo.isVisible) dp(LOGO_HEIGHT_DP) else dp(ICON_DP)
+        setArtScale(1f)
+        params.gravity = Gravity.CENTER
+        params.topMargin = 0
+        params.bottomMargin = dp(IDENTITY_BOTTOM_DP)
+        // The same whether the buttons show or not (they hide while the system prompt is up), so
+        // nothing moves as the prompt comes and goes.
+        if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED) return
+
+        val height = MeasureSpec.getSize(heightMeasureSpec) - paddingTop - paddingBottom
+        val innerWidth = (MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight - params.leftMargin - params.rightMargin)
+            .coerceAtLeast(0)
+        identity.measure(
+            MeasureSpec.makeMeasureSpec(innerWidth, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+        )
+        val natural = identity.measuredHeight
+        val above = height - dp(ACTIONS_DP + ACTIONS_GAP_DP)
+        // As usual: centred, then raised by the margin (FrameLayout's centring takes it off whole).
+        val top = (height - natural) / 2 - dp(IDENTITY_BOTTOM_DP)
+        if (top >= 0 && top + natural <= above) return
+
+        // A short window: centred in the space above the buttons, the icon as much smaller as it
+        // takes (to half at most), and scrolling past that.
+        val scale = ((artHeight - (natural - above)).toFloat() / artHeight).coerceIn(MIN_ART_SCALE, 1f)
+        setArtScale(scale)
+        val fitted = natural - (artHeight - (artHeight * scale).toInt())
+        params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        params.topMargin = ((above - fitted) / 2).coerceAtLeast(0)
+        params.bottomMargin = height - above
     }
 
     private val iconLocation = IntArray(2)
@@ -228,8 +325,21 @@ class LockCoverView(context: Context) : FrameLayout(context) {
 
     /** Re-resolves colours, e.g. after a dark-mode switch. */
     fun refreshPalette() {
-        palette = Palette(context)
+        palette = Palette(context, appDark)
         applyPalette()
+    }
+
+    /**
+     * Light or dark as the locked app's own launch screen is ([dark]; null: as the phone is set).
+     * The design and the icon's glow stay; only the scheme changes, and only if it has to.
+     */
+    private fun followScheme(dark: Boolean?) {
+        appDark = dark
+        if ((dark ?: isNight(context)) == palette.isDark) return
+        palette = Palette(context, dark)
+        applyPalette()
+        // The placeholder key is tinted with the scheme's colour.
+        if (placeholderIcon) icon.drawable?.setTint(palette.primary)
     }
 
     private fun applyPalette() {
@@ -245,6 +355,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         cancelButton.background = ripple(Color.TRANSPARENT, p.primary)
         primaryButton.setTextColor(p.onPrimary)
         primaryButton.background = ripple(p.primary, p.onPrimary)
+        // The glyph takes the text's colour, so it's drawn again with it.
+        if (!lockoutMode) primaryButton.text = unlockLabel()
         logo.setColor(p.primary)
         brandMark.setColor(p.primary)
     }
@@ -265,14 +377,17 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     /**
      * Shows a locked app's icon (or BioKey's logo when [isBioKey]); [label] is for screen readers.
      * [accent] is the icon's glow colour, ready-made from [AppInfoCache]; worked out here (on the
-     * main thread, on the way to the cover) only when not passed.
+     * main thread, on the way to the cover) only when not passed. [dark]: the app's own launch
+     * screen is ([CachedAppInfo.dark]), and the cover follows it; null, as the phone is set.
      */
     fun bind(
         label: String,
         appIcon: Drawable?,
         isBioKey: Boolean,
-        accent: Int? = appIcon?.let { AppInfoCache.accentOf(it, resources) }
+        accent: Int? = appIcon?.let { AppInfoCache.accentOf(it, resources) },
+        dark: Boolean? = null
     ) {
+        followScheme(if (isBioKey) null else dark)
         logo.visibility = if (isBioKey) VISIBLE else GONE
         icon.visibility = if (isBioKey) GONE else VISIBLE
         name.visibility = icon.visibility
@@ -306,10 +421,12 @@ class LockCoverView(context: Context) : FrameLayout(context) {
             // Cached icons are shared with the other cover; each view needs its own instance.
             icon.setImageDrawable(appIcon.constantState?.newDrawable(resources)?.mutate() ?: appIcon)
             icon.setPadding(0, 0, 0, 0)
+            placeholderIcon = false
             backdrop.setAccent(accent)
         } else {
             icon.setImageDrawable(context.getDrawable(R.drawable.ic_lock_key)?.mutate()?.apply { setTint(palette.primary) })
-            icon.setPadding(dp(26), dp(26), dp(26), dp(26))
+            icon.setPadding(dp(PLACEHOLDER_PADDING_DP), dp(PLACEHOLDER_PADDING_DP), dp(PLACEHOLDER_PADDING_DP), dp(PLACEHOLDER_PADDING_DP))
+            placeholderIcon = true
             backdrop.setAccent(null)
         }
     }
@@ -324,7 +441,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         lockoutMode = permanentLockout
         status.text = message
         status.isVisible = !message.isNullOrBlank()
-        primaryButton.text = if (permanentLockout) "Lock screen" else "Unlock"
+        primaryButton.text = if (permanentLockout) context.getString(R.string.lock_screen_lock_phone) else unlockLabel()
+        primaryButton.contentDescription = if (permanentLockout) null else context.getString(R.string.lock_screen_unlock)
         // After a lockout the button locks the phone, which only the accessibility service can
         // do: in compatibility mode, Cancel is the way out (the message names the power button).
         primaryButton.isVisible = !permanentLockout || BioKeyAccessibilityService.isRunning
@@ -345,6 +463,22 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
         setPadding(bars.left, bars.top, bars.right, bars.bottom)
         return insets
+    }
+
+    /**
+     * "Unlock" after a fingerprint, centred together, as on BioKey's own lock screen
+     * ([BioKeyLockScreen]): one product, one button. Screen readers hear just "Unlock".
+     */
+    private fun unlockLabel(): CharSequence {
+        val glyph = context.getDrawable(R.drawable.ic_fingerprint)?.mutate() ?: return "Unlock"
+        // As tall as the text's own line, no taller: a bigger glyph would stretch the line and
+        // push the word below the button's centre.
+        val size = primaryButton.paint.fontMetricsInt.let { it.descent - it.ascent }
+        glyph.setBounds(0, 0, size, size)
+        glyph.setTint(primaryButton.currentTextColor)
+        return SpannableString("${Typography.nbsp}  Unlock").apply {
+            setSpan(ImageSpan(glyph, DynamicDrawableSpan.ALIGN_CENTER), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
     }
 
     /** Unlock and Cancel are text drawn as buttons: screen readers are told they are buttons. */

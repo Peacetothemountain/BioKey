@@ -1,6 +1,5 @@
 package com.android.BioKey
 
-import android.app.Activity
 import android.app.Application
 import android.app.KeyguardManager
 import android.app.usage.UsageStatsManager
@@ -9,7 +8,6 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.graphics.Rect
-import android.os.CancellationSignal
 import android.os.HandlerThread
 import android.os.Looper
 import android.os.PowerManager
@@ -30,8 +28,8 @@ import com.android.BioKey.feature.lock.ForegroundRules
 import com.android.BioKey.feature.lock.InstantShieldOverlay
 import com.android.BioKey.feature.lock.LockCoverView
 import com.android.BioKey.feature.lock.LockScreenActivity
+import com.android.BioKey.feature.lock.UsageReader
 import com.android.BioKey.feature.lock.UsageWatchService
-import java.lang.ref.WeakReference
 import java.time.Duration
 import org.robolectric.Robolectric
 import org.robolectric.Shadows.shadowOf
@@ -55,6 +53,9 @@ internal class EngineReplay(private val context: Application) {
     class Record(val time: Long, val kind: String, val fields: List<String>)
 
     companion object {
+        /** How long after an input what the engine read while handling it can be recorded. */
+        private const val READ_DURING_INPUT_MS = 5L
+
         /** A trace's lines as records; comments and blank lines skipped. */
         fun parse(lines: List<String>): List<Record> = lines.filter { it.isNotBlank() && !it.startsWith("#") }.map { line ->
             val parts = line.split('\t')
@@ -112,12 +113,12 @@ internal class EngineReplay(private val context: Application) {
                 continue
             }
             runUntil(at)
-            // What the engine read while handling this input is recorded after it, at the same
-            // moment: it was so before the input came.
+            // What the engine read while handling this input is recorded after it, within a few
+            // milliseconds (a question asked part-way through): it was so before the input came.
             var firstWindows = true
             for (j in i + 1 until played.size) {
                 val next = played[j]
-                if (next.time != r.time) break
+                if (next.time - r.time > READ_DURING_INPUT_MS) break
                 if (!isState(next)) {
                     if (next.kind.startsWith("o.")) continue else break
                 }
@@ -156,7 +157,7 @@ internal class EngineReplay(private val context: Application) {
         LockStateTracker.lockAll()
         // Robolectric's clock starts again for each test; a lock screen "resumed" in an earlier one
         // in this JVM would otherwise look newer than anything started here.
-        LockScreenActivity::class.java.getDeclaredField("resumedAt").apply { isAccessible = true }.setLong(null, 0L)
+        LockScreenActivity.forgetResumeForTests()
         DiagnosticLog.clear()
         // A fresh phone: no usage history from before the trace (a recording made in the same test, say).
         ShadowUsageStatsManager.reset()
@@ -185,12 +186,20 @@ internal class EngineReplay(private val context: Application) {
             for (r in apps) vault.moveAppToProfile(r.fields[1], profile.id)
         }
         if (env.any { it.fields[0] == "protection" && it.fields[1] == "0" }) vault.setGlobalLockEnabled(false)
+        // A trace from before the lock-screen camera could open uncovered: it was covered then.
+        vault.setKeyguardCameraAllowed(env.any { it.fields[0] == "keyguardCamera" && it.fields[1] == "1" })
+        // Screensavers as they were set (off, with none chosen, in a trace from before they were recorded).
+        val screensaver = env.firstOrNull { it.fields[0] == "screensaver" }?.fields
+        Settings.Secure.putInt(context.contentResolver, "screensaver_enabled", screensaver?.getOrNull(1)?.toIntOrNull() ?: 0)
+        Settings.Secure.putString(context.contentResolver, "screensaver_components", screensaver?.getOrNull(2).orEmpty())
+        Settings.Secure.putString(context.contentResolver, "screensaver_default_component", screensaver?.getOrNull(3).orEmpty())
         val homes = env.filter { it.fields[0] == "home" }
         ForegroundRules.pinSystemLists(
             homeApps = homes.associate { it.fields[1] to (it.fields[2] == "1") },
             defaultHome = homes.firstOrNull { it.fields[3] == "1" }?.fields?.get(1),
             helpers = env.filter { it.fields[0] == "picker" }.mapTo(HashSet()) { it.fields[1] },
-            inputMethods = env.filter { it.fields[0] == "keyboard" }.mapTo(HashSet()) { it.fields[1] }
+            inputMethods = env.filter { it.fields[0] == "keyboard" }.mapTo(HashSet()) { it.fields[1] },
+            overKeyguard = env.filter { it.fields[0] == "keyguardApp" }.groupBy({ it.fields[1] }, { it.fields[2] }).mapValues { it.value.toSet() }
         )
         shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
         shadowOf(context.getSystemService(KeyguardManager::class.java)).apply {
@@ -245,6 +254,7 @@ internal class EngineReplay(private val context: Application) {
             "p.up" -> setPrompt(f[0])
             "p.down" -> setPrompt(null)
             "u.unlock" -> LockStateTracker.onAppUnlocked(f[0])
+            "u.named" -> LockStateTracker.nameAlongside(f[0], LockStateTracker.lockGeneration())
             "u.abandon" -> LockStateTracker.markLockAbandoned(f[0])
             "u.displaced" -> LockStateTracker.markLockDisplaced(f[0])
             "s.tap" -> shieldCover()?.onUnlock?.invoke()
@@ -325,7 +335,11 @@ internal class EngineReplay(private val context: Application) {
         // The engine's own next poll is put off: this one is it.
         val pollTask = UsageWatchService::class.java.getDeclaredField("pollTask").apply { isAccessible = true }.get(service) as Runnable
         val handler = UsageWatchService::class.java.getDeclaredField("workerHandler").apply { isAccessible = true }.get(service) as android.os.Handler
-        if (lookBack) UsageWatchService::class.java.getDeclaredField("lookBackNext").apply { isAccessible = true }.setBoolean(service, true)
+        if (lookBack) {
+            // The service reads through its UsageReader: that look is a look back.
+            val reader = UsageWatchService::class.java.getDeclaredField("reader\$delegate").apply { isAccessible = true }.get(service) as Lazy<*>
+            handler.post { (reader.value as UsageReader).lookBackNext() }
+        }
         handler.removeCallbacks(pollTask)
         handler.post(pollTask)
         worker?.let { shadowOf(it).idle() }
@@ -333,16 +347,11 @@ internal class EngineReplay(private val context: Application) {
     }
 
     private fun setLockScreen(resumed: Boolean, target: String?) {
-        LockScreenActivity::class.java.getDeclaredField("isLockScreenResumed").apply { isAccessible = true }.setBoolean(null, resumed)
-        LockScreenActivity::class.java.getDeclaredField("activeLockedTarget").apply { isAccessible = true }.set(null, target)
-        if (resumed) LockScreenActivity::class.java.getDeclaredField("resumedAt").apply { isAccessible = true }.setLong(null, SystemClock.uptimeMillis())
+        LockScreenActivity.setStateForTests(target, resumed, resumedAt = if (resumed) SystemClock.uptimeMillis() else null)
     }
 
     private fun setPrompt(pkg: String?) {
-        val active = SecurityEngine::class.java.getDeclaredField("active").apply { isAccessible = true }
-        if (pkg == null) return active.set(SecurityEngine.INSTANCE, null)
-        val attempt = Class.forName("${SecurityEngine::class.java.name}\$Attempt").declaredConstructors.single().apply { isAccessible = true }
-        active.set(SecurityEngine.INSTANCE, attempt.newInstance(pkg, WeakReference<Activity>(null), CancellationSignal()))
+        SecurityEngine.INSTANCE.setPromptForTests(pkg)
     }
 
     /** The cover of the engine's shield, whose buttons the owner pressed. */

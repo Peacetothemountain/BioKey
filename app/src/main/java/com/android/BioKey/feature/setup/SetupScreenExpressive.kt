@@ -1,6 +1,8 @@
 package com.android.BioKey.feature.setup
 
 import android.os.Build
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -32,15 +34,25 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
@@ -48,18 +60,25 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.android.BioKey.R
 import com.android.BioKey.core.security.AdvancedProtection
 import com.android.BioKey.core.security.ProtectionEngine
-import com.android.BioKey.core.security.rejectObscuredTouches
+import com.android.BioKey.core.security.UnlockMethods
+import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
-import com.android.BioKey.feature.main.Disclosure
-import com.android.BioKey.feature.main.IntentNavigationHelper
-import com.android.BioKey.feature.main.rememberDisclosureGate
-import com.android.BioKey.feature.main.rememberNotificationPermission
 import com.android.BioKey.ui.brand.BioKeyLogo
 import com.android.BioKey.ui.brand.HeaderMatrixDotsExpressive
+import com.android.BioKey.ui.disclosure.Disclosure
+import com.android.BioKey.ui.disclosure.rememberDisclosureGate
+import com.android.BioKey.ui.disclosure.rememberNotificationPermission
+import com.android.BioKey.ui.format.attemptTime
+import com.android.BioKey.ui.navigation.IntentNavigationHelper
+import com.android.BioKey.ui.security.rejectObscuredTouches
+import com.android.BioKey.ui.theme.Callout
 import com.android.BioKey.ui.theme.Group
+import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow
+import com.android.BioKey.ui.theme.scaledWithText
 import com.android.BioKey.ui.theme.springPress
 
 /**
@@ -76,7 +95,9 @@ import com.android.BioKey.ui.theme.springPress
 fun SetupScreenExpressive(
     isAuthenticating: Boolean = false,
     authError: String? = null,
-    needsScreenLock: Boolean = authError?.startsWith("Set a screen lock") == true,
+    needsScreenLock: Boolean = false,
+    /** BioKey's storage was cleared, if that's why it's being set up ([ProtectionGaps.checkStorageCleared]). */
+    cleared: ProtectionGaps.Cleared? = null,
     onSetupComplete: () -> Unit
 ) {
     val context = LocalContext.current
@@ -98,17 +119,22 @@ fun SetupScreenExpressive(
     var overlay by remember { mutableStateOf(false) }
     var restrictedSettingsBlocked by remember { mutableStateOf(false) }
     var hasAutoPrompted by remember { mutableStateOf(false) }
+    /** Android's words for the check, naming what's set up ("Use your fingerprint or screen lock…"); null for BioKey's own. */
+    var howItOpens by remember { mutableStateOf<String?>(null) }
     val ready = a11yActive || (compatibilityMode && usageAccess && overlay)
 
     // Advance by itself once BioKey can see apps; don't loop if the user cancels the prompt.
+    // Read when the screen resumes, not as it was when this effect was first composed.
+    val currentAuthError by rememberUpdatedState(authError)
     LifecycleResumeEffect(Unit) {
         a11yActive = BioKeyAccessibilityService.isServiceEnabled(context)
         compatibilityMode = !a11yActive && AdvancedProtection.blocksBioKey(context)
         usageAccess = ProtectionEngine.hasUsageAccess(context)
         overlay = ProtectionEngine.canDrawOverlays(context)
+        howItOpens = UnlockMethods.promptMessage(context)
         restrictedSettingsBlocked = !a11yActive && !compatibilityMode && RestrictedSettingsHelper.isRestrictedSettingsEnforced(context)
         val nowReady = a11yActive || (compatibilityMode && usageAccess && overlay)
-        if (nowReady && !hasAutoPrompted && authError == null) {
+        if (nowReady && !hasAutoPrompted && currentAuthError == null) {
             hasAutoPrompted = true
             finish()
         } else if (!nowReady) {
@@ -127,49 +153,53 @@ fun SetupScreenExpressive(
         val subtitle: String,
         val done: Boolean,
         val opensExternally: Boolean = true,
+        /** Done after another step has been tried (restricted settings, after the accessibility switch): never the one to do now. */
+        val afterAnother: Boolean = false,
+        /** Not needed to finish (notifications): never the step the main button does. */
+        val optional: Boolean = false,
         val onClick: (() -> Unit)?
     )
     val steps = buildList {
-        if (restrictedSettingsBlocked) {
-            add(
-                Step(
-                    Icons.Default.Policy, "Allow restricted settings",
-                    // Android offers the ⋮ item only once its "restricted setting" dialog has been seen.
-                    "Android blocks this for apps installed outside the Play Store. Try the accessibility switch once; " +
-                        "then in App info tap ⋮ > “Allow restricted settings”.",
-                    done = false
-                ) { IntentNavigationHelper.openAppDetailsSettings(context) }
-            )
-        }
         if (compatibilityMode) {
             add(
                 Step(
-                    Icons.Default.AppSettingsAlt, "Allow usage access",
-                    "Advanced Protection is on, so BioKey uses compatibility mode: this tells it which app was opened and whether a locked app is still on screen.",
+                    Icons.Default.AppSettingsAlt, stringResource(R.string.setup_usage_access_title),
+                    stringResource(R.string.setup_usage_access_text),
                     done = usageAccess, onClick = openCompatibility
                 )
             )
             add(
                 Step(
-                    Icons.Default.Layers, "Allow display over other apps",
-                    "Lets BioKey cover a locked app as it opens.",
+                    Icons.Default.Layers, stringResource(R.string.setup_overlay_title),
+                    stringResource(R.string.setup_overlay_text),
                     done = overlay, onClick = openCompatibility
                 )
             )
         } else {
             add(
                 Step(
-                    Icons.Default.Accessibility, "Turn on BioKey in Accessibility",
-                    "Lets BioKey see which app is open so it can cover locked ones.",
+                    Icons.Default.Accessibility, stringResource(R.string.setup_accessibility_title),
+                    stringResource(R.string.setup_accessibility_text),
                     done = a11yActive, onClick = openAccessibility
                 )
+            )
+        }
+        if (restrictedSettingsBlocked) {
+            add(
+                Step(
+                    Icons.Default.Policy, stringResource(R.string.setup_restricted_title),
+                    // Android offers the ⋮ item only once its "restricted setting" dialog has been seen.
+                    stringResource(R.string.setup_restricted_text),
+                    done = false,
+                    afterAnother = true
+                ) { IntentNavigationHelper.openAppDetailsSettings(context) }
             )
         }
         if (needsScreenLock) {
             add(
                 Step(
-                    Icons.Default.Password, "Set a screen lock",
-                    "BioKey uses your PIN, pattern or password as the fallback.",
+                    Icons.Default.Password, stringResource(R.string.setup_screen_lock_title),
+                    stringResource(R.string.setup_screen_lock_text),
                     done = false
                 ) { IntentNavigationHelper.openScreenLockSetup(context) }
             )
@@ -178,9 +208,15 @@ fun SetupScreenExpressive(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU || !notifications.allowed) {
             add(
                 Step(
-                    Icons.Default.Notifications, "Allow notifications (optional)",
-                    "So BioKey can tell you if app locking ever stops.",
+                    Icons.Default.Notifications, stringResource(R.string.setup_notifications_title),
+                    // A clearing took the permission back (Android 13+, where it's one) with everything
+                    // else: why it matters now, until it's allowed again.
+                    stringResource(
+                        if (cleared != null && !notifications.allowed && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) R.string.setup_notifications_text_reset
+                        else R.string.setup_notifications_text
+                    ),
                     done = notifications.allowed,
+                    optional = true,
                     // Android's own question from 13 on; before that, only its settings page.
                     opensExternally = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU,
                     onClick = {
@@ -192,8 +228,9 @@ fun SetupScreenExpressive(
         }
         add(
             Step(
-                Icons.Default.Fingerprint, "Confirm it's you",
-                "One check with your face, fingerprint or screen lock to finish.",
+                Icons.Default.Fingerprint, stringResource(R.string.setup_confirm_title),
+                // Without a screen lock yet, Android's words would name nothing worth reading.
+                howItOpens?.takeIf { !needsScreenLock } ?: stringResource(R.string.setup_confirm_text),
                 done = false,
                 opensExternally = false,
                 onClick = if (ready && !isAuthenticating) finish else null
@@ -206,7 +243,18 @@ fun SetupScreenExpressive(
             .fillMaxSize()
             .rejectObscuredTouches()
     ) {
-        HeaderMatrixDotsExpressive(Modifier.fillMaxWidth().height(360.dp).align(Alignment.TopCenter))
+        // The constellation thins out round the logo, the title and the line under it: no link
+        // crosses the first words a new owner reads.
+        var fieldOrigin by remember { mutableStateOf(Offset.Zero) }
+        val quietZones = remember { mutableStateMapOf<Int, Rect>() }
+        HeaderMatrixDotsExpressive(
+            Modifier
+                .fillMaxWidth()
+                .height(360.dp)
+                .align(Alignment.TopCenter)
+                .onGloballyPositioned { fieldOrigin = it.positionInRoot() },
+            quiet = { quietZones.values.map { it.translate(-fieldOrigin) } }
+        )
 
         Column(
             modifier = Modifier
@@ -215,41 +263,72 @@ fun SetupScreenExpressive(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .verticalScroll(rememberScrollState())
+                // Room for the button below, which sits above the navigation bar: the last line
+                // scrolls clear of both.
+                .navigationBarsPadding()
                 .padding(bottom = 120.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(Modifier.height(48.dp))
-            BioKeyLogo(Modifier.size(104.dp, 118.dp))
+            BioKeyLogo(Modifier.size(104.dp, 118.dp).onGloballyPositioned { quietZones[0] = it.boundsInRoot() })
             Spacer(Modifier.height(28.dp))
-            Text("Set up BioKey", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
+            Text(
+                stringResource(R.string.setup_title),
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.semantics { heading() }.onGloballyPositioned { quietZones[1] = it.boundsInRoot() }
+            )
             Spacer(Modifier.height(8.dp))
             Text(
-                "Lock any app behind your face, fingerprint or screen lock.",
+                stringResource(R.string.setup_subtitle),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 32.dp)
+                modifier = Modifier.padding(horizontal = 32.dp).onGloballyPositioned { quietZones[2] = it.boundsInRoot() }
             )
+            if (cleared != null) {
+                Spacer(Modifier.height(20.dp))
+                // Why BioKey is being set up again: Review's callout, lined up with the steps below.
+                Callout(
+                    if (cleared.known) stringResource(R.string.setup_storage_cleared, attemptTime(context, cleared.after))
+                    else stringResource(R.string.setup_storage_cleared_unknown),
+                    headline = stringResource(R.string.storage_cleared_notification_title),
+                    warning = true,
+                    modifier = Modifier.padding(horizontal = GroupInset)
+                )
+            }
             Spacer(Modifier.height(28.dp))
+            // The step to do now: the first one not done that the main button below does (the
+            // restricted-settings step comes after the accessibility switch has been tried).
+            val current = steps.indexOfFirst { !it.done && !it.afterAnother && !it.optional }
             Group(count = steps.size) { i ->
                 val step = steps[i]
+                val state = when {
+                    step.done -> StepState.DONE
+                    i == current -> StepState.CURRENT
+                    // Only the last step is ever without an action: until the ones above are
+                    // done, or while it runs (then it's the current one).
+                    step.onClick == null -> StepState.BLOCKED
+                    else -> StepState.LATER
+                }
                 GroupRow(
                     index = i,
                     count = steps.size,
                     title = step.title,
                     subtitle = step.subtitle,
-                    icon = if (step.done) Icons.Default.CheckCircle else step.icon,
-                    iconTint = if (step.done) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer,
-                    iconContainer = if (step.done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
+                    leading = { StepBadge(if (step.done) Icons.Default.CheckCircle else step.icon, state) },
                     onClick = step.onClick.takeIf { !step.done },
-                    // Said aloud, as the tick and the colour only show it. Only the last step is
-                    // ever without an action: until the ones above are done, or while it runs.
-                    stateDescription = when {
-                        step.done -> "Done"
-                        step.onClick != null -> "Not done"
-                        isAuthenticating -> "Confirming"
-                        else -> "Available after the steps above"
-                    }
+                    // One that can't be done yet looks it, but stays readable: it says what's coming.
+                    modifier = if (state == StepState.BLOCKED) Modifier.alpha(0.85f) else Modifier,
+                    // Said aloud, as the tick, the ring and the colour only show it.
+                    stateDescription = stringResource(
+                        when {
+                            state == StepState.DONE -> R.string.setup_step_done
+                            isAuthenticating && step.onClick == null -> R.string.setup_step_confirming
+                            state == StepState.CURRENT -> R.string.setup_step_current
+                            state == StepState.LATER -> R.string.setup_step_later
+                            else -> R.string.setup_step_waiting
+                        }
+                    )
                 ) {
                     if (!step.done && step.onClick != null && step.opensExternally) {
                         Icon(
@@ -278,6 +357,8 @@ fun SetupScreenExpressive(
         Button(
             onClick = {
                 when {
+                    // No screen lock yet: setting one is what's next, not finishing again.
+                    ready && needsScreenLock -> IntentNavigationHelper.openScreenLockSetup(context)
                     ready -> finish()
                     compatibilityMode -> openCompatibility()
                     else -> openAccessibility()
@@ -295,20 +376,50 @@ fun SetupScreenExpressive(
                 .springPress(enabled = !isAuthenticating)
         ) {
             Icon(
-                if (ready) Icons.Default.Fingerprint else Icons.AutoMirrored.Filled.OpenInNew,
+                if (ready && !needsScreenLock) Icons.Default.Fingerprint else Icons.AutoMirrored.Filled.OpenInNew,
                 contentDescription = null,
                 modifier = Modifier.size(20.dp)
             )
             Spacer(Modifier.width(10.dp))
             Text(
-                when {
-                    isAuthenticating -> "Confirming…"
-                    ready -> "Confirm and finish"
-                    compatibilityMode -> "Allow next permission"
-                    else -> "Turn on Accessibility"
-                },
+                stringResource(
+                    when {
+                        isAuthenticating -> R.string.setup_button_confirming
+                        ready && needsScreenLock -> R.string.setup_screen_lock_title
+                        ready -> R.string.setup_button_finish
+                        compatibilityMode -> R.string.setup_button_next_permission
+                        else -> R.string.setup_button_accessibility
+                    }
+                ),
                 style = MaterialTheme.typography.titleMedium
             )
         }
+    }
+}
+
+/** Where a setup step stands: done, the one to do now, one after it, or one that can't be done yet. */
+private enum class StepState { DONE, CURRENT, LATER, BLOCKED }
+
+/**
+ * A step's icon in its circle: a tick on the primary colour when done; the step to do now in
+ * the primary container with a ring round it; the rest in a quiet neutral circle.
+ */
+@Composable
+private fun StepBadge(icon: ImageVector, state: StepState) {
+    val colors = MaterialTheme.colorScheme
+    val (container, tint) = when (state) {
+        StepState.DONE -> colors.primary to colors.onPrimary
+        StepState.CURRENT -> colors.primaryContainer to colors.onPrimaryContainer
+        else -> colors.surfaceContainerHighest to colors.onSurfaceVariant
+    }
+    val size = 40.dp.scaledWithText()
+    Box(
+        modifier = Modifier
+            .size(size)
+            .background(container, CircleShape)
+            .then(if (state == StepState.CURRENT) Modifier.border(2.dp, colors.primary, CircleShape) else Modifier),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(size * 0.55f))
     }
 }

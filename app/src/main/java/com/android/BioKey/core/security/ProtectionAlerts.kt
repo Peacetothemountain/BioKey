@@ -7,13 +7,13 @@ import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.text.format.DateUtils
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.edit
 import com.android.BioKey.R
+import com.android.BioKey.core.FeatureLinks
 import com.android.BioKey.core.diagnostics.DiagnosticLog
-import com.android.BioKey.feature.lock.BioKeyAccessibilityService
-import com.android.BioKey.feature.lock.UsageWatchService
-import com.android.BioKey.feature.main.MainActivity
 
 /**
  * High-priority alerts for when BioKey's protection stops working.
@@ -23,8 +23,9 @@ import com.android.BioKey.feature.main.MainActivity
  */
 object ProtectionAlerts {
 
-    private const val CHANNEL_ID = "biokey_protection_alerts"
+    const val CHANNEL_ID = "biokey_protection_alerts"
     private const val ID_SERVICE_STOPPED = 1001
+    private const val ID_STORAGE_CLEARED = 1103
 
     /**
      * How long a stopped engine waits before alerting. When one engine hands over to the other
@@ -43,24 +44,73 @@ object ProtectionAlerts {
     private val CONNECT_TOKEN = Any()
     private val main = Handler(Looper.getMainLooper())
 
-    fun ensureChannels(context: Context) {
-        val nm = context.getSystemService(NotificationManager::class.java)
-        if (nm.getNotificationChannel(CHANNEL_ID) != null) return
-        nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Protection alerts", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Warns when app locking stops working"
-            }
-        )
+    private const val PREFS = "biokey_protection_alerts"
+    private const val KEY_REMINDERS_STOPPED = "reminders_stopped"
+
+    /**
+     * The owner stopped the reminders, and app locking is still switched off. A different failure
+     * since (switched back on, but not running) is reminded about again: the stop was for a switch-off.
+     */
+    fun remindersStopped(context: Context) =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_REMINDERS_STOPPED, false) &&
+            ProtectionEngine.mode(context) == ProtectionEngine.Mode.OFF
+
+    /** "Remind me": the reminders come back now, as if never stopped. */
+    fun resumeReminders(context: Context) {
+        val app = context.applicationContext
+        app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { remove(KEY_REMINDERS_STOPPED) }
+        DiagnosticLog.log("Reminders that app locking is off resumed by the owner")
+        if (!ProtectionEngine.isProtecting(app)) ProtectionCheckJob.schedule(app)
     }
 
-    private fun post(context: Context, id: Int, title: String, text: String, ongoing: Boolean = false) {
+    /**
+     * The owner switched app locking off on purpose: no more reminders until it's on again (it
+     * stays recorded, and home still says it's off). Asked for with the owner's face or fingerprint.
+     */
+    fun stopReminders(context: Context) {
+        val app = context.applicationContext
+        app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putBoolean(KEY_REMINDERS_STOPPED, true) }
+        ProtectionCheckJob.cancel(app)
+        NotificationManagerCompat.from(app).cancel(ID_SERVICE_STOPPED)
+        DiagnosticLog.log("Reminders that app locking is off stopped by the owner")
+    }
+
+    fun ensureChannels(context: Context) {
+        val nm = context.getSystemService(NotificationManager::class.java)
+        // Created, or updated: Android takes a new name and description, never touches the importance
+        // the owner chose.
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_ID, context.getString(R.string.alerts_channel_name), NotificationManager.IMPORTANCE_HIGH).apply {
+                description = context.getString(R.string.alerts_channel_description)
+            }
+        )
+        retireHiddenNotificationStandIns(nm)
+    }
+
+    /**
+     * The channel of "Hide notification content" (gone since 1.0.4): its stand-ins for hidden
+     * notifications, left in the shade by the version before, are taken down with it. The
+     * notifications it hid come back by themselves, as their snooze runs out (a day at most).
+     */
+    private const val RETIRED_STAND_IN_CHANNEL = "biokey_privacy_shield_channel"
+
+    private fun retireHiddenNotificationStandIns(nm: NotificationManager) {
+        if (nm.getNotificationChannel(RETIRED_STAND_IN_CHANNEL) == null) return
+        runCatching {
+            for (n in nm.activeNotifications) if (n.notification.channelId == RETIRED_STAND_IN_CHANNEL) nm.cancel(n.tag, n.id)
+            nm.deleteNotificationChannel(RETIRED_STAND_IN_CHANNEL)
+        }
+    }
+
+    /** [silent]: a reminder ([remindIfOff]) brings the alert back without a sound. */
+    private fun post(context: Context, id: Int, title: String, text: String, ongoing: Boolean = false, silent: Boolean = false) {
         val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return
         ensureChannels(context)
         val open = PendingIntent.getActivity(
             context,
             id,
-            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            FeatureLinks.openMainScreen(context),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -73,6 +123,16 @@ object ProtectionAlerts {
             .setContentIntent(open)
             .setOngoing(ongoing)
             .setAutoCancel(!ongoing)
+            .setSilent(silent)
+            // On the phone's lock screen, only that BioKey has something to say: whoever holds
+            // the locked phone isn't told protection is off.
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(
+                NotificationCompat.Builder(context, CHANNEL_ID)
+                    .setSmallIcon(R.drawable.ic_biokey_mark)
+                    .setContentTitle(context.getString(R.string.brand_name))
+                    .build()
+            )
         val notification = builder.build()
         try {
             manager.notify(id, notification)
@@ -87,17 +147,24 @@ object ProtectionAlerts {
      */
     fun serviceStopped(context: Context, now: Boolean = false) {
         val app = context.applicationContext
+        // Noted now, not after the grace: the process may not live that long. An engine back
+        // within moments makes it no gap (ProtectionGaps' minimum).
+        ProtectionGaps.onEngineDown(app)
+        // The owner stopped the reminders (a deliberate switch-off): still recorded, not alerted.
+        if (remindersStopped(app)) return
+        // Reminders that outlive BioKey's process, until an engine runs again.
+        ProtectionCheckJob.schedule(app)
         main.removeCallbacksAndMessages(STOP_TOKEN)
         if (now) {
             postServiceStopped(app)
             return
         }
         main.postDelayed({
-            if (!BioKeyAccessibilityService.isRunning && !UsageWatchService.isRunning) postServiceStopped(app)
+            if (!FeatureLinks.engines.accessibilityRunning && !FeatureLinks.engines.compatibilityRunning) postServiceStopped(app)
         }, STOP_TOKEN, HANDOVER_GRACE_MS)
     }
 
-    private fun postServiceStopped(context: Context) {
+    private fun postServiceStopped(context: Context, silent: Boolean = false) {
         if (ProtectionEngine.shouldRunCompatibility(context)) {
             // Compatibility mode is the engine to run and has what it needs, but didn't start
             // (Android limits starting it from the background); opening BioKey starts it. Checked
@@ -107,9 +174,10 @@ object ProtectionAlerts {
             post(
                 context,
                 ID_SERVICE_STOPPED,
-                "App lock is off",
-                "BioKey's compatibility mode isn't running, so locked apps are not protected. Tap to open BioKey and start it.",
-                ongoing = true
+                context.getString(R.string.alert_off_title),
+                context.getString(R.string.alert_compat_not_running),
+                ongoing = true,
+                silent = silent
             )
             return
         }
@@ -118,18 +186,20 @@ object ProtectionAlerts {
             post(
                 context,
                 ID_SERVICE_STOPPED,
-                "Switch BioKey to compatibility mode",
-                "Advanced Protection reserves accessibility for accessibility tools. Tap to give BioKey usage access and display-over-apps instead, so it keeps locking your apps.",
-                ongoing = true
+                context.getString(R.string.alert_switch_to_compat_title),
+                context.getString(R.string.alert_switch_to_compat),
+                ongoing = true,
+                silent = silent
             )
             return
         }
         post(
             context,
             ID_SERVICE_STOPPED,
-            "App lock is off",
-            "BioKey's app lock service stopped, so locked apps are not protected. Tap to open BioKey and turn it back on.",
-            ongoing = true
+            context.getString(R.string.alert_off_title),
+            context.getString(R.string.alert_service_stopped),
+            ongoing = true,
+            silent = silent
         )
     }
 
@@ -138,12 +208,14 @@ object ProtectionAlerts {
      * it can't see or cover locked apps without it.
      */
     fun compatibilityStopped(context: Context, missing: String) {
+        ProtectionGaps.onEngineDown(context)
+        ProtectionCheckJob.schedule(context.applicationContext)
         main.removeCallbacksAndMessages(STOP_TOKEN)
         post(
             context.applicationContext,
             ID_SERVICE_STOPPED,
-            "App lock is off",
-            "BioKey's compatibility mode lost $missing, so locked apps are not protected. Tap to open BioKey and turn it back on.",
+            context.getString(R.string.alert_off_title),
+            context.getString(R.string.alert_compat_lost, missing),
             ongoing = true
         )
     }
@@ -172,7 +244,80 @@ object ProtectionAlerts {
     private fun isShowing(context: Context, id: Int): Boolean =
         runCatching { context.getSystemService(NotificationManager::class.java).activeNotifications.any { it.id == id } }.getOrDefault(false)
 
+    /**
+     * The phone was just unlocked: if app locking is still off, say so again. Its alert may have
+     * been swiped away by whoever switched it off.
+     */
+    fun remindIfOff(context: Context) {
+        val app = context.applicationContext
+        if (!SecurityVault.getInstance(app).isSetupCompleted() || ProtectionEngine.isProtecting(app)) return
+        if (remindersStopped(app)) return
+        if (isShowing(app, ID_SERVICE_STOPPED)) return
+        postServiceStopped(app, silent = true)
+    }
+
+    /**
+     * BioKey's storage was cleared and it isn't set up again ([ProtectionGaps.checkStorageCleared]):
+     * said, and again every so often ([ProtectionCheckJob]) and at each unlock once the accessibility
+     * service is back on, until it is. Hidden on the phone's lock screen. (A clearing switches the
+     * service off and, from Android 13, takes back the notification permission: there it's said
+     * only once setup has asked for it again; setup's own screen says so first.)
+     */
+    fun remindIfStorageCleared(context: Context) {
+        val app = context.applicationContext
+        if (!ProtectionGaps.awaitingSetupAfterClear(app)) return
+        val cleared = ProtectionGaps.cleared.value ?: return
+        val manager = NotificationManagerCompat.from(app)
+        if (!manager.areNotificationsEnabled()) return
+        UnlockAttempts.ensureChannel(app)
+        val text = if (cleared.known) {
+            app.getString(
+                R.string.storage_cleared_notification_text,
+                DateUtils.formatDateTime(app, cleared.after, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_ABBREV_MONTH)
+            )
+        } else app.getString(R.string.storage_cleared_notification_text_unknown)
+        val open = PendingIntent.getActivity(
+            app,
+            ID_STORAGE_CLEARED,
+            FeatureLinks.openMainScreen(app),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notification = NotificationCompat.Builder(app, UnlockAttempts.CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_biokey_mark)
+            .setContentTitle(app.getString(R.string.storage_cleared_notification_title))
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+            .setContentIntent(open)
+            .setOnlyAlertOnce(true)
+            .build()
+        try {
+            manager.notify(ID_STORAGE_CLEARED, notification)
+        } catch (e: SecurityException) {
+            DiagnosticLog.log("Storage cleared alert not allowed: ${e.message}")
+        }
+    }
+
+    /**
+     * Notifications allowed again (setup asks: a clearing took them back) while BioKey waits to be
+     * set up after a clearing: the reminders every so often start. Reads storage: off the main thread.
+     */
+    fun resumeStorageClearedReminders(context: Context) {
+        val app = context.applicationContext
+        if (!NotificationManagerCompat.from(app).areNotificationsEnabled()) return
+        if (ProtectionGaps.awaitingSetupAfterClear(app)) ProtectionCheckJob.schedule(app)
+    }
+
+    fun cancelStorageCleared(context: Context) {
+        NotificationManagerCompat.from(context).cancel(ID_STORAGE_CLEARED)
+    }
+
     fun serviceRestored(context: Context) {
+        ProtectionGaps.onEngineUp(context)
+        ProtectionCheckJob.cancel(context)
+        // Back on: the next time it stops, it's reminded about again.
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { remove(KEY_REMINDERS_STOPPED) }
         main.removeCallbacksAndMessages(STOP_TOKEN)
         main.removeCallbacksAndMessages(CONNECT_TOKEN)
         NotificationManagerCompat.from(context).cancel(ID_SERVICE_STOPPED)

@@ -134,7 +134,7 @@ class ProfileLockRulesTest {
     }
 
     @Test
-    fun aDeletedProfilesAppsKeepTheirSwitchesAndStayOutOfAutoSort() {
+    fun aDeletedProfilesAppsAreSwitchedOffAndStayOutOfAutoSort() {
         val vault = freshVault()
         val profile = vault.createProfile("Money", "wallet", LockTimeoutMode.IMMEDIATE)
         vault.addAppsToProfile(profile.id, listOf(bank, chat))
@@ -145,8 +145,39 @@ class ProfileLockRulesTest {
 
         assertEquals(null, vault.profileOf(bank))
         assertEquals(null, vault.profileOf(chat))
-        assertTrue(vault.isAppLocked(bank))
+        assertFalse(vault.isAppLocked(bank))
+        assertFalse(bank in vault.selectedAppsFlow.value) // its switch shows off, as it is
         assertFalse(vault.isAppLocked(chat)) // auto-sort didn't switch it on
+    }
+
+    @Test
+    fun deletingAProfileThatIsOffDoesNotLockItsApps() {
+        val vault = freshVault()
+        vault.addAppsToProfile(SecurityProfile.PRESET_FINANCE, listOf(bank))
+        vault.setProfileEnabled(SecurityProfile.PRESET_FINANCE, false)
+
+        vault.deleteProfile(SecurityProfile.PRESET_FINANCE)
+
+        assertFalse(vault.isAppLocked(bank))
+        assertTrue(vault.selectedAppsFlow.value.isEmpty())
+    }
+
+    @Test
+    fun undoingADeleteBringsBackTheProfileItsAppsAndTheirSwitches() {
+        val vault = freshVault()
+        val before = vault.profilesFlow.value.map { it.id }
+        vault.addAppsToProfile(SecurityProfile.PRESET_FINANCE, listOf(bank, chat))
+        vault.setAppLock(chat, false)
+
+        val deleted = vault.deleteProfile(SecurityProfile.PRESET_FINANCE)!!
+        vault.restoreDeletedProfile(deleted)
+
+        assertEquals(before, vault.profilesFlow.value.map { it.id }) // back in its place
+        assertEquals(SecurityProfile.PRESET_FINANCE, vault.profileOf(bank)?.id)
+        assertEquals(SecurityProfile.PRESET_FINANCE, vault.profileOf(chat)?.id)
+        assertTrue(vault.isAppLocked(bank))
+        assertFalse(vault.isAppLocked(chat))
+        assertEquals(null, vault.deleteProfile("profile_missing"))
     }
 
     @Test
@@ -236,7 +267,6 @@ class ProfileLockRulesTest {
         assertTrue(prefs.getBoolean("setup_completed", false))
         assertTrue(prefs.getBoolean("accessibility_self_protection_enabled", false))
         assertEquals("GRACE_5_MINUTES", prefs.getString("timeout_mode", null))
-        assertFalse(prefs.getBoolean("notification_shield_enabled", true))
         assertFalse(prefs.getBoolean("auto_sort_profiles_enabled", true))
         assertEquals(setOf(other), prefs.getStringSet("auto_sort_excluded_packages", null))
 
@@ -244,7 +274,6 @@ class ProfileLockRulesTest {
         assertTrue(again.isSetupCompleted())
         assertTrue(again.isAccessibilitySelfProtectionEnabled())
         assertEquals(LockTimeoutMode.GRACE_5_MINUTES, again.getTimeoutMode(chat))
-        assertFalse(again.isNotificationShieldEnabled())
         assertFalse(again.isAutoSortProfilesEnabled())
         assertTrue(again.isAppLocked(bank))
         assertTrue(again.isAppLocked(chat))

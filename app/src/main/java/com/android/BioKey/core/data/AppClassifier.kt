@@ -1,15 +1,18 @@
 package com.android.BioKey.core.data
 
 import android.content.pm.ApplicationInfo
+import androidx.annotation.StringRes
+import com.android.BioKey.R
 
-enum class AppCategory(val label: String) {
-    FINANCE("Banking & Crypto"),
-    AUTH("2FA & Passwords"),
-    SOCIAL("Social & Chat"),
-    WORK("Work & Productivity"),
-    PRIVACY("Photos, Files & Health"),
-    SYSTEM("System"),
-    GENERAL("App")
+/** What kind of app something is; [label] is its name on screen. */
+enum class AppCategory(@StringRes val label: Int) {
+    FINANCE(R.string.category_finance),
+    AUTH(R.string.category_auth),
+    SOCIAL(R.string.category_social),
+    WORK(R.string.category_work),
+    PRIVACY(R.string.category_privacy),
+    SYSTEM(R.string.category_system),
+    GENERAL(R.string.category_general)
 }
 
 /**

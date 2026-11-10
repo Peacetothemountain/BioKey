@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The "Lock all now" launcher shortcut: a padlock on the phone's accent colour. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/shortcut_background" />
+    <foreground android:drawable="@drawable/ic_shortcut_lock_all_foreground" />
+    <monochrome android:drawable="@drawable/ic_shortcut_lock_all_foreground" />
+</adaptive-icon>

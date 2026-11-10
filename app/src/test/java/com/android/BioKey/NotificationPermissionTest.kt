@@ -9,7 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.ActivityOptionsCompat
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.security.LockStateTracker
-import com.android.BioKey.feature.main.NotificationPermission
+import com.android.BioKey.ui.disclosure.NotificationPermission
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

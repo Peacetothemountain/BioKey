@@ -1,4 +1,4 @@
-package com.android.BioKey.feature.main
+package com.android.BioKey.ui.disclosure
 
 import android.Manifest
 import android.app.Activity
@@ -12,6 +12,7 @@ import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -34,6 +35,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -45,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -55,9 +58,12 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.android.BioKey.R
 import com.android.BioKey.core.security.LockStateTracker
-import com.android.BioKey.core.security.ProtectDialogWindow
-import com.android.BioKey.core.security.rejectObscuredTouches
+import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.ui.navigation.IntentNavigationHelper
+import com.android.BioKey.ui.security.ProtectDialogWindow
+import com.android.BioKey.ui.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.IconBadge
 
 /**
@@ -67,52 +73,53 @@ import com.android.BioKey.ui.theme.IconBadge
  */
 enum class Disclosure(
     val icon: ImageVector,
-    val title: String,
-    val reads: List<String>,
-    val usedFor: List<String>,
+    @StringRes val title: Int,
+    val reads: List<Int>,
+    val usedFor: List<Int>,
     /** How switching it off works, when that's more than Android's settings switch. */
-    val turningOff: String = "You can turn this off at any time in Android settings."
+    @StringRes val turningOff: Int = R.string.disclosure_turning_off
 ) {
     ACCESSIBILITY(
         Icons.Default.Accessibility,
-        "BioKey uses the Accessibility service",
-        reads = listOf(
-            "Which app is on screen",
-            "The label of what you tap on the home screen, in its search or in Recents",
-            "The names of apps on Recents cards, while Recents is open and an app you've locked is unlocked",
-            "The text of system Settings pages about BioKey itself (App info, Accessibility, notification access, uninstall)"
+        R.string.disclosure_accessibility_title,
+        reads = listOfNotNull(
+            R.string.disclosure_accessibility_reads_app_on_screen,
+            R.string.disclosure_accessibility_reads_tap_labels,
+            R.string.disclosure_accessibility_reads_recents_names,
+            R.string.disclosure_accessibility_reads_window_titles,
+            R.string.disclosure_accessibility_reads_app_lock_prompt,
+            R.string.disclosure_accessibility_reads_settings_pages
+                .takeIf { SecurityVault.selfProtectionAvailable }
         ),
-        usedFor = listOf(
-            "Covering apps you've locked until you authenticate, even before they open",
-            "Ending a locked app's session when you close it from Recents",
-            "Asking for authentication before BioKey can be switched off, if you turn that on"
+        usedFor = listOfNotNull(
+            R.string.disclosure_accessibility_used_covering,
+            R.string.disclosure_accessibility_used_home_back,
+            R.string.disclosure_accessibility_used_lock_screen,
+            R.string.disclosure_accessibility_used_pip,
+            R.string.disclosure_accessibility_used_recents_session,
+            R.string.disclosure_accessibility_used_self_protection
+                .takeIf { SecurityVault.selfProtectionAvailable }
         )
     ),
     COMPATIBILITY(
         Icons.Default.AppSettingsAlt,
-        "BioKey uses usage access and display over other apps",
-        reads = listOf("Which app was just opened, and whether a locked app is still on screen (app usage events on this phone)"),
+        R.string.disclosure_compatibility_title,
+        reads = listOf(R.string.disclosure_compatibility_reads),
         usedFor = listOf(
-            "Covering apps you've locked until you authenticate, without the Accessibility service",
-            "Drawing BioKey's lock cover over a locked app as it opens"
+            R.string.disclosure_compatibility_used_covering,
+            R.string.disclosure_compatibility_used_drawing
         )
-    ),
-    NOTIFICATIONS(
-        Icons.Default.Notifications,
-        "BioKey uses notification access",
-        reads = listOf("Notifications from apps you've locked"),
-        usedFor = listOf("Hiding their content until you unlock the app, then putting them back"),
-        // Hidden notifications are snoozed for up to a day, and only BioKey's access can bring them back early.
-        turningOff = "You can turn this off at any time in Android settings. To bring hidden notifications back, " +
-            "switch off “Hide notification content” in BioKey's settings first: revoking notification access " +
-            "instead can leave them hidden for up to a day."
     );
 }
 
+private val KEEPS = listOf(
+    R.string.disclosure_keeps_log,
+    R.string.disclosure_keeps_security_activity
+)
+
 private val NEVER = listOf(
-    "Nothing BioKey sees leaves this phone: it has no internet access. It keeps a short on-phone log of its own " +
-        "lock decisions (which locked apps it locked or unlocked) for 3 days, which you can turn off in Settings.",
-    "BioKey never reads what you type, your messages, or the content of the apps you use."
+    R.string.disclosure_never_leaves_phone,
+    R.string.disclosure_never_reads
 )
 
 @Stable
@@ -271,28 +278,34 @@ private fun DisclosureSheet(disclosure: Disclosure, onAgree: () -> Unit, onDecli
         ) {
             IconBadge(disclosure.icon, size = 52.dp)
             Spacer(Modifier.height(16.dp))
-            Text(disclosure.title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
+            Text(stringResource(disclosure.title), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
             Spacer(Modifier.height(20.dp))
-            DisclosureSection("What BioKey reads", disclosure.reads)
-            DisclosureSection("What it's used for", disclosure.usedFor)
-            DisclosureSection("What it never does", NEVER)
+            DisclosureSection(stringResource(R.string.disclosure_section_reads), disclosure.reads)
+            DisclosureSection(stringResource(R.string.disclosure_section_used_for), disclosure.usedFor)
+            DisclosureSection(stringResource(R.string.disclosure_section_keeps), KEEPS)
+            DisclosureSection(stringResource(R.string.disclosure_section_never), NEVER)
             Spacer(Modifier.height(8.dp))
             Text(
-                disclosure.turningOff,
+                stringResource(disclosure.turningOff),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            // The whole policy, before agreeing, not only after setup in Settings.
+            val sheetContext = LocalContext.current
+            TextButton(onClick = { IntentNavigationHelper.openWebPage(sheetContext, IntentNavigationHelper.PRIVACY_POLICY_URL) }) {
+                Text(stringResource(R.string.disclosure_read_privacy_policy))
+            }
             Spacer(Modifier.height(24.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = onDecline, modifier = Modifier.weight(1f)) { Text("Not now") }
-                Button(onClick = onAgree, modifier = Modifier.weight(1f)) { Text("Agree") }
+                OutlinedButton(onClick = onDecline, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.common_not_now)) }
+                Button(onClick = onAgree, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.disclosure_agree)) }
             }
         }
     }
 }
 
 @Composable
-private fun DisclosureSection(title: String, lines: List<String>) {
+private fun DisclosureSection(title: String, lines: List<Int>) {
     Text(
         title,
         style = MaterialTheme.typography.titleSmall,
@@ -304,7 +317,7 @@ private fun DisclosureSection(title: String, lines: List<String>) {
         Row(Modifier.padding(bottom = 6.dp)) {
             // Only drawn: screen readers go from line to line, not stopping at each bullet.
             Text("•", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(16.dp).clearAndSetSemantics { })
-            Text(line, style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(line), style = MaterialTheme.typography.bodyMedium)
         }
     }
     Spacer(Modifier.height(12.dp))

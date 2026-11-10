@@ -28,8 +28,9 @@ class BioKeyTileService : TileService() {
     companion object {
         internal fun status(setupCompleted: Boolean, enabled: Boolean, engineRunning: Boolean): Status = when {
             !setupCompleted -> Status.SETUP_REQUIRED
-            !enabled -> Status.PAUSED
+            // As home says: nothing running outranks a pause, which resuming wouldn't fix.
             !engineRunning -> Status.NOT_PROTECTING
+            !enabled -> Status.PAUSED
             else -> Status.PROTECTING
         }
     }
@@ -103,10 +104,10 @@ class BioKeyTileService : TileService() {
         // unavailable tiles, and a tap should open BioKey to finish it.
         tile.state = if (status == Status.PROTECTING) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.subtitle = when (status) {
-            Status.SETUP_REQUIRED -> "Setup required"
-            Status.NOT_PROTECTING -> "Not protecting"
-            Status.PROTECTING -> "Protecting"
-            Status.PAUSED -> "Paused"
+            Status.SETUP_REQUIRED -> getString(R.string.tile_setup_required)
+            Status.NOT_PROTECTING -> getString(R.string.lock_all_tile_not_protecting)
+            Status.PROTECTING -> getString(R.string.tile_protecting)
+            Status.PAUSED -> getString(R.string.common_paused)
         }
         tile.updateTile()
     }

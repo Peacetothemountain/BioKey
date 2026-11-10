@@ -5,7 +5,9 @@ import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import kotlin.math.abs
 
 /**
@@ -23,17 +25,23 @@ import kotlin.math.abs
  */
 internal class RecentsWatcher(
     private val service: AccessibilityService,
+    /** The active window's root, under the service's before-setup rule (never read directly). */
+    private val activeRoot: () -> AccessibilityNodeInfo?,
     private val onClosed: (appName: String) -> Unit,
     private val onClearAll: () -> Unit
 ) {
     internal companion object {
+        private const val TAG = "RecentsWatcher"
         /** Nodes of a Recents card that carry the app's name. */
         val CARD_IDS = listOf("snapshot", "task_thumbnail", "task_thumbnail_live_tile")
         /** How far up, as a share of the screen, a card must have gone to count as swiped away. */
         const val MIN_RISE = 0.12f
         /** A card tapped to open it is never "closed", however it animates. */
         const val TAP_GRACE_MS = 2_000L
-        /** A burst of changes in the launcher settles this fast. */
+        /**
+         * While cards move, they're looked at this often: a swipe changes the launcher every
+         * frame, so waiting for the changes to stop would only see a card once it had gone.
+         */
         const val SETTLE_MS = 30L
         /**
          * While the last look found the home screen, not Recents, look at most this often: live
@@ -97,18 +105,44 @@ internal class RecentsWatcher(
             return CardRead(cards, byId.filterValues { it.isNotEmpty() }.keys, readEveryId)
         }
 
-        /** Slid up, whole: both edges rose, it kept its size and stayed in its column. */
+        /**
+         * Slid up, whole, in its column: its bottom rose, its width held, and either it kept its
+         * height or it ran into the top of the screen. There only what's still on screen is
+         * reported: the top stops at the edge and the height shrinks, below zero once it's off
+         * (Android 17's launcher), but the width holds. A card that shrinks as it goes wasn't
+         * swiped away: going Home scales the app's card down into its icon on the home screen
+         * (which can sit near the top, so the card ends up there, smaller), and leaving Recents
+         * scales every card down. Sideways is a scroll; growing (the bottom going down) is
+         * opening it.
+         */
         fun sweptAway(first: Rect, last: Rect, screenHeight: Int, screenWidth: Int): Boolean {
             val rise = screenHeight * MIN_RISE
-            return first.top - last.top > rise &&
-                first.bottom - last.bottom > rise &&
-                abs(last.height() - first.height()) < first.height() * 0.15f &&
-                abs(last.left - first.left) < screenWidth * 0.15f
+            if (abs(last.left - first.left) >= screenWidth * 0.15f) return false
+            if (first.bottom - last.bottom <= rise) return false
+            if (abs(last.width() - first.width()) >= first.width() * 0.15f) return false
+            val keptHeight = abs(last.height() - first.height()) < first.height() * 0.15f
+            val ranIntoTheTop = last.top <= rise && last.top < first.top
+            return (keptHeight && first.top - last.top > rise) || ranIntoTheTop
         }
     }
 
-    private class Card(val first: Rect) {
-        val last = Rect(first)
+    /**
+     * A card on screen: where it was [last] seen, and where it [first] rested since, which a swipe
+     * is measured from. Recents opened from Home slides its cards in sideways: measured from where
+     * they came in, a swipe up would look like a scroll.
+     */
+    internal class Card(rect: Rect) {
+        val first = Rect(rect)
+        val last = Rect(rect)
+
+        /**
+         * Seen at [rect]: not moved up or down since the last look, it rests there, unless it's
+         * running off the top of the screen (only its visible part reported: clipped at the edge).
+         */
+        fun moveTo(rect: Rect) {
+            if (rect.top == last.top && rect.bottom == last.bottom && rect.top > 0 && rect.bottom > rect.top) first.set(rect)
+            last.set(rect)
+        }
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -125,13 +159,14 @@ internal class RecentsWatcher(
     private val scanRunnable = Runnable(::scan)
 
     /**
-     * The launcher's content changed ([changeTypes] says how): look again, once the burst of
-     * changes settles. On the home screen a widget rewording itself is no reason to.
+     * The launcher's content changed ([changeTypes] says how): look again shortly. A look already
+     * due stays due, not put off by the changes that follow, so a card is seen on its way out
+     * however fast it's flung. On the home screen a widget rewording itself is no reason to look.
      */
     fun onLauncherChanged(pkg: String, changeTypes: Int) {
         if (!changeNeedsScan(changeTypes, inRecents)) return
         launcher = pkg
-        handler.removeCallbacks(scanRunnable)
+        if (handler.hasCallbacks(scanRunnable)) return
         handler.postDelayed(scanRunnable, scanDelayMs(SystemClock.elapsedRealtime() - scannedAt, inRecents))
     }
 
@@ -173,7 +208,7 @@ internal class RecentsWatcher(
     private fun scan() {
         val pkg = launcher ?: return
         scannedAt = SystemClock.elapsedRealtime()
-        val root = service.rootInActiveWindow
+        val root = activeRoot()
         if (root == null) {
             cardIds = null
             return
@@ -210,10 +245,18 @@ internal class RecentsWatcher(
             val recentlyTapped = tapped.takeIf { SystemClock.elapsedRealtime() - tappedAt < TAP_GRACE_MS }
             for ((name, card) in cards) {
                 if (name in now || name == recentlyTapped) continue
-                if (sweptAway(card.first, card.last, metrics.heightPixels, metrics.widthPixels)) onClosed(name)
+                val swept = sweptAway(card.first, card.last, metrics.heightPixels, metrics.widthPixels)
+                // Debug builds only (release strips it): how a card went, to tell a swipe from a gesture.
+                Log.d(TAG, "Card gone: $name rested at ${card.first.toShortString()}, last at ${card.last.toShortString()} → ${if (swept) "closed" else "not closed"}")
+                if (swept) onClosed(name)
             }
             cards.keys.retainAll(now.keys)
-            for ((name, rect) in now) cards.getOrPut(name) { Card(rect) }.last.set(rect)
+            for ((name, rect) in now) cards.getOrPut(name) { Card(rect) }.moveTo(rect)
+        } catch (e: RuntimeException) {
+            // The launcher's windows changed under the look (a node gone stale): the next look
+            // reads every ID afresh. Thrown out of a posted look, it would stop the whole service.
+            Log.w(TAG, "Recents look failed: ${e.javaClass.simpleName}")
+            cardIds = null
         } finally {
             root.release()
         }

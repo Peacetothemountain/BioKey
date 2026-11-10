@@ -8,9 +8,10 @@ import android.os.Build
 import android.os.Process
 import android.provider.Settings
 import android.util.Log
+import androidx.annotation.VisibleForTesting
+import com.android.BioKey.R
+import com.android.BioKey.core.FeatureLinks
 import com.android.BioKey.core.diagnostics.DiagnosticLog
-import com.android.BioKey.feature.lock.BioKeyAccessibilityService
-import com.android.BioKey.feature.lock.UsageWatchService
 
 /**
  * Which detection engine protects locked apps.
@@ -67,20 +68,32 @@ object ProtectionEngine {
 
     fun compatibilityPermissionsGranted(context: Context): Boolean = hasUsageAccess(context) && canDrawOverlays(context)
 
-    /** What compatibility mode lacks, in the user's words ("usage access"), or null if nothing. */
-    fun missingCompatibilityPermissions(context: Context): String? = listOfNotNull(
-        "usage access".takeUnless { hasUsageAccess(context) },
-        "display over other apps".takeUnless { canDrawOverlays(context) }
-    ).takeIf { it.isNotEmpty() }?.joinToString(" and ")
+    /** What compatibility mode lacks, in the user's words and language ("usage access"), or null if nothing. */
+    fun missingCompatibilityPermissions(context: Context): String? {
+        val usage = hasUsageAccess(context)
+        val overlay = canDrawOverlays(context)
+        return when {
+            !usage && !overlay -> context.getString(
+                R.string.permission_both, context.getString(R.string.permission_usage_access), context.getString(R.string.permission_overlay)
+            )
+            !usage -> context.getString(R.string.permission_usage_access)
+            !overlay -> context.getString(R.string.permission_overlay)
+            else -> null
+        }
+    }
 
     /** Compatibility mode is the engine to run: BioKey is set up, accessibility is off, its permissions are granted. */
     fun shouldRunCompatibility(context: Context): Boolean =
         SecurityVault.getInstance(context).isSetupCompleted() &&
-            !BioKeyAccessibilityService.isServiceEnabled(context) &&
+            !FeatureLinks.engines.accessibilityEnabled(context) &&
             compatibilityPermissionsGranted(context)
 
-    fun mode(context: Context): Mode =
-        accessibilityMode(BioKeyAccessibilityService.isServiceEnabled(context), BioKeyAccessibilityService.isRunning) ?: when {
+    /** Tests of what depends on the mode, without a running engine. */
+    @VisibleForTesting
+    internal var overrideModeForTests: Mode? = null
+
+    fun mode(context: Context): Mode = overrideModeForTests ?:
+        accessibilityMode(FeatureLinks.engines.accessibilityEnabled(context), FeatureLinks.engines.accessibilityRunning) ?: when {
             compatibilityPermissionsGranted(context) && compatibilityUp(context) -> Mode.COMPATIBILITY
             AdvancedProtection.blocksBioKey(context) -> Mode.NEEDS_COMPATIBILITY_SETUP
             else -> Mode.OFF
@@ -99,7 +112,7 @@ object ProtectionEngine {
 
     /** A failed start (refused in the background) must not read as protecting. */
     private fun compatibilityUp(context: Context): Boolean =
-        !SecurityVault.getInstance(context).isSetupCompleted() || UsageWatchService.isRunning || UsageWatchService.startPending
+        !SecurityVault.getInstance(context).isSetupCompleted() || FeatureLinks.engines.compatibilityRunning || FeatureLinks.engines.compatibilityStartPending
 
     /** Whether locked apps are being watched by an engine, in [mode]. */
     fun isProtecting(mode: Mode): Boolean = mode == Mode.ACCESSIBILITY || mode == Mode.COMPATIBILITY
@@ -115,16 +128,16 @@ object ProtectionEngine {
     fun refresh(context: Context): Boolean {
         val shouldRun = shouldRunCompatibility(context)
         try {
-            if (shouldRun) UsageWatchService.start(context) else UsageWatchService.stop(context)
+            if (shouldRun) FeatureLinks.engines.startCompatibility(context) else FeatureLinks.engines.stopCompatibility(context)
         } catch (e: Exception) {
             // Android limits starting foreground services from the background; the next time
             // BioKey is opened it starts from the foreground. Until then nothing covers apps: say so.
             Log.w(TAG, "Couldn't ${if (shouldRun) "start" else "stop"} compatibility mode: ${e.message}")
-            if (shouldRun && !UsageWatchService.isRunning) {
+            if (shouldRun && !FeatureLinks.engines.compatibilityRunning) {
                 DiagnosticLog.log("Compatibility mode couldn't start in the background")
                 ProtectionAlerts.serviceStopped(context)
             }
         }
-        return shouldRun && (UsageWatchService.isRunning || UsageWatchService.startPending)
+        return shouldRun && (FeatureLinks.engines.compatibilityRunning || FeatureLinks.engines.compatibilityStartPending)
     }
 }

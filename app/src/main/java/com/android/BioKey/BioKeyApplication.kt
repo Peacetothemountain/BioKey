@@ -11,19 +11,31 @@ import android.os.UserManager
 import android.security.advancedprotection.AdvancedProtectionManager
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.android.BioKey.core.FeatureLinks
 import com.android.BioKey.core.data.AppClassifier
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.security.AlsoLockedByAndroid
+import com.android.BioKey.core.security.BiometricEnrollment
+import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.NewAppSuggestions
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
+import com.android.BioKey.core.security.ProtectionGaps
+import com.android.BioKey.core.security.ReinstallMemory
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.feature.lock.AppInfoCache
+import com.android.BioKey.feature.lock.BioKeyAccessibilityService
+import com.android.BioKey.feature.lock.LockEngines
 import com.android.BioKey.feature.lock.ScreenReceiver
+import com.android.BioKey.feature.lock.VaultReactions
+import com.android.BioKey.feature.main.MainActivity
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 
 class BioKeyApplication : Application() {
 
@@ -32,6 +44,12 @@ class BioKeyApplication : Application() {
         private val initExecutor = Executors.newSingleThreadExecutor { r ->
             Thread(r, "biokey-async-init").apply { isDaemon = true }
         }
+        /** Waits for the start-up work already queued, so a test's own setup isn't raced by it. */
+        @androidx.annotation.VisibleForTesting
+        internal fun awaitInitForTests() {
+            initExecutor.submit {}.get()
+        }
+
         private val _packageChangeVersion = MutableStateFlow(0)
         val packageChangeVersion: StateFlow<Int> = _packageChangeVersion.asStateFlow()
 
@@ -53,6 +71,14 @@ class BioKeyApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // A process starting knows of no screensaver (ScreenReceiver hears the next one start).
+        LockStateTracker.screensaverShowing = false
+        // Before anything in core/ can ask: the engines and the main screen it opens.
+        FeatureLinks.install(LockEngines, MainActivity::class.java, BioKeyAccessibilityService::class.java)
+        // Before the vault first loads: the lock follows its changes.
+        SecurityVault.addListener(VaultReactions)
+        // Locked apps' certificates, noted while they're installed: a reinstall is told by them.
+        SecurityVault.addListener(ReinstallMemory.VaultListener)
         ScreenReceiver.register(this)
 
         if (isUserUnlocked()) {
@@ -84,6 +110,19 @@ class BioKeyApplication : Application() {
             try {
                 // Pre-warm SecurityVault so UI threads find it ready in memory
                 SecurityVault.getInstance(app)
+                // Off the main thread, so a prompt's first miss or a screen-off doesn't wait for the disk.
+                UnlockAttempts.load(app)
+                NewAppSuggestions.load(app)
+                AlsoLockedByAndroid.load(app)
+                ProtectionGaps.load(app)
+                // Early, before anything else is written: a cleared storage is told from an empty one here.
+                ProtectionGaps.checkStorageCleared(app)
+                BiometricEnrollment.checkSoon(app)
+                // Channel names and descriptions as this version words them, before any is posted.
+                ProtectionAlerts.ensureChannels(app)
+                UnlockAttempts.ensureChannel(app)
+                // An engine that connected before the first unlock couldn't say so then.
+                if (ProtectionEngine.isProtecting(app)) ProtectionGaps.onEngineUp(app)
                 ProtectionEngine.refresh(app)
                 ProtectionAlerts.checkAccessibilityConnects(app)
             } catch (e: Exception) {
@@ -92,6 +131,20 @@ class BioKeyApplication : Application() {
         }
         registerPackageChangeReceiver()
         watchAdvancedProtection()
+        // The phone's clock changed: how force stops are read afterwards ([ProtectionGaps.onClockChanged]).
+        ContextCompat.registerReceiver(
+            this,
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    val pending = goAsync()
+                    initExecutor.execute {
+                        try { ProtectionGaps.onClockChanged(app) } finally { pending.finish() }
+                    }
+                }
+            },
+            IntentFilter(Intent.ACTION_TIME_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
     }
 
     /** Switch engines the moment Advanced Protection is turned on or off. */
@@ -122,23 +175,36 @@ class BioKeyApplication : Application() {
                             val vault = SecurityVault.getInstance(this@BioKeyApplication)
                             when (intent.action) {
                                 Intent.ACTION_PACKAGE_ADDED -> {
-                                    if (!replacing && vault.isAutoSortProfilesEnabled()) {
+                                    // A locked app uninstalled and back: locked again (same developer)
+                                    // or offered (another), before auto-sort and the offer have their turn.
+                                    val again = if (replacing) ReinstallMemory.Outcome.NOTHING else ReinstallMemory.onInstalled(this@BioKeyApplication, pkg)
+                                    if (!replacing && again != ReinstallMemory.Outcome.LOCKED_AGAIN && vault.isAutoSortProfilesEnabled()) {
                                         val pm = packageManager
                                         val info = runCatching { pm.getApplicationInfo(pkg, 0) }.getOrNull()
                                         val label = info?.let { runCatching { pm.getApplicationLabel(it).toString() }.getOrNull() } ?: pkg
                                         vault.autoSortAppsIntoProfiles(listOf(pkg to AppClassifier.categorize(pkg, label, info?.category ?: -1)))
+                                    }
+                                    // Whatever auto-sort didn't lock is offered: "Lock <app>?".
+                                    if (!replacing) {
+                                        val pm = packageManager
+                                        val label = runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }.getOrDefault(pkg)
+                                        NewAppSuggestions.onInstalled(
+                                            this@BioKeyApplication, pkg, label, lockedBefore = again == ReinstallMemory.Outcome.OFFER
+                                        )
                                     }
                                     if (pkg in vault.getLockedPackages()) {
                                         AppInfoCache.preWarm(this@BioKeyApplication, listOf(pkg))
                                     }
                                 }
                                 Intent.ACTION_PACKAGE_REPLACED -> {
+                                    ReinstallMemory.onReplaced(this@BioKeyApplication, pkg)
                                     if (pkg in vault.getLockedPackages()) {
                                         AppInfoCache.preWarm(this@BioKeyApplication, listOf(pkg))
                                     }
                                 }
                                 Intent.ACTION_PACKAGE_REMOVED -> {
                                     if (!replacing) {
+                                        NewAppSuggestions.onUninstalled(this@BioKeyApplication, pkg)
                                         if (keepsLockAfterRemoval(
                                                 archival = isArchival(intent),
                                                 dataRemoved = intent.getBooleanExtra(Intent.EXTRA_DATA_REMOVED, true),
@@ -149,6 +215,8 @@ class BioKeyApplication : Application() {
                                                 DiagnosticLog.log("Kept the lock on $pkg: its data is still on the phone")
                                             }
                                         } else {
+                                            // Before it's dropped: its profile is read now.
+                                            ReinstallMemory.onUninstalled(this@BioKeyApplication, pkg)
                                             vault.onPackageUninstalled(pkg)
                                         }
                                     }

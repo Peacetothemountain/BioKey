@@ -1,17 +1,24 @@
 package com.android.BioKey.feature.lock
 
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import androidx.core.content.ContextCompat
+import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.diagnostics.EngineTrace
+import com.android.BioKey.core.security.BiometricEnrollment
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.ProtectionAlerts
+import com.android.BioKey.core.security.UnlockAttempts
 
 /**
- * Ends every unlock session the moment the display turns off or a screensaver starts, so a
- * phone that's picked up again always starts locked. Registered dynamically and not exported,
- * so other apps can't spoof these broadcasts.
+ * Ends every unlock session the moment a screensaver starts, or the display turns off with the
+ * phone locked (otherwise as soon as Android locks it: [LockStateTracker.onScreenTurnedOff]), so
+ * a phone that's picked up again always starts locked. Registered dynamically and not exported,
+ * so other apps can't spoof these broadcasts; the phone being unlocked, which SystemUI sends, see
+ * [registerForUnlocks].
  */
 class ScreenReceiver private constructor() : BroadcastReceiver() {
 
@@ -21,9 +28,11 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
             val filter = IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_OFF)
                 addAction(Intent.ACTION_DREAMING_STARTED)
+                addAction(Intent.ACTION_DREAMING_STOPPED)
                 addAction(Intent.ACTION_SHUTDOWN)
             }
             ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+            context.registerForUnlocks(receiver)
             return receiver
         }
     }
@@ -31,13 +40,56 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         EngineTrace.record("d.bc", intent.action)
         when (intent.action) {
+            Intent.ACTION_DREAMING_STOPPED -> LockStateTracker.screensaverShowing = false
             Intent.ACTION_SCREEN_OFF,
             Intent.ACTION_DREAMING_STARTED,
             Intent.ACTION_SHUTDOWN -> {
+                if (intent.action == Intent.ACTION_DREAMING_STARTED) LockStateTracker.screensaverShowing = true
                 // Always: ending sessions twice is harmless, missing a lock is not (a screensaver
                 // never turns the screen off, so the engines' own screen-off handling misses it).
-                LockStateTracker.onScreenTurnedOff()
+                // The screen going off with the phone not locked yet waits for it to lock.
+                LockStateTracker.onScreenTurnedOff(
+                    phoneLocked = if (intent.action == Intent.ACTION_SCREEN_OFF) context.isPhoneLocked() else null
+                )
+            }
+            // The phone was unlocked: whoever had it has likely handed it back, so this is when
+            // failed unlocks and times app locking was off are told.
+            Intent.ACTION_USER_PRESENT -> {
+                // Sessions waiting for the phone to lock, which may have happened unseen: see there.
+                LockStateTracker.onUserPresent()
+                LockStateTracker.screensaverShowing = false
+                // Off the main thread: right after a restart, this may be the first read of BioKey's storage.
+                val pending: PendingResult? = goAsync()
+                val app = context.applicationContext
+                Thread {
+                    try {
+                        // Each on its own: one failing mustn't skip the others (each is looked at
+                        // again at the next unlock).
+                        listOf(
+                            { UnlockAttempts.onUserPresent(app) },
+                            { ProtectionAlerts.remindIfOff(app) },
+                            { BiometricEnrollment.checkSoon(app) }
+                        ).forEach { step ->
+                            runCatching(step).onFailure { DiagnosticLog.log("Unlock check failed: ${it.javaClass.simpleName}") }
+                        }
+                    } finally {
+                        pending?.finish()
+                    }
+                }.start()
             }
         }
     }
+}
+
+/** Whether Android has locked the phone (its keyguard secured), or null if that can't be asked. */
+internal fun Context.isPhoneLocked(): Boolean? = runCatching { getSystemService(KeyguardManager::class.java)?.isDeviceLocked }.getOrNull()
+
+/**
+ * Registers [receiver] for the phone being unlocked (ACTION_USER_PRESENT). The keyguard sends it,
+ * and on a phone the keyguard is SystemUI: an app of its own, not the system, so a receiver that
+ * isn't exported never hears it. It's a protected broadcast, which only the system and SystemUI
+ * may send: exporting the receiver for it alone lets no other app in.
+ */
+internal fun Context.registerForUnlocks(receiver: BroadcastReceiver) {
+    ContextCompat.registerReceiver(this, receiver, IntentFilter(Intent.ACTION_USER_PRESENT), ContextCompat.RECEIVER_EXPORTED)
 }

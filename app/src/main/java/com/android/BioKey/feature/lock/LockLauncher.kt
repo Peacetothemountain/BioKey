@@ -36,12 +36,14 @@ object LockLauncher {
         targetPkg: String,
         isSelfProtection: Boolean,
         displayId: Int? = null,
-        reprompt: Boolean = false
+        reprompt: Boolean = false,
+        behindKeyguard: Boolean = false
     ): Boolean {
         val intent = Intent(context, LockScreenActivity::class.java).apply {
             putExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE, targetPkg)
             putExtra(LockScreenActivity.EXTRA_SELF_PROTECTION, isSelfProtection)
             putExtra(LockScreenActivity.EXTRA_REPROMPT, reprompt)
+            putExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, behindKeyguard)
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_NO_ANIMATION or

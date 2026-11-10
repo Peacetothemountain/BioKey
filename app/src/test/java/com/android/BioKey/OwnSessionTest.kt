@@ -16,9 +16,9 @@ import androidx.activity.ComponentActivity
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityVault
-import com.android.BioKey.core.security.WindowProtection
 import com.android.BioKey.feature.lock.LockScreenActivity
-import com.android.BioKey.feature.main.IntentNavigationHelper
+import com.android.BioKey.ui.navigation.IntentNavigationHelper
+import com.android.BioKey.ui.security.WindowProtection
 import java.time.Duration
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -63,6 +63,47 @@ class OwnSessionTest {
         decor.addView(content)
         WindowProtection.countAccessibilityInteractions(decor)
         decor.requestSendAccessibilityEvent(content, AccessibilityEvent(eventType))
+    }
+
+    @Test
+    fun lockingEverythingTellsBioKeysScreensAtOnceAndIsNoTimeout() {
+        LockStateTracker.onOwnAppUnlocked()
+        val before = LockStateTracker.ownLocks.value
+        // "Lock all" from a tile, the shortcut or the status sheet, with BioKey on screen.
+        LockStateTracker.lockAll(reason = "test")
+        assertTrue(LockStateTracker.ownLocks.value > before)
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
+        assertFalse(LockStateTracker.ownSessionTimedOut)
+    }
+
+    @Test
+    fun bioKeysOwnFilePickerOpensEvenWhenFilesIsLocked() {
+        val picker = "com.google.android.documentsui"
+        LockStateTracker.onOwnAppUnlocked()
+        LockStateTracker.beginOwnPicker(setOf(picker))
+        assertTrue(LockStateTracker.isAppUnlocked(picker, com.android.BioKey.core.data.LockTimeoutMode.IMMEDIATE))
+        // Only for that trip: locking everything ends it.
+        LockStateTracker.lockAll(reason = "test")
+        assertFalse(LockStateTracker.isAppUnlocked(picker, com.android.BioKey.core.data.LockTimeoutMode.IMMEDIATE))
+    }
+
+    @Test
+    fun aTripThatRanOutAwayIsSaidAsSuch() {
+        LockStateTracker.onOwnAppUnlocked()
+        LockStateTracker.beginOwnPicker()
+        LockStateTracker.onOwnAppStopped()
+        advance(121_000)
+        assertFalse(LockStateTracker.isOwnTripActive())
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
+        assertTrue(LockStateTracker.ownTripRanOut)
+    }
+
+    @Test
+    fun aSessionThatRanOutIsATimeout() {
+        LockStateTracker.onOwnAppUnlocked()
+        advance(LockStateTracker.OWN_APP_IDLE_MS + 1_000)
+        assertFalse(LockStateTracker.isOwnAppUnlocked())
+        assertTrue(LockStateTracker.ownSessionTimedOut)
     }
 
     @Test
@@ -180,7 +221,20 @@ class OwnSessionTest {
     fun aSettingsPageThatOpensKeepsThem() {
         val page = ComponentName("com.example.settings", "com.example.settings.PageActivity")
         val pm = shadowOf(context.packageManager)
-        pm.addActivityIfNotPresent(page)
+        // A system app's page: BioKey opens settings pages only there.
+        pm.installPackage(android.content.pm.PackageInfo().apply {
+            packageName = page.packageName
+            applicationInfo = android.content.pm.ApplicationInfo().apply {
+                packageName = page.packageName
+                flags = android.content.pm.ApplicationInfo.FLAG_SYSTEM
+            }
+        })
+        // Exported, as a page other apps open is: one Settings keeps to itself is never opened.
+        pm.addOrUpdateActivity(android.content.pm.ActivityInfo().apply {
+            packageName = page.packageName
+            name = page.className
+            exported = true
+        })
         pm.addIntentFilterForActivity(page, IntentFilter("com.example.SETTINGS_PAGE").apply { addCategory(Intent.CATEGORY_DEFAULT) })
         shadowOf(context as Application).checkActivities(true)
         LockStateTracker.onOwnAppUnlocked()

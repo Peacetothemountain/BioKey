@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import androidx.core.net.toUri
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.inputmethod.InputMethodManager
@@ -12,6 +13,7 @@ import com.android.BioKey.BioKeyApplication
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.feature.main.MainActivity
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -102,6 +104,9 @@ object ForegroundRules {
         // (in its task), and a Play listing the app sends the user to ("Rate us", "Update").
         "com.android.vending"
     )
+
+    /** The activity every screensaver runs in, whichever app's it is. */
+    const val DREAM_ACTIVITY = "android.service.dreams.DreamActivity"
 
     /** The system file picker: the one trip BioKey's own session survives ([com.android.BioKey.core.security.LockStateTracker.beginOwnPicker]). */
     val DOCUMENTS_UI = setOf("com.android.documentsui", "com.google.android.documentsui")
@@ -254,6 +259,46 @@ object ForegroundRules {
         } - context.packageName
     }
 
+    /**
+     * What may open over the phone's lock screen without its app lock, as Android's own App lock
+     * lets it (AppLockOverlayController's permitted secure actions): the lock-screen camera
+     * (still, capture and motion-photo, and reviewing what it just took) and the emergency dialer
+     * and calls. Each needs a `<queries>` entry in the manifest, or Android hides its handlers.
+     */
+    internal val KEYGUARD_INTENTS = listOf(
+        Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE),
+        Intent(MediaStore.ACTION_IMAGE_CAPTURE_SECURE),
+        Intent("android.media.action.MOTION_PHOTO_CAPTURE_SECURE"),
+        Intent("android.provider.action.REVIEW_SECURE").setType("image/*"),
+        Intent("android.intent.action.DIAL_EMERGENCY"),
+        Intent("android.intent.action.DIAL_EMERGENCY", "tel:".toUri()),
+        Intent("android.intent.action.CALL_EMERGENCY", "tel:".toUri())
+    )
+
+    /**
+     * The screens that answer [KEYGUARD_INTENTS] on this phone, by app: each intent's default
+     * handler only, the one the lock screen opens (none where Android would ask which to use).
+     * Read again at most every 5 min.
+     */
+    private val keyguardApps = SystemList(5 * 60_000L, emptyMap<String, Set<String>>()) { context ->
+        val pm = context.packageManager
+        val found = HashMap<String, MutableSet<String>>()
+        for (intent in KEYGUARD_INTENTS) {
+            val activity = pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo ?: continue
+            // Android's chooser: no default handler.
+            if (activity.packageName == "android") continue
+            // An alias's own name, and the screen it opens, which is what its windows say.
+            found.getOrPut(activity.packageName) { HashSet() } += listOfNotNull(activity.name, activity.targetActivity)
+        }
+        found - context.packageName
+    }
+
+    /** Whether [pkg] is the phone's lock-screen camera or emergency dialer ([KEYGUARD_INTENTS]). */
+    fun isKeyguardApp(context: Context, pkg: String): Boolean = pkg in keyguardApps.get(context)
+
+    /** [pkg]'s activities that handle [KEYGUARD_INTENTS] (none for any other app). */
+    fun keyguardActivities(context: Context, pkg: String): Set<String> = keyguardApps.get(context)[pkg].orEmpty()
+
     /** Enabled keyboards (read again at most every 30 s, and at once after [onInputMethodsChanged]). */
     private val keyboards = SystemList(30_000L, emptySet<String>()) { context ->
         context.getSystemService(InputMethodManager::class.java).enabledInputMethodList.mapTo(HashSet()) { it.packageName }
@@ -274,6 +319,7 @@ object ForegroundRules {
         homes.refresh(context)
         pickers.refresh(context)
         keyboards.refresh(context)
+        keyguardApps.refresh(context)
     }
 
     /** Forgets every list read so far (tests register apps between cases). */
@@ -282,34 +328,46 @@ object ForegroundRules {
         homes.reset()
         pickers.reset()
         keyboards.reset()
+        keyguardApps.reset()
     }
 
     /**
      * The lists as a trace records them (EngineTrace's `env` records): home screens (whether each
-     * is a system app, and the one in use), helper apps and keyboards, as last read.
+     * is a system app, and the one in use), helper apps, keyboards, and what opens over the lock
+     * screen (each app with an activity), as last read.
      */
     internal fun traceEnvironment(context: Context): List<String> = buildList {
         val h = homes.get(context)
         for ((pkg, system) in h.apps) add(EngineTrace.line("env", "home", pkg, if (system) 1 else 0, if (pkg == h.default) 1 else 0))
         for (pkg in pickers.get(context)) add(EngineTrace.line("env", "picker", pkg))
         for (pkg in keyboards.get(context)) add(EngineTrace.line("env", "keyboard", pkg))
+        for ((pkg, activities) in keyguardApps.get(context)) for (cls in activities) add(EngineTrace.line("env", "keyguardApp", pkg, cls))
     }
 
     /** A replay's lists, from its trace's `env` records, in place of the system's until [resetSystemLists]. */
     @VisibleForTesting
-    internal fun pinSystemLists(homeApps: Map<String, Boolean>, defaultHome: String?, helpers: Set<String>, inputMethods: Set<String>) {
+    internal fun pinSystemLists(
+        homeApps: Map<String, Boolean>,
+        defaultHome: String?,
+        helpers: Set<String>,
+        inputMethods: Set<String>,
+        overKeyguard: Map<String, Set<String>> = emptyMap()
+    ) {
         homes.pin(Homes(homeApps, defaultHome))
         pickers.pin(helpers)
         keyboards.pin(inputMethods)
+        keyguardApps.pin(overKeyguard)
     }
 
     /**
      * Anything that can come between leaving an unlocked app and coming straight back to it
      * without ending its session: a helper, a system screen it opened (permission page, share
-     * sheet), or BioKey itself (the lock screen of a helper that is locked too).
+     * sheet), or BioKey's lock screen (for a helper that is locked too). Not BioKey's own screens:
+     * going there is leaving the app.
      */
     fun isHopTarget(context: Context, pkg: String, activityClass: String?): Boolean =
-        pkg == context.packageName || pkg in SYSTEM_OVERLAYS || isHopHelper(context, pkg, activityClass)
+        (pkg == context.packageName && activityClass != MainActivity::class.java.name) || pkg in SYSTEM_OVERLAYS ||
+            isHopHelper(context, pkg, activityClass)
 
     /** A helper app worth keeping the previous app's session for; [activityClass] spots custom tabs. */
     fun isHopHelper(context: Context, pkg: String, activityClass: String?): Boolean {

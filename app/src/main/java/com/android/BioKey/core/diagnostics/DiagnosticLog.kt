@@ -2,7 +2,11 @@ package com.android.BioKey.core.diagnostics
 
 import android.content.Context
 import android.os.Build
+import android.os.SystemClock
+import android.provider.Settings
 import androidx.core.content.edit
+import com.android.BioKey.core.security.TrustedClock
+import com.android.BioKey.core.security.UnlockAttempts
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -34,7 +38,14 @@ object DiagnosticLog {
     private const val PREFS = "biokey_diagnostics"
     private const val KEY_ENABLED = "enabled"
 
-    data class Entry(val at: Long, val text: String)
+    /**
+     * [at] on [TrustedClock]; [elapsed] and [boot] when, on the clock since boot, and [net] whether
+     * [at] is on the network's time: aged like BioKey's records ([UnlockAttempts.Ageing]).
+     */
+    data class Entry(val at: Long, val text: String, val elapsed: Long = 0L, val boot: Int = -1, val net: Boolean = true)
+
+    /** The phone's restart count, read at [init]; -1 before (those entries age only on network time). */
+    @Volatile private var boot = -1
 
     /**
      * The kept entries. Their lock is held only to change or copy them, never for the file, which
@@ -51,12 +62,18 @@ object DiagnosticLog {
     private var linesInFile = 0
     /** The number ([logged]) of the newest entry the file holds. Only touched on [io]. */
     private var written = 0L
-    /** Time of the oldest line in the file, or [Long.MAX_VALUE] when it has none. Written only on [io]. */
-    @Volatile private var oldestInFile = Long.MAX_VALUE
+    /** The oldest line in the file, or null when it has none. Written only on [io]. */
+    @Volatile private var oldestInFile: Entry? = null
 
     private val _version = MutableStateFlow(0)
     /** Changes whenever the log does, for screens showing it. */
     val version: StateFlow<Int> = _version.asStateFlow()
+
+    /** Tests: waits until what's queued on the log's own thread (loading it, its on/off setting) is done. */
+    @androidx.annotation.VisibleForTesting
+    internal fun awaitIoForTests() {
+        io.submit {}.get()
+    }
 
     /**
      * Loads the saved log; call once the user's storage is unlocked. Before that, and before the
@@ -65,12 +82,17 @@ object DiagnosticLog {
     fun init(context: Context) {
         val f = File(context.filesDir, FILE_NAME)
         io.execute {
+            val count = Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, 0)
+            // Set and patched under the entries' lock, which log() stamps under: no entry logged
+            // meanwhile can miss both.
+            synchronized(entries) {
+                boot = count
+                // Logged before this was known (this process's start): they're from this boot.
+                for (i in entries.indices) if (entries[i].boot == -1 && entries[i].elapsed > 0L) entries[i] = entries[i].copy(boot = count)
+            }
             enabled = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, true)
             val saved = runCatching {
-                if (!f.exists()) emptyList() else f.readLines().mapNotNull { line ->
-                    val tab = line.indexOf('\t')
-                    if (tab <= 0) null else line.substring(0, tab).toLongOrNull()?.let { Entry(it, line.substring(tab + 1)) }
-                }
+                if (!f.exists()) emptyList() else f.readLines().mapNotNull(::parse)
             }.getOrDefault(emptyList())
             val (kept, through) = synchronized(entries) {
                 val early = entries.toList()
@@ -95,8 +117,13 @@ object DiagnosticLog {
         // Whatever the log's own switch: a replay compares what the engines decided.
         EngineTrace.record("o.log", text)
         if (!enabled) return
-        val entry = Entry(System.currentTimeMillis(), text.replace('\n', ' '))
+        // Stamped on the clocks it's aged on, which a changed date doesn't move.
+        val at = TrustedClock.now()
+        val net = TrustedClock.onNetworkTime()
+        val since = SystemClock.elapsedRealtime()
+        val entry: Entry
         synchronized(entries) {
+            entry = Entry(at, text.replace('\n', ' '), since, boot, net)
             entries.addLast(entry)
             while (entries.size > MAX_ENTRIES) entries.removeFirst()
             val number = ++logged
@@ -106,13 +133,13 @@ object DiagnosticLog {
                 val f = file?.takeIf { enabled } ?: return@execute
                 // Already in the file: a rewrite since it was logged wrote it.
                 if (number <= written) return@execute
-                if (oldestInFile < cutoff() || linesInFile >= REWRITE_AT_LINES) {
+                if (oldestInFile?.let { isOld(it) } == true || linesInFile >= REWRITE_AT_LINES) {
                     rewrite()
                 } else {
-                    runCatching { f.appendText("${entry.at}\t${entry.text}\n") }
+                    runCatching { f.appendText(line(entry)) }
                     linesInFile++
                     written = number
-                    oldestInFile = minOf(oldestInFile, entry.at)
+                    if (oldestInFile == null) oldestInFile = entry
                 }
             }
         }
@@ -120,13 +147,13 @@ object DiagnosticLog {
     }
 
     fun entries(): List<Entry> {
-        val cutoff = cutoff()
+        val age = ageing()
         val kept = synchronized(entries) {
-            entries.removeAll { it.at < cutoff }
+            entries.removeAll { isOld(it, age) }
             entries.toList()
         }
         // The file still holds lines that old: written afresh, on the log's own thread.
-        if (oldestInFile < cutoff) io.execute { if (oldestInFile < cutoff()) rewrite() }
+        if (oldestInFile?.let { isOld(it, age) } == true) io.execute { if (oldestInFile?.let { isOld(it) } == true) rewrite() }
         return kept
     }
 
@@ -157,16 +184,40 @@ object DiagnosticLog {
         }
     }
 
-    /** Entries logged before this are older than [MAX_AGE_MS]. */
-    private fun cutoff(): Long = System.currentTimeMillis() - MAX_AGE_MS
+    /**
+     * Older than [MAX_AGE_MS] on a clock nobody can set: the clock since boot within a boot, the
+     * network's time across one. Otherwise not aged (only [MAX_ENTRIES] applies): on the phone's
+     * own clock, a date set ahead would empty the log.
+     */
+    private fun ageing() = UnlockAttempts.Ageing(boot, SystemClock.elapsedRealtime(), MAX_AGE_MS)
+
+    private fun isOld(e: Entry, age: UnlockAttempts.Ageing = ageing()) = age.past(e.at, e.net, e.elapsed, e.boot)
+
+    /** One line of the file: time, then "~elapsed,boot,net" (absent in older files), then the text. */
+    private fun line(e: Entry) = "${e.at}\t~${e.elapsed},${e.boot},${if (e.net) 1 else 0}\t${e.text}\n"
+
+    private fun parse(line: String): Entry? {
+        val tab = line.indexOf('\t')
+        if (tab <= 0) return null
+        val at = line.substring(0, tab).toLongOrNull() ?: return null
+        val rest = line.substring(tab + 1)
+        if (rest.startsWith("~")) {
+            val end = rest.indexOf('\t')
+            val clocks = if (end > 0) rest.substring(1, end).split(',') else emptyList()
+            if (clocks.size == 3) {
+                return Entry(at, rest.substring(end + 1), clocks[0].toLongOrNull() ?: 0L, clocks[1].toIntOrNull() ?: -1, clocks[2] == "1")
+            }
+        }
+        return Entry(at, rest)
+    }
 
     /**
      * Forgets entries older than [MAX_AGE_MS] and copies the rest, with the number ([logged]) of
      * the newest entry logged so far. Call holding the entries lock.
      */
     private fun keptEntries(): Pair<List<Entry>, Long> {
-        val cutoff = cutoff()
-        entries.removeAll { it.at < cutoff }
+        val age = ageing()
+        entries.removeAll { isOld(it, age) }
         return entries.toList() to logged
     }
 
@@ -179,9 +230,9 @@ object DiagnosticLog {
     /** Writes [kept], every entry up to number [through], over the file. On [io], outside the entries lock. */
     private fun write(kept: List<Entry>, through: Long) {
         val f = file ?: return
-        runCatching { f.writeText(kept.joinToString("") { "${it.at}\t${it.text}\n" }) }
+        runCatching { f.writeText(kept.joinToString("", transform = ::line)) }
         linesInFile = kept.size
         written = through
-        oldestInFile = kept.minOfOrNull { it.at } ?: Long.MAX_VALUE
+        oldestInFile = kept.firstOrNull()
     }
 }

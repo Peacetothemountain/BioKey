@@ -25,7 +25,9 @@
         <package android:name="com.google.android.gms" />
         <package android:name="com.google.android.apps.credentialmanager" />
         <package android:name="com.android.credentialmanager" />
-        <!-- Settings' own labels ("Force stop", "Uninstall"...), read in the phone's language for self-protection. -->
+        <!-- Settings itself: its pages open straight in it, never in an app posing as it
+             (IntentNavigationHelper), and self-protection reads its labels ("Force stop",
+             "Uninstall"...) in the phone's language. -->
         <package android:name="com.android.settings" />
         <!-- Apps the user can pick to lock. -->
         <intent>
@@ -40,6 +42,58 @@
         <!-- BioKey's own switch on the Accessibility settings page (Android 13+). -->
         <intent>
             <action android:name="android.settings.ACCESSIBILITY_DETAILS_SETTINGS" />
+        </intent>
+        <!-- The other system pages BioKey opens: seen, so each opens in the system app that
+             handles it, wherever a phone maker put it, never in an app posing as Settings. -->
+        <intent>
+            <action android:name="android.app.action.SET_NEW_PASSWORD" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.SECURITY_SETTINGS" />
+        </intent>
+        <!-- Adding a face or fingerprint (home's card), Android 17's own App lock page, and
+             private space's page where Settings lets other apps open it (Settings). -->
+        <intent>
+            <action android:name="android.settings.BIOMETRIC_ENROLL" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.APP_LOCK_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="com.android.settings.action.OPEN_PRIVATE_SPACE_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.ACCESSIBILITY_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.USAGE_ACCESS_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.USAGE_ACCESS_SETTINGS" />
+            <data android:scheme="package" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.action.MANAGE_OVERLAY_PERMISSION" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.action.MANAGE_OVERLAY_PERMISSION" />
+            <data android:scheme="package" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.NOTIFICATION_LISTENER_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.NOTIFICATION_LISTENER_DETAIL_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.APP_NOTIFICATION_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.CHANNEL_NOTIFICATION_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.APPLICATION_DETAILS_SETTINGS" />
+            <data android:scheme="package" />
         </intent>
         <!-- Photo pickers, galleries, file pickers and cameras: an app opening one mid-task (to
              attach a photo, say) and getting the result back keeps its session. -->
@@ -63,6 +117,32 @@
         </intent>
         <intent>
             <action android:name="android.media.action.VIDEO_CAPTURE" />
+        </intent>
+        <!-- The lock-screen camera and the emergency dialer: they open over the phone's lock
+             screen uncovered, as Android's own App lock lets them (ForegroundRules.KEYGUARD_INTENTS). -->
+        <intent>
+            <action android:name="android.media.action.STILL_IMAGE_CAMERA_SECURE" />
+        </intent>
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE_SECURE" />
+        </intent>
+        <intent>
+            <action android:name="android.media.action.MOTION_PHOTO_CAPTURE_SECURE" />
+        </intent>
+        <intent>
+            <action android:name="android.provider.action.REVIEW_SECURE" />
+            <data android:mimeType="image/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.DIAL_EMERGENCY" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.DIAL_EMERGENCY" />
+            <data android:scheme="tel" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.CALL_EMERGENCY" />
+            <data android:scheme="tel" />
         </intent>
         <!-- Keyboards: an IME window must never count as leaving a locked app. -->
         <intent>
@@ -89,6 +169,7 @@
 
         <activity
             android:name=".feature.main.MainActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|uiMode|density|keyboard|keyboardHidden|navigation|touchscreen|colorMode|mcc|mnc"
             android:exported="true"
             android:launchMode="singleTask"
             android:theme="@style/Theme.BioKey"
@@ -97,7 +178,20 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
+
+        <!-- The launcher shortcut "Lock all now": ends every session and goes, showing nothing.
+             Not exported: the launcher starts a shortcut as BioKey itself, and no other app can. -->
+        <activity
+            android:name=".feature.main.LockAllActivity"
+            android:exported="false"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay" />
 
         <!-- The Quick Settings tile's way to the pause sheet. Not exported: no other app can open it. -->
         <activity-alias
@@ -151,6 +245,42 @@
             </intent-filter>
         </service>
 
+        <!-- While app locking is off, brings its alert back every ~15 minutes if swiped away. -->
+        <service
+            android:name=".core.security.ProtectionCheckJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <!-- The Lock button on "Lock <new app>?". Not exported: only BioKey's own notification sends it. -->
+        <receiver
+            android:name=".core.security.NewAppSuggestions$LockReceiver"
+            android:exported="false" />
+
+        <!-- Quick Settings "Lock all": only ever locks, so a tap needs no authentication. -->
+        <service
+            android:name=".feature.tile.LockAllTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_lock_all"
+            android:label="@string/lock_all_tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- Quick Settings "Lock this app": locks the app the shade came down over; only ever
+             adds a lock, so a tap needs no authentication. -->
+        <service
+            android:name=".feature.tile.LockThisAppTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_lock_app"
+            android:label="@string/lock_app_tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <service
             android:name=".feature.lock.UsageWatchService"
             android:exported="false"
@@ -158,16 +288,6 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="App lock compatibility mode: while the screen is on, reads which app was opened and whether a locked app is still on screen (usage access) to cover apps the user has locked, on devices where the accessibility service cannot run (for example under Android Advanced Protection). Nothing leaves the device." />
-        </service>
-
-        <service
-            android:name=".feature.notification.BioKeyNotificationShieldService"
-            android:exported="true"
-            android:label="@string/notification_shield_label"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
         </service>
 
     </application>

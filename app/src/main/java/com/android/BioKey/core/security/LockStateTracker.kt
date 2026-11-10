@@ -14,6 +14,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
@@ -80,6 +84,16 @@ object LockStateTracker {
     /** How long after an app left the screen its window may still flicker back during the exit animation. */
     private const val JUST_LEFT_MS = 2_000L
 
+    /**
+     * With sessions waiting for the phone to lock ([awaitingPhoneLock]), a phone-unlocked
+     * broadcast this soon after the screen came back on is the unlock that woke it (a fingerprint
+     * on a dark screen): see [onUserPresent].
+     */
+    private const val SCREEN_BACK_UNLOCK_MS = 5_000L
+
+    /** Smart Lock is taken to keep the phone unlocked once seen so twice at least this far apart ([trustedKeyguardSeen]). */
+    private const val TRUSTED_KEYGUARD_MS = 1_000L
+
     /** How long a successful self-protection challenge lets the user stay in BioKey's settings pages. */
     private const val SELF_PROTECTION_LEASE_MS = 120_000L
 
@@ -124,6 +138,12 @@ object LockStateTracker {
     @Volatile private var selfProtectionGrantedAt = 0L
     @Volatile private var selfProtectionVisitedGuardedScreen = false
 
+    /**
+     * BioKey's main screen is on display (started, not stopped), locked or not. Its windows can't
+     * be read by its own accessibility service, nor send it events: this is how it knows.
+     */
+    @Volatile var ownScreenShowing = false
+
     @Volatile private var ownUnlockedAt = 0L
     @Volatile private var ownLastActiveAt = 0L
     @Volatile private var ownInForeground = false
@@ -149,7 +169,7 @@ object LockStateTracker {
     fun addLockAllListener(listener: () -> Unit) { lockAllListeners += listener }
     fun removeLockAllListener(listener: () -> Unit) { lockAllListeners -= listener }
 
-    /** Notified whenever an app is unlocked, e.g. for notification shield stand-in dismissal. */
+    /** Notified whenever an app is unlocked. */
     fun addAppUnlockListener(listener: (String) -> Unit) { appUnlockListeners += listener }
     fun removeAppUnlockListener(listener: (String) -> Unit) { appUnlockListeners -= listener }
 
@@ -159,8 +179,8 @@ object LockStateTracker {
 
     /**
      * Like [addAppLockListener], but told once per batch ([lockPackages]): turning on 40 locks
-     * from a backup is one call, so a listener that rescans everything (the notification shield)
-     * does it once rather than 40 times.
+     * from a backup is one call, so a listener that rescans everything does it once rather than
+     * 40 times.
      */
     fun addAppsLockListener(listener: (Set<String>) -> Unit) { appsLockListeners += listener }
     fun removeAppsLockListener(listener: (Set<String>) -> Unit) { appsLockListeners -= listener }
@@ -188,14 +208,33 @@ object LockStateTracker {
     private val timerScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val expiryJobs = ConcurrentHashMap<String, Job>()
 
+    /**
+     * Where the re-lock delay in force comes from (the vault, as it loads): a delay changed in
+     * Settings while an app is away applies to it, not the one it left under.
+     */
+    @Volatile
+    var timeoutModeOf: ((String) -> LockTimeoutMode)? = null
+
     /** Re-checks a session when its away time runs out so notifications re-mask on time. */
     private fun scheduleExpiry(packageName: String, delayMs: Long, timeoutMode: LockTimeoutMode) {
         cancelExpiry(packageName)
         val job = timerScope.launch {
             delay(delayMs + 50L)
-            isAppUnlocked(packageName, timeoutMode)
+            onExpiryDue(packageName, timeoutMode)
         }
         for (pkg in PasswordManager.aliasesOf(packageName)) expiryJobs[pkg] = job
+    }
+
+    /**
+     * [packageName]'s away time under [scheduled] ran out: it ends under the delay in force now.
+     * Made longer meanwhile, the session carries on, and is looked at again when that runs out.
+     */
+    internal fun onExpiryDue(packageName: String, scheduled: LockTimeoutMode) {
+        val mode = timeoutModeOf?.invoke(packageName) ?: scheduled
+        if (!isAppUnlocked(packageName, mode) || mode.durationMillis <= 0L) return
+        val away = sessionOf(packageName)?.away?.get() ?: return
+        val left = away.since + awayAllowanceMs(mode, away.hopTarget != null) - now()
+        if (left > 0L) scheduleExpiry(packageName, left, mode)
     }
 
     private fun cancelExpiry(packageName: String) {
@@ -232,6 +271,47 @@ object LockStateTracker {
         return true
     }
 
+    /**
+     * How long an app a prompt named beside its own ([nameAlongside]) has to be seen on screen to
+     * be unlocked by it: a split screen the lock screen hid takes about a second to form again.
+     */
+    const val NAMED_ARRIVAL_MS = 3_000L
+
+    /** Apps a prompt named beside its own, with when and the [generation] then ([nameAlongside]). */
+    private val namedAlongside = ConcurrentHashMap<String, Pair<Long, Int>>()
+
+    /**
+     * A lock screen's prompt, which named [packageName] beside the app it was for (the other half
+     * of a split screen), succeeded, [generation] being [lockGeneration] as it started. It isn't
+     * unlocked yet: only once an engine sees it on screen, within [NAMED_ARRIVAL_MS] ([claimNamed]),
+     * so a name that turns out not to be on screen (it was left meanwhile) unlocks nothing.
+     */
+    fun nameAlongside(packageName: String, generation: Int) {
+        if (generation != this.generation) return
+        val entry = now() to generation
+        for (pkg in PasswordManager.aliasesOf(packageName)) namedAlongside[pkg] = entry
+        timerScope.launch {
+            delay(NAMED_ARRIVAL_MS)
+            val left = PasswordManager.aliasesOf(packageName).any { namedAlongside.remove(it, entry) }
+            if (left) DiagnosticLog.log("$packageName wasn't on screen after the prompt that named it; still locked")
+        }
+    }
+
+    /**
+     * [packageName] is on screen now, as an engine sees it. If a prompt named it beside its own app
+     * moments ago ([nameAlongside]), its session starts. Returns whether it did.
+     */
+    fun claimNamed(packageName: String): Boolean {
+        if (namedAlongside.isEmpty()) return false
+        val aliases = PasswordManager.aliasesOf(packageName)
+        val (at, generation) = aliases.firstNotNullOfOrNull { namedAlongside[it] } ?: return false
+        for (pkg in aliases) namedAlongside.remove(pkg)
+        if (now() - at >= NAMED_ARRIVAL_MS) return false
+        return onAppUnlocked(packageName, generation).also { started ->
+            if (started) DiagnosticLog.log("$packageName unlocked by the prompt that named it, now that it's on screen")
+        }
+    }
+
     private fun staleUnlock(packageName: String): Boolean {
         Log.i(TAG, "Unlock of $packageName arrived after a lock-all; ignored")
         DiagnosticLog.log("Unlock of $packageName ignored: the phone was locked meanwhile")
@@ -244,6 +324,13 @@ object LockStateTracker {
         session.seen = true
         if (session.away.getAndSet(null) == null) return
         cancelExpiry(packageName)
+    }
+
+    /** [mode] as the diagnostic log says it: "after 30 s", "at screen off". */
+    private fun relockLabel(mode: LockTimeoutMode) = when (mode) {
+        LockTimeoutMode.IMMEDIATE -> "immediately"
+        LockTimeoutMode.ON_SCREEN_OFF -> "when the phone locks"
+        else -> if (mode.durationMillis < 60_000L) "after ${mode.durationMillis / 1000} s" else "after ${mode.durationMillis / 60_000} min"
     }
 
     /**
@@ -260,7 +347,7 @@ object LockStateTracker {
         for (pkg in PasswordManager.aliasesOf(packageName)) leftAt[pkg] = away.since
         Log.d(TAG, "$packageName left the screen (hop=$hopTarget)")
         // The diagnostic log names locked apps only: a hop's destination is just "a helper app".
-        DiagnosticLog.log("$packageName left the screen" + if (hopTarget != null) " · hop to a helper app" else " · re-lock: ${timeoutMode.name.lowercase()}")
+        DiagnosticLog.log("$packageName left the screen" + if (hopTarget != null) " · hop to a helper app" else " · re-lock: ${relockLabel(timeoutMode)}")
         when {
             timeoutMode == LockTimeoutMode.IMMEDIATE && hopTarget == null -> lockPackage(packageName, "left, re-locks immediately")
             timeoutMode == LockTimeoutMode.ON_SCREEN_OFF -> Unit
@@ -284,6 +371,8 @@ object LockStateTracker {
         timeoutModeOf: (String) -> LockTimeoutMode,
         continuesHop: (String) -> Boolean = { false }
     ) {
+        // What the "Lock this app" tile locks.
+        FrontApp.onFront(foregroundPackage)
         if (foregroundPackage != OWN_PACKAGE) {
             val front = PasswordManager.aliasesOf(foregroundPackage)
             displacedCovers.keys.removeAll { it !in front }
@@ -322,6 +411,8 @@ object LockStateTracker {
     }
 
     fun isAppUnlocked(packageName: String, timeoutMode: LockTimeoutMode): Boolean {
+        // The file picker BioKey opened itself, from its own unlocked screen: the owner's trip.
+        if (packageName in ownPickers && isOwnPickerActive()) return true
         val session = sessionOf(packageName) ?: return false
         if (!session.seen && now() - session.unlockedAt > ARRIVAL_GRACE_MS) {
             return !expire(packageName, session, "never reached the screen") && isAppUnlocked(packageName, timeoutMode)
@@ -334,6 +425,23 @@ object LockStateTracker {
         }
         if (now() - away.since < awayAllowanceMs(timeoutMode, hopping)) return true
         return !expire(packageName, session, "re-lock time passed") && isAppUnlocked(packageName, timeoutMode)
+    }
+
+    /**
+     * The locked apps open right now: a session that [isAppUnlocked] still honours (looking ends
+     * any that ran out). Both of Google Password Manager's names count as one app's.
+     */
+    fun unlockedApps(timeoutModeOf: (String) -> LockTimeoutMode): Set<String> =
+        sessions.keys.filterTo(HashSet()) { isAppUnlocked(it, timeoutModeOf(it)) }
+
+    /**
+     * How long [packageName], unlocked and off screen, has left before it locks again; null while
+     * it's on screen, when it waits for the screen to turn off, or when it isn't unlocked.
+     */
+    fun awayRemainingMs(packageName: String, timeoutMode: LockTimeoutMode): Long? {
+        if (!isAppUnlocked(packageName, timeoutMode) || timeoutMode == LockTimeoutMode.ON_SCREEN_OFF) return null
+        val away = sessionOf(packageName)?.away?.get() ?: return null
+        return (awayAllowanceMs(timeoutMode, away.hopTarget != null) - (now() - away.since)).coerceAtLeast(0L)
     }
 
     /**
@@ -396,6 +504,9 @@ object LockStateTracker {
     fun lockAll(includeOwnApp: Boolean = true, reason: String? = null) {
         // First, so an unlock racing this from another thread sees it ([onAppUnlocked]).
         generation++
+        // Nothing is waiting for the phone to lock any more: it's all locked.
+        awaitingPhoneLock = false
+        namedAlongside.clear()
         expiryJobs.values.forEach { it.cancel() }
         expiryJobs.clear()
         sessions.clear()
@@ -424,18 +535,123 @@ object LockStateTracker {
         DiagnosticLog.log("All sessions ended ($reason)")
     }
 
-    fun onScreenTurnedOff() = lockAll(reason = "screen off")
+    /**
+     * The screen went off with every session kept (apps lock when the phone locks, not when the
+     * screen turns off while Android keeps the phone unlocked: its own "lock after" delay, Smart
+     * Lock): waiting to see the phone lock ([onDeviceLockState]), or be unlocked without having
+     * been seen not locked with its keyguard up ([onUserPresent]). Over at the next lock-all.
+     */
+    @Volatile
+    var awaitingPhoneLock = false
+        private set
+
+    /**
+     * While [awaitingPhoneLock]: the keyguard was seen up, with the screen off, and the phone not
+     * locked under it (Smart Lock keeps it unlocked), twice at least [TRUSTED_KEYGUARD_MS] apart:
+     * its being dismissed later is no lock missed. Once isn't enough: as the keyguard comes up to
+     * lock the phone, it's up a moment before the phone counts as locked.
+     */
+    @Volatile private var trustedKeyguardSeen = false
+    /** When the keyguard was first seen up in the dark with the phone not locked, or 0 ([trustedKeyguardSeen]). */
+    @Volatile private var trustedKeyguardFirstAt = 0L
+
+    /** When the screen last came back on while [awaitingPhoneLock] ([onScreenOn]), or 0. */
+    @Volatile private var screenBackAt = 0L
+
+    /**
+     * The screen turned off (or a screensaver started, or the phone is shutting down: then
+     * [phoneLocked] is null). Every session ends if Android has locked the phone already
+     * ([phoneLocked]); otherwise they wait for it ([awaitingPhoneLock]): apps lock when the phone
+     * locks, and a screen-off Android doesn't follow with a lock (its own "lock after" delay,
+     * Smart Lock keeping it unlocked) is no lock. Can't tell (null): they end, failing toward
+     * locking. BioKey's own session ends either way.
+     */
+    fun onScreenTurnedOff(phoneLocked: Boolean? = null) {
+        if (phoneLocked != false) {
+            lockAll(reason = "screen off")
+            return
+        }
+        if (!awaitingPhoneLock) {
+            awaitingPhoneLock = true
+            DiagnosticLog.log("Screen off: apps stay unlocked until the phone locks")
+        }
+        trustedKeyguardSeen = false
+        trustedKeyguardFirstAt = 0L
+        screenBackAt = 0L
+        deviceLocked = false
+        clearSelfProtection()
+        lockOwnApp()
+    }
 
     @Volatile private var deviceLocked = false
 
     /**
      * The device's locked state, as last seen. Locking the device (screen off, screensaver, the
      * power menu's Lockdown, a lock with the screen still on) ends every session, every time.
+     * [keyguardUpInTheDark]: asked only while [awaitingPhoneLock] and the phone isn't locked,
+     * whether the keyguard is up with the screen off, which, seen so twice a moment apart, can
+     * only be Android keeping the phone unlocked under it (Smart Lock): see [onUserPresent].
      */
-    fun onDeviceLockState(locked: Boolean) {
+    fun onDeviceLockState(locked: Boolean, keyguardUpInTheDark: (() -> Boolean)? = null) {
         if (locked && !deviceLocked) lockAll(reason = "phone locked")
+        if (!locked && deviceLocked) phoneUnlocks++
         deviceLocked = locked
+        if (!locked && awaitingPhoneLock && !trustedKeyguardSeen && keyguardUpInTheDark != null) {
+            if (!keyguardUpInTheDark()) {
+                trustedKeyguardFirstAt = 0L
+            } else {
+                val t = now()
+                val first = trustedKeyguardFirstAt
+                if (first == 0L) trustedKeyguardFirstAt = t else if (t - first >= TRUSTED_KEYGUARD_MS) trustedKeyguardSeen = true
+            }
+        }
     }
+
+    /**
+     * The screen came back on, [phoneLocked] or not. Locked: every session ends, and the app left
+     * on screen is covered behind the keyguard before the phone is unlocked. Not: the screen came
+     * back within Android's own lock delay, as far as can be told yet ([onUserPresent]). Only
+     * while sessions wait for the phone to lock: otherwise every one ended with the screen.
+     */
+    fun onScreenOn(phoneLocked: Boolean) {
+        if (!awaitingPhoneLock) return
+        onDeviceLockState(phoneLocked)
+        if (awaitingPhoneLock) screenBackAt = now()
+    }
+
+    /**
+     * The phone was just unlocked (the keyguard dismissed). While [awaitingPhoneLock], a keyguard
+     * that went away means the phone may have locked and been unlocked again in the dark, a
+     * fingerprint on a dark screen racing the screen coming on, unseen; unless the keyguard was
+     * seen up with the phone not locked (Smart Lock), BioKey can't tell, and every session ends.
+     * Either way the wait is over: the phone is in use.
+     */
+    fun onUserPresent() {
+        if (!awaitingPhoneLock) return
+        val recent = screenBackAt == 0L || now() - screenBackAt < SCREEN_BACK_UNLOCK_MS
+        if (!trustedKeyguardSeen && recent) {
+            lockAll(reason = "phone unlocked; couldn't tell whether it had locked")
+        } else {
+            awaitingPhoneLock = false
+        }
+    }
+
+    /**
+     * A screensaver is showing (DREAMING_STARTED until DREAMING_STOPPED, or the phone unlocked):
+     * the phone counts as locked, nothing is covered over it, and a lock screen started as it came
+     * waits behind it whatever the keyguard's own lock delay says ([ScreenReceiver] keeps this).
+     */
+    var screensaverShowing: Boolean
+        get() = screensaverFlow.value
+        set(value) { screensaverFlow.value = value }
+    private val screensaverFlow = MutableStateFlow(false)
+    /** [screensaverShowing], to follow: a lock screen held while one showed prompts as it ends. */
+    val screensaver: StateFlow<Boolean> = screensaverFlow.asStateFlow()
+
+    /** Times the phone has been seen unlocked (the keyguard going away), as the engines report it. */
+    @Volatile
+    var phoneUnlocks = 0
+        private set
 
     // ---------------------------------------------------------------------------------------
     // Lock-screen launch debouncing
@@ -569,7 +785,7 @@ object LockStateTracker {
         if (ownUnlockedAt == 0L) return false
         if (now() - ownLastActiveAt < OWN_APP_IDLE_MS) return true
         Log.i(TAG, "BioKey session ended after inactivity")
-        lockOwnApp()
+        lockOwnApp(timedOut = true)
         return false
     }
 
@@ -626,12 +842,16 @@ object LockStateTracker {
      * that one trip (at most [OWN_PICKER_LEASE_MS], ended by coming back, by going anywhere but the
      * picker, or by any lock-all). Unlike [beginExternalNavigation], it grants no self-protection.
      */
-    fun beginOwnPicker() {
+    fun beginOwnPicker(pickers: Set<String> = emptySet()) {
         if (!hasActiveOwnerSession()) return
         val t = now()
         ownLastActiveAt = t
         ownPickerAt = t
+        ownPickers = pickers
     }
+
+    /** The file picker's own packages: locked themselves (a "Files" app), they open for BioKey's own trip. */
+    @Volatile private var ownPickers: Set<String> = emptySet()
 
     fun isOwnPickerActive(): Boolean {
         val started = ownPickerAt
@@ -706,16 +926,38 @@ object LockStateTracker {
     private fun endTripAway() {
         if (!ownInForeground && ownUnlockedAt != 0L) {
             Log.i(TAG, "BioKey's trip away ran out; session ended")
-            lockOwnApp()
+            lockOwnApp(timedOut = true, tripRanOut = true)
         }
     }
 
-    fun lockOwnApp() {
+    private val ownLocksFlow = MutableStateFlow(0)
+
+    /**
+     * Counts BioKey's own session ending, however it ended (a timeout, "lock all" from a tile or
+     * the shortcut, the screen turning off): its screens follow at once rather than at their next check.
+     */
+    val ownLocks: StateFlow<Int> = ownLocksFlow.asStateFlow()
+
+    /** Whether BioKey's session last ended by running out (3 minutes idle, a trip away), not by being locked. */
+    @Volatile
+    var ownSessionTimedOut = false
+        private set
+
+    /** Whether that was a trip of BioKey's own (a settings page, the file picker) running out while away. */
+    @Volatile
+    var ownTripRanOut = false
+        private set
+
+    fun lockOwnApp(timedOut: Boolean = false, tripRanOut: Boolean = false) {
+        ownSessionTimedOut = timedOut
+        ownTripRanOut = tripRanOut
+        SecurityEngine.INSTANCE.forgetOwnProof()
         ownUnlockedAt = 0L
         ownLastActiveAt = 0L
         ownInForeground = false
         externalNavigationAt = 0L
         ownPickerAt = 0L
         ownLockScreenHopAt = 0L
+        ownLocksFlow.update { it + 1 }
     }
 }

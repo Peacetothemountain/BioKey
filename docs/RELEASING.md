@@ -21,7 +21,8 @@ For whoever publishes BioKey to Google Play. Users don't need any of this.
 3. The emulator gantlet passes on the foldable profiles: `python tools/emulator_gantlet.py`.
 4. `versionCode` and `versionName` are bumped in `app/build.gradle.kts`.
 5. `CHANGELOG.md` has an entry for the version.
-6. If anything BioKey reads, keeps or shares changed: `PRIVACY.md` and `docs/privacy.md` are updated together (with a new effective date), and so are the in-app disclosures (`feature/main/Disclosures.kt`) and the Play Console Data safety form.
+6. On the test phone, with **Face or fingerprint only** on, lock **Android Settings** (home suggests it): otherwise anyone with the PIN can add a fingerprint there, and the gantlets don't cover that. For Play review: an owner who locks Android's Settings puts BioKey's own accessibility switch and App info behind their face or fingerprint too. That is the owner locking an app of their choice, not BioKey protecting itself (it never blocks those screens on its own), and a dead sensor falls back to the screen lock; say so in the Accessibility declaration if asked.
+7. If anything BioKey reads, keeps or shares changed: `PRIVACY.md` and `docs/privacy.md` are updated together (with a new effective date), and so are the in-app disclosures (`ui/disclosure/Disclosures.kt`) and the Play Console Data safety form.
 
 ## Building the bundle
 
@@ -46,9 +47,9 @@ Keep `app/build/outputs/mapping/release/mapping.txt` from every build you upload
 Done once, and checked again whenever the app's behaviour changes:
 
 - **Privacy policy:** https://peacetothemountain.github.io/BioKey/privacy/ (needs GitHub Pages, below).
-- **Accessibility API declaration:** BioKey uses the Accessibility API and isn't an accessibility tool (`isAccessibilityTool="false"`). Describe the core feature (locking chosen apps until the owner authenticates; optionally guarding BioKey's own settings) and attach a short screen recording showing the in-app disclosure, **Agree**, turning on the service, and a locked app being covered and unlocked.
+- **Accessibility API declaration:** BioKey uses the Accessibility API and isn't an accessibility tool (`isAccessibilityTool="false"`). The Play build has no self-protection (Play doesn't allow blocking disable or uninstall outside parental-control and enterprise apps): never upload a build made with `-Pbiokey.selfProtection=true`, whose version name ends in `-selfprotection`. Describe the core feature (locking chosen apps until the owner authenticates), and say up front that the owner may choose to lock Android's Settings like any app (BioKey suggests it with "Face or fingerprint only"), which also puts BioKey's own switch behind their authentication; BioKey never blocks those screens itself, a dead sensor falls back to the screen lock, and the disclosure says so. Attach a short screen recording showing the in-app disclosure, **Agree**, turning on the service, a locked app being covered and unlocked, and the "Lock Android Settings too" suggestion.
 - **Foreground service declaration:** `specialUse`, for compatibility mode. Use the same text as `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` in `app/src/main/AndroidManifest.xml`, and a short video of compatibility mode covering a locked app.
-- **Data safety:** BioKey has no `INTERNET` permission, and NB Designs receives nothing. Data processed only on the device isn't "collected" in Play's terms, and the two things that can leave the phone (the backup file and the diagnostic log) go only where the user sends them, from Android's file picker and share sheet. The answer is no data collected and no data shared; re-read Google's current guidance before submitting, since it's your declaration.
+- **Data safety:** BioKey has no `INTERNET` permission, and NB Designs receives nothing. Data processed only on the device isn't "collected" in Play's terms, and the two things that can leave the phone (the backup file and the diagnostic log) go only where the user sends them, from Android's file picker and share sheet. Security activity (failed unlocks, times app locking was off, face or fingerprint changes, notification access revoked under the shield, changes from a screen-lock session or within a day of a face or fingerprint change, reminders stopped meanwhile, the diagnostic log opened for sharing from such a session) stays on the phone too, like the diagnostic log (which now names them); the log leaves only when the user shares it, to a place they pick, which Play doesn't count as collection by the app. The answer is no data collected and no data shared; re-read Google's current guidance before submitting, since it's your declaration.
 - **App access:** nothing is behind a sign-in. Reviewers need a phone with a screen lock set up; tell them setup asks for accessibility (or, under Advanced Protection, usage access and display over other apps) after an in-app disclosure.
 - **Ads:** none.
 - **Target audience and content:** not designed for children. Fill in the content rating questionnaire (no user-generated content, no sharing between users, no location).
@@ -78,11 +79,8 @@ The privacy policy, support page and landing page are served from the `docs/` fo
 
 - Repository Settings > Pages > Build and deployment: **Deploy from a branch**, branch `main`, folder `/docs`.
 - The site is at https://peacetothemountain.github.io/BioKey/, the policy at `/privacy/`, support at `/support/`.
-- `docs/privacy.md` is `PRIVACY.md` with Jekyll front matter on top. Keep them identical; this prints nothing when they are:
-
-  ```bash
-  tail -n +6 docs/privacy.md | diff - PRIVACY.md
-  ```
+- `docs/privacy.md` says what `PRIVACY.md` says, laid out for the web (an "at a glance" summary, a table of contents, HTML headings with fixed ids the table of contents relies on). The two aren't byte-identical: when one changes, change the other to match, statement for statement, and give both the new effective date.
+- The site's look is `docs/_layouts/default.html`, `docs/_includes/mark-defs.html` (the logo) and `docs/assets/css/style.css`; `docs/assets/logo.svg` is the mark on its own. No theme, no plugins, nothing loaded from another site.
 
 This file (`docs/RELEASING.md`) is excluded in `docs/_config.yml`, so it isn't part of the site.
 

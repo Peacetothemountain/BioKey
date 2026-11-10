@@ -4,16 +4,11 @@ title: BioKey
 description: An app lock for Android. Your chosen apps open only after your face, fingerprint or screen lock. No internet access, no data collected.
 url: "https://peacetothemountain.github.io"
 baseurl: "/BioKey"
-
-# Supported by GitHub Pages without any extra plugins.
-theme: minima
 email: support.nbdesigns@gmail.com
-github_username: Peacetothemountain
 
-# The links in the site's header, in this order.
-header_pages:
-  - privacy.md
-  - support.md
+# No theme and no plugins: the site is _layouts/default.html, _includes/ and assets/css/style.css,
+# built by GitHub Pages' stock Jekyll. Nothing on it is loaded from anywhere else (no web fonts,
+# scripts or analytics), as nothing leaves the phone in BioKey either.
 
 # For whoever publishes BioKey, not for its users: read on GitHub instead.
 exclude:

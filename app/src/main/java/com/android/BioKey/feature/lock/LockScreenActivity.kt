@@ -1,10 +1,9 @@
 package com.android.BioKey.feature.lock
 
-import android.app.ActivityOptions
 import android.app.KeyguardManager
-import android.app.PendingIntent
 import android.content.Intent
 import android.content.res.Configuration
+import android.content.res.Resources
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
@@ -17,18 +16,22 @@ import android.util.Log
 import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.annotation.VisibleForTesting
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.android.BioKey.R
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
+import com.android.BioKey.core.security.ScreenLockWatch
 import com.android.BioKey.core.security.SecurityVault
-import com.android.BioKey.core.security.WindowProtection
-import com.android.BioKey.feature.notification.BioKeyNotificationShieldService
+import com.android.BioKey.ui.security.WindowProtection
 import java.lang.ref.WeakReference
-import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.launch
 
 /**
  * Covers a locked app (or a BioKey system-settings page) and hosts the system prompt until the
@@ -47,16 +50,25 @@ class LockScreenActivity : ComponentActivity() {
         private const val TAG = "LockScreenActivity"
         const val EXTRA_LOCKED_PACKAGE = "extra_locked_package"
         const val EXTRA_SELF_PROTECTION = "extra_self_protection"
-        /** Launch the locked app after a successful unlock (used by redacted notifications). */
-        const val EXTRA_LAUNCH_AFTER_UNLOCK = "extra_launch_after_unlock"
         /**
          * The user asked for this lock again (tapped the patch over the app's picture-in-picture
          * window, or over a window beside a smaller lock screen): a prompt they dismissed comes
          * back, rather than the cover only being brought to the front.
          */
         const val EXTRA_REPROMPT = "extra_reprompt"
+        /**
+         * Started as the phone locked (the screen off, a screensaver), for an app left on screen:
+         * the cover waits behind the keyguard whatever it sees as it starts (a screensaver keeps
+         * the screen on over the keyguard), so the phone's unlock uncovers the cover, not the app.
+         */
+        const val EXTRA_BEHIND_KEYGUARD = "extra_behind_keyguard"
         /** How long a cover in a window waits to be given the whole display before failing closed. */
         private const val FULLSCREEN_WAIT_MS = 1_500L
+        /** The longest the shield waits for this screen to come in ([onCoverShown]), and over the keyguard. */
+        private const val ENTRY_WAIT_MS = 600L
+        private const val KEYGUARD_ENTRY_WAIT_MS = 1_000L
+        /** Come in over the keyguard: how long its own transition is given to end. */
+        private const val KEYGUARD_SETTLE_MS = 150L
         /**
          * How long a shield outlives a cover that sent the user Home: long enough for Home to be in
          * front, and well inside [LockStateTracker.ABANDONED_LOCK_COOLDOWN_MS], so it is still ours.
@@ -71,20 +83,39 @@ class LockScreenActivity : ComponentActivity() {
         internal fun coversDisplay(inMultiWindow: Boolean, window: Rect, display: Rect): Boolean =
             !inMultiWindow || window.contains(display)
 
-        // Both are what the engines are told about the lock screen: recorded for a replay (EngineTrace).
+        /**
+         * Apps' [names] as one prompt names them: "X", "X and Y", "X, Y and Z", or "X, Y, Z and 2
+         * other apps" (the rest counted, not named, so the title stays short).
+         */
+        internal fun appsNamed(res: Resources, names: List<String>): String = when (names.size) {
+            0 -> ""
+            1 -> names[0]
+            2 -> res.getString(R.string.prompt_apps_two, names[0], names[1])
+            3 -> res.getString(R.string.prompt_apps_three, names[0], names[1], names[2])
+            else -> res.getQuantityString(R.plurals.prompt_apps_more, names.size - 3, names[0], names[1], names[2], names.size - 3)
+        }
+
+        /** The other locked apps on screen with [pkg], as the engine running sees them: see [BioKeyAccessibilityService.lockedAppsOnScreenWith]. */
+        private fun lockedAppsOnScreenWith(pkg: String): List<String> =
+            BioKeyAccessibilityService.lockedAppsOnScreenWith(pkg) ?: UsageWatchService.lockedAppsOnScreenWith(pkg) ?: emptyList()
+
+        // Both are what the engines are told about the lock screen: recorded for a replay
+        // (EngineTrace), unless a test sets them as a replay does ([setStateForTests]).
         @Volatile
         var isLockScreenResumed: Boolean = false
             private set(value) {
-                if (value != field) EngineTrace.record("l.resumed", if (value) 1 else 0)
+                if (value != field && !untraced) EngineTrace.record("l.resumed", if (value) 1 else 0)
                 field = value
             }
 
         @Volatile
         var activeLockedTarget: String? = null
             private set(value) {
-                if (value != field) EngineTrace.record("l.target", value)
+                if (value != field && !untraced) EngineTrace.record("l.target", value)
                 field = value
             }
+
+        @Volatile private var untraced = false
 
         /** When a lock screen last resumed ([SystemClock.uptimeMillis]): a start before it has arrived. */
         @Volatile
@@ -92,30 +123,36 @@ class LockScreenActivity : ComponentActivity() {
             private set
 
         /**
+         * Tests: the lock screen's state as the engines see it: up for [target] (or none), in front
+         * if [resumed], resumed at [resumedAt] (null: unchanged). [traced] as the real activity is
+         * (a test of the trace), or not, as a replay sets it.
+         */
+        @VisibleForTesting
+        internal fun setStateForTests(
+            target: String?,
+            resumed: Boolean = target != null,
+            resumedAt: Long? = null,
+            traced: Boolean = false
+        ) {
+            untraced = !traced
+            try {
+                activeLockedTarget = target
+                isLockScreenResumed = resumed
+                resumedAt?.let { this.resumedAt = it }
+            } finally {
+                untraced = false
+            }
+        }
+
+        /** Tests: the last resume forgotten (Robolectric's clock starts again for each test). */
+        @VisibleForTesting
+        internal fun forgetResumeForTests() = setStateForTests(activeLockedTarget, isLockScreenResumed, resumedAt = 0L)
+
+        /**
          * The newest lock screen. A new one can start while the last one is still finishing: only
          * the newest may change the state above or lower the shield.
          */
         @Volatile private var current: WeakReference<LockScreenActivity>? = null
-
-        /**
-         * What to send once [pkg] is unlocked from a stand-in: the link of its newest hidden
-         * notification, if that is the app's own link to one of its screens. Null means opening
-         * the app itself: a link made by another app, or by one BioKey can't tell, is never sent,
-         * and one that starts a broadcast or a service may put nothing on screen, while the new
-         * session must reach it ([LockStateTracker.ARRIVAL_GRACE_MS]).
-         */
-        internal fun deepLinkFor(
-            pkg: String,
-            intents: Map<String, BioKeyNotificationShieldService.CachedPendingIntent>?
-        ): PendingIntent? {
-            val target = intents?.values?.filter { !it.isSummary }?.maxByOrNull { it.postTime }
-                ?: intents?.values?.maxByOrNull { it.postTime }
-            val pending = target?.pendingIntent ?: return null
-            val creator = pending.creatorPackage ?: return null
-            val ownLink = creator == PasswordManager.launchPackage(pkg) || creator == pkg ||
-                (pkg == PasswordManager.VIRTUAL_PACKAGE && creator == PasswordManager.GMS)
-            return pending.takeIf { ownLink && it.isActivity }
-        }
     }
 
     private val engine get() = SecurityEngine.INSTANCE
@@ -124,15 +161,31 @@ class LockScreenActivity : ComponentActivity() {
 
     private var lockedPackage = ""
     private var isSelfProtection = false
-    private var launchAfterUnlock = false
     /** The prompt opens by itself once per showing; after a cancel the user taps Unlock. */
     private var promptAutoLaunched = false
     private var firstFrameCommitted = false
+
+    /** Tests: the first frame drawn (Robolectric draws none), so what waits on it can go ahead. */
+    @VisibleForTesting
+    internal fun markFirstFrameForTests() {
+        firstFrameCommitted = true
+    }
     private var isPermanentLockout = false
     /** Left without unlocking: a shield an engine raised since is newer than this lock (see [onStop]). */
     private var leftWithoutUnlock = false
     /** See [showOverKeyguard]. */
     private var showsOverKeyguard = false
+    /**
+     * The keyguard was already locked when this cover went over it (an app over the keyguard: the
+     * camera), and hasn't gone away since ([LockStateTracker.phoneUnlocks] then).
+     */
+    private var overKeyguardOnPurpose = false
+    private var phoneUnlocksWhenOver = 0
+    /**
+     * Started as the phone locked ([EXTRA_BEHIND_KEYGUARD]) and not yet seen with the phone unlocked:
+     * stopped meanwhile (under a screensaver, before the keyguard's own lock delay is up), it stays.
+     */
+    private var heldForPhoneLock = false
     /** Asked for the whole display ([askForWholeDisplay]); the shield stays up until it comes. */
     private var awaitingFullscreen = false
     /**
@@ -166,12 +219,16 @@ class LockScreenActivity : ComponentActivity() {
             finishSilently()
             return
         }
-        showOverKeyguard(isKeyguardLocked())
+        heldForPhoneLock = intent.getBooleanExtra(EXTRA_BEHIND_KEYGUARD, false)
+        showOverKeyguard(!heldForPhoneLock && coversAppOverKeyguard())
 
         cover = LockCoverView(this).apply {
             onUnlock = ::showPrompt
             onCancel = ::goHomeAndFinish
             onLockDevice = ::lockDeviceOrHome
+            setOnClickListener { onCoverTapped() }
+            // Tappable, but never where a key press lands: the buttons are, when shown.
+            isFocusable = false
         }
         bindCover()
         setContentView(cover)
@@ -181,6 +238,17 @@ class LockScreenActivity : ComponentActivity() {
             override fun handleOnBackPressed() = goHomeAndFinish()
         })
         LockStateTracker.addLockAllListener(onLockAll)
+        // A screensaver ending: the broadcast saying so can come after this screen resumed under it,
+        // with its hold and prompt held back. Seen to now, while resumed.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                LockStateTracker.screensaver.collect { showing ->
+                    if (showing) return@collect
+                    if (!isKeyguardLocked()) heldForPhoneLock = false
+                    maybeAutoPrompt()
+                }
+            }
+        }
 
         // The shield above us can go as soon as our identical cover is actually on screen.
         cover.viewTreeObserver.registerFrameCommitCallback {
@@ -194,15 +262,11 @@ class LockScreenActivity : ComponentActivity() {
         val pkg = intent.getStringExtra(EXTRA_LOCKED_PACKAGE).orEmpty()
         val selfProtection = intent.getBooleanExtra(EXTRA_SELF_PROTECTION, false)
         if (pkg.isBlank()) return false
-        if (!selfProtection && isTargetUnlocked(pkg)) {
-            // Nothing to unlock; still honour a tap on a hidden-notification stand-in.
-            if (intent.getBooleanExtra(EXTRA_LAUNCH_AFTER_UNLOCK, false)) sendPendingDeepLink(pkg)
-            return false
-        }
+        // Nothing to unlock.
+        if (!selfProtection && isTargetUnlocked(pkg)) return false
         lockedPackage = pkg
         activeLockedTarget = pkg
         isSelfProtection = selfProtection
-        launchAfterUnlock = intent.getBooleanExtra(EXTRA_LAUNCH_AFTER_UNLOCK, false)
         promptAutoLaunched = false
         isPermanentLockout = false
         // The shield up now is the one that brought this lock screen.
@@ -225,7 +289,8 @@ class LockScreenActivity : ComponentActivity() {
             val cached = AppInfoCache.get(pkg)
             // The icon's colour comes worked out with it: nothing is computed here on the way to the prompt.
             val label = AppInfoCache.cachedLabel(pkg)
-            cover.bind(label.orEmpty(), cached?.icon, isBioKey = false, accent = cached?.accent)
+            // Light or dark as the app's own launch screen is, when known already (never looked up here).
+            cover.bind(label.orEmpty(), cached?.icon, isBioKey = false, accent = cached?.accent, dark = cached?.dark)
             // Never load on the way to the prompt: the name and icon follow as soon as they're ready.
             if (cached == null) AppInfoCache.load(this, pkg) { info ->
                 if (!isFinishing && lockedPackage == pkg) {
@@ -235,14 +300,17 @@ class LockScreenActivity : ComponentActivity() {
             }
         }
         cover.setActionsVisible(false)
+        if (::cover.isInitialized && window != null) applyBarAppearance()
     }
 
     /**
      * Dark or light status and navigation bar icons to match the cover. The theme sets them at
-     * launch; this screen handles dark-mode switches itself (configChanges), so it sets them again.
+     * launch; this screen handles dark-mode switches itself (configChanges), and the cover can be
+     * dark or light as the locked app is, so it sets them again.
      */
     private fun applyBarAppearance() {
-        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val night = if (::cover.isInitialized) cover.isDark
+        else (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         WindowCompat.getInsetsController(window, window.decorView).run {
             isAppearanceLightStatusBars = !night
             isAppearanceLightNavigationBars = !night
@@ -255,11 +323,20 @@ class LockScreenActivity : ComponentActivity() {
         shownAt = SystemClock.elapsedRealtime()
         isLockScreenResumed = true
         resumedAt = SystemClock.uptimeMillis()
+        // Not while a screensaver shows: during the keyguard's lock delay this screen can come
+        // forward under it for a moment, which isn't the phone unlocked.
+        if (!isKeyguardLocked() && !LockStateTracker.screensaverShowing) {
+            heldForPhoneLock = false
+            // Over the keyguard for an app that was over it (the camera): the phone is unlocked
+            // now, so the next keyguard comes up over this cover like any other.
+            showOverKeyguard(false)
+        }
         activeLockedTarget = lockedPackage
         if (!isSelfProtection && isTargetUnlocked(lockedPackage)) {
             finishSilently()
             return
         }
+        awaitEntryAgain()
         maybeAutoPrompt()
     }
 
@@ -268,16 +345,62 @@ class LockScreenActivity : ComponentActivity() {
         super.onPause()
     }
 
+    /** In front again with a screensaver gone (it held the prompt back): the prompt comes up now. */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) return
+        awaitEntryAgain()
+        maybeAutoPrompt()
+    }
+
+    /**
+     * Shown again after being hidden ([onStop]), it waits to have come in before it prompts
+     * ([onCoverShown]), but no opening transition says so when it comes back from behind the
+     * keyguard (the phone unlocked over it), and its first frame was drawn long ago: it would
+     * wait for ever, no prompt and no buttons, as the owner sees it. Its next frame is waited for
+     * instead, and then at most [ENTRY_WAIT_MS].
+     */
+    private fun awaitEntryAgain() {
+        if (!hiddenSinceEntered || entered || awaitingEntry || !firstFrameCommitted || isFinishing || !::cover.isInitialized) return
+        hiddenSinceEntered = false
+        whenCoverDrawn()
+    }
+
+    /** It had been drawn, and has been hidden since ([onStop]): only then is [awaitEntryAgain] needed. */
+    private var hiddenSinceEntered = false
+
+    /**
+     * A tap anywhere on the cover asks again whenever no prompt is up (Android dismissed it, a
+     * screensaver or the keyguard held it back): the owner is never left with a cover and no way
+     * on but Back.
+     */
+    private fun onCoverTapped() {
+        if (isFinishing || isPermanentLockout || engine.isAuthenticatingFor(lockedPackage)) return
+        if (LockStateTracker.screensaverShowing || (isKeyguardLocked() && !showsOverKeyguard)) return
+        // On screen, as the tap shows.
+        if (!entered) onEntered()
+        promptAutoLaunched = true
+        showPrompt()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         // Already leaving: if the app is still in front, the engine's shield brings a new lock.
         if (isFinishing) return
-        showOverKeyguard(isKeyguardLocked())
         val newPkg = intent.getStringExtra(EXTRA_LOCKED_PACKAGE).orEmpty()
         val newSelfProt = intent.getBooleanExtra(EXTRA_SELF_PROTECTION, false)
+        // Held for the phone's lock only for the app it was started for, and while that app isn't
+        // over the keyguard itself: another app's lock (the camera, opened over the keyguard), or
+        // the same app's opened there again (the camera left on screen as the phone locked, then
+        // opened from the power button), is judged afresh.
+        heldForPhoneLock = intent.getBooleanExtra(EXTRA_BEHIND_KEYGUARD, false) ||
+            (heldForPhoneLock && newPkg == lockedPackage && newSelfProt == isSelfProtection && !isOverKeyguardNow(newPkg))
+        // Once over the keyguard with its app, the cover stays there for it while the keyguard
+        // does: that app's window can be gone from view by the next request, under this cover.
+        val sameTarget = newPkg == lockedPackage && newSelfProt == isSelfProtection
+        showOverKeyguard(!heldForPhoneLock && (coversAppOverKeyguard(newPkg) || (sameTarget && showsOverKeyguard && isKeyguardLocked())))
         if (newPkg == lockedPackage && newSelfProt == isSelfProtection) {
             // Same target brought to front again (e.g. over a trampoline): keep the running prompt.
-            launchAfterUnlock = launchAfterUnlock || intent.getBooleanExtra(EXTRA_LAUNCH_AFTER_UNLOCK, false)
             // Asked for on purpose: the prompt comes up again if it isn't up (the next maybeAutoPrompt).
             if (intent.getBooleanExtra(EXTRA_REPROMPT, false)) promptAutoLaunched = false
             if (firstFrameCommitted) whenCoverDrawn()
@@ -296,6 +419,11 @@ class LockScreenActivity : ComponentActivity() {
 
     override fun onStop() {
         if (isCurrent) isLockScreenResumed = false
+        // Hidden: it comes in again when it's next shown.
+        if (firstFrameCommitted) hiddenSinceEntered = true
+        entered = false
+        awaitingEntry = false
+        if (::cover.isInitialized) cover.removeCallbacks(entryFallback)
         super.onStop()
         if (isChangingConfigurations) return
         // A trip BioKey's own session is on, this screen having come up over it, ends here, after
@@ -307,7 +435,7 @@ class LockScreenActivity : ComponentActivity() {
         // The screen went off, or the keyguard came up over the cover (Lockdown with the screen
         // on): keep the cover, behind the keyguard, so nothing of the app shows once the phone is
         // unlocked, and prompt again then.
-        if (isScreenOff() || (isKeyguardLocked() && !showsOverKeyguard)) {
+        if (isScreenOff() || (isKeyguardLocked() && !showsOverKeyguard) || heldForPhoneLock || LockStateTracker.screensaverShowing) {
             promptAutoLaunched = false
             isPermanentLockout = false
             showOverKeyguard(false)
@@ -379,8 +507,40 @@ class LockScreenActivity : ComponentActivity() {
             askForWholeDisplay()
             return
         }
+        // A frame drawn isn't a frame shown while this screen is still coming in (its opening
+        // transition; over the keyguard, the keyguard's own first): the shield waits for that,
+        // and the prompt for the shield.
+        if (!entered) {
+            if (!awaitingEntry) {
+                awaitingEntry = true
+                cover.postDelayed(entryFallback, if (showsOverKeyguard) KEYGUARD_ENTRY_WAIT_MS else ENTRY_WAIT_MS)
+            }
+            return
+        }
         dismissShield()
         maybeAutoPrompt()
+    }
+
+    /** This screen has come in since it was last hidden ([onEnterAnimationComplete]): see [onCoverShown]. */
+    private var entered = false
+    private var awaitingEntry = false
+    /** No word that it came in: taken to have, so the shield never waits on it for long. */
+    private val entryFallback = Runnable { onEntered() }
+
+    override fun onEnterAnimationComplete() {
+        super.onEnterAnimationComplete()
+        // Over the keyguard, its own transition can still be ending: a moment more.
+        if (showsOverKeyguard && isKeyguardLocked()) cover.postDelayed(entryFallback, KEYGUARD_SETTLE_MS) else onEntered()
+    }
+
+    private fun onEntered() {
+        if (entered || isFinishing) return
+        entered = true
+        cover.removeCallbacks(entryFallback)
+        if (awaitingEntry) {
+            awaitingEntry = false
+            onCoverShown()
+        }
     }
 
     /** Full screen, or a window as big as the display: nothing else can be on screen beside it. */
@@ -448,8 +608,11 @@ class LockScreenActivity : ComponentActivity() {
     }
 
     private fun maybeAutoPrompt() {
-        if (promptAutoLaunched || !firstFrameCommitted || awaitingFullscreen || isPermanentLockout || isFinishing) return
+        if (promptAutoLaunched || !firstFrameCommitted || !entered || awaitingFullscreen || isPermanentLockout || isFinishing) return
         if (!isLockScreenResumed || engine.isAuthenticatingFor(lockedPackage)) return
+        // Never over a screensaver: it would take the tap meant to end it. Nor over the keyguard,
+        // unless this cover is meant to be there (its app is): it would name the app there.
+        if (LockStateTracker.screensaverShowing || (isKeyguardLocked() && !showsOverKeyguard)) return
         promptAutoLaunched = true
         showPrompt()
     }
@@ -459,22 +622,35 @@ class LockScreenActivity : ComponentActivity() {
         val selfProtection = isSelfProtection
         // A device lock while the prompt is up ends every session, this one included.
         val generation = LockStateTracker.lockGeneration()
+        // Other locked apps on screen with this one (split screen, another display): one prompt
+        // names them all and unlocks them all, rather than one prompt after another. Its misses
+        // and its unlock are recorded under all their names.
+        val others = if (selfProtection) emptyList() else lockedAppsOnScreenWith(pkg)
+        val name = if (selfProtection) getString(R.string.brand_name) else appsNamed(resources, (listOf(pkg) + others).map { AppInfoCache.quickLabel(this, it) })
         cover.setStatus(null, permanentLockout = false)
         cover.setActionsVisible(false)
         // A cover held over this screen (picture-in-picture in compatibility mode) follows suit.
         InstantShieldOverlay.onPrompt(pkg, showing = true)
         engine.showBiometricPrompt(
             activity = this,
-            appName = if (selfProtection) getString(R.string.brand_name) else AppInfoCache.quickLabel(this, pkg),
+            appName = name,
             packageName = pkg,
-            onSuccess = { onAuthenticated(pkg, selfProtection, generation) },
+            onSuccess = { onAuthenticated(pkg, selfProtection, generation, others) },
             onError = { code, message ->
+                // No screen lock on the phone any more: nothing can check who this is, so the app
+                // opens (recorded as a gap and said on home) rather than stay shut for good.
+                if ((code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL || code == SecurityEngine.ERROR_NO_BIOMETRICS) &&
+                    ScreenLockWatch.letThroughWithoutScreenLock(this, pkg)
+                ) {
+                    InstantShieldOverlay.onPrompt(pkg, showing = false)
+                    return@showBiometricPrompt onAuthenticated(pkg, selfProtection, generation, others)
+                }
                 if (!SecurityEngine.isUserCancel(code)) DiagnosticLog.log("Unlock prompt for $pkg: error $code")
                 isPermanentLockout = code == SecurityEngine.ERROR_LOCKOUT_PERMANENT
                 val text = when {
                     SecurityEngine.isUserCancel(code) -> null
-                    isPermanentLockout -> SecurityEngine.LOCKOUT_PERMANENT_MESSAGE
-                    code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL -> "Set a screen lock in Settings to unlock apps."
+                    isPermanentLockout -> getString(R.string.prompt_lockout_permanent)
+                    code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL -> getString(R.string.lock_needs_screen_lock)
                     else -> message.toString()
                 }
                 cover.setStatus(text, isPermanentLockout)
@@ -485,20 +661,21 @@ class LockScreenActivity : ComponentActivity() {
         )
     }
 
-    private fun onAuthenticated(pkg: String, selfProtection: Boolean, generation: Int) {
+    private fun onAuthenticated(pkg: String, selfProtection: Boolean, generation: Int, others: List<String> = emptyList()) {
         if (selfProtection) {
             if (LockStateTracker.lockGeneration() != generation) return unlockVoided()
             LockStateTracker.setSelfProtectionGranted(granted = true, visitedGuardedScreen = true)
         } else {
-            // Taken first: the unlock lets the notification shield restore (and forget) them.
-            val deepLinks = if (launchAfterUnlock) BioKeyNotificationShieldService.takeDeepLinks(pkg) else null
             EngineTrace.record("u.unlock", pkg)
-            if (!LockStateTracker.onAppUnlocked(pkg, generation)) {
-                // Still hidden: the stand-in keeps its links for the next unlock.
-                deepLinks?.let { BioKeyNotificationShieldService.cachedPendingIntents.putIfAbsent(pkg, ConcurrentHashMap(it)) }
-                return unlockVoided()
+            if (!LockStateTracker.onAppUnlocked(pkg, generation)) return unlockVoided()
+            // The others the prompt named, still locked: unlocked by it too, but only once seen on
+            // screen (the split screen this lock screen hid forming again), never one that isn't.
+            for (other in others) {
+                if (!vault.isAppLocked(other) || LockStateTracker.isAppUnlocked(other, vault.getTimeoutMode(other))) continue
+                EngineTrace.record("u.named", other)
+                LockStateTracker.nameAlongside(other, generation)
+                DiagnosticLog.log("$other named with $pkg by the same prompt: unlocked once it's on screen")
             }
-            if (launchAfterUnlock) sendPendingDeepLink(pkg, deepLinks)
         }
         LockStateTracker.clearRegularLockPending(pkg)
         finishSilently()
@@ -518,38 +695,6 @@ class LockScreenActivity : ComponentActivity() {
         abandon()
         if (!BioKeyAccessibilityService.lockDevice()) goHome()
         finishSilently(abandoned = true)
-    }
-
-    private fun launchApp(pkg: String) {
-        packageManager.getLaunchIntentForPackage(PasswordManager.launchPackage(pkg))?.let { launch ->
-            runCatching { startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-        }
-    }
-
-    private fun sendPendingDeepLink(
-        pkg: String,
-        preExtractedMap: Map<String, BioKeyNotificationShieldService.CachedPendingIntent>? = null
-    ) {
-        val pending = deepLinkFor(pkg, preExtractedMap ?: BioKeyNotificationShieldService.takeDeepLinks(pkg))
-        if (pending == null) {
-            launchApp(pkg)
-            return
-        }
-        // BioKey's lock screen is on screen while it forwards the app's own link: grant the
-        // launch only while visible, never an open-ended grant.
-        val options = ActivityOptions.makeBasic().apply {
-            if (Build.VERSION.SDK_INT >= 36) {
-                pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                @Suppress("DEPRECATION")
-                pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
-            }
-        }.toBundle()
-        runCatching { pending.send(this, 0, null, null, null, null, options) }.onFailure {
-            // Not which app: logs mustn't tell which apps are locked.
-            Log.w(TAG, "Deep link failed, launching instead: ${it.javaClass.simpleName}")
-            launchApp(pkg)
-        }
     }
 
     /**
@@ -600,6 +745,8 @@ class LockScreenActivity : ComponentActivity() {
         // it): each call makes the system work out again what shows over the keyguard.
         if (show == showsOverKeyguard) return
         showsOverKeyguard = show
+        overKeyguardOnPurpose = show && isKeyguardLocked()
+        phoneUnlocksWhenOver = LockStateTracker.phoneUnlocks
         setShowWhenLocked(show)
     }
 
@@ -608,10 +755,33 @@ class LockScreenActivity : ComponentActivity() {
      * (Lockdown), the keyguard must come up over the cover. Can run on any thread.
      */
     private val onLockAll: () -> Unit = {
-        runOnUiThread { if (!isDestroyed && isKeyguardLocked()) showOverKeyguard(false) }
+        // Not a cover put over the keyguard on purpose, for an app that is itself over it (the
+        // camera): that one stays, as its app does.
+        runOnUiThread {
+            val stillOnPurpose = overKeyguardOnPurpose && LockStateTracker.phoneUnlocks == phoneUnlocksWhenOver
+            if (!isDestroyed && isKeyguardLocked() && !stillOnPurpose) showOverKeyguard(false)
+        }
     }
 
     private fun isKeyguardLocked() = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+
+    /**
+     * The keyguard is up with the screen on, and the app this covers is on display: it can only be
+     * over the keyguard (the camera, say). With the screen off, it's an app left on screen as the
+     * phone locked; started while locked by something else (a notification's action, say), it
+     * waits behind the keyguard for the phone to be unlocked. Either way its cover waits there too
+     * (see [showOverKeyguard]). In compatibility mode, which can't see windows, an app only ever
+     * comes forward while locked over the keyguard.
+     */
+    private fun coversAppOverKeyguard(pkg: String = lockedPackage) = isKeyguardLocked() && !isScreenOff() &&
+        BioKeyAccessibilityService.hasScreenShowing(pkg) != false
+
+    /**
+     * [pkg] is on display over the keyguard now, as the accessibility engine has seen (compatibility
+     * mode can't tell: no).
+     */
+    private fun isOverKeyguardNow(pkg: String) = isKeyguardLocked() && !isScreenOff() &&
+        !LockStateTracker.screensaverShowing && BioKeyAccessibilityService.hasScreenShowing(pkg) == true
 
     private fun isScreenOff() = getSystemService(PowerManager::class.java)?.isInteractive == false
 

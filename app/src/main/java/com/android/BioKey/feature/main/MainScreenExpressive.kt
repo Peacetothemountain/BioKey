@@ -1,14 +1,18 @@
 package com.android.BioKey.feature.main
 
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,18 +20,17 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
@@ -40,118 +43,141 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Apps
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.GppMaybe
-import androidx.compose.material.icons.filled.LockClock
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.NotificationsOff
-import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.RemoveCircleOutline
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.VerifiedUser
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.android.BioKey.BioKeyApplication
-import com.android.BioKey.core.data.LockTimeoutMode
+import com.android.BioKey.R
+import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.data.SecurityProfile
-import com.android.BioKey.core.security.ProtectDialogWindow
+import com.android.BioKey.core.data.openFor
+import com.android.BioKey.core.security.LockAllNow
+import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionEngine
+import com.android.BioKey.core.security.ProtectionGaps
+import com.android.BioKey.core.security.ScreenLockWatch
 import com.android.BioKey.core.security.SecurityVault
-import com.android.BioKey.core.security.rejectObscuredTouches
+import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.ForegroundRules
-import com.android.BioKey.ui.brand.BioKeyMarkSideways
-import com.android.BioKey.ui.brand.HeaderMatrixDotsExpressive
-import com.android.BioKey.ui.brand.KeyMark
+import com.android.BioKey.ui.disclosure.Disclosure
+import com.android.BioKey.ui.disclosure.rememberDisclosureGate
+import com.android.BioKey.ui.disclosure.rememberNotificationPermission
+import com.android.BioKey.ui.navigation.IntentNavigationHelper
+import com.android.BioKey.ui.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.GroupGap
 import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.Haptics
 import com.android.BioKey.ui.theme.MaxContentWidth
+import com.android.BioKey.ui.theme.SEPARATOR
 import com.android.BioKey.ui.theme.SectionHeader
-import com.android.BioKey.ui.theme.springPress
+import com.android.BioKey.ui.theme.scaledWithText
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private const val FILTER_ALL = "filter:all"
+internal const val FILTER_ALL = "filter:all"
+
+/** From here (Material's expanded width), Settings opens beside home rather than over it. */
+private val TwoPaneMinWidth = 840.dp
+
+/** Home's share of the window with Settings open beside it. */
+private const val HomePaneFraction = 0.48f
 
 /** The list's kinds of row, so a row scrolled away is reused for another of its kind. */
 private const val CONTENT_APP = "app"
 private const val CONTENT_HEADER = "header"
-
-/** Shown wherever a home-screen app's lock switch can't be turned on. */
-internal const val HOME_SCREEN_NOTE = "Home screens can't be locked"
 
 /**
  * BioKey's home. From the top: the logo over its constellation, a card saying whether
  * protection is on (with the one action that matters), then the apps. Search and profile chips
  * stay pinned while the list scrolls.
  *
- * "All apps" shows locked apps first, then the rest; every switch works. A profile is a page of
- * its own: its card holds everything about it, so a profile is edited inside the profile.
- * Tapping an app opens its options (lock, which profile).
+ * "All apps" shows locked apps first, then the rest, each recently used first then A–Z
+ * ([AppOrder]), in an order fixed until BioKey is left (a row stays put as its switch is flipped);
+ * every switch works. A profile is a page of its own: its card holds everything about it, so a
+ * profile is edited inside the profile. Tapping an app opens its options (lock, which profile).
  */
 @Composable
-fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Unit) {
+fun MainScreenExpressive(
+    mode: ProtectionEngine.Mode,
+    onPauseRequested: () -> Unit,
+    /** An app to show as home opens (the new-app offer); [onSearchRequestTaken] once it's in the search. */
+    searchRequest: String? = null,
+    onSearchRequestTaken: () -> Unit = {},
+    /** Home's state from outside the vault, and Review's. */
+    homeViewModel: HomeViewModel = viewModel(),
+    /** Settings open as home opens (screenshots of the tablet's two panes). */
+    settingsOpenAtStart: Boolean = false,
+    /**
+     * HOOK for the lock engine: apps Android's own App lock (Android 17) was seen locking, which
+     * BioKey can't ask Android about. Their rows say "Also locked by Android". Empty until the
+     * engine supplies it.
+     */
+    lockedByAndroid: Set<String> = emptySet()
+) {
     val context = LocalContext.current
+    val res = LocalResources.current
     val view = LocalView.current
     val vault = remember { SecurityVault.getInstance(context) }
 
@@ -240,30 +266,45 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
         onPauseOrDispose { job.cancel() }
     }
 
-    var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showSettings by rememberSaveable { mutableStateOf(settingsOpenAtStart) }
     // Settings' slide in and out, followed so the header holds still only once Settings covers it.
     val settingsVisibility = remember { MutableTransitionState(showSettings) }
     settingsVisibility.targetState = showSettings
+    // On a wide window (expanded width) Settings opens as a pane beside home instead of over it.
+    val density = LocalDensity.current
+    val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
+    val twoPane = windowWidth >= TwoPaneMinWidth
+    val homeFraction by animateFloatAsState(if (twoPane && showSettings) HomePaneFraction else 1f, label = "home_pane")
     var filter by rememberSaveable { mutableStateOf(FILTER_ALL) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
-    var optionsForPackage by rememberSaveable { mutableStateOf<String?>(null) }
-    var showAddApps by rememberSaveable { mutableStateOf(false) }
-    var showNewProfile by rememberSaveable { mutableStateOf(false) }
-    /** After creating a profile from an app's options, put that app in it. */
-    var newProfileForPackage by rememberSaveable { mutableStateOf<String?>(null) }
-    var showEditProfile by rememberSaveable { mutableStateOf(false) }
-    var showRelock by rememberSaveable { mutableStateOf(false) }
-    var showProtectionSheet by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(searchRequest) {
+        if (searchRequest != null) {
+            filter = FILTER_ALL
+            searchQuery = searchRequest
+            onSearchRequestTaken()
+        }
+    }
+    val overlays = rememberHomeOverlays()
 
     val currentProfile = profiles.firstOrNull { it.id == filter }
     LaunchedEffect(filter, currentProfile == null) {
         if (filter != FILTER_ALL && currentProfile == null) filter = FILTER_ALL
     }
+    /**
+     * Apps picked on a profile's page, to take out of it together: picking starts with a long
+     * press on an app or "Select", and belongs to that page ([pickingIn] is its profile), so
+     * leaving it, by a chip or Back, ends it. Kept through a rotation.
+     */
+    var pickingIn by rememberSaveable { mutableStateOf<String?>(null) }
+    val picked = rememberSaveable(saver = listSaver(save = { it.toList() }, restore = { it.toMutableStateList() })) {
+        mutableStateListOf<String>()
+    }
+    val picking = currentProfile != null && pickingIn == currentProfile.id
     // An app's options close if it's uninstalled; not while the list is still loading (after
     // the process was restarted, say), or the sheet the user had open would be lost.
     LaunchedEffect(isLoadingApps, installedApps) {
-        val pkg = optionsForPackage
-        if (!isLoadingApps && pkg != null && installedApps.none { it.packageName == pkg }) optionsForPackage = null
+        val pkg = overlays.optionsForPackage
+        if (!isLoadingApps && pkg != null && installedApps.none { it.packageName == pkg }) overlays.optionsForPackage = null
     }
     // Sheets, dialogs and the notification shade take the window's focus, while BioKey stays
     // resumed behind their scrim. Only once it has had focus: before, the header moves from its
@@ -273,10 +314,10 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     LaunchedEffect(windowFocused) { if (windowFocused) hadFocus = true }
     /**
      * Home's decorations animate only while nothing covers them: the app picker, Settings once
-     * it has slid in (stopping as it starts would show them jump to a still frame), or a window
-     * over BioKey's.
+     * it has slid in over home (stopping as it starts would show them jump to a still frame; as
+     * a pane beside home it covers nothing), or a window over BioKey's.
      */
-    val headerActive = !(settingsVisibility.currentState && settingsVisibility.isIdle) && !(showAddApps && currentProfile != null) &&
+    val headerActive = !(settingsVisibility.currentState && settingsVisibility.isIdle && !twoPane) && !(overlays.showAddApps && currentProfile != null) &&
         (windowFocused || !hadFocus)
 
     val profileByPackage = remember(profiles) {
@@ -287,18 +328,40 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     fun isOn(pkg: String) = PasswordManager.aliasesOf(pkg).any { it in selectedApps }
     /** Actually locked: switched on, and its profile (if any) is on too. */
     fun isLocked(pkg: String) = PasswordManager.aliasesOf(pkg).any { it in lockedApps }
+    /** Locked as the vault has it this moment, paused or not: for telling what a change just unlocked. */
+    fun lockedInVault(pkg: String) = PasswordManager.aliasesOf(pkg).any { it in vault.getLockedPackages() }
     /** Never covered, so its switch can only be turned off. */
     fun isHomeScreen(pkg: String) = pkg in homeScreens
 
     BackHandler(enabled = filter != FILTER_ALL && !showSettings) { filter = FILTER_ALL }
+    // Composed after the page's own, so while apps are being picked Back ends that first.
+    BackHandler(enabled = picking && !showSettings) { pickingIn = null }
 
-    val matching = remember(installedApps, searchQuery, filter, profiles) {
-        installedApps.filter { app ->
+    /**
+     * Which apps were locked, and when each was last used, as the list was read or BioKey came
+     * back (or a page was chosen, or Settings closed): the list's order and groups go by these,
+     * not by switches flipped since, so a row never moves under the finger ([AppOrder]). Null
+     * before the first look: the live state then.
+     */
+    var lockedAtLoad by remember { mutableStateOf<Set<String>?>(null) }
+    var lastUsed by remember { mutableStateOf(AppOrder.lastRead) }
+    LifecycleResumeEffect(installedApps, filter, showSettings) {
+        lockedAtLoad = installedApps.mapNotNullTo(HashSet()) { app -> app.packageName.takeIf { isLocked(it) } }
+        val job = scope.launch { lastUsed = withContext(Dispatchers.IO) { AppOrder.recentUse(context) } }
+        onPauseOrDispose { job.cancel() }
+    }
+    fun wasLocked(pkg: String) = lockedAtLoad?.let { pkg in it } ?: isLocked(pkg)
+    val ordered = remember(installedApps, lockedAtLoad, lastUsed) { AppOrder.order(installedApps, ::wasLocked, lastUsed) }
+
+    val matching = remember(ordered, searchQuery, filter, profiles) {
+        ordered.filter { app ->
             (currentProfile == null || profileOf(app.packageName)?.id == currentProfile.id) &&
                 (searchQuery.isBlank() || app.label.contains(searchQuery.trim(), ignoreCase = true))
         }
     }
-    val (lockedShown, unlockedShown) = remember(matching, selectedApps, profiles) { matching.partition { isOn(it.packageName) } }
+    // Grouped by what actually happened as the list was read: an app in a profile that's off is
+    // under "Not locked". A switch flipped since moves nothing until BioKey is next opened.
+    val (lockedShown, unlockedShown) = remember(matching, lockedAtLoad, lockedApps, profiles) { matching.partition { wasLocked(it.packageName) } }
     val appCountByProfile = remember(installedApps, profiles) {
         installedApps.mapNotNull { profileOf(it.packageName)?.id }.groupingBy { it }.eachCount()
     }
@@ -310,692 +373,564 @@ fun MainScreenExpressive(mode: ProtectionEngine.Mode, onPauseRequested: () -> Un
     fun isUnwatched(app: AppItem) = mode == ProtectionEngine.Mode.COMPATIBILITY && app.inOtherProfile && isLocked(app.packageName) &&
         !isHomeScreen(app.packageName)
     val unwatchedCount = remember(installedApps, lockedApps, profiles, mode, homeScreens) { installedApps.count(::isUnwatched) }
+    val homeState by homeViewModel.state.collectAsStateWithLifecycle()
+    val screenLockMissing by ScreenLockWatch.missing.collectAsStateWithLifecycle()
+    val home = homeState
     val look = protectionLook(mode, globalLockEnabled, pausedUntil, lockedCount, unwatchedCount, defaultTimeout)
+
+    /**
+     * Locked apps open right now. Every unlock and lock (an app's re-lock delay running out
+     * included) says so, so the card and the rows follow sessions starting and ending while
+     * BioKey is open; read again on every resume too. Read in an effect, not while composing:
+     * looking can end a session whose time ran out, which is logged and tells listeners.
+     */
+    var sessionsChanged by remember { mutableIntStateOf(0) }
+    DisposableEffect(Unit) {
+        val main = Handler(Looper.getMainLooper())
+        val onAll: () -> Unit = { main.post { sessionsChanged++ } }
+        val onApp: (String) -> Unit = { main.post { sessionsChanged++ } }
+        LockStateTracker.addLockAllListener(onAll)
+        LockStateTracker.addAppUnlockListener(onApp)
+        LockStateTracker.addAppLockListener(onApp)
+        onDispose {
+            LockStateTracker.removeLockAllListener(onAll)
+            LockStateTracker.removeAppUnlockListener(onApp)
+            LockStateTracker.removeAppLockListener(onApp)
+            main.removeCallbacksAndMessages(null)
+        }
+    }
+    LifecycleResumeEffect(Unit) {
+        sessionsChanged++
+        onPauseOrDispose { }
+    }
+    var unlockedNow by remember { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(sessionsChanged, lockedApps, profiles, defaultTimeout, globalLockEnabled) {
+        // Paused, nothing is locked, so nothing is "unlocked" either.
+        unlockedNow = if (globalLockEnabled) LockStateTracker.unlockedApps(vault::getTimeoutMode) else emptySet()
+    }
+    fun isUnlockedNow(pkg: String) = PasswordManager.aliasesOf(pkg).any { it in unlockedNow }
+    val unlockedNowApps = remember(unlockedNow, installedApps, lockedApps, profiles) {
+        installedApps.filter { isLocked(it.packageName) && isUnlockedNow(it.packageName) }
+    }
+
+    // What happened while the owner was away: failed unlocks, and protection switched off.
+    // Seeing them here is what the notification was for, so it goes.
+    val attempts by UnlockAttempts.attempts.collectAsStateWithLifecycle()
+    val attemptsChosen by UnlockAttempts.chosen.collectAsStateWithLifecycle()
+    val gaps by ProtectionGaps.gaps.collectAsStateWithLifecycle()
+    fun openReview() = homeViewModel.openReview { overlays.showActivity = true }
+    // Back after a rotation with Review open: work it out again.
+    LaunchedEffect(overlays.showActivity) { if (overlays.showActivity) homeViewModel.restoreReview { overlays.showActivity = true } }
+    // Review's state goes with the screen, so it's worked out again when it comes back.
+    DisposableEffect(homeViewModel) { onDispose { homeViewModel.forgetReview() } }
+    val attemptsEnabled by UnlockAttempts.enabled.collectAsStateWithLifecycle()
+    val biometricOnlyOn by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
+    val seenUpTo by UnlockAttempts.seen.collectAsStateWithLifecycle()
+    // Read again on every visit (an engine coming back clears stopped reminders, say), off the main thread.
+    LifecycleResumeEffect(homeViewModel) {
+        val job = homeViewModel.refresh()
+        onPauseOrDispose { job.cancel() }
+    }
+    val labelByPackage = remember(installedApps) { installedApps.associate { it.packageName to it.label } }
+    fun attemptLabel(attempt: UnlockAttempts.Attempt) = labelByPackage[attempt.packageName] ?: attempt.label
+
+    /**
+     * Ends every locked app's session at once. [includeOwnApp]: BioKey too, for the status sheet's
+     * "Lock all apps now" (the phone is about to be handed over); the unlocked card's Lock all
+     * leaves BioKey open, where the owner is.
+     */
+    fun lockAllNow(includeOwnApp: Boolean) {
+        Haptics.confirm(view)
+        val outcome = LockAllNow.run(context, includeOwnApp = includeOwnApp, reason = "locked from BioKey")
+        BioKeyMessages.show(LockAllNow.message(context, outcome), Icons.Default.Lock)
+    }
+
+    /** The one thing to do when nothing is protecting: turn an engine on, or resume. */
+    fun onProtectionAction() {
+        when (mode) {
+            ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP ->
+                disclosures.request(Disclosure.COMPATIBILITY) { IntentNavigationHelper.openNextCompatibilityPermission(context) }
+            // Not running too: turning it off and on grants it again, so the disclosure comes first.
+            ProtectionEngine.Mode.OFF, ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING ->
+                disclosures.request(Disclosure.ACCESSIBILITY) { IntentNavigationHelper.openAccessibilitySettings(context) }
+            else -> vault.resumeProtection()
+        }
+    }
+
+    /**
+     * [pkg] was just locked by the owner here (its switch, or a profile chosen in its options):
+     * the first time, and only if it's actually locked now (not in a profile that's off), what
+     * locking does is explained ([LockExplainer]).
+     */
+    fun explainIfFirst(pkg: String) {
+        if (!lockedInVault(pkg) || !LockExplainer.shouldExplain(context, pkg)) return
+        overlays.explainJustLocked = true
+        overlays.explainPackage = pkg
+    }
+
+    /** Ends one app's session: the others stay open. */
+    fun lockOne(app: AppItem) {
+        Haptics.confirm(view)
+        LockStateTracker.lockPackage(app.packageName, "locked from BioKey")
+        BioKeyMessages.show(res.getString(R.string.home_app_locked, app.label), Icons.Default.Lock)
+    }
 
     /** The app's own switch; it stays in its profile either way. */
     fun toggleLock(app: AppItem, locked: Boolean) {
         Haptics.toggle(view, locked)
         vault.setAppLock(app.packageName, locked)
+        // Locked by hand for the first time: what that does and doesn't do, once.
+        if (locked) explainIfFirst(app.packageName)
+        if (!locked) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.LOCK_OFF, app.label)
         if (!locked) {
-            BioKeyMessages.show("${app.label} unlocked", Icons.Default.LockOpen, actionLabel = "Undo") {
+            // "Unlocked" is kept for an app open right now: this is its lock taken off.
+            BioKeyMessages.show(res.getString(R.string.home_lock_removed, app.label), Icons.Default.LockOpen, actionLabel = res.getString(R.string.common_undo)) {
                 vault.setAppLock(app.packageName, true)
             }
         }
     }
 
+    /** Picking starts on this profile's page, with [first] picked if it began on an app. */
+    fun startPicking(profile: SecurityProfile, first: String? = null) {
+        Haptics.confirm(view)
+        picked.clear()
+        if (first != null) picked += first
+        pickingIn = profile.id
+    }
+
+    fun togglePicked(pkg: String) {
+        Haptics.toggle(view, pkg !in picked)
+        if (pkg in picked) picked.remove(pkg) else picked += pkg
+    }
+
+    /**
+     * The picked apps still in [profile] taken out of it at once, each as "Remove from …" does it
+     * alone: its own switch kept, recorded where that leaves it locked less. One Undo puts them
+     * all back.
+     */
+    fun removePicked(profile: SecurityProfile) {
+        val apps = installedApps.filter { it.packageName in picked && profileOf(it.packageName)?.id == profile.id }
+        pickingIn = null
+        picked.clear()
+        if (apps.isEmpty()) return
+        Haptics.confirm(view)
+        for (app in apps) {
+            val pkg = app.packageName
+            val wasLocked = lockedInVault(pkg)
+            val delayBefore = vault.getTimeoutMode(pkg).openFor
+            vault.removeAppFromProfile(pkg)
+            // Out of a strict profile, it follows the default delay: maybe a longer one.
+            if (wasLocked && (!lockedInVault(pkg) || vault.getTimeoutMode(pkg).openFor > delayBefore)) {
+                ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.TAKEN_OUT, app.label, profile.name)
+            }
+        }
+        val message = apps.singleOrNull()?.let { res.getString(R.string.home_removed_from_profile, it.label, profile.name) }
+            ?: res.getQuantityString(R.plurals.home_removed_apps_from_profile, apps.size, apps.size, profile.name)
+        BioKeyMessages.show(message, Icons.Default.RemoveCircleOutline, actionLabel = res.getString(R.string.common_undo)) {
+            for (app in apps) vault.moveAppToProfile(app.packageName, profile.id, switchOn = false)
+        }
+    }
+
     /**
      * A group of app rows in the list. Keyed by package alone (the groups split one list without
-     * repeats), so a row whose lock is switched moves to its new group rather than being rebuilt.
+     * repeats), so a row that changes group when the list is next looked at moves rather than
+     * being rebuilt. On a profile's page ([pickableIn]) a long press starts picking apps there,
+     * and while they're being picked a row is a checkbox: a tap picks it, its switch stands aside.
      */
-    fun LazyListScope.appGroup(apps: List<AppItem>, showProfile: Boolean) {
+    fun LazyListScope.appGroup(apps: List<AppItem>, showProfile: Boolean, pickableIn: SecurityProfile? = null) {
         itemsIndexed(apps, key = { _, app -> app.packageName }, contentType = { _, _ -> CONTENT_APP }) { i, app ->
-            val profile = if (showProfile) profileOf(app.packageName) else null
+            // An app whose profile is off always says so: it's why its switch is off.
+            val profile = profileOf(app.packageName)?.takeIf { showProfile || !it.enabled }
             // The lock stays on: it still hides the app's notifications, and protects it again as
             // soon as the accessibility engine is back.
             val unwatched = isUnwatched(app)
             val homeScreen = isHomeScreen(app.packageName)
+            // A state, not a category: "unlocked now" takes its own colour, the rest of the line
+            // keeps the row's. Not where the whole line is a warning.
+            val unlockedColor = MaterialTheme.colorScheme.tertiary.takeIf { !homeScreen && !unwatched }
             GroupRow(
                 index = i,
                 count = apps.size,
                 title = app.label,
-                subtitle = buildString {
-                    append(profile?.name ?: app.category.label)
-                    if (profile != null && !profile.enabled) append(" · off")
-                    if (app.isWorkProfile) append(" · Work")
+                subtitle = buildAnnotatedString {
+                    val locked = isLocked(app.packageName)
+                    // Its profile, or else its kind; "App" (no category known) says nothing, so it isn't shown.
+                    val name = profile?.name ?: if (app.category != AppCategory.GENERAL) stringResource(app.category.label) else null
+                    if (name != null) append(name)
+                    if (profile != null && !profile.enabled) append(SEPARATOR + stringResource(R.string.home_off))
+                    // The default is said once, in the section header; a row says only a delay of its own.
+                    val delay = vault.getTimeoutMode(app.packageName)
+                    if (locked && !homeScreen && delay != defaultTimeout) {
+                        val relock = stringResource(delay.relockPhraseRes)
+                        append(if (name != null) SEPARATOR + relock.replaceFirstChar { it.lowercase() } else relock)
+                    }
+                    if (isUnlockedNow(app.packageName) && locked) {
+                        val first = length == 0
+                        if (!first) append(SEPARATOR)
+                        val unlocked = stringResource(if (first) R.string.home_unlocked_now else R.string.home_unlocked_now_lower)
+                        if (unlockedColor != null) withStyle(SpanStyle(color = unlockedColor)) { append(unlocked) } else append(unlocked)
+                    }
+                    if (app.isWorkProfile) append(SEPARATOR + stringResource(R.string.home_row_work))
+                    if (app.packageName in lockedByAndroid) {
+                        val also = stringResource(R.string.home_row_also_locked_by_android)
+                        append(if (length == 0) also else SEPARATOR + also.replaceFirstChar { it.lowercase() })
+                    }
                     if (homeScreen) {
-                        append(" · $HOME_SCREEN_NOTE")
+                        append(SEPARATOR + stringResource(R.string.home_screen_note))
                     } else if (unwatched) {
-                        append(if (app.isWorkProfile) " · Not protected in compatibility mode" else " · Work copy not protected in compatibility mode")
+                        append(
+                            SEPARATOR + stringResource(
+                                if (app.isWorkProfile) R.string.home_row_not_protected_compat else R.string.home_row_work_copy_not_protected_compat
+                            )
+                        )
                     }
                 },
                 subtitleColor = when {
                     homeScreen && isOn(app.packageName) -> MaterialTheme.colorScheme.error
                     homeScreen -> MaterialTheme.colorScheme.onSurfaceVariant
                     unwatched -> MaterialTheme.colorScheme.error
-                    profile != null -> MaterialTheme.colorScheme.primary
+                    profile != null && profile.enabled -> MaterialTheme.colorScheme.primary
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
                 leading = { AppIcon(app) },
-                onClick = { optionsForPackage = app.packageName },
+                // Outside a profile's page the row opens the app's options, as it always has.
+                onClick = if (pickableIn == null) ({ overlays.optionsForPackage = app.packageName }) else null,
+                interaction = when {
+                    pickableIn == null -> Modifier
+                    picking -> Modifier.toggleable(value = app.packageName in picked, role = Role.Checkbox) { togglePicked(app.packageName) }
+                    else -> Modifier.combinedClickable(
+                        onLongClickLabel = stringResource(R.string.home_pick_start_label),
+                        onLongClick = { startPicking(pickableIn, app.packageName) }
+                    ) { overlays.optionsForPackage = app.packageName }
+                },
                 modifier = Modifier
                     .animateItem()
                     .padding(horizontal = GroupInset)
                     .padding(top = if (i == 0) 0.dp else GroupGap)
             ) {
+                if (pickableIn != null && picking) {
+                    // The row says picked or not, and a tap anywhere on it picks: the box only shows it.
+                    Checkbox(checked = app.packageName in picked, onCheckedChange = null)
+                    return@GroupRow
+                }
                 // Its own TalkBack stop, so it says which app it locks. A home screen's can only
-                // be turned off.
+                // be turned off. While its profile is off it shows off and can't be changed (the
+                // subtitle says why); its own choice comes back with the profile.
+                val profileOff = profile?.enabled == false
+                val lockDescription = stringResource(R.string.home_lock_app_description, app.label)
                 Switch(
-                    checked = isOn(app.packageName),
+                    checked = isLocked(app.packageName),
                     onCheckedChange = { toggleLock(app, it) },
-                    enabled = !homeScreen || isOn(app.packageName),
-                    modifier = Modifier.semantics { contentDescription = "Lock ${app.label}" }
+                    enabled = !profileOff && (!homeScreen || isOn(app.packageName)),
+                    modifier = Modifier.semantics { contentDescription = lockDescription }
                 )
             }
         }
     }
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .rejectObscuredTouches()
-            // Out of screen readers' reach while Settings is over it, as it is out of the eye's.
-            .then(if (showSettings) Modifier.clearAndSetSemantics { } else Modifier)
-    ) {
-        val listState = key(filter) { rememberLazyListState() }
-        // The list runs under the status bar, and so would the search bar pinned at its top: by as
-        // much as it would be under the status bar, it moves down, over a band of the page's colour.
-        val statusBarTop = WindowInsets.statusBars.getTop(LocalDensity.current)
-        val controlsInset by remember(listState, statusBarTop) {
-            derivedStateOf {
-                val items = listState.layoutInfo.visibleItemsInfo
-                val controls = items.firstOrNull { it.key == "controls" } ?: return@derivedStateOf 0
-                // Where it would be if it didn't stick: just after the item before it.
-                val before = items.lastOrNull { it.index == controls.index - 1 }
-                val natural = before?.let { it.offset + it.size } ?: Int.MIN_VALUE
-                (statusBarTop.toLong() - natural).coerceIn(0L, statusBarTop.toLong()).toInt()
-            }
-        }
-        LazyColumn(
-            state = listState,
-            // Phones use the full width; on tablets and in landscape the list keeps a readable width.
-            modifier = Modifier
-                .align(Alignment.TopCenter)
+    Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
                 .fillMaxHeight()
-                .widthIn(max = MaxContentWidth)
-                .fillMaxWidth(),
-            contentPadding = PaddingValues(bottom = 96.dp)
+                .fillMaxWidth(homeFraction)
+                .rejectObscuredTouches()
+                // Out of screen readers' reach while Settings is over it, as it is out of the eye's.
+                .then(if (showSettings && !twoPane) Modifier.clearAndSetSemantics { } else Modifier)
         ) {
-            item(key = "header") {
-                // Where the header and its logo are on screen: the constellation thins out round
-                // the logo, so no link cuts through the name.
-                var headerOrigin by remember { mutableStateOf(Offset.Zero) }
-                var logoBounds by remember { mutableStateOf<Rect?>(null) }
-                Box(Modifier.onGloballyPositioned { headerOrigin = it.positionInRoot() }) {
-                    HeaderMatrixDotsExpressive(
-                        Modifier.matchParentSize(),
+            // Phones use the full width; on tablets and in landscape the list keeps a readable width
+            // in the middle (of its pane, with Settings open beside it), while the header's
+            // constellation still runs edge to edge.
+            val homeWidth = windowWidth * homeFraction
+            val sidePad = ((homeWidth - MaxContentWidth) / 2).coerceAtLeast(0.dp)
+            val sidePadPx = with(density) { sidePad.roundToPx() }
+            val listState = key(filter) { rememberLazyListState() }
+            // The list runs under the status bar, and so would the search bar pinned at its top: by as
+            // much as it would be under the status bar, it moves down, over a band of the page's colour.
+            val statusBarTop = WindowInsets.statusBars.getTop(LocalDensity.current)
+            val controlsInset by remember(listState, statusBarTop) {
+                derivedStateOf {
+                    val items = listState.layoutInfo.visibleItemsInfo
+                    val controls = items.firstOrNull { it.key == "controls" } ?: return@derivedStateOf 0
+                    // Where it would be if it didn't stick: just after the item before it.
+                    val before = items.lastOrNull { it.index == controls.index - 1 }
+                    val natural = before?.let { it.offset + it.size } ?: Int.MIN_VALUE
+                    (statusBarTop.toLong() - natural).coerceIn(0L, statusBarTop.toLong()).toInt()
+                }
+            }
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = sidePad, end = sidePad, bottom = 96.dp)
+            ) {
+                item(key = "header") {
+                    HomeHeader(
+                        look = look,
                         animated = headerActive,
-                        quiet = logoBounds?.translate(-headerOrigin)
+                        sidePadPx = sidePadPx,
+                        onOpenStatus = { overlays.showProtectionSheet = true },
+                        onOpenSettings = { showSettings = if (twoPane) !showSettings else true },
+                        settingsSelected = if (twoPane) showSettings else null
                     )
-                    Column(Modifier.statusBarsPadding()) {
-                        MainHeader(
-                            status = look,
-                            animated = headerActive,
-                            onOpenStatus = { showProtectionSheet = true },
-                            onOpenSettings = { showSettings = true },
-                            onLogoPlaced = { logoBounds = it }
-                        )
-                    }
                 }
-            }
 
-            if (!notifications.allowed) {
-                item(key = "alerts_off") {
-                    Box(Modifier.padding(horizontal = GroupInset).padding(bottom = 8.dp)) {
-                        GroupRow(
-                            index = 0,
-                            count = 1,
-                            title = "Alerts are off",
-                            subtitle = "BioKey can't tell you if app locking stops, or stand in for hidden notifications · tap to allow",
-                            icon = Icons.Default.NotificationsOff,
-                            iconTint = MaterialTheme.colorScheme.onErrorContainer,
-                            iconContainer = MaterialTheme.colorScheme.errorContainer,
-                            onClick = notifications::requestOrOpenSettings
-                        )
-                    }
-                }
-            }
+                homeCards(
+                    mode = mode,
+                    look = look,
+                    vault = vault,
+                    globalLockEnabled = globalLockEnabled,
+                    notifications = notifications,
+                    disclosures = disclosures,
+                    homeViewModel = homeViewModel,
+                    home = home,
+                    attempts = attempts,
+                    gaps = gaps,
+                    seenUpTo = seenUpTo,
+                    attemptsChosen = attemptsChosen,
+                    biometricOnlyOn = biometricOnlyOn,
+                    lockedApps = lockedApps,
+                    unlockedNowApps = unlockedNowApps,
+                    attemptLabel = ::attemptLabel,
+                    onProtectionAction = ::onProtectionAction,
+                    onReview = ::openReview,
+                    onLockOne = ::lockOne,
+                    onChooseUnlocked = { overlays.showUnlocked = true },
+                    onLockAll = { lockAllNow(includeOwnApp = false) },
+                    screenLockMissing = screenLockMissing
+                )
 
-            stickyHeader(key = "controls") {
-                val surface = MaterialTheme.colorScheme.surface
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .graphicsLayer { translationY = controlsInset.toFloat() }
-                        .drawBehind {
-                            drawRect(surface, topLeft = Offset(0f, -controlsInset.toFloat()), size = Size(size.width, size.height + controlsInset))
-                        }
-                        .padding(top = 12.dp, bottom = 4.dp)
-                ) {
-                    SearchPill(searchQuery, onChange = { searchQuery = it }, modifier = Modifier.padding(horizontal = GroupInset))
-                    LazyRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = GroupInset, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                stickyHeader(key = "controls") {
+                    val surface = MaterialTheme.colorScheme.surface
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer { translationY = controlsInset.toFloat() }
+                            .drawBehind {
+                                drawRect(surface, topLeft = Offset(0f, -controlsInset.toFloat()), size = Size(size.width, size.height + controlsInset))
+                            }
+                            .padding(top = 12.dp, bottom = 4.dp)
                     ) {
-                        item(key = FILTER_ALL) {
-                            FilterChoice("All apps", Icons.Default.Apps, filter == FILTER_ALL) { filter = FILTER_ALL }
-                        }
-                        items(profiles, key = { it.id }) { profile ->
-                            val apps = appCountByProfile[profile.id] ?: 0
-                            FilterChoice(
-                                label = "${profile.name} · " + if (profile.enabled) "$apps" else "off",
-                                description = "${profile.name} profile, " + when {
-                                    !profile.enabled -> "off"
-                                    apps == 1 -> "1 app"
-                                    else -> "$apps apps"
-                                },
-                                icon = profileIcon(profile.iconKey),
-                                selected = filter == profile.id
-                            ) { filter = profile.id }
-                        }
-                        item(key = "new_profile") {
-                            FilterChip(
-                                selected = false,
-                                onClick = { newProfileForPackage = null; showNewProfile = true },
-                                label = { Text("New profile") },
-                                leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                                shape = CircleShape
-                            )
+                        SearchPill(searchQuery, onChange = { searchQuery = it }, modifier = Modifier.padding(horizontal = GroupInset))
+                        // On wide screens the chips scroll edge to edge, like the header, not cut off at the column.
+                        LazyRow(
+                            modifier = Modifier.fillMaxWidth().horizontalBleed(sidePadPx),
+                            contentPadding = PaddingValues(horizontal = GroupInset + sidePad, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            item(key = FILTER_ALL) {
+                                FilterChoice(stringResource(R.string.home_filter_all), Icons.Default.Apps, filter == FILTER_ALL) { filter = FILTER_ALL }
+                            }
+                            items(profiles, key = { it.id }) { profile ->
+                                val apps = appCountByProfile[profile.id] ?: 0
+                                FilterChoice(
+                                    // An empty profile says just its name: "· 0" is noise.
+                                    label = profile.name + when {
+                                        !profile.enabled -> SEPARATOR + stringResource(R.string.home_off)
+                                        apps == 0 -> ""
+                                        else -> "$SEPARATOR$apps"
+                                    },
+                                    description = if (!profile.enabled) {
+                                        stringResource(R.string.home_profile_chip_off_description, profile.name)
+                                    } else {
+                                        pluralStringResource(R.plurals.home_profile_chip_description, apps, profile.name, apps)
+                                    },
+                                    icon = profileIcon(profile.iconKey),
+                                    selected = filter == profile.id
+                                ) { filter = profile.id }
+                            }
+                            item(key = "new_profile") {
+                                FilterChip(
+                                    selected = false,
+                                    onClick = { overlays.newProfileForPackage = null; overlays.showNewProfile = true },
+                                    label = { Text(stringResource(R.string.profile_new)) },
+                                    leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp.scaledWithText())) },
+                                    shape = CircleShape
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            if (currentProfile != null) {
-                item(key = "profile_${currentProfile.id}") {
-                    ProfileCard(
-                        profile = currentProfile,
-                        appCount = appCountByProfile[currentProfile.id] ?: 0,
-                        defaultTimeout = defaultTimeout,
-                        onEnabledChange = { on ->
-                            Haptics.toggle(view, on)
-                            vault.setProfileEnabled(currentProfile.id, on)
-                            if (!on) {
-                                val id = currentProfile.id
-                                BioKeyMessages.show("${currentProfile.name} off · its apps aren't locked", Icons.Default.LockOpen, actionLabel = "Undo") {
-                                    vault.setProfileEnabled(id, true)
+                if (currentProfile != null) {
+                    item(key = "profile_${currentProfile.id}") {
+                        ProfileCard(
+                            profile = currentProfile,
+                            appCount = appCountByProfile[currentProfile.id] ?: 0,
+                            defaultTimeout = defaultTimeout,
+                            onEnabledChange = { on ->
+                                Haptics.toggle(view, on)
+                                vault.setProfileEnabled(currentProfile.id, on)
+                                if (!on) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.PROFILE_OFF, currentProfile.name)
+                                if (!on) {
+                                    val id = currentProfile.id
+                                    BioKeyMessages.show(
+                                        res.getString(R.string.home_profile_switched_off, currentProfile.name),
+                                        Icons.Default.LockOpen,
+                                        actionLabel = res.getString(R.string.common_undo)
+                                    ) {
+                                        vault.setProfileEnabled(id, true)
+                                    }
+                                }
+                            },
+                            onEdit = { overlays.showEditProfile = true },
+                            onRelock = { overlays.showRelock = true },
+                            onAddApps = { overlays.showAddApps = true }
+                        )
+                    }
+                }
+
+                when {
+                    isLoadingApps -> item(key = "loading") {
+                        Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                    }
+                    matching.isEmpty() -> item(key = "empty") {
+                        EmptyState(
+                            text = when {
+                                appsFailed -> stringResource(R.string.home_apps_failed)
+                                searchQuery.isNotBlank() -> stringResource(R.string.home_no_match, searchQuery.trim())
+                                currentProfile != null -> stringResource(R.string.home_profile_empty, currentProfile.name)
+                                else -> stringResource(R.string.home_no_apps)
+                            },
+                            actionLabel = if (currentProfile != null && searchQuery.isBlank()) stringResource(R.string.home_add_apps) else null,
+                            onAction = { overlays.showAddApps = true }
+                        )
+                    }
+                    currentProfile != null -> {
+                        item(key = "h_profile", contentType = CONTENT_HEADER) {
+                            Row {
+                                SectionHeader(stringResource(R.string.home_apps_in_profile, currentProfile.name), Modifier.weight(1f).alignByBaseline())
+                                // A long press on an app does the same: this says it can be done.
+                                if (!picking) {
+                                    TextButton(
+                                        onClick = { startPicking(currentProfile) },
+                                        modifier = Modifier.alignByBaseline().padding(end = GroupInset + 4.dp)
+                                    ) { Text(stringResource(R.string.home_pick_start)) }
                                 }
                             }
-                        },
-                        onEdit = { showEditProfile = true },
-                        onRelock = { showRelock = true },
-                        onAddApps = { showAddApps = true }
-                    )
+                        }
+                        appGroup(matching, showProfile = false, pickableIn = currentProfile)
+                    }
+                    else -> {
+                        if (lockedShown.isNotEmpty()) {
+                            item(key = "h_locked", contentType = CONTENT_HEADER) {
+                                // How they re-lock, said once, only while something actually locks them.
+                                val relock = when {
+                                    !ProtectionEngine.isProtecting(mode) -> SEPARATOR + stringResource(R.string.home_not_protected_now)
+                                    !globalLockEnabled -> SEPARATOR + stringResource(R.string.home_paused_lower)
+                                    else -> SEPARATOR + stringResource(defaultTimeout.relockPhraseRes).replaceFirstChar { it.lowercase() }
+                                }
+                                SectionHeader(
+                                    stringResource(R.string.home_section_locked) + "$SEPARATOR${lockedShown.size}$relock",
+                                    color = when {
+                                        !ProtectionEngine.isProtecting(mode) -> MaterialTheme.colorScheme.error
+                                        // A pause the owner chose: calm, like its card.
+                                        !globalLockEnabled -> MaterialTheme.colorScheme.tertiary
+                                        else -> MaterialTheme.colorScheme.primary
+                                    }
+                                )
+                            }
+                            appGroup(lockedShown, showProfile = true)
+                        }
+                        if (unlockedShown.isNotEmpty()) {
+                            item(key = "h_unlocked", contentType = CONTENT_HEADER) { SectionHeader(stringResource(if (lockedShown.isEmpty()) R.string.home_choose_apps else R.string.common_not_locked)) }
+                            // With their profile: one that's off is why they aren't locked.
+                            appGroup(unlockedShown, showProfile = true)
+                        }
+                    }
                 }
             }
 
-            when {
-                isLoadingApps -> item(key = "loading") {
-                    Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                }
-                matching.isEmpty() -> item(key = "empty") {
-                    EmptyState(
-                        text = when {
-                            appsFailed -> "Couldn't list your apps. Close BioKey and open it again to retry."
-                            searchQuery.isNotBlank() -> "No apps match “${searchQuery.trim()}”"
-                            currentProfile != null -> "No apps in ${currentProfile.name} yet"
-                            else -> "No apps found"
-                        },
-                        actionLabel = if (currentProfile != null && searchQuery.isBlank()) "Add apps" else null,
-                        onAction = { showAddApps = true }
-                    )
-                }
-                currentProfile != null -> {
-                    item(key = "h_profile", contentType = CONTENT_HEADER) { SectionHeader("Apps in ${currentProfile.name}") }
-                    appGroup(matching, showProfile = false)
-                }
-                else -> {
-                    if (lockedShown.isNotEmpty()) {
-                        item(key = "h_locked", contentType = CONTENT_HEADER) { SectionHeader("Locked · ${lockedShown.size}") }
-                        appGroup(lockedShown, showProfile = true)
-                    }
-                    if (unlockedShown.isNotEmpty()) {
-                        item(key = "h_unlocked", contentType = CONTENT_HEADER) { SectionHeader(if (lockedShown.isEmpty()) "Choose apps to lock" else "Not locked") }
-                        appGroup(unlockedShown, showProfile = false)
+            // While apps are picked on a profile's page: how many, all or none, and taking them out.
+            val pageApps = if (currentProfile != null) matching.map { it.packageName } else emptyList()
+            val pickedHere = picked.count { it in pageApps }
+            AnimatedVisibility(
+                visible = picking,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                enter = slideInVertically { it } + fadeIn(),
+                exit = slideOutVertically { it } + fadeOut()
+            ) {
+                val profile = currentProfile ?: return@AnimatedVisibility
+                Surface(
+                    shape = RoundedCornerShape(28.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shadowElevation = 6.dp,
+                    modifier = Modifier
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .padding(horizontal = GroupInset, vertical = 12.dp)
+                        .widthIn(max = MaxContentWidth)
+                        .fillMaxWidth()
+                ) {
+                    Row(Modifier.padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { pickingIn = null }) {
+                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.home_pick_stop))
+                        }
+                        Text(
+                            pluralStringResource(R.plurals.home_picked_count, pickedHere, pickedHere),
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite }
+                        )
+                        val all = pageApps.isNotEmpty() && pickedHere == pageApps.size
+                        TextButton(onClick = {
+                            picked.removeAll(pageApps)
+                            if (!all) picked += pageApps
+                        }) { Text(stringResource(if (all) R.string.home_pick_none else R.string.home_pick_all)) }
+                        Spacer(Modifier.width(4.dp))
+                        Button(onClick = { removePicked(profile) }, enabled = pickedHere > 0) {
+                            Text(stringResource(R.string.home_pick_remove))
+                        }
                     }
                 }
             }
         }
 
-    }
-
-    // Settings slides in over the home screen, which stays composed underneath so the
-    // predictive back gesture can reveal it.
-    AnimatedVisibility(
-        visibleState = settingsVisibility,
-        enter = slideInHorizontally { it / 3 } + fadeIn(),
-        exit = slideOutHorizontally { it / 3 } + fadeOut()
-    ) {
-        SettingsScreenExpressive(mode = mode, onNavigateBack = { showSettings = false }, onPauseRequested = onPauseRequested)
+        // Settings slides in over the home screen, which stays composed underneath so the
+        // predictive back gesture can reveal it. On a wide window it's a pane on the right instead,
+        // home still in use beside it; its back arrow (and Back) closes the pane.
+        AnimatedVisibility(
+            visibleState = settingsVisibility,
+            modifier = if (twoPane) Modifier.align(Alignment.TopEnd).fillMaxHeight().fillMaxWidth(1f - HomePaneFraction) else Modifier.fillMaxSize(),
+            enter = slideInHorizontally { it / 3 } + fadeIn(),
+            exit = slideOutHorizontally { it / 3 } + fadeOut()
+        ) {
+            Row(Modifier.fillMaxSize()) {
+                if (twoPane) VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Box(Modifier.weight(1f)) {
+                    SettingsScreenExpressive(
+                        mode = mode, onNavigateBack = { showSettings = false }, onPauseRequested = onPauseRequested,
+                        onBiometricOnlyOn = homeViewModel::undismissLockSettings, asPane = twoPane
+                    )
+                }
+            }
+        }
     }
 
     // ---- Sheets & dialogs ------------------------------------------------------------------
 
-    if (showProtectionSheet) {
-        ProtectionSheet(
-            look = look,
-            onAction = {
-                showProtectionSheet = false
-                when (mode) {
-                    ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP ->
-                        disclosures.request(Disclosure.COMPATIBILITY) { IntentNavigationHelper.openNextCompatibilityPermission(context) }
-                    // Not running too: turning it off and on grants it again, so the disclosure comes first.
-                    ProtectionEngine.Mode.OFF, ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING ->
-                        disclosures.request(Disclosure.ACCESSIBILITY) { IntentNavigationHelper.openAccessibilitySettings(context) }
-                    else -> vault.resumeProtection()
-                }
-            },
-            onPause = {
-                showProtectionSheet = false
-                onPauseRequested()
-            },
-            onDismiss = { showProtectionSheet = false }
-        )
-    }
-
-    optionsForPackage?.let { pkg ->
-        val app = installedApps.firstOrNull { it.packageName == pkg }
-        if (app != null) {
-            AppOptionsSheet(
-                app = app,
-                isLocked = isOn(pkg),
-                isHomeScreen = isHomeScreen(pkg),
-                currentProfile = profileOf(pkg),
-                profiles = profiles,
-                defaultTimeout = defaultTimeout,
-                onLockedChange = { toggleLock(app, it) },
-                onMoveToProfile = { profileId -> vault.moveAppToProfile(pkg, profileId) },
-                onRemoveFromProfile = {
-                    val former = profileOf(pkg)
-                    vault.removeAppFromProfile(pkg)
-                    optionsForPackage = null
-                    if (former != null) {
-                        BioKeyMessages.show("Removed ${app.label} from ${former.name}", Icons.Default.RemoveCircleOutline, actionLabel = "Undo") {
-                            vault.moveAppToProfile(pkg, former.id, switchOn = false)
-                        }
-                    }
-                },
-                onNewProfile = {
-                    newProfileForPackage = pkg
-                    optionsForPackage = null
-                    showNewProfile = true
-                },
-                onDismiss = { optionsForPackage = null }
-            )
-        }
-    }
-
-    if (showNewProfile) {
-        ProfileDetailsDialog(
-            existing = null,
-            onDismiss = { showNewProfile = false; newProfileForPackage = null },
-            onSave = { name, iconKey ->
-                val created = vault.createProfile(name, iconKey)
-                showNewProfile = false
-                filter = created.id
-                val forPkg = newProfileForPackage
-                newProfileForPackage = null
-                if (forPkg != null) vault.moveAppToProfile(forPkg, created.id) else showAddApps = true
-            },
-            onDelete = null
-        )
-    }
-
-    if (showEditProfile && currentProfile != null) {
-        ProfileDetailsDialog(
-            existing = currentProfile,
-            onDismiss = { showEditProfile = false },
-            onSave = { name, iconKey ->
-                vault.updateProfileDetails(currentProfile.id, name = name, iconKey = iconKey)
-                showEditProfile = false
-            },
-            onDelete = {
-                val name = currentProfile.name
-                vault.deleteProfile(currentProfile.id)
-                showEditProfile = false
-                filter = FILTER_ALL
-                BioKeyMessages.show("Deleted $name. Its apps keep their own lock switches.", Icons.Default.Delete)
-            }
-        )
-    }
-
-    if (showRelock && currentProfile != null) {
-        RelockSheet(
-            title = "Re-lock ${currentProfile.name}",
-            current = currentProfile.timeoutMode,
-            onSelect = { mode ->
-                vault.setProfileTimeout(currentProfile.id, mode)
-                showRelock = false
-            },
-            onDismiss = { showRelock = false },
-            settingsDefault = defaultTimeout
-        )
-    }
-
-    if (showAddApps && currentProfile != null) {
-        AddAppsScreen(
-            profile = currentProfile,
-            installedApps = installedApps,
-            profiles = profiles,
-            profileOfApp = ::profileOf,
-            lockedApps = lockedApps,
-            homeScreens = homeScreens,
-            onAdd = { packages ->
-                vault.addAppsToProfile(currentProfile.id, packages)
-                showAddApps = false
-            },
-            onDismiss = { showAddApps = false }
-        )
-    }
-}
-
-/**
- * Status and Settings as equal-width tiles at the edges, BioKey's mark centred between them,
- * moving unless [animated] is false (the header covered).
- */
-@Composable
-private fun MainHeader(
-    status: ProtectionLook,
-    animated: Boolean,
-    onOpenStatus: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onLogoPlaced: (Rect) -> Unit = {}
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 12.dp, end = 12.dp, top = 28.dp, bottom = 24.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        HeaderTile(
-            icon = status.icon,
-            label = status.shortLabel,
-            container = status.container,
-            content = status.content,
-            contentDescription = "${status.title}. Details",
-            onClick = onOpenStatus
-        )
-        // Centred between the two equal-width tiles, with breathing room on both sides.
-        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-            // The mark alone, on its side (the fingerprint on the right, the key on the left), as
-            // large as the header holds; its print swirls while the header is uncovered.
-            BioKeyMarkSideways(
-                Modifier
-                    .height(104.dp)
-                    .aspectRatio(1f / KeyMark.ASPECT)
-                    .onGloballyPositioned { onLogoPlaced(it.boundsInRoot()) },
-                animated = animated
-            )
-        }
-        HeaderTile(
-            icon = Icons.Default.Settings,
-            label = "Settings",
-            container = MaterialTheme.colorScheme.surfaceContainerHigh,
-            content = MaterialTheme.colorScheme.onSurface,
-            contentDescription = "Settings",
-            onClick = onOpenSettings
-        )
-    }
-}
-
-/** A circle around an icon, with its label underneath; the whole column is the touch target. */
-@Composable
-private fun HeaderTile(
-    icon: ImageVector,
-    label: String,
-    container: Color,
-    content: Color,
-    contentDescription: String,
-    onClick: () -> Unit
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .width(84.dp)
-            .springPress()
-            .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick, role = Role.Button)
-            .semantics(mergeDescendants = true) { this.contentDescription = contentDescription }
-            .padding(vertical = 6.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(64.dp)
-                .background(container, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(32.dp))
-        }
-        Spacer(Modifier.height(8.dp))
-        // Two lines, so large text still shows the whole of "Protected" or "Not running".
-        Text(
-            label,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-/** How each protection state looks, in the header tile and its sheet. */
-private data class ProtectionLook(
-    val container: Color,
-    val content: Color,
-    val icon: ImageVector,
-    val shortLabel: String,
-    val title: String,
-    val body: String,
-    /** Primary action, or null when protecting normally (then the sheet offers Pause). */
-    val action: String?
-)
-
-@Composable
-private fun protectionLook(
-    mode: ProtectionEngine.Mode,
-    enabled: Boolean,
-    pausedUntil: Long,
-    lockedCount: Int,
-    /** Locked apps with a copy in another profile, which compatibility mode can't see. */
-    unwatchedCount: Int,
-    defaultTimeout: LockTimeoutMode
-): ProtectionLook {
-    val context = LocalContext.current
-    val colors = MaterialTheme.colorScheme
-    val apps = if (lockedCount == 1) "1 app locked" else "$lockedCount apps locked"
-    return when {
-        mode == ProtectionEngine.Mode.NEEDS_COMPATIBILITY_SETUP -> ProtectionLook(
-            colors.tertiaryContainer, colors.onTertiaryContainer, Icons.Default.GppMaybe, "Set up",
-            "Advanced Protection is on",
-            "It reserves accessibility for accessibility tools. Allow usage access and display over other apps, and BioKey keeps locking your apps in compatibility mode.",
-            "Set up compatibility mode"
-        )
-        mode == ProtectionEngine.Mode.OFF -> ProtectionLook(
-            colors.errorContainer, colors.onErrorContainer, Icons.Default.Warning, "Off",
-            "App lock is off", "Turn on BioKey in Accessibility settings to start locking apps.", "Turn on"
-        )
-        // Switched on, but not running (it crashed): saying "Protected" here would be the one lie that matters.
-        mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> ProtectionLook(
-            colors.errorContainer, colors.onErrorContainer, Icons.Default.Warning, "Not running",
-            "App lock isn't running",
-            "BioKey's accessibility service is switched on but isn't running, so locked apps open without a check. Turn it off and on again in Accessibility settings.",
-            "Open Accessibility settings"
-        )
-        !enabled -> ProtectionLook(
-            colors.tertiaryContainer, colors.onTertiaryContainer, Icons.Default.PauseCircle, "Paused",
-            if (pausedUntil > System.currentTimeMillis()) {
-                "Paused until " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil))
-            } else "Protection paused",
-            "Locked apps open without a check until you resume.",
-            "Resume protection"
-        )
-        else -> ProtectionLook(
-            colors.primaryContainer, colors.onPrimaryContainer, Icons.Default.VerifiedUser, "Protected",
-            "Protected",
-            apps + " · " + defaultTimeout.relockPhrase.lowercase() +
-                (if (mode == ProtectionEngine.Mode.COMPATIBILITY) "\nCompatibility mode (works with Advanced Protection)" else "") +
-                when (unwatchedCount) {
-                    0 -> ""
-                    1 -> "\n1 locked app isn't protected in your work profile: compatibility mode can't see apps there"
-                    else -> "\n$unwatchedCount locked apps aren't protected in your work profile: compatibility mode can't see apps there"
-                },
-            null
-        )
-    }
-}
-
-/** Protection details and the one action that matters, opened from the header tile. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ProtectionSheet(
-    look: ProtectionLook,
-    onAction: () -> Unit,
-    onPause: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        ProtectDialogWindow()
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .rejectObscuredTouches()
-                .padding(horizontal = 28.dp)
-                .padding(bottom = 28.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(72.dp)
-                    .background(look.container, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(look.icon, contentDescription = null, tint = look.content, modifier = Modifier.size(36.dp))
-            }
-            Spacer(Modifier.height(16.dp))
-            Text(
-                look.title,
-                style = MaterialTheme.typography.headlineSmall,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.semantics { heading() }
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                look.body,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            Spacer(Modifier.height(24.dp))
-            if (look.action != null) {
-                Button(onClick = onAction, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text(look.action) }
-            } else {
-                OutlinedButton(onClick = onPause, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
-                    Icon(Icons.Default.PauseCircle, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Pause protection")
-                }
-            }
-        }
-    }
-}
-
-/** [description]: what screen readers say in place of a short [label] ("Finance profile, 2 apps" for "Finance · 2"). */
-@Composable
-private fun FilterChoice(label: String, icon: ImageVector, selected: Boolean, description: String? = null, onClick: () -> Unit) {
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        label = { Text(label) },
-        leadingIcon = { Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
-        shape = CircleShape,
-        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer),
-        modifier = if (description != null) Modifier.semantics { contentDescription = description } else Modifier
+    HomeDialogs(
+        overlays = overlays,
+        homeViewModel = homeViewModel,
+        vault = vault,
+        look = look,
+        installedApps = installedApps,
+        profiles = profiles,
+        currentProfile = currentProfile,
+        defaultTimeout = defaultTimeout,
+        lockedApps = lockedApps,
+        homeScreens = homeScreens,
+        unlockedNowApps = unlockedNowApps,
+        attempts = attempts,
+        gaps = gaps,
+        labelByPackage = labelByPackage,
+        profileOf = ::profileOf,
+        isOn = ::isOn,
+        isHomeScreen = ::isHomeScreen,
+        lockedInVault = ::lockedInVault,
+        attemptLabel = ::attemptLabel,
+        onToggleLock = ::toggleLock,
+        onLockOne = ::lockOne,
+        onLockAll = ::lockAllNow,
+        onProtectionAction = ::onProtectionAction,
+        onPauseRequested = onPauseRequested,
+        onFilterChange = { filter = it },
+        onLockedByHand = ::explainIfFirst
     )
-}
-
-/** Everything about a profile, at the top of its own page. */
-@Composable
-private fun ProfileCard(
-    profile: SecurityProfile,
-    appCount: Int,
-    defaultTimeout: LockTimeoutMode,
-    onEnabledChange: (Boolean) -> Unit,
-    onEdit: () -> Unit,
-    onRelock: () -> Unit,
-    onAddApps: () -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = GroupInset, vertical = 8.dp)
-    ) {
-        Column(Modifier.padding(20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                ProfileBadge(profile.iconKey, 56.dp)
-                Spacer(Modifier.width(16.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(profile.name, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        text = (if (appCount == 1) "1 app" else "$appCount apps") + " · " +
-                            if (profile.enabled) (profile.timeoutMode ?: defaultTimeout).relockPhrase.lowercase() else "off",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-                IconButton(onClick = onEdit) {
-                    Icon(Icons.Default.Edit, contentDescription = "Rename, change icon or delete ${profile.name}")
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            // The profile's own switch: off pauses every app in it; each keeps its own setting.
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .toggleable(value = profile.enabled, role = Role.Switch, onValueChange = onEnabledChange)
-                    .padding(horizontal = 4.dp, vertical = 8.dp)
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Lock apps in ${profile.name}", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        text = if (profile.enabled) "Each app follows its own switch" else "Off: none of its apps are locked",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                Switch(checked = profile.enabled, onCheckedChange = null)
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onAddApps, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Add apps")
-                }
-                FilledTonalButton(
-                    onClick = onRelock,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)
-                ) {
-                    Icon(Icons.Default.LockClock, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Re-lock")
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyState(text: String, actionLabel: String?, onAction: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 32.dp, vertical = 40.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (actionLabel != null) {
-            Spacer(Modifier.height(16.dp))
-            FilledTonalButton(onClick = onAction) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(actionLabel)
-            }
-        }
-    }
 }

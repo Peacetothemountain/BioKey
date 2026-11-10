@@ -19,6 +19,14 @@ val allowDebugSignedRelease = providers.gradleProperty("biokey.allowDebugSignedR
     .map { it.toBoolean() }
     .getOrElse(false)
 
+// Self-protection (asking for authentication before BioKey can be switched off or uninstalled)
+// is left out of release builds: Google Play's Accessibility API policy forbids preventing users
+// from disabling or uninstalling an app outside parental-control and enterprise apps. A release
+// for sideloading can opt back in with: ./gradlew assembleRelease -Pbiokey.selfProtection=true
+val selfProtectionInRelease = providers.gradleProperty("biokey.selfProtection")
+    .map { it.toBoolean() }
+    .getOrElse(false)
+
 android {
     namespace = "com.android.BioKey"
     compileSdk { version = release(37) { minorApiLevel = 2 } }
@@ -27,8 +35,8 @@ android {
         applicationId = "com.nbdesigns.biokey"
         minSdk = 31
         targetSdk = 37
-        versionCode = 3
-        versionName = "1.0.1"
+        versionCode = 6
+        versionName = "1.0.4"
     }
 
     signingConfigs {
@@ -45,9 +53,18 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Self-protection's tests run on debug builds, so they always have it.
+            buildConfigField("boolean", "SELF_PROTECTION", "true")
+        }
         release {
+            buildConfigField("boolean", "SELF_PROTECTION", "$selfProtectionInRelease")
             isMinifyEnabled = true
             isShrinkResources = true
+            // Symbol tables for native code in the bundle, so Play can read native crash reports.
+            // AndroidX's graphics library comes stripped, so for it there are none to take: Play
+            // gets a zip of the libraries themselves (see README, Release builds).
+            ndk { debugSymbolLevel = "FULL" }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -62,8 +79,14 @@ android {
                 }
                 else -> signingConfig = null // Produces an unsigned APK; configure key.properties to sign.
             }
+            // Marked too, so a build with self-protection is never mistaken for the Play build.
+            if (selfProtectionInRelease) versionNameSuffix = (versionNameSuffix ?: "") + "-selfprotection"
         }
     }
+
+    // What only self-protection needs (the accessibility config's view IDs): in the builds that have it.
+    sourceSets.getByName("debug").res.srcDir("src/selfProtection/res")
+    if (selfProtectionInRelease) sourceSets.getByName("release").res.srcDir("src/selfProtection/res")
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
@@ -96,7 +119,8 @@ android {
 
         unitTests.all { test ->
             // Test classes run in parallel JVMs, each with its own copy of BioKey's singletons
-            // (SecurityVault, LockStateTracker), so no class can lean on what another left behind.
+            // (SecurityVault, LockStateTracker); classes in one JVM run one after another, so each
+            // test resets what it relies on (BioKeyApplication starts every one afresh too).
             // Half the cores, at most four: two on GitHub's four-core runners, where two of these
             // and the Gradle daemon fit in 16 GB, and a desktop isn't swamped. Robolectric keeps a
             // sandbox per Android version in each JVM, which 2 GB holds.
@@ -200,6 +224,7 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.core.ktx)
     // Installs the baseline profile (src/main/baseline-prof.txt) on installs that don't come from
     // Google Play, which installs it itself.

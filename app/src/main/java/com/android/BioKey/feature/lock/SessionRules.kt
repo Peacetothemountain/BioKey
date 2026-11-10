@@ -15,7 +15,8 @@ import com.android.BioKey.core.security.LockStateTracker
  * The rules:
  * 1. An app on screen is in use: nothing ages.
  * 2. An app with a session counts as left once its windows have been gone for [LEAVE_CONFIRM_MS]
- *    (rotations, an app restarting its own screen), unless the screen in front can't be read and
+ *    (rotations, an app restarting its own screen; just unlocked, it first has [UNLOCK_ARRIVAL_MS]
+ *    to reach the screen, unless Home comes forward), unless the screen in front can't be read and
  *    no other app has come forward (apps that hide their windows from accessibility services).
  *    An unreadable screen titled after another app, and not after one of the app's own screens,
  *    is that other app coming forward. Left for a helper, a system screen it opened, or BioKey
@@ -43,6 +44,11 @@ internal class SessionRules(private val env: Env) {
          * the unlocked app's, as a sign-in link can cold-start a browser.
          */
         const val UNLOCK_LANDING_MS = 5_000L
+        /**
+         * After an unlock, how long the app may take to reach the screen before being off it
+         * counts as leaving: a split screen the lock screen hid takes about a second to form again.
+         */
+        const val UNLOCK_ARRIVAL_MS = 2_500L
     }
 
     interface Env {
@@ -88,6 +94,8 @@ internal class SessionRules(private val env: Env) {
     private val returningSince = HashMap<String, Long>()
     /** The app unlocked last, and when, until the first app in front after that ([noteInFront]). */
     private var unlockLanding: Pair<String, Long>? = null
+    /** Apps just unlocked, and when, until they reach the screen ([UNLOCK_ARRIVAL_MS]). */
+    private val arriving = HashMap<String, Long>()
 
     /** A window event put [pkg], unlocked, in front: it is in use. */
     fun noteOnScreen(pkg: String) {
@@ -98,6 +106,7 @@ internal class SessionRules(private val env: Env) {
     /** [pkg] was just unlocked (at [now]): the next app in front says where its lock screen closed. */
     fun noteUnlocked(pkg: String, now: Long) {
         unlockLanding = pkg to now
+        arriving[pkg] = now
     }
 
     /**
@@ -135,6 +144,7 @@ internal class SessionRules(private val env: Env) {
         pendingLeaves.clear()
         returningSince.clear()
         unlockLanding = null
+        arriving.clear()
     }
 
     fun reconcile(screen: Screen): Outcome {
@@ -150,8 +160,11 @@ internal class SessionRules(private val env: Env) {
         // 1. On screen: in use, nothing ages.
         for (pkg in visible) {
             pendingLeaves.remove(pkg)
+            arriving.remove(pkg)
             if (env.isLocked(pkg)) LockStateTracker.onAppVisible(pkg)
         }
+        // Home in front: whatever was on its way isn't.
+        if (env.isLauncher(front)) arriving.clear()
 
         // 2. Gone from the screen long enough: the user left.
         for (pkg in onScreenSessions.toList()) {
@@ -160,6 +173,14 @@ internal class SessionRules(private val env: Env) {
                 pendingLeaves.remove(pkg)
                 continue
             }
+            // Just unlocked and not on screen yet (a split screen forming again): not left.
+            val unlockedAt = arriving[pkg]
+            if (unlockedAt != null && now - unlockedAt < UNLOCK_ARRIVAL_MS) {
+                pendingLeaves.remove(pkg)
+                recheckIn(UNLOCK_ARRIVAL_MS - (now - unlockedAt) + 20L)
+                continue
+            }
+            arriving.remove(pkg)
             val goneSince = pendingLeaves.getOrPut(pkg) { now }
             if (now - goneSince < LEAVE_CONFIRM_MS) {
                 recheckIn(LEAVE_CONFIRM_MS - (now - goneSince) + 20L)

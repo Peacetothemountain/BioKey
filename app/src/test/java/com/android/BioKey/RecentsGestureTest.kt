@@ -32,6 +32,51 @@ class RecentsGestureTest {
     }
 
     @Test
+    fun swipedUpOffTheTopIsClosedThoughOnlyItsVisiblePartIsReported() {
+        // Measured on Android 17's launcher (1080 x 2424): the top stops at the edge, then the
+        // height goes below zero as the card leaves the screen.
+        val card17 = Rect(175, 304, 905, 1940)
+        assertTrue(RecentsWatcher.sweptAway(card17, Rect(178, 12, 902, 1109), 2424, 1080))
+        assertTrue(RecentsWatcher.sweptAway(card17, Rect(173, 0, 907, -50), 2424, 1080))
+        // Moved over sideways as its neighbour closed, it wasn't closed itself.
+        assertFalse(RecentsWatcher.sweptAway(Rect(0, 302, 131, 1949), Rect(173, 302, 907, 1949), 2424, 1080))
+    }
+
+    @Test
+    fun aCardSlidInFromTheSideIsMeasuredFromWhereItRests() {
+        // Recents opened from Home (Android 17, 1080 x 2424): the cards slide in from the left,
+        // clipped at the edge, then rest; swiped up from there, the card is closed.
+        val c = RecentsWatcher.Card(Rect(0, 302, 421, 1949))
+        c.moveTo(Rect(88, 302, 822, 1949))
+        c.moveTo(Rect(173, 302, 907, 1949))
+        c.moveTo(Rect(173, 302, 907, 1949))
+        c.moveTo(Rect(176, 120, 904, 1766))
+        c.moveTo(Rect(178, 12, 902, 1109))
+        assertTrue(RecentsWatcher.sweptAway(c.first, c.last, 2424, 1080))
+        // Seen off the top twice, it's still leaving, not resting there.
+        c.moveTo(Rect(173, 0, 907, -50))
+        c.moveTo(Rect(173, 0, 907, -50))
+        assertTrue(RecentsWatcher.sweptAway(c.first, c.last, 2424, 1080))
+        // Only sliding in, it rests where it came to.
+        val still = RecentsWatcher.Card(Rect(0, 302, 421, 1949))
+        still.moveTo(Rect(173, 302, 907, 1949))
+        assertFalse(RecentsWatcher.sweptAway(still.first, still.last, 2424, 1080))
+    }
+
+    @Test
+    fun anAppShrinkingIntoItsIconOnTheWayHomeIsNotClosed() {
+        // Swiping up to go Home scales the app's card down into its icon on the home screen,
+        // which can be near the top: the card ends up there smaller, not slid up whole. (Seen on
+        // a Pixel: a session ended as "closed from Recents" a second after the app was opened.)
+        val card17 = Rect(175, 304, 905, 1940)
+        assertFalse(RecentsWatcher.sweptAway(card17, Rect(430, 120, 650, 610), 2424, 1080))
+        assertFalse(RecentsWatcher.sweptAway(card17, Rect(300, 40, 780, 1100), 2424, 1080))
+        assertFalse(RecentsWatcher.sweptAway(card17, Rect(500, 200, 580, 380), 2424, 1080))
+        // Leaving Recents for the home screen scales every card down where it is.
+        assertFalse(RecentsWatcher.sweptAway(card17, Rect(320, 700, 760, 1680), 2424, 1080))
+    }
+
+    @Test
     fun scrolledSidewaysIsNotClosed() {
         assertFalse(RecentsWatcher.sweptAway(card, moved(-1100, 0), h, w))
         assertFalse(RecentsWatcher.sweptAway(card, moved(900, -20), h, w))

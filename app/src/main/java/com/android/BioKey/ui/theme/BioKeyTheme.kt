@@ -147,6 +147,11 @@ private data class SpringPressElement(val pressedScale: Float, val enabled: Bool
         node.pressedScale = pressedScale
         node.enabled = enabled
     }
+    override fun androidx.compose.ui.platform.InspectorInfo.inspectableProperties() {
+        name = "springPress"
+        properties["pressedScale"] = pressedScale
+        properties["enabled"] = enabled
+    }
 }
 
 private class SpringPressNode(var pressedScale: Float, enabled: Boolean) :

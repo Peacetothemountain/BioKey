@@ -2,6 +2,7 @@ package com.android.BioKey.feature.main
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.Resources
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.activity.ComponentActivity
@@ -61,10 +62,13 @@ import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalAutofillManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.semantics.error
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -77,13 +81,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import com.android.BioKey.R
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
-import com.android.BioKey.core.security.ProtectDialogWindow
 import com.android.BioKey.core.security.ProtectionEngine
+import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.core.security.VaultBackup
-import com.android.BioKey.core.security.rejectObscuredTouches
+import com.android.BioKey.feature.lock.ForegroundRules
+import com.android.BioKey.ui.security.ProtectDialogWindow
+import com.android.BioKey.ui.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.BioKeyMessageHost
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.GroupInset
@@ -133,6 +141,7 @@ internal class PendingBackup : ViewModel() {
 @Composable
 internal fun rememberBackupActions(): BackupActions {
     val context = LocalContext.current
+    val res = LocalResources.current
     val scope = rememberCoroutineScope()
     val vault = remember { SecurityVault.getInstance(context) }
     val activity = LocalActivity.current as ComponentActivity
@@ -152,7 +161,7 @@ internal fun rememberBackupActions(): BackupActions {
         if (password == null) {
             // The picker created the file, but the password is gone (BioKey was closed meanwhile).
             pending.viewModelScope.launch(Dispatchers.IO) { discard(app, uri) }
-            BioKeyMessages.show("Backup cancelled, try again", Icons.Default.ErrorOutline)
+            BioKeyMessages.show(res.getString(R.string.backup_cancelled), Icons.Default.ErrorOutline)
             return@rememberLauncherForActivityResult
         }
         pending.viewModelScope.launch {
@@ -171,10 +180,10 @@ internal fun rememberBackupActions(): BackupActions {
             }
             if (saved) {
                 DiagnosticLog.log("Settings backed up")
-                BioKeyMessages.show("Backup saved", Icons.Default.CheckCircle)
+                BioKeyMessages.show(res.getString(R.string.backup_saved), Icons.Default.CheckCircle)
             } else {
                 withContext(Dispatchers.IO) { discard(app, uri) }
-                BioKeyMessages.show("Couldn't save the backup there", Icons.Default.ErrorOutline)
+                BioKeyMessages.show(res.getString(R.string.backup_save_failed), Icons.Default.ErrorOutline)
             }
         }
     }
@@ -183,7 +192,7 @@ internal fun rememberBackupActions(): BackupActions {
         scope.launch {
             val file = withContext(Dispatchers.IO) { runCatching { read(context, uri) }.getOrNull() }
             if (file == null) {
-                BioKeyMessages.show("Couldn't open that file", Icons.Default.ErrorOutline)
+                BioKeyMessages.show(res.getString(R.string.backup_open_file_failed), Icons.Default.ErrorOutline)
             } else {
                 error = null
                 step = BackupStep.EnterPassword(file)
@@ -193,9 +202,9 @@ internal fun rememberBackupActions(): BackupActions {
 
     when (val current = step) {
         BackupStep.ChoosePassword -> PasswordDialog(
-            title = "Back up settings",
-            text = "Your locked apps, profiles and settings go into a file protected by this password. You'll need it to restore.",
-            confirmLabel = "Choose where to save",
+            title = stringResource(R.string.backup_title),
+            text = stringResource(R.string.backup_text),
+            confirmLabel = stringResource(R.string.backup_choose_where),
             creating = true,
             busy = false,
             error = null,
@@ -204,7 +213,7 @@ internal fun rememberBackupActions(): BackupActions {
                 pending.password = password
                 step = null
                 val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                openPicker { createFile.launch("BioKey backup $date.${VaultBackup.FILE_EXTENSION}") }
+                openPicker(res) { createFile.launch("BioKey backup $date.${VaultBackup.FILE_EXTENSION}") }
                     .onFailure {
                         pending.password?.fill(' ')
                         pending.password = null
@@ -213,9 +222,9 @@ internal fun rememberBackupActions(): BackupActions {
             onDismiss = { step = null }
         )
         is BackupStep.EnterPassword -> PasswordDialog(
-            title = "Restore from a backup",
-            text = "Enter the password this backup was saved with.",
-            confirmLabel = "Open",
+            title = stringResource(R.string.backup_restore_title),
+            text = stringResource(R.string.backup_restore_text),
+            confirmLabel = stringResource(R.string.backup_restore_open),
             creating = false,
             busy = busy,
             error = error,
@@ -235,14 +244,14 @@ internal fun rememberBackupActions(): BackupActions {
                     opened.onSuccess { step = BackupStep.ConfirmRestore(it) }
                     opened.onFailure { e ->
                         when (e) {
-                            is VaultBackup.WrongPasswordException -> error = "That password doesn't open this backup"
+                            is VaultBackup.WrongPasswordException -> error = res.getString(R.string.backup_wrong_password)
                             is VaultBackup.UnsupportedVersionException -> {
                                 step = null
-                                BioKeyMessages.show("That backup was made by a newer version of BioKey. Update BioKey to restore it", Icons.Default.ErrorOutline)
+                                BioKeyMessages.show(res.getString(R.string.backup_newer_version), Icons.Default.ErrorOutline)
                             }
                             else -> {
                                 step = null
-                                BioKeyMessages.show("That file isn't a BioKey backup", Icons.Default.ErrorOutline)
+                                BioKeyMessages.show(res.getString(R.string.backup_not_a_backup), Icons.Default.ErrorOutline)
                             }
                         }
                     }
@@ -253,18 +262,27 @@ internal fun rememberBackupActions(): BackupActions {
         is BackupStep.ConfirmRestore -> AlertDialog(
             onDismissRequest = { step = null },
             icon = { Icon(Icons.Default.Restore, contentDescription = null) },
-            title = { Text("Restore this backup?") },
+            title = { Text(stringResource(R.string.backup_confirm_restore_title)) },
             text = {
                 ProtectDialogWindow()
-                Text("Your locked apps, profiles and BioKey settings will be replaced with the backup's.")
+                Text(stringResource(R.string.backup_confirm_restore_text))
             },
             confirmButton = {
                 TextButton(onClick = {
                     // Closed first, so a second tap can't restore twice.
                     step = null
+                    // A restore replaces every lock and setting at once: the owner's to do, with a face or
+                    // fingerprint (the screen lock where none is set up).
+                    val restore = {
                     // Off the main thread (restoring sweeps notifications), and in the backup's
                     // scope, so leaving Settings meanwhile doesn't stop it halfway to its message.
+                    val app = activity.applicationContext
                     pending.viewModelScope.launch {
+                        // Checked again as it runs: a face or fingerprint change recorded meanwhile refuses it.
+                        if (withContext(Dispatchers.Default) { UnlockAttempts.holding(app) }) {
+                            BioKeyMessages.show(heldRefused(app, UnlockAttempts.heldUntil(app) ?: 0L), Icons.Default.ErrorOutline)
+                            return@launch
+                        }
                         val restored = try {
                             withContext(Dispatchers.Default) { vault.restoreState(current.state) }
                             true
@@ -276,14 +294,16 @@ internal fun rememberBackupActions(): BackupActions {
                         if (restored) {
                             // Let auto-sort go through the restored profiles on the next unlock.
                             InstalledAppsCache.autoSortedVersion = -1
-                            BioKeyMessages.show("Backup restored", Icons.Default.CheckCircle)
+                            BioKeyMessages.show(res.getString(R.string.backup_restored), Icons.Default.CheckCircle)
                         } else {
-                            BioKeyMessages.show("That backup couldn't be restored", Icons.Default.ErrorOutline)
+                            BioKeyMessages.show(res.getString(R.string.backup_restore_failed), Icons.Default.ErrorOutline)
                         }
                     }
-                }) { Text("Restore") }
+                    }
+                    confirmOwner(activity, res.getString(R.string.backup_confirm_restore_prompt), silencesRecords = true) { restore() }
+                }) { Text(stringResource(R.string.backup_restore)) }
             },
-            dismissButton = { TextButton(onClick = { step = null }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { step = null }) { Text(stringResource(R.string.prompt_cancel)) } }
         )
         null -> Unit
     }
@@ -291,18 +311,18 @@ internal fun rememberBackupActions(): BackupActions {
     return remember {
         BackupActions(
             backUp = { step = BackupStep.ChoosePassword },
-            restore = { openPicker { openFile.launch(arrayOf("*/*")) } }
+            restore = { openPicker(res) { openFile.launch(arrayOf("*/*")) } }
         )
     }
 }
 
 /** Opens the system file picker, keeping BioKey's session for the trip. */
-private fun openPicker(launch: () -> Unit): Result<Unit> {
-    LockStateTracker.beginOwnPicker()
+private fun openPicker(res: Resources, launch: () -> Unit): Result<Unit> {
+    LockStateTracker.beginOwnPicker(ForegroundRules.DOCUMENTS_UI)
     return runCatching(launch).onFailure {
         // No file picker on this phone (or it's disabled).
         LockStateTracker.onOwnAppResumed()
-        BioKeyMessages.show("Couldn't open the file picker", Icons.Default.ErrorOutline)
+        BioKeyMessages.show(res.getString(R.string.backup_no_file_picker), Icons.Default.ErrorOutline)
     }
 }
 
@@ -312,7 +332,10 @@ private fun discard(context: Context, uri: Uri) {
 }
 
 private fun write(context: Context, uri: Uri, bytes: ByteArray) {
-    val out = context.contentResolver.openOutputStream(uri, "wt") ?: error("No output stream")
+    // Some providers (cloud drives) refuse "wt"; the picker has just created the file, so "w" is
+    // as good there.
+    val out = runCatching { context.contentResolver.openOutputStream(uri, "wt") }.getOrNull()
+        ?: context.contentResolver.openOutputStream(uri, "w") ?: error("No output stream")
     out.use { it.write(bytes) }
 }
 
@@ -380,7 +403,7 @@ private fun PasswordDialog(
                             LockStateTracker.onOwnAppInteraction()
                             password = it
                         },
-                        label = { Text("Password") },
+                        label = { Text(stringResource(R.string.backup_password)) },
                         singleLine = true,
                         shape = CircleShape,
                         visualTransformation = if (shown) VisualTransformation.None else PasswordVisualTransformation(),
@@ -388,7 +411,7 @@ private fun PasswordDialog(
                             IconButton(onClick = { shown = !shown }) {
                                 Icon(
                                     if (shown) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = if (shown) "Hide password" else "Show password"
+                                    contentDescription = stringResource(if (shown) R.string.backup_hide_password else R.string.backup_show_password)
                                 )
                             }
                         },
@@ -397,7 +420,7 @@ private fun PasswordDialog(
                         // The error belongs to the field, so screen readers say it with the field.
                         supportingText = when {
                             error != null -> { { Text(error) } }
-                            creating -> { { Text("At least ${VaultBackup.MIN_PASSWORD_LENGTH} characters") } }
+                            creating -> { { Text(pluralStringResource(R.plurals.backup_password_min_length, VaultBackup.MIN_PASSWORD_LENGTH, VaultBackup.MIN_PASSWORD_LENGTH)) } }
                             else -> null
                         },
                         isError = error != null,
@@ -416,7 +439,7 @@ private fun PasswordDialog(
         confirmButton = {
             TextButton(onClick = confirm, enabled = ready) { Text(confirmLabel) }
         },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Cancel") } }
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text(stringResource(R.string.prompt_cancel)) } }
     )
 }
 
@@ -438,6 +461,8 @@ internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
     }
     val time = remember { SimpleDateFormat("MMM d, HH:mm:ss", Locale.getDefault()) }
     var confirmDelete by remember { mutableStateOf(false) }
+    val logActivity = LocalActivity.current
+    val res = LocalResources.current
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         ProtectDialogWindow()
@@ -452,22 +477,27 @@ internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
                         .rejectObscuredTouches()
                 ) {
                     TopAppBar(
-                        title = { Text("Diagnostic log") },
+                        title = { Text(stringResource(R.string.diagnostics_title)) },
                         navigationIcon = {
-                            IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close") }
+                            IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.common_close)) }
                         },
                         actions = {
-                            IconButton(onClick = { share(context) }, enabled = entries.isNotEmpty()) {
-                                Icon(Icons.Default.Share, contentDescription = "Share the log")
+                            IconButton(onClick = {
+                                // It names locked apps and their unlocks: the owner's to send, not only the screen lock's.
+                                confirmOwner(logActivity, res.getString(R.string.diagnostics_share_prompt), screenLockIfSensorUnusable = true) {
+                                    share(context)
+                                }
+                            }, enabled = entries.isNotEmpty()) {
+                                Icon(Icons.Default.Share, contentDescription = stringResource(R.string.diagnostics_share))
                             }
                             IconButton(onClick = { confirmDelete = true }, enabled = entries.isNotEmpty()) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete the log")
+                                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.diagnostics_delete))
                             }
                         },
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
                     )
                     Text(
-                        text = "BioKey's lock decisions about your locked apps over the last 3 days, kept on this phone. It never names apps you haven't locked. Share it with whoever is helping you with a problem; it lists your locked apps by package name.",
+                        text = stringResource(R.string.diagnostics_explanation),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = GroupInset + 8.dp)
@@ -481,7 +511,7 @@ internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
                         if (entries.isEmpty()) {
                             item {
                                 Text(
-                                    text = if (DiagnosticLog.isEnabled()) "Nothing recorded yet" else "The diagnostic log is off",
+                                    text = stringResource(if (DiagnosticLog.isEnabled()) R.string.diagnostics_empty else R.string.diagnostics_off),
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -506,18 +536,19 @@ internal fun DiagnosticLogScreen(onDismiss: () -> Unit) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             icon = { Icon(Icons.Default.Delete, contentDescription = null) },
-            title = { Text("Delete the diagnostic log?") },
+            title = { Text(stringResource(R.string.diagnostics_delete_title)) },
             text = {
                 ProtectDialogWindow()
-                Text("Everything recorded so far is deleted. New entries are still kept while the log is on.")
+                Text(stringResource(R.string.diagnostics_delete_text))
             },
             confirmButton = {
                 TextButton(onClick = {
-                    DiagnosticLog.clear()
                     confirmDelete = false
-                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                    // It holds who unlocked what, and when: the owner's to delete.
+                    confirmOwner(logActivity, res.getString(R.string.diagnostics_delete_prompt), silencesRecords = true) { DiagnosticLog.clear() }
+                }) { Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.prompt_cancel)) } }
         )
     }
 }
@@ -526,8 +557,10 @@ private fun share(context: Context) {
     val report = DiagnosticLog.report(context, ProtectionEngine.mode(context).name.lowercase())
     val send = Intent(Intent.ACTION_SEND)
         .setType("text/plain")
-        .putExtra(Intent.EXTRA_SUBJECT, "BioKey diagnostic log")
+        .putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.diagnostics_share_subject))
         .putExtra(Intent.EXTRA_TEXT, report)
-    runCatching { context.startActivity(Intent.createChooser(send, "Share diagnostic log")) }
-        .onFailure { BioKeyMessages.show("Couldn't open sharing", Icons.Default.ErrorOutline) }
+    runCatching { context.startActivity(Intent.createChooser(send, context.getString(R.string.diagnostics_share_chooser))) }
+        // Recorded once it's been offered to another app (Android doesn't say if it was sent).
+        .onSuccess { ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.LOG_SHARED) }
+        .onFailure { BioKeyMessages.show(context.getString(R.string.diagnostics_share_failed), Icons.Default.ErrorOutline) }
 }

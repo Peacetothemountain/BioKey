@@ -60,6 +60,17 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
          */
         fun isHostPackage(pkg: String) = pkg in HOST_PACKAGES
 
+        /** Android's own confirm-your-PIN and biometric screens (also used outside self-protection). */
+        fun isCredentialConfirmationClass(className: String?): Boolean {
+            if (className.isNullOrBlank()) return false
+            return className.contains("ConfirmDeviceCredential", ignoreCase = true) ||
+                className.contains("ConfirmLockPattern", ignoreCase = true) ||
+                className.contains("ConfirmLockPassword", ignoreCase = true) ||
+                className.contains("ConfirmCommonPassword", ignoreCase = true) ||
+                className.contains("BiometricPrompt", ignoreCase = true) ||
+                className.contains("AuthContainerView", ignoreCase = true)
+        }
+
         private const val SETTINGS_PKG = "com.android.settings"
         private const val PLAY_STORE_PKG = "com.android.vending"
 
@@ -131,7 +142,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
             "android:id/action_bar"
         )
 
-        /** English control verbs a single node starts with, e.g. "Use Bio Key App Lock Service". */
+        /** English control verbs a single node starts with, e.g. "Use BioKey App Lock Service". */
         private val SAME_NODE_PROMPT_VERBS = listOf(
             "use ", "stop ", "turn off", "disable ", "uninstall", "deny ", "allow "
         )
@@ -162,8 +173,8 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
             }
 
         /**
-         * Matches any of [labels] as a whole name: "Bio Key" and "Bio Key's", but not the start of
-         * "Bio Keyboard". Only Latin letters and digits count as part of a word, so a name written
+         * Matches any of [labels] as a whole name: "BioKey" and "BioKey's", but not the start of
+         * "BioKeyboard". Only Latin letters and digits count as part of a word, so a name written
          * right next to Chinese or Japanese text still matches.
          */
         internal fun namePattern(labels: Collection<String>): Regex = Regex(
@@ -173,9 +184,9 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         )
 
         /**
-         * A single node that is itself a control or prompt for one service: "Use Bio Key App Lock
-         * Service", "Stop Bio Key App Lock Service?", "Bio Key App Lock Service shortcut", "Turn
-         * off notification access for Bio Key notification shield?". [togglePrompts] are the
+         * A single node that is itself a control or prompt for one service: "Use BioKey App Lock
+         * Service", "Stop BioKey App Lock Service?", "BioKey App Lock Service shortcut", "Turn
+         * off notification access for BioKey notification shield?". [togglePrompts] are the
          * device's own Settings strings for them, in the phone's language.
          */
         internal fun isControlPrompt(text: String, togglePrompts: Set<String>): Boolean {
@@ -187,8 +198,8 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
 
         /**
          * The [labels] worth a text search: Android's finds any text that contains the label,
-         * ignoring case, so a label that contains a shorter one ("Bio Key App Lock Service",
-         * "Bio Key") finds nothing the shorter one doesn't. Only exact containment counts, so no
+         * ignoring case, so a label that contains a shorter one ("BioKey App Lock Service",
+         * "BioKey") finds nothing the shorter one doesn't. Only exact containment counts, so no
          * language's rules for upper and lower case can make the two searches differ.
          */
         internal fun textSearchLabels(labels: Collection<String>): List<String> {
@@ -215,15 +226,13 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
 
     private val appName = service.getString(R.string.app_name)
     private val a11yLabel = service.getString(R.string.accessibility_service_label)
-    private val notifLabel = service.getString(R.string.notification_shield_label)
     private val pkgName = service.packageName
 
     private val labels: List<String> = listOf(
         appName,
         "BioKey",
         pkgName,
-        a11yLabel,
-        notifLabel
+        a11yLabel
     ).filter { it.isNotBlank() }.distinct()
 
     private val names = namePattern(labels)
@@ -275,15 +284,6 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
 
     fun isHost(pkg: String) = isHostPackage(pkg)
 
-    fun isCredentialConfirmationClass(className: String?): Boolean {
-        if (className.isNullOrBlank()) return false
-        return className.contains("ConfirmDeviceCredential", ignoreCase = true) ||
-            className.contains("ConfirmLockPattern", ignoreCase = true) ||
-            className.contains("ConfirmLockPassword", ignoreCase = true) ||
-            className.contains("ConfirmCommonPassword", ignoreCase = true) ||
-            className.contains("BiometricPrompt", ignoreCase = true) ||
-            className.contains("AuthContainerView", ignoreCase = true)
-    }
 
     /**
      * Whether [pkg]'s window is one of BioKey's guarded screens: [event]'s window, or without an
@@ -353,13 +353,14 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
      */
     private fun hostRoot(pkg: String, event: AccessibilityEvent?): AccessibilityNodeInfo? {
         val windowId = event?.windowId ?: -1
-        val active = runCatching { service.rootInActiveWindow }.getOrNull()
+        // Through the service's own accessors: nothing is read before setup.
+        val active = runCatching { service.activeRoot() }.getOrNull()
         if (active != null) {
             if (active.packageName?.toString() == pkg && (windowId < 0 || active.windowId == windowId)) return active
             active.release()
         }
         // Split screen, or a window that isn't the active one yet: look it up in the window list.
-        val windows = runCatching { service.windows }.getOrNull().orEmpty()
+        val windows = runCatching { service.windowList() }.getOrNull().orEmpty()
         val candidates = if (windowId >= 0) {
             windows.filter { it.id == windowId }
         } else {
@@ -524,7 +525,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
         if (hasAppDetailAction) return Scan.GUARDED
 
         // Android 14-17 Compose SpaActivity single-app detail page (AppInfoHeader renders
-        // "Bio Key" + "Version X.Y" or "com.android.BioKey", plus a permission toggle or detail body).
+        // "BioKey" + "Version X.Y" or "com.android.BioKey", plus a permission toggle or detail body).
         if ((hasVersionHeader || hasExactPackageName) && (hasToggle || windowTitleNamesBioKey)) {
             return Scan.GUARDED
         }
@@ -555,7 +556,7 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
     private fun mentionsBioKey(text: CharSequence?): Boolean =
         !text.isNullOrEmpty() && names.containsMatchIn(text)
 
-    /** Android's text search matches parts of words ("Bio Keyboard"): keep whole-name matches only. */
+    /** Android's text search matches parts of words ("BioKeyboard"): keep whole-name matches only. */
     private fun AccessibilityNodeInfo.hasNodeNamingBioKey(): Boolean = searchLabels.any { label ->
         val nodes = findAccessibilityNodeInfosByText(label).orEmpty()
         val found = nodes.any { mentionsBioKey(it.text) || mentionsBioKey(it.contentDescription) }

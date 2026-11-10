@@ -1,11 +1,10 @@
 package com.android.BioKey
 
-import android.app.Activity
 import android.app.Application
 import android.app.NotificationManager
+import android.app.usage.UsageEvents
 import android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED
 import android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED
-import android.app.usage.UsageEvents
 import android.app.usage.UsageEvents.Event.ACTIVITY_STOPPED
 import android.app.usage.UsageEventsQuery
 import android.app.usage.UsageStatsManager
@@ -15,13 +14,14 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
-import android.os.CancellationSignal
 import android.os.HandlerThread
 import android.os.Looper
 import android.provider.Settings
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import android.app.KeyguardManager
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.LockTimeoutMode
@@ -36,7 +36,6 @@ import com.android.BioKey.feature.lock.InstantShieldOverlay
 import com.android.BioKey.feature.lock.LockScreenActivity
 import com.android.BioKey.feature.lock.UsageWatchService
 import com.android.BioKey.feature.main.MainActivity
-import java.lang.ref.WeakReference
 import java.time.Duration
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -120,6 +119,23 @@ class CompatibilityEngineTest {
         startEngine()
     }
 
+    /**
+     * The screen turns off and the phone locks with it (Android's usual lock delay): every session
+     * ends. (A screen-off Android doesn't follow with a lock keeps them: see the phone-lock tests.)
+     */
+    private fun screenOffPhoneLocks() {
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setIsDeviceLocked(true)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        step()
+    }
+
+    /** The phone is unlocked again and the screen comes back. */
+    private fun screenOnPhoneUnlocked() {
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setIsDeviceLocked(false)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
+        step()
+    }
+
     /** Compatibility mode starts (BioKey set up, or the accessibility engine handing over). */
     private fun startEngine() {
         engine = Robolectric.buildService(UsageWatchService::class.java).create()
@@ -159,21 +175,17 @@ class CompatibilityEngineTest {
 
     /** The app BioKey's lock screen is up for, as the real activity reports it. */
     private fun lockScreenFor(pkg: String?) {
-        LockScreenActivity::class.java.getDeclaredField("activeLockedTarget").apply { isAccessible = true }.set(null, pkg)
+        LockScreenActivity.setStateForTests(pkg, resumed = LockScreenActivity.isLockScreenResumed)
     }
 
     /** The app BioKey's lock screen is up and in front for (null: none), as the real activity reports it. */
     private fun lockScreenUp(pkg: String?) {
-        lockScreenFor(pkg)
-        LockScreenActivity::class.java.getDeclaredField("isLockScreenResumed").apply { isAccessible = true }.setBoolean(null, pkg != null)
+        LockScreenActivity.setStateForTests(pkg)
     }
 
     /** BioKey's prompt is up for [pkg] (null: none is), as SecurityEngine reports it. */
     private fun promptUpFor(pkg: String?) {
-        val active = SecurityEngine::class.java.getDeclaredField("active").apply { isAccessible = true }
-        if (pkg == null) return active.set(SecurityEngine.INSTANCE, null)
-        val attempt = Class.forName("${SecurityEngine::class.java.name}\$Attempt").declaredConstructors.single().apply { isAccessible = true }
-        active.set(SecurityEngine.INSTANCE, attempt.newInstance(pkg, WeakReference<Activity>(null), CancellationSignal()))
+        SecurityEngine.INSTANCE.setPromptForTests(pkg)
     }
 
     private val lockScreen = LockScreenActivity::class.java.name
@@ -371,7 +383,7 @@ class CompatibilityEngineTest {
     }
 
     @Test
-    fun theAppInFrontWhenAScreensaverStartsIsCoveredWhenItEnds() {
+    fun theAppInFrontWhenAScreensaverStartsIsCoveredBehindItAsItStarts() {
         event(ACTIVITY_RESUMED, bank)
         step()
         LockStateTracker.onAppUnlocked(bank)
@@ -384,7 +396,8 @@ class CompatibilityEngineTest {
         shadowOf(context.getSystemService(UsageStatsManager::class.java)).simulateTimeChange(-60_000)
         context.sendBroadcast(Intent(Intent.ACTION_DREAMING_STOPPED))
         repeat(3) { step() }
-        assertEquals(listOf("Covered $bank (opened)", "Covered $bank (still in front, uncovered)"), covered(bank))
+        // Its lock screen went up behind the keyguard as the screensaver started: nothing more to cover.
+        assertEquals(listOf("Covered $bank (opened)", "Covered $bank (on screen as a screensaver started)"), covered(bank))
     }
 
     @Test
@@ -396,8 +409,12 @@ class CompatibilityEngineTest {
         step()
         context.sendBroadcast(Intent(Intent.ACTION_DREAMING_STARTED))
         repeat(3) { step() }
-        assertEquals(1, covered(bank).size)
+        // Only its lock screen, started behind the keyguard: no cover over the screensaver.
+        assertEquals(listOf("Covered $bank (opened)", "Covered $bank (on screen as a screensaver started)"), covered(bank))
         assertFalse(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.GRACE_5_MINUTES))
+        // Over: nothing after this runs as if one still showed.
+        context.sendBroadcast(Intent(Intent.ACTION_DREAMING_STOPPED))
+        step()
     }
 
     @Test
@@ -420,6 +437,181 @@ class CompatibilityEngineTest {
         LockStateTracker.onAppUnlocked(bank)
         event(ACTIVITY_RESUMED, bank) // Back from the lock screen.
         step()
+    }
+
+    /** Home goes over the bank, unlocked, and the bank comes back before Android stopped it. */
+    private fun homeAndStraightBack(delay: LockTimeoutMode) {
+        ForegroundRules.pinSystemLists(mapOf(launcher to true), launcher, emptySet(), emptySet())
+        vault.setTimeoutMode(delay)
+        unlockBank()
+        event(ACTIVITY_PAUSED, bank)
+        event(ACTIVITY_RESUMED, launcher, "$launcher.NexusLauncherActivity")
+        step()
+        // Android holds back the bank's stop about a second: it's back first.
+        event(ACTIVITY_PAUSED, launcher, "$launcher.NexusLauncherActivity")
+        event(ACTIVITY_RESUMED, bank)
+        step()
+    }
+
+    @Test
+    fun anAppBackMomentsAfterHomeBeforeItStoppedHadLeft() {
+        homeAndStraightBack(LockTimeoutMode.IMMEDIATE)
+        assertFalse(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+        assertEquals(2, covered(bank).size)
+    }
+
+    @Test
+    fun anAppBackMomentsAfterHomeKeepsALongerDelay() {
+        homeAndStraightBack(LockTimeoutMode.GRACE_30_SECONDS)
+        assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.GRACE_30_SECONDS))
+        assertEquals(1, covered(bank).size)
+    }
+
+    /** The keyguard is up with the screen on; the bank comes forward, and [then] follows. */
+    private fun bankComesForwardOnTheKeyguard(then: () -> Unit): List<Intent> {
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(true)
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        started()
+        event(ACTIVITY_RESUMED, bank)
+        step(150)
+        then()
+        repeat(8) { step(150) }
+        return started().filter { it.component?.className == lockScreen && it.getStringExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE) == bank }
+    }
+
+    @Test
+    fun anAppStartedBehindTheKeyguardHasItsLockScreenWaitBehindIt() {
+        // Starting cold behind the keyguard: paused, and stopped a moment later.
+        val starts = bankComesForwardOnTheKeyguard {
+            event(ACTIVITY_PAUSED, bank)
+            step(150)
+            event(ACTIVITY_STOPPED, bank)
+        }
+        // Every start behind it (the cover asks again while the lock screen, behind it, can't come up).
+        assertTrue(starts.isNotEmpty())
+        assertTrue(starts.all { it.getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false) })
+        assertTrue(covered(bank).contains("Covered $bank (opened behind the keyguard)"))
+    }
+
+    @Test
+    fun anAppOverTheKeyguardHasItsLockScreenOverItToo() {
+        // The camera, say: it stays on screen.
+        val starts = bankComesForwardOnTheKeyguard { }
+        assertEquals(1, starts.size)
+        assertFalse(starts.single().getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false))
+    }
+
+    @Test
+    fun aSplitLeftOnScreenAsThePhoneLocksIsAskedForInOnePrompt() {
+        vault.setAppLock(chat, true)
+        run {
+            // Both halves of a split screen, unlocked.
+            LockStateTracker.onAppUnlocked(bank)
+            LockStateTracker.onAppUnlocked(chat)
+            event(ACTIVITY_RESUMED, bank)
+            event(ACTIVITY_RESUMED, chat)
+            step()
+            // The screen times out: it dims first, and both halves pause.
+            event(ACTIVITY_PAUSED, bank)
+            event(ACTIVITY_PAUSED, chat)
+            step()
+            // The phone locks a moment after the screen goes off.
+            val keyguard = shadowOf(context.getSystemService(KeyguardManager::class.java))
+            val power = shadowOf(context.getSystemService(PowerManager::class.java))
+            keyguard.setIsDeviceLocked(false)
+            power.setIsInteractive(false)
+            context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+            step()
+            assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+            started()
+            keyguard.setKeyguardLocked(true)
+            keyguard.setIsDeviceLocked(true)
+            repeat(15) { step() }
+            val behind = started().filter { it.component?.className == lockScreen && it.getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false) }
+            val target = behind.single().getStringExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE)!!
+            // Its prompt, once the phone is unlocked, names the other half too.
+            assertEquals(listOf(if (target == bank) chat else bank), UsageWatchService.lockedAppsOnScreenWith(target))
+        }
+    }
+
+    @Test
+    fun withNoCoverAndNoLockScreenTheAppGoesHome() {
+        // The cover's window can't be shown, and Android refuses the lock screen without a word.
+        (UsageWatchService::class.java.getDeclaredField("shield").apply { isAccessible = true }.get(engine.get()) as InstantShieldOverlay).destroy()
+        step()
+        started()
+        event(ACTIVITY_RESUMED, bank)
+        step()
+        assertTrue(started().none { it.hasCategory(Intent.CATEGORY_HOME) })
+        repeat(6) { step() }
+        assertTrue(started().any { it.hasCategory(Intent.CATEGORY_HOME) })
+        assertTrue(DiagnosticLog.entries().any { it.text == "Lock screen for $bank didn't appear; went Home" })
+    }
+
+    @Test
+    fun bothHalvesOfASplitScreenAreAskedForInOnePrompt() {
+        vault.setAppLock(chat, true)
+        // A pair opened from Recents: both resume.
+        event(ACTIVITY_RESUMED, bank)
+        event(ACTIVITY_RESUMED, chat)
+        step()
+        val asked = listOf(bank, chat).associateWith { UsageWatchService.lockedAppsOnScreenWith(it) }
+        assertEquals(listOf(chat), asked[bank])
+        assertEquals(listOf(bank), asked[chat])
+        // One of them unlocked meanwhile: no longer named.
+        LockStateTracker.onAppUnlocked(chat)
+        assertEquals(emptyList<String>(), UsageWatchService.lockedAppsOnScreenWith(bank))
+    }
+
+    /** The bank's [cls] is the phone's lock-screen camera (it answers the secure camera intent). */
+    private fun bankIsTheLockScreenCamera(cls: String) {
+        val secure = ComponentName(bank, cls)
+        shadowOf(context.packageManager).apply {
+            addActivityIfNotPresent(secure)
+            addIntentFilterForActivity(secure, IntentFilter(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE).apply { addCategory(Intent.CATEGORY_DEFAULT) })
+        }
+        ForegroundRules.resetSystemLists()
+    }
+
+    @Test
+    fun theLockScreenCameraOpensOverTheKeyguardUncoveredAndIsCoveredOnceThePhoneIsUnlocked() {
+        val secure = "$bank.SecureCameraActivity"
+        bankIsTheLockScreenCamera(secure)
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(true)
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        started()
+        event(ACTIVITY_RESUMED, bank, secure)
+        repeat(8) { step(150) }
+        assertTrue(started().none { it.component?.className == lockScreen })
+        assertEquals(emptyList<String>(), covered(bank))
+        // Unlocked from inside the camera, which stays in front.
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(false)
+        context.sendBroadcast(Intent(Intent.ACTION_USER_PRESENT))
+        step()
+        assertEquals(listOf("Covered $bank (opened)"), covered(bank))
+        assertTrue(started().any { it.component?.className == lockScreen })
+    }
+
+    @Test
+    fun withTheSettingOffTheLockScreenCameraIsCoveredOverTheKeyguard() {
+        vault.setKeyguardCameraAllowed(false)
+        val secure = "$bank.SecureCameraActivity"
+        bankIsTheLockScreenCamera(secure)
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(true)
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        started()
+        event(ACTIVITY_RESUMED, bank, secure)
+        repeat(9) { step(150) }
+        assertEquals(listOf("Covered $bank (opened)"), covered(bank))
+        assertTrue(started().any { it.component?.className == lockScreen })
+    }
+
+    @Test
+    fun anotherScreenOfTheCameraAppOverTheKeyguardIsCoveredAsBefore() {
+        bankIsTheLockScreenCamera("$bank.SecureCameraActivity")
+        // Its ordinary screen, still on screen over the keyguard: not the lock-screen camera.
+        val starts = bankComesForwardOnTheKeyguard { }
+        assertEquals(1, starts.size)
     }
 
     @Test
@@ -449,12 +641,10 @@ class CompatibilityEngineTest {
         repeat(3) { step() }
         assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
         // The phone locks: every session ends, and the keyguard stops the window.
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
-        step()
+        screenOffPhoneLocks()
         event(ACTIVITY_STOPPED, bank)
         event(ACTIVITY_STOPPED, chat)
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
-        step()
+        screenOnPhoneUnlocked()
         // Unlocked: the window is back, paused (it never resumes), over the app that was in front.
         event(ACTIVITY_RESUMED, chat)
         event(ACTIVITY_PAUSED, bank)
@@ -476,11 +666,9 @@ class CompatibilityEngineTest {
     @Test
     fun aWindowThatComesBackPausedAndThenStopsIsNotCovered() {
         // Under something that hid it after all (it stopped within the settle time): nothing showed.
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
-        step()
+        screenOffPhoneLocks()
         event(ACTIVITY_STOPPED, bank)
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
-        step()
+        screenOnPhoneUnlocked()
         event(ACTIVITY_RESUMED, chat)
         event(ACTIVITY_PAUSED, bank)
         step()
@@ -549,13 +737,11 @@ class CompatibilityEngineTest {
         event(ACTIVITY_PAUSED, bank)
         event(ACTIVITY_RESUMED, front)
         repeat(3) { step() }
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
-        step()
+        screenOffPhoneLocks()
         if (frontLocked) vault.setAppLock(front, true)
         event(ACTIVITY_STOPPED, bank)
         event(ACTIVITY_STOPPED, front)
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
-        step()
+        screenOnPhoneUnlocked()
         event(ACTIVITY_RESUMED, front)
         event(ACTIVITY_PAUSED, bank)
         step()
@@ -665,14 +851,14 @@ class CompatibilityEngineTest {
         // The prompt ends in a lockout: the held cover, all the owner sees, says so, and keeps
         // saying it when something tries to take it down.
         InstantShieldOverlay.onPrompt(bank, showing = true)
-        InstantShieldOverlay.onPrompt(bank, showing = false, message = SecurityEngine.LOCKOUT_PERMANENT_MESSAGE, permanentLockout = true)
-        assertTrue(coverTexts().toString(), SecurityEngine.LOCKOUT_PERMANENT_MESSAGE in coverTexts())
+        InstantShieldOverlay.onPrompt(bank, showing = false, message = context.getString(com.android.BioKey.R.string.prompt_lockout_permanent), permanentLockout = true)
+        assertTrue(coverTexts().toString(), context.getString(com.android.BioKey.R.string.prompt_lockout_permanent) in coverTexts())
         shield().hide()
         assertTrue(shield().isShowing)
-        assertTrue(coverTexts().toString(), SecurityEngine.LOCKOUT_PERMANENT_MESSAGE in coverTexts())
+        assertTrue(coverTexts().toString(), context.getString(com.android.BioKey.R.string.prompt_lockout_permanent) in coverTexts())
         // The next prompt clears it.
         InstantShieldOverlay.onPrompt(bank, showing = true)
-        assertFalse(coverTexts().toString(), SecurityEngine.LOCKOUT_PERMANENT_MESSAGE in coverTexts())
+        assertFalse(coverTexts().toString(), context.getString(com.android.BioKey.R.string.prompt_lockout_permanent) in coverTexts())
     }
 
     @Test
@@ -879,13 +1065,11 @@ class CompatibilityEngineTest {
         event(ACTIVITY_PAUSED, bank)
         event(ACTIVITY_RESUMED, chat)
         repeat(3) { step() }
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
-        step()
+        screenOffPhoneLocks()
         event(ACTIVITY_STOPPED, bank)
         event(ACTIVITY_STOPPED, chat)
         shadowOf(context.getSystemService(UsageStatsManager::class.java)).simulateTimeChange(-60_000)
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
-        step()
+        screenOnPhoneUnlocked()
         event(ACTIVITY_RESUMED, chat)
         event(ACTIVITY_PAUSED, bank)
         step()
@@ -945,12 +1129,10 @@ class CompatibilityEngineTest {
         event(ACTIVITY_PAUSED, bank)
         event(ACTIVITY_RESUMED, context.packageName, bioKeysScreen)
         repeat(3) { step() }
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
-        step()
+        screenOffPhoneLocks()
         event(ACTIVITY_STOPPED, bank)
         event(ACTIVITY_STOPPED, context.packageName, bioKeysScreen)
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
-        step()
+        screenOnPhoneUnlocked()
         assertFalse(LockStateTracker.isOwnAppUnlocked())
         // BioKey is back, asking for itself; the bank's window floats over it.
         promptUpFor(context.packageName)
@@ -1226,14 +1408,12 @@ class CompatibilityEngineTest {
         event(ACTIVITY_RESUMED, chat)
         event(ACTIVITY_RESUMED, notes)
         repeat(3) { step() }
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
-        step()
+        screenOffPhoneLocks()
         vault.setAppLock(chat, true)
         event(ACTIVITY_STOPPED, bank)
         event(ACTIVITY_STOPPED, chat)
         event(ACTIVITY_STOPPED, notes)
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
-        step()
+        screenOnPhoneUnlocked()
         // Unlocked: the pair is back, the notes app's resume the newer, the bank's window paused.
         event(ACTIVITY_RESUMED, chat)
         event(ACTIVITY_RESUMED, notes)
@@ -1280,13 +1460,11 @@ class CompatibilityEngineTest {
         event(ACTIVITY_RESUMED, context.packageName, bioKeysScreen)
         event(ACTIVITY_RESUMED, notes)
         repeat(3) { step() }
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
-        step()
+        screenOffPhoneLocks()
         event(ACTIVITY_STOPPED, bank)
         event(ACTIVITY_STOPPED, context.packageName, bioKeysScreen)
         event(ACTIVITY_STOPPED, notes)
-        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
-        step()
+        screenOnPhoneUnlocked()
         promptUpFor(context.packageName)
         event(ACTIVITY_RESUMED, context.packageName, bioKeysScreen)
         event(ACTIVITY_RESUMED, notes)

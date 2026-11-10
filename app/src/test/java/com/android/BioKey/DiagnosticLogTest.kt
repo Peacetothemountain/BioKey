@@ -42,17 +42,36 @@ class DiagnosticLogTest {
 
     @Test
     fun entriesOlderThanThreeDaysAreDroppedOnLoad() {
-        // The app's own start loaded the log already; let that finish before replacing the file.
+        // The app's own start loaded the log already; let that finish before replacing the file,
+        // with the log loaded and on whatever an earlier test in this JVM left it as.
+        DiagnosticLog.init(context)
+        DiagnosticLog.setEnabled(context, true)
         DiagnosticLog.clear()
         DiagnosticLog.log("settled")
+        DiagnosticLog.awaitIoForTests()
         waitUntil("the app's own load") { file.exists() && file.readText().contains("settled") }
-        val now = System.currentTimeMillis()
+        // The log stamps and ages entries on BioKey's trusted clock.
+        val now = com.android.BioKey.core.security.TrustedClock.now()
         file.writeText("${now - 4 * 24 * 60 * 60_000L}\tfrom last week\n${now - 60 * 60_000L}\tfrom this morning\n")
 
         DiagnosticLog.init(context)
         awaitEntry("from this morning")
         assertTrue(DiagnosticLog.entries().none { it.text == "from last week" })
         assertFalse(file.readText().contains("from last week"))
+    }
+
+    @Test
+    fun linesWithTheirClocksAreReadBackAndAgedToo() {
+        DiagnosticLog.clear()
+        DiagnosticLog.log("settled")
+        waitUntil("the app's own load") { file.exists() && file.readText().contains("settled") }
+        val now = com.android.BioKey.core.security.TrustedClock.now()
+        // From another boot, on the network's time: aged on that time.
+        file.writeText("${now - 4 * 24 * 60 * 60_000L}\t~0,-7,1\told, with clocks\n${now - 60 * 60_000L}\t~0,-7,1\tfresh, with clocks\n")
+
+        DiagnosticLog.init(context)
+        awaitEntry("fresh, with clocks")
+        assertTrue(DiagnosticLog.entries().none { it.text == "old, with clocks" })
     }
 
     @Test

@@ -1,0 +1,131 @@
+# BioKey engine trace v1
+3587849	env	engine	accessibility
+3587849	env	protection	1
+3587849	env	locked	com.android.camera2	GRACE_30_SECONDS	Camera
+3587849	env	locked	com.google.android.apps.photos	GRACE_30_SECONDS	Photos
+3587849	env	locked	com.google.android.gm	GRACE_30_SECONDS	Gmail
+3587849	env	locked	com.google.android.gms.passwordmanager	GRACE_30_SECONDS	Google Password Manager
+3587850	env	locked	com.google.android.documentsui	GRACE_30_SECONDS	Files
+3587850	env	locked	com.google.android.apps.docs	GRACE_30_SECONDS	Drive
+3587850	env	locked	com.google.android.deskclock	GRACE_30_SECONDS	Clock
+3587850	env	locked	com.google.android.apps.credentialmanager	GRACE_30_SECONDS	Google Password Manager
+3587850	env	locked	com.google.android.apps.messaging	GRACE_30_SECONDS	Messages
+3587850	env	locked	com.android.chrome	GRACE_30_SECONDS	Chrome
+3587850	env	locked	com.biokey.gantlet.plain	GRACE_30_SECONDS	Gantlet Plain
+3587850	env	locked	com.google.android.calendar	GRACE_30_SECONDS	Calendar
+3587850	env	home	com.google.android.apps.nexuslauncher	1	1
+3587850	env	picker	com.google.android.apps.photos
+3587850	env	picker	com.android.camera2
+3587850	env	picker	com.google.android.photopicker
+3587850	env	picker	com.google.android.contacts
+3587850	env	picker	com.google.android.providers.media.module
+3587850	env	picker	com.google.android.documentsui
+3587850	env	picker	com.google.android.apps.docs
+3587850	env	keyboard	com.callstack.agentdevice.imehelper
+3587851	env	keyboard	com.google.android.tts
+3587851	env	keyboard	com.google.android.inputmethod.latin
+3587851	env	screensaver	1	com.google.android.apps.photos/.daydream.PhotosDreamService	com.google.android.deskclock/com.android.deskclock.Screensaver
+3587851	o.log	Accessibility engine started
+3587852	a.ev	4194304			154	0	1	0	%00
+3587857	d.deviceLocked	0
+3587974	a.ev	4194304			154	0	16	0	%00
+3587974	a.ev	4194304			158	0	1	0	%00
+3587975	a.ev	4194304			159	0	1	0	%00
+3587986	a.ev	4194304			159	0	2	0	%00
+3587989	a.ev	4194304			154	0	16	0	%00
+3587989	a.ev	4194304			158	0	16	0	%00
+3587989	a.ev	4194304			158	0	2	0	%00
+3587990	a.ev	4194304			159	0	1	0	%00
+3587990	a.ev	4194304			154	0	2	0	%00
+3587991	a.ev	4194304			159	0	2	0	%00
+3587991	a.ev	4194304			160	0	1	0	%00
+3588034	d.interactive	1
+3588100	a.win	160%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2CUnlock Gantlet Plain%2Ccom.android.systemui
+3588130	a.win	160%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2CUnlock Gantlet Plain%2Ccom.android.systemui
+3588309	a.win	160%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2CUnlock Gantlet Plain%2Ccom.android.systemui
+3593114	p.down	com.biokey.gantlet.plain
+3593206	l.resumed	0
+3593723	o.log	Lock screen for com.biokey.gantlet.plain covered by another screen without unlocking
+3593724	u.displaced	com.biokey.gantlet.plain
+3593724	l.dismiss	com.biokey.gantlet.plain
+3593774	a.ev	4194304			160	0	2	0	%00
+3593803	a.ev	32	com.google.android.apps.nexuslauncher	com.google.android.apps.nexuslauncher.NexusLauncherActivity	149	0	0	0	%00	Home screen 1 of 1
+3593809	a.win	154%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	149%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+3593826	a.ev	4194304			149	0	1	0	%00
+3593857	a.win	154%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	149%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+3593858	l.target	
+3593881	a.ev	4194304			154	0	1	0	%00
+3593883	a.ev	32	com.google.android.apps.nexuslauncher	com.google.android.apps.nexuslauncher.NexusLauncherActivity	149	0	0	0	%00	Home screen 1 of 1
+3593929	a.win	154%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	149%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+3594647	a.win	154%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	149%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+3594653	a.win	154%2C3%2C0%2C%2C1%2C0 0 1080 142%2C%2Ccom.android.systemui	149%2C1%2C0%2Caf%2C0%2C0 0 1080 2424%2CHome%2Ccom.google.android.apps.nexuslauncher
+3595949	a.ev	4194304			154	0	2	0	%00
+3595951	d.deviceLocked	1
+3595951	o.log	All sessions ended (phone locked)
+3595955	a.ev	4194304			149	0	2	0	%00
+3595958	d.bc	android.intent.action.SCREEN_OFF
+3595958	o.log	All sessions ended (screen off)
+3595985	d.interactive	0
+3595986	d.bc	android.intent.action.SCREEN_OFF
+3596013	a.win	150%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2C%2Ccom.android.systemui
+3596031	a.win	150%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2C%2Ccom.android.systemui
+3596032	a.ev	32	com.android.systemui	android.widget.FrameLayout	150	0	0	0	%00	Lock screen	T-Mobile	5G	10:38	Fri%2C Oct 30	Device locked
+3596036	a.win	150%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2C%2Ccom.android.systemui
+3596036	a.ev	32	com.android.systemui	android.widget.FrameLayout	150	0	0	16	%00	Lock screen
+3596036	a.ev	4194304			150	0	1	0	%00
+3596039	a.ev	32	com.android.systemui	android.widget.FrameLayout	150	0	0	0	%00	Lock screen	Android System notification: 	T-Mobile	5G	10:38	Fri%2C Oct 30	Device locked
+3597417	d.bc	android.intent.action.SCREEN_ON
+3597451	a.win	150%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2C%2Ccom.android.systemui
+3597487	d.interactive	1
+3597487	a.win	150%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2C%2Ccom.android.systemui
+3600116	a.ev	32	com.biokey.gantlet.plain	com.biokey.gantlet.LaunchActivity	162	0	0	0	%00	Gantlet Plain
+3600118	d.keyguard	1
+3600119	a.win	150%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2C%2Ccom.android.systemui
+3600198	a.ev	32	com.biokey.gantlet.plain	com.biokey.gantlet.MainActivity	163	0	0	0	%00	Gantlet Plain
+3600199	a.win	150%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2C%2Ccom.android.systemui
+3600273	a.win	150%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2C%2Ccom.android.systemui
+3600273	a.win	150%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2C%2Ccom.android.systemui
+3600425	a.win	150%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2C%2Ccom.android.systemui
+3600577	a.win	150%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2C%2Ccom.android.systemui
+3600577	o.log	Covered com.biokey.gantlet.plain (opened behind the keyguard)
+3600577	o.launch	com.biokey.gantlet.plain	0	0
+3600611	l.target	com.biokey.gantlet.plain
+3600617	l.resumed	1
+3600623	l.resumed	0
+3600674	l.dismiss	com.biokey.gantlet.plain
+3603250	a.ev	32	com.android.camera2	android.widget.FrameLayout	165	0	0	0	%00	Application icon
+3603258	a.win	150%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2C%2Ccom.android.systemui
+3603275	a.ev	32	com.android.camera2	com.android.camera.SecureCameraActivity	166	0	0	0	%00	Camera
+3603320	a.win	166%2C1%2C0%2C%2C1%2C35 129 1045 2345%2CCamera%2Ccom.android.camera2	150%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2C%2Ccom.android.systemui
+3603553	o.log	Covered com.android.camera2 (opened)
+3603556	o.launch	com.android.camera2	0	0
+3603593	a.ev	4194304			166	0	1	0	%00
+3603600	a.win	166%2C1%2C0%2C%2C1%2C35 129 1045 2345%2CCamera%2Ccom.android.camera2	150%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2C%2Ccom.android.systemui
+3603604	a.win	166%2C1%2C0%2C%2C1%2C35 129 1045 2345%2CCamera%2Ccom.android.camera2	150%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2C%2Ccom.android.systemui
+3603683	a.win	166%2C1%2C0%2C%2C1%2C35 129 1045 2345%2CCamera%2Ccom.android.camera2	150%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2C%2Ccom.android.systemui
+3603789	o.launch	com.android.camera2	0	0
+3603830	a.ev	4194304			166	0	8	0	%00
+3603839	a.ev	4194304			161	0	1	0	%00
+3603840	a.ev	4194304			150	0	24	0	%00
+3603840	a.ev	4194304			166	0	24	0	%00
+3603841	a.ev	32	com.android.systemui	android.widget.FrameLayout	150	0	0	32	%00	Lock screen
+3603922	l.resumed	1
+3603937	l.resumed	0
+3603952	l.target	com.android.camera2
+3603956	l.resumed	1
+3603972	p.up	com.android.camera2
+3604037	l.dismiss	com.android.camera2
+3604038	l.dismiss	com.android.camera2
+3604268	a.win	161%2C4%2C0%2C%2C1%2C0 0 1080 2424%2CBioKeyShield%2C	154%2C3%2C0%2C%2C0%2C0 0 1080 142%2C%2Ccom.android.systemui
+3604292	a.ev	4194304			150	0	2	0	%00
+3604294	a.ev	4194304			166	0	2	0	%00
+3604308	a.ev	4194304			161	0	16	0	%00
+3604309	a.ev	4194304			154	0	1	0	%00
+3604321	a.ev	32	com.android.systemui	android.widget.FrameLayout	150	0	0	0	%00	Lock screen	10:38	Fri%2C Oct 30	Charged	Device locked
+3604322	a.ev	32	com.android.systemui	android.widget.FrameLayout	150	0	0	16	%00	Lock screen
+3604322	a.ev	4194304			154	0	2	0	%00
+3604326	a.ev	4194304			150	0	1	0	%00
+3604342	a.ev	4194304			150	0	2	0	%00
+3604349	a.ev	4194304			167	0	1	0	%00
+3604373	a.ev	4194304			161	0	2	0	%00
+3604521	a.win	167%2C3%2C0%2Caf%2C0%2C0 0 1080 2424%2CUnlock Camera%2Ccom.android.systemui
