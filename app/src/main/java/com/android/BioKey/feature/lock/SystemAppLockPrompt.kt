@@ -1,5 +1,6 @@
 package com.android.BioKey.feature.lock
 
+import android.annotation.SuppressLint
 import android.content.res.Resources
 
 /**
@@ -21,7 +22,11 @@ internal class SystemAppLockPrompt(
         /** What SystemUI names the prompt's window itself, whatever its title. */
         private const val PROMPT_WINDOW = "BiometricPrompt"
 
-        /** Android's own words, or null where it has none (before Android 17 QPR3, or another build). */
+        /**
+         * Android's own words, or null where it has none (before Android 17 QPR3, or another
+         * build). Looked up by name: they aren't BioKey's strings, so there's no R field to use.
+         */
+        @SuppressLint("DiscouragedApi")
         fun fromSystem(): SystemAppLockPrompt? = runCatching {
             val res = Resources.getSystem()
             fun words(name: String): String? = res.getIdentifier(name, "string", SystemAppLock.PACKAGE).takeIf { it != 0 }?.let(res::getString)

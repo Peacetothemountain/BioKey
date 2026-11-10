@@ -4,7 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
-import android.net.Uri
+import androidx.core.net.toUri
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.inputmethod.InputMethodManager
@@ -271,8 +271,8 @@ object ForegroundRules {
         Intent("android.media.action.MOTION_PHOTO_CAPTURE_SECURE"),
         Intent("android.provider.action.REVIEW_SECURE").setType("image/*"),
         Intent("android.intent.action.DIAL_EMERGENCY"),
-        Intent("android.intent.action.DIAL_EMERGENCY", Uri.parse("tel:")),
-        Intent("android.intent.action.CALL_EMERGENCY", Uri.parse("tel:"))
+        Intent("android.intent.action.DIAL_EMERGENCY", "tel:".toUri()),
+        Intent("android.intent.action.CALL_EMERGENCY", "tel:".toUri())
     )
 
     /**

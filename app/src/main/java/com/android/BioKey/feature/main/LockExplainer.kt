@@ -1,6 +1,7 @@
 package com.android.BioKey.feature.main
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.Intent
@@ -27,7 +28,11 @@ import com.android.BioKey.feature.lock.ForegroundRules
  */
 internal object LockExplainer {
 
-    /** The kind of data an app is the home of, whose other readers are listed. */
+    /**
+     * The kind of data an app is the home of, whose other readers are listed. The newer
+     * permissions are only names: on an Android without them, no app holds them.
+     */
+    @SuppressLint("InlinedApi")
     enum class DataKind(
         /** The permissions that let another app read it: Android's own App lock lists the same. */
         val permissions: List<String>
