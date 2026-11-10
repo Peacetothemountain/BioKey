@@ -93,7 +93,7 @@ class SystemAppLockTest {
         engine = Robolectric.buildService(BioKeyAccessibilityService::class.java).create()
         BioKeyAccessibilityService::class.java.getDeclaredMethod("onServiceConnected").apply { isAccessible = true }.invoke(engine.get())
         // Android's words, in English, as on the owner's phone.
-        engine.get().systemPromptWords = SystemAppLockPrompt(oneApp, "%1\$s and %2\$s are protected with app lock", null, title)
+        engine.get().androidLock.promptWords = SystemAppLockPrompt(oneApp, "%1\$s and %2\$s are protected with app lock", null, title)
         idle()
         homeInFront()
     }
