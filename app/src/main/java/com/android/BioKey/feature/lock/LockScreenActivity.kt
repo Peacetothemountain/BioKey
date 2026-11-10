@@ -207,11 +207,29 @@ class LockScreenActivity : ComponentActivity() {
         return super.dispatchTouchEvent(ev)
     }
 
+    /**
+     * Other apps' overlays are hidden while this screen shows, except while a cover of
+     * compatibility mode's must stay up over it (a locked app in picture-in-picture, which floats
+     * above this screen too): Android through 15 hides BioKey's own overlays with the rest (16
+     * leaves an app its own, where that fix is switched on), and the window would show over the
+     * prompt. Touches through anything over this screen are dropped all the same ([dispatchTouchEvent]).
+     */
+    private val syncOverlayHiding: () -> Unit = {
+        val hide = !InstantShieldOverlay.staysOverLockScreen
+        if (hide != hidesOverlays) {
+            hidesOverlays = hide
+            WindowProtection.hideOtherOverlays(window, hide)
+        }
+    }
+    private var hidesOverlays = true
+
     override fun onCreate(savedInstanceState: Bundle?) {
         WindowProtection.applyWindowProtections(this)
+        syncOverlayHiding()
         noTransition(open = true)
         super.onCreate(savedInstanceState)
         current = WeakReference(this)
+        InstantShieldOverlay.onCoverChanged = syncOverlayHiding
         shownAt = SystemClock.elapsedRealtime()
         vault = SecurityVault.getInstance(this)
 
@@ -431,6 +449,11 @@ class LockScreenActivity : ComponentActivity() {
         // anywhere else (an app the engine can't see among them) the session ends with it.
         if (isCurrent) LockStateTracker.endOwnLockScreenHop(shownAt)
         if (isFinishing) return
+        // Its prompt, still running, handed over to the phone's PIN screen, which some phones open
+        // as an activity over this one: the prompt goes on there and answers here, so this screen
+        // and it stay, as BioKey's own do (MainActivity.onStop). The engine doesn't count that
+        // screen as leaving the app either.
+        if (engine.isAuthenticatingFor(lockedPackage) && BioKeyAccessibilityService.isConfirmingDeviceCredential) return
         engine.resetAuthenticatingStateFor(this)
         // The screen went off, or the keyguard came up over the cover (Lockdown with the screen
         // on): keep the cover, behind the keyguard, so nothing of the app shows once the phone is
@@ -460,6 +483,7 @@ class LockScreenActivity : ComponentActivity() {
     override fun onDestroy() {
         LockStateTracker.removeLockAllListener(onLockAll)
         if (::cover.isInitialized) cover.removeCallbacks(fullscreenTimeout)
+        if (InstantShieldOverlay.onCoverChanged === syncOverlayHiding) InstantShieldOverlay.onCoverChanged = null
         if (isCurrent) {
             isLockScreenResumed = false
             if (activeLockedTarget == lockedPackage) activeLockedTarget = null
@@ -691,9 +715,17 @@ class LockScreenActivity : ComponentActivity() {
         InstantShieldOverlay.onPrompt(lockedPackage, showing = false)
     }
 
+    /**
+     * "Lock phone", after too many misses. Android locks the phone a moment after it's asked, so
+     * the cover stays up meanwhile (closed now, the app would show until the keyguard draws), and
+     * is then a cover behind the keyguard like any other ([onStop]): the lockout is forgotten and
+     * it asks again once the phone is unlocked. Where the phone can't be locked from here
+     * (compatibility mode), Home.
+     */
     private fun lockDeviceOrHome() {
+        if (BioKeyAccessibilityService.lockDevice()) return
         abandon()
-        if (!BioKeyAccessibilityService.lockDevice()) goHome()
+        goHome()
         finishSilently(abandoned = true)
     }
 

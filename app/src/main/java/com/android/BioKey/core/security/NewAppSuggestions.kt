@@ -55,8 +55,21 @@ object NewAppSuggestions {
         if (on) ensureChannel(context)
     }
 
-    // Clear of every other id BioKey posts (compatibility mode's own is 2001).
-    private fun notificationId(pkg: String) = 10_000 + (pkg.hashCode() and 0x7fff)
+    // Clear of every other id BioKey posts (all below 10,000; compatibility mode's own is 2001),
+    // and from a range wide enough that two apps offered at once never share one: sharing it, the
+    // second offer would replace the first.
+    private fun notificationId(pkg: String) = 10_000 + (pkg.hashCode() and Int.MAX_VALUE) % 2_000_000_000
+
+    /** The id an offer for [pkg] had up to 1.0.4 (15 bits of the same hash): one still showing from then goes by it. */
+    private fun earlierNotificationId(pkg: String) = 10_000 + (pkg.hashCode() and 0x7fff)
+
+    /** Takes down the offer for [pkg], and says which ids that was ([updateSummary]). */
+    private fun cancelOffer(context: Context, pkg: String): Set<Int> {
+        val ids = setOf(notificationId(pkg), earlierNotificationId(pkg))
+        val manager = NotificationManagerCompat.from(context)
+        ids.forEach(manager::cancel)
+        return ids
+    }
 
     fun ensureChannel(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
@@ -137,8 +150,7 @@ object NewAppSuggestions {
 
     /** [pkg] was uninstalled: an offer to lock it would lock nothing. */
     fun onUninstalled(context: Context, pkg: String) {
-        NotificationManagerCompat.from(context).cancel(notificationId(pkg))
-        updateSummary(context, cancelled = notificationId(pkg))
+        updateSummary(context, cancelled = cancelOffer(context, pkg))
     }
 
     /**
@@ -162,7 +174,7 @@ object NewAppSuggestions {
                 val pending: PendingResult? = goAsync()
                 worker.execute {
                     try {
-                        updateSummary(app, cancelled = notificationId(pkg))
+                        updateSummary(app, cancelled = setOf(notificationId(pkg), earlierNotificationId(pkg)))
                     } finally {
                         pending?.finish()
                     }
@@ -170,7 +182,7 @@ object NewAppSuggestions {
                 return
             }
             if (intent.action != ACTION_LOCK) return
-            NotificationManagerCompat.from(context).cancel(notificationId(pkg))
+            val cancelled = cancelOffer(context, pkg)
             // The vault may have to be read from disk (BioKey just started for this): not on the main thread.
             val pending: PendingResult? = goAsync()
             val app = context.applicationContext
@@ -181,7 +193,7 @@ object NewAppSuggestions {
                         SecurityVault.getInstance(app).setAppLock(pkg, true)
                         DiagnosticLog.log("Locked $pkg from the new-app notification")
                     }
-                    updateSummary(app, cancelled = notificationId(pkg))
+                    updateSummary(app, cancelled = cancelled)
                 } finally {
                     pending?.finish()
                 }
@@ -201,11 +213,11 @@ object NewAppSuggestions {
     /**
      * Several offers at once (a new phone restoring its apps) gather under one summary, which
      * opens BioKey; a lone offer stands on its own. [posted] or [cancelled]: an offer's id just
-     * posted or cancelled. Android's list of what's showing is updated a moment later, so that one
-     * is counted (or not) as it will be.
+     * posted, or the ids just cancelled. Android's list of what's showing is updated a moment
+     * later, so that one is counted (or not) as it will be.
      */
     @Synchronized
-    private fun updateSummary(context: Context, posted: Int? = null, cancelled: Int? = null) {
+    private fun updateSummary(context: Context, posted: Int? = null, cancelled: Set<Int> = emptySet()) {
         val manager = NotificationManagerCompat.from(context)
         val active = runCatching { context.getSystemService(NotificationManager::class.java).activeNotifications.toList() }
             .getOrDefault(emptyList())
@@ -215,7 +227,7 @@ object NewAppSuggestions {
                 it.notification.flags and android.app.Notification.FLAG_GROUP_SUMMARY == 0
         }.map { it.id }.toMutableSet()
         posted?.let(ids::add)
-        cancelled?.let(ids::remove)
+        ids -= cancelled
         val offers = ids.size
         if (offers == 0) {
             manager.cancel(SUMMARY_ID)

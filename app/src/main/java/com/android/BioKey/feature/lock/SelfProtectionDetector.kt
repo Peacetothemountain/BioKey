@@ -12,7 +12,6 @@ import com.android.BioKey.R
  * Recognises system screens that specifically target BioKey and could switch it off:
  * - BioKey's App info / Storage pages (XML and Android 14-17 Jetpack Compose SPA)
  * - BioKey's Accessibility service detail page and stop confirmation dialog
- * - BioKey's Notification access / Special app access detail page and revoke dialog
  * - Package installer uninstall confirmation dialog for BioKey
  *
  * Multi-app list screens (Settings -> Apps, See all apps, Accessibility list, Special app access
@@ -185,9 +184,8 @@ internal class SelfProtectionDetector(private val service: BioKeyAccessibilitySe
 
         /**
          * A single node that is itself a control or prompt for one service: "Use BioKey App Lock
-         * Service", "Stop BioKey App Lock Service?", "BioKey App Lock Service shortcut", "Turn
-         * off notification access for BioKey notification shield?". [togglePrompts] are the
-         * device's own Settings strings for them, in the phone's language.
+         * Service", "Stop BioKey App Lock Service?", "BioKey App Lock Service shortcut".
+         * [togglePrompts] are the device's own Settings strings for them, in the phone's language.
          */
         internal fun isControlPrompt(text: String, togglePrompts: Set<String>): Boolean {
             val lower = text.trim().lowercase()

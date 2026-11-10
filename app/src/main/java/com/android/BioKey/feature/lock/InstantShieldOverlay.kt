@@ -65,7 +65,6 @@ class InstantShieldOverlay(
         private const val FAST_VERIFY_MS = 60L
         private const val TIMEOUT_MS = 700L
         private const val MAX_ATTEMPTS = 4
-        /** What a held cover ([holdWhile]) says while its lock screen has nothing else to say. */
 
         @SuppressLint("StaticFieldLeak")
         @Volatile
@@ -77,6 +76,24 @@ class InstantShieldOverlay(
 
         /** The generation of the cover put up last (see [dismiss]). */
         fun currentGeneration(): Long = coversShown
+
+        /**
+         * A cover that must stay up over BioKey's lock screen is showing as an application overlay
+         * (compatibility mode's): held ([holdWhile]), or about to be once it's asked to go.
+         * A window that hides other apps' overlays hides BioKey's own with them (through Android
+         * 15; 16 leaves an app its own, where that fix is switched on), so a lock screen under
+         * such a cover hides none meanwhile ([LockScreenActivity]). Main thread.
+         */
+        val staysOverLockScreen: Boolean
+            get() {
+                val current = activeInstance ?: return false
+                if (!current.isAppOverlay || !current.isShowing) return false
+                return current.isHeld || current.targetPackage?.let { current.holdWhile?.invoke(it) } == true
+            }
+
+        /** Told, on the main thread, whenever a cover goes up, is held or goes: [staysOverLockScreen] may have changed. */
+        @Volatile
+        var onCoverChanged: (() -> Unit)? = null
 
         /**
          * Hides the cover if it is for [targetPackage] (any, when null) and no newer than
@@ -114,6 +131,8 @@ class InstantShieldOverlay(
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val windowManager = service.getSystemService(WindowManager::class.java)
+    /** An application overlay (compatibility mode's), which Android hides with other apps' ([staysOverLockScreen]). */
+    private val isAppOverlay = windowType == WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
     private val cover = LockCoverView(service).apply { visibility = View.GONE }
 
     var isShowing = false
@@ -348,6 +367,7 @@ class InstantShieldOverlay(
         isShowing = true
         LatencyMarks.markOnNextDraw(cover, "cover", targetPackage)
         activeInstance = this
+        onCoverChanged?.invoke()
         return true
     }
 
@@ -442,6 +462,7 @@ class InstantShieldOverlay(
         val prompting = SecurityEngine.INSTANCE.isAuthenticatingFor(target)
         if (prompting) cover.setStatus(null, permanentLockout = false) else showHeldStatus()
         cover.setActionsVisible(!prompting)
+        onCoverChanged?.invoke()
     }
 
     /** A held cover says what the last prompt left on its lock screen, or else the "still on screen" text. */
@@ -477,6 +498,7 @@ class InstantShieldOverlay(
         } catch (e: Exception) {
             Log.w(TAG, "Shield hide failed: ${e.message}")
         }
+        onCoverChanged?.invoke()
     }
 
     fun destroy() {

@@ -541,8 +541,7 @@ fun MainScreenExpressive(
         itemsIndexed(apps, key = { _, app -> app.packageName }, contentType = { _, _ -> CONTENT_APP }) { i, app ->
             // An app whose profile is off always says so: it's why its switch is off.
             val profile = profileOf(app.packageName)?.takeIf { showProfile || !it.enabled }
-            // The lock stays on: it still hides the app's notifications, and protects it again as
-            // soon as the accessibility engine is back.
+            // The lock stays on: it protects the app again as soon as the accessibility engine is back.
             val unwatched = isUnwatched(app)
             val homeScreen = isHomeScreen(app.packageName)
             // A state, not a category: "unlocked now" takes its own colour, the rest of the line

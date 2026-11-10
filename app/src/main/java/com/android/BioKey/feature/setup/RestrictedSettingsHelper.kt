@@ -9,7 +9,7 @@ import androidx.annotation.RequiresApi
 /**
  * Helper to detect if Android 13+ (API 33+) Restricted Settings (ACCESS_RESTRICTED_SETTINGS)
  * or Android 15+ Enhanced Confirmation Mode (ECM) is actively blocking BioKey's sensitive
- * capabilities (Accessibility and Notification Listener).
+ * capability (Accessibility).
  */
 object RestrictedSettingsHelper {
     private const val OPSTR_ACCESS_RESTRICTED_SETTINGS = "android:access_restricted_settings"

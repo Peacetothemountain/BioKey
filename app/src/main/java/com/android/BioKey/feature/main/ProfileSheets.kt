@@ -82,6 +82,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -402,7 +403,14 @@ internal fun AppOptionsSheet(
                     ) {
                         AppIcon(app, 64.dp)
                         Spacer(Modifier.height(12.dp))
-                        Text(app.label, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        // The app the sheet is about: its whole name, wrapped where it's long or the text large.
+                        Text(
+                            app.label,
+                            style = MaterialTheme.typography.headlineSmall,
+                            textAlign = TextAlign.Center,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
                         Spacer(Modifier.height(4.dp))
                         Text(
                             text = when {

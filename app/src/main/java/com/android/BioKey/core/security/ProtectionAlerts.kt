@@ -75,6 +75,11 @@ object ProtectionAlerts {
         DiagnosticLog.log("Reminders that app locking is off stopped by the owner")
     }
 
+    /** The protection alerts' own channel is switched off in Android's settings, with BioKey's notifications otherwise allowed. */
+    fun channelOff(context: Context): Boolean = runCatching {
+        context.getSystemService(NotificationManager::class.java).getNotificationChannel(CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE
+    }.getOrDefault(false)
+
     fun ensureChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
         // Created, or updated: Android takes a new name and description, never touches the importance

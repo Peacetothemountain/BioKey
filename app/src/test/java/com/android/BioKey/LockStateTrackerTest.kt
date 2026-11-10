@@ -320,27 +320,25 @@ class LockStateTrackerTest {
 
     @Test
     fun lockingABatchEndsEverySessionBeforeTellingAnyone() {
-        val batches = mutableListOf<Set<String>>()
-        val singles = mutableListOf<String>()
-        val batchListener: (Set<String>) -> Unit = { pkgs ->
-            assertFalse(pkgs.any { LockStateTracker.isAppUnlocked(it, LockTimeoutMode.GRACE_5_MINUTES) })
-            batches += pkgs
+        val told = mutableListOf<String>()
+        val listener: (String) -> Unit = { pkg ->
+            // Whichever app it's told of first, the other's session is over too.
+            assertFalse(listOf(chat, bank).any { LockStateTracker.isAppUnlocked(it, LockTimeoutMode.GRACE_5_MINUTES) })
+            told += pkg
         }
-        val singleListener: (String) -> Unit = { singles += it }
-        LockStateTracker.addAppsLockListener(batchListener)
-        LockStateTracker.addAppLockListener(singleListener)
+        LockStateTracker.addAppLockListener(listener)
         try {
             LockStateTracker.onAppUnlocked(chat)
             LockStateTracker.onAppUnlocked(bank)
             LockStateTracker.lockPackages(setOf(chat, bank), "test")
-            assertEquals(listOf(setOf(chat, bank)), batches)
-            assertEquals(setOf(chat, bank), singles.toSet())
+            assertEquals(setOf(chat, bank), told.toSet())
+            assertEquals(2, told.size)
 
             LockStateTracker.lockPackage(chat)
-            assertEquals(listOf(setOf(chat, bank), setOf(chat)), batches)
+            assertEquals(chat, told.last())
+            assertEquals(3, told.size)
         } finally {
-            LockStateTracker.removeAppsLockListener(batchListener)
-            LockStateTracker.removeAppLockListener(singleListener)
+            LockStateTracker.removeAppLockListener(listener)
         }
     }
 

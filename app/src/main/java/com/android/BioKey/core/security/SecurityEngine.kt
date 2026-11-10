@@ -43,9 +43,24 @@ class SecurityEngine private constructor() {
         fun isUserCancel(code: Int) = code == ERROR_USER_CANCELED || code == ERROR_CANCELED ||
             code == ERROR_NEGATIVE_BUTTON
 
-        private fun strongStatus(context: Context): Int? = runCatching {
+        /**
+         * BiometricManager.BIOMETRIC_ERROR_LOCKOUT, which Android keeps to itself but lists among
+         * canAuthenticate's answers: too many misses, for now. Only a face or fingerprint that is
+         * set up can be locked out, and the prompt says so itself, so it reads as one that works:
+         * a few wrong fingers must neither look like every fingerprint removed (a record, and a
+         * day's hold) nor let the screen lock in under "Face or fingerprint only".
+         */
+        private const val STATUS_LOCKED_OUT = 7
+
+        /** Android's answer about a strong face or fingerprint; tests give their own. */
+        @androidx.annotation.VisibleForTesting
+        @Volatile
+        internal var canAuthenticateStrong: (Context) -> Int? = { context ->
             context.getSystemService(BiometricManager::class.java)?.canAuthenticate(BIOMETRIC_STRONG)
-        }.getOrNull().also { lastStrongStatus = it }
+        }
+
+        private fun strongStatus(context: Context): Int? = runCatching { canAuthenticateStrong(context) }.getOrNull()
+            .let { if (it == STATUS_LOCKED_OUT) BiometricManager.BIOMETRIC_SUCCESS else it }.also { lastStrongStatus = it }
 
         /** The last answer Android gave ([strongStatus]): for a screen's first frame, before it asks again. */
         @Volatile private var lastStrongStatus: Int? = null

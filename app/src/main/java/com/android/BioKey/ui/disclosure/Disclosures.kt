@@ -114,7 +114,8 @@ enum class Disclosure(
 
 private val KEEPS = listOf(
     R.string.disclosure_keeps_log,
-    R.string.disclosure_keeps_security_activity
+    R.string.disclosure_keeps_security_activity,
+    R.string.disclosure_keeps_app_notes
 )
 
 private val NEVER = listOf(
@@ -150,8 +151,8 @@ fun rememberDisclosureGate(): DisclosureGate {
 }
 
 /**
- * Android 13+'s permission to post notifications, which protection alerts and the notification
- * shield's stand-ins need; without it both are silently dropped. A normal runtime permission, so
+ * Android 13+'s permission to post notifications, which protection alerts, security activity
+ * and new-app offers need; without it they are silently dropped. A normal runtime permission, so
  * no disclosure: just Android's own question. [allowed] follows Android's setting, rechecked on
  * every resume.
  */
@@ -168,7 +169,7 @@ class NotificationPermission internal constructor(private val context: Context, 
 
     /**
      * Asks Android's question if it still may, then runs [then] once BioKey is back on screen.
-     * For moments BioKey chooses (end of setup, notification access just granted): never opens Settings.
+     * For moments BioKey chooses (the end of setup): never opens Settings.
      */
     fun request(then: () -> Unit = {}) {
         if (allowed || !canAsk()) {

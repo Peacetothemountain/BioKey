@@ -28,6 +28,7 @@ import com.android.BioKey.feature.lock.LockScreenActivity
 import com.android.BioKey.feature.lock.SystemAppLock
 import com.android.BioKey.feature.lock.SystemAppLockPrompt
 import java.time.Duration
+import java.util.concurrent.Executor
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -37,6 +38,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ServiceController
 import org.robolectric.annotation.Config
@@ -94,6 +96,8 @@ class SystemAppLockTest {
         BioKeyAccessibilityService::class.java.getDeclaredMethod("onServiceConnected").apply { isAccessible = true }.invoke(engine.get())
         // Android's words, in English, as on the owner's phone.
         engine.get().androidLock.promptWords = SystemAppLockPrompt(oneApp, "%1\$s and %2\$s are protected with app lock", null, title)
+        // The apps' names are read in place, not on a thread of their own the test would have to wait for.
+        engine.get().androidLock.namesReader = Executor { it.run() }
         idle()
         homeInFront()
     }
@@ -245,6 +249,29 @@ class SystemAppLockTest {
         homeInFront()
         idle(1_000)
         assertFalse(LockStateTracker.isAppUnlocked(x, LockTimeoutMode.IMMEDIATE))
+    }
+
+    @Test
+    fun theAppsNamesAreReadAgainWhenThePhonesLanguageChanges() {
+        // Read once, in English.
+        androidCoverComesUp()
+        androidAsksForNotes()
+        androidLetsThrough(x)
+        assertTrue(LockStateTracker.isAppUnlocked(x, LockTimeoutMode.IMMEDIATE))
+        LockStateTracker.lockAll(reason = "test")
+        homeInFront()
+        // The language changes: Notes is Notizen now, on its icon and on Android's prompt. No app
+        // was installed or updated, so only the language says the names are out of date.
+        install(x, "Notizen")
+        RuntimeEnvironment.setQualifiers("+de")
+        engine.get().onConfigurationChanged(context.resources.configuration)
+        // (The prompt's own words would be read from Android here; the test's stand in for them.)
+        engine.get().androidLock.promptWords = SystemAppLockPrompt(oneApp, "%1\$s and %2\$s are protected with app lock", null, title)
+        androidCoverComesUp()
+        androidPromptSays(title, "Notizen", oneApp, "Use PIN")
+        androidLetsThrough(x)
+        assertTrue(LockStateTracker.isAppUnlocked(x, LockTimeoutMode.IMMEDIATE))
+        assertEquals(emptyList<String>(), covered(x))
     }
 
     @Test

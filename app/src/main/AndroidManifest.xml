@@ -51,13 +51,10 @@
         <intent>
             <action android:name="android.settings.SECURITY_SETTINGS" />
         </intent>
-        <!-- Adding a face or fingerprint (home's card), Android 17's own App lock page, and
-             private space's page where Settings lets other apps open it (Settings). -->
+        <!-- Adding a face or fingerprint (home's card), and private space's page where Settings
+             lets other apps open it (Settings). -->
         <intent>
             <action android:name="android.settings.BIOMETRIC_ENROLL" />
-        </intent>
-        <intent>
-            <action android:name="android.settings.APP_LOCK_SETTINGS" />
         </intent>
         <intent>
             <action android:name="com.android.settings.action.OPEN_PRIVATE_SPACE_SETTINGS" />
@@ -78,12 +75,6 @@
         <intent>
             <action android:name="android.settings.action.MANAGE_OVERLAY_PERMISSION" />
             <data android:scheme="package" />
-        </intent>
-        <intent>
-            <action android:name="android.settings.NOTIFICATION_LISTENER_SETTINGS" />
-        </intent>
-        <intent>
-            <action android:name="android.settings.NOTIFICATION_LISTENER_DETAIL_SETTINGS" />
         </intent>
         <intent>
             <action android:name="android.settings.APP_NOTIFICATION_SETTINGS" />

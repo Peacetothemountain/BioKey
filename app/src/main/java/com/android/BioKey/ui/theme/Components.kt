@@ -174,7 +174,10 @@ fun GroupRow(
                 }
             }
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                // Two lines at most, except with large text, where that cuts a setting's name
+                // short ("Let the camera open over the..."): then it wraps as far as it needs.
+                val titleLines = if (LocalDensity.current.fontScale >= 1.3f) 8 else 2
+                Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = titleLines, overflow = TextOverflow.Ellipsis)
                 // In full, however large the text: its end is often what to do ("· tap to grant").
                 if (!subtitle.isNullOrEmpty()) {
                     Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = subtitleColor)

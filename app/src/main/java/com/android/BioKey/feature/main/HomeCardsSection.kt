@@ -35,7 +35,7 @@ import com.android.BioKey.ui.theme.GroupRow
 
 /**
  * The cards between home's header and its search bar, most urgent first: alerts off, nothing
- * protecting, no screen lock, hiding without access, an alert channel muted, the one-time attempts
+ * protecting, no screen lock, an alert channel muted, the one-time attempts
  * question, what happened while the owner was away, apps unlocked now, and the calm suggestions
  * (add a face or fingerprint, lock Settings). Only one is urgent at a time.
  */
@@ -260,7 +260,7 @@ internal enum class UrgentCard { NOT_PROTECTING, NO_SCREEN_LOCK, ACTIVITY, ALERT
  * The one card on home shown as urgent: the most serious of those showing. Not protecting comes
  * first, unless it's a pause the owner chose (never an emergency, and then the next one is);
  * then no screen lock (locked apps open without a check), security activity not yet reviewed,
- * notifications showing in full under the shield, and BioKey's alerts silenced.
+ * and BioKey's alerts silenced.
  */
 internal fun urgentCard(
     notProtecting: Boolean,

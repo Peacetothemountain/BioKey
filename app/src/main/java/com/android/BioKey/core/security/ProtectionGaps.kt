@@ -114,6 +114,8 @@ object ProtectionGaps {
         /** No longer recorded (apps always lock when the phone locks now); kept to word old records. */
         RELOCK_AT_PHONE_LOCK(R.string.change_relock_at_phone_lock),
         BIOMETRIC_ONLY_OFF(R.string.change_biometric_only_off),
+        /** "Protect BioKey's settings" switched off (builds with self-protection only). */
+        SELF_PROTECTION_OFF(R.string.change_self_protection_off),
         REMINDERS_STOPPED(R.string.change_reminders_stopped),
         LOG_SHARED(R.string.change_log_shared),
         /** Not a change from a session: the sensor couldn't be used, so the screen lock was allowed. */
@@ -199,6 +201,8 @@ object ProtectionGaps {
     private const val KEY_CLEARED_AT = "cleared_at"
     /** ... and whether that time can't be told (the phone's clock was set back since). */
     private const val KEY_CLEARED_UNKNOWN = "cleared_unknown"
+    /** A process of BioKey's started with it left force-stopped, and no engine has run since ([noteStart]). */
+    private const val KEY_STARTED_STOPPED = "started_stopped"
 
     private fun cleared(p: SharedPreferences) =
         if (p.contains(KEY_CLEARED_AT)) Cleared(p.getLong(KEY_CLEARED_AT, 0L), known = !p.getBoolean(KEY_CLEARED_UNKNOWN, false)) else null
@@ -288,18 +292,44 @@ object ProtectionGaps {
     /**
      * Whether this process started with BioKey left force-stopped (Android 15+ says so; false
      * before, or if it can't be read). Android keeps that a package is stopped across a restart of
-     * the phone, though not always its record of the stop itself.
+     * the phone, though not always its record of the stop itself. Its starts come newest first:
+     * this process's own are looked at, the one that made it and any since (BioKey opened again
+     * is a start of its own, and wouldn't say).
      */
     @VisibleForTesting
     internal var startedAfterForceStop: (Context) -> Boolean = { context ->
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && runCatching {
-            context.getSystemService(ActivityManager::class.java).getHistoricalProcessStartReasons(1)
-                .firstOrNull { it.pid == Process.myPid() }?.wasForceStopped() == true
+            context.getSystemService(ActivityManager::class.java).getHistoricalProcessStartReasons(START_RECORDS)
+                .takeWhile { it.pid == Process.myPid() }.any { it.wasForceStopped() }
         }.getOrDefault(false)
     }
 
-    /** This process's start has been looked at ([startedAfterForceStop]): once per process. */
+    /** How many of BioKey's latest starts are asked for ([startedAfterForceStop]). */
+    private const val START_RECORDS = 8
+
+    /** This process's start has been looked at ([lookAtStart]): once per process. */
     @Volatile private var startLookedAt = false
+
+    /**
+     * As BioKey's process starts: did it start with BioKey left force-stopped? Kept on disk until
+     * an engine runs ([onEngineUp] records it), which can be in a later process: a force stop
+     * switches the accessibility service off, and BioKey can be closed again before it's back on.
+     */
+    fun noteStart(context: Context) {
+        val p = load(context) ?: return
+        val setUp = SecurityVault.getInstance(context).isSetupCompleted()
+        synchronized(lock) { lookAtStart(context, p, setUp) }
+    }
+
+    /**
+     * [noteStart], once per process, whichever asks first (start-up, or an engine already
+     * running). Not before BioKey is [setUp]: a new install starts stopped too. Under [lock].
+     */
+    private fun lookAtStart(context: Context, p: SharedPreferences, setUp: Boolean) {
+        if (startLookedAt) return
+        startLookedAt = true
+        if (setUp && startedAfterForceStop(context)) p.edit { putBoolean(KEY_STARTED_STOPPED, true) }
+    }
 
     /** Null before the first unlock after a restart: BioKey's storage isn't readable yet. */
     fun load(context: Context): SharedPreferences? {
@@ -443,14 +473,13 @@ object ProtectionGaps {
             }
             // Force-stopped, then the phone restarted: Android can lose the stop's record with the
             // restart (it keeps the newest exits in memory a while), but BioKey starts up still
-            // marked stopped. When it stopped can't be told, only that it was until now. Once per
-            // process, and not for a stop already accounted for: an exit just read (however
-            // short), the engine's own report, or a clearing of the storage (which stops it too).
-            if (!startLookedAt) {
-                startLookedAt = true
-                if (forceStopAt == null && stoppedAt == 0L && cleared(p) == null && startedAfterForceStop(context)) {
-                    found += Gap(now, now, Kind.FORCE_STOPPED, detail = RESTARTED, unknownStart = true)
-                }
+            // marked stopped ([noteStart]). When it stopped can't be told, only that it was until
+            // now. Once (the note goes below), and not for a stop already accounted for: an exit
+            // just read (however short), the engine's own report, or a clearing of the storage
+            // (which stops it too).
+            lookAtStart(context, p, setUp)
+            if (p.getBoolean(KEY_STARTED_STOPPED, false) && forceStopAt == null && stoppedAt == 0L && cleared(p) == null) {
+                found += Gap(now, now, Kind.FORCE_STOPPED, detail = RESTARTED, unknownStart = true)
             }
             // Its storage was cleared ([checkStorageCleared]): nothing locked from then until set up again.
             cleared(p)?.takeIf { setUp }?.let { found += Gap(it.after.coerceAtMost(now), now, Kind.DATA_CLEARED, unknownStart = !it.known) }
@@ -463,7 +492,7 @@ object ProtectionGaps {
                 }
             }
             p.edit {
-                remove(KEY_STOPPED_AT).remove(KEY_STOPPED_ELAPSED).remove(KEY_STOPPED_BOOT)
+                remove(KEY_STOPPED_AT).remove(KEY_STOPPED_ELAPSED).remove(KEY_STOPPED_BOOT).remove(KEY_STARTED_STOPPED)
                 putLong(KEY_CLOCK_OFFSET, now - wallNow())
                 putLong(KEY_LAST_UPDATE, update)
                 // Added to, not replaced: Android lists only the newest exits, and after a restart it

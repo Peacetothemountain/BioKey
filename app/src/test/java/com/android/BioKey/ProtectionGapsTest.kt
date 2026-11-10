@@ -619,10 +619,56 @@ class ProtectionGapsTest {
         // A new install starts stopped too, before it's set up.
         SecurityVault.getInstance(context).setSetupCompletedSync(false)
         newProcess(afterForceStop = true)
-        ProtectionGaps.onEngineUp(context)
+        ProtectionGaps.noteStart(context)
         SecurityVault.getInstance(context).setSetupCompletedSync(true)
         ProtectionGaps.onEngineUp(context)
         assertTrue(gaps.isEmpty())
+    }
+
+    @Test
+    fun aNewInstallSetUpBeforeItsStartWasLookedAtIsNoGap() {
+        // Set up, and only then does the first engine start (compatibility mode): setting up
+        // itself says this process's stopped start was a new install's.
+        SecurityVault.getInstance(context).setSetupCompletedSync(false)
+        newProcess(afterForceStop = true)
+        SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        ProtectionGaps.onSetUp(context)
+        ProtectionGaps.recorder.submit {}.get()
+        ProtectionGaps.onEngineUp(context)
+        assertTrue(gaps.isEmpty())
+    }
+
+    @Test
+    fun aStoppedStartIsRememberedUntilAnEngineRunsInALaterProcess() {
+        // Opened after the force stop and the restart, with the accessibility service still off
+        // (a force stop switches it off), then closed again before it was switched back on.
+        newProcess(afterForceStop = true)
+        ProtectionGaps.noteStart(context)
+        assertTrue(gaps.isEmpty())
+        newProcess(afterForceStop = false)
+        ProtectionGaps.noteStart(context)
+        pass(60_000L)
+        ProtectionGaps.onEngineUp(context)
+        val gap = gaps.single()
+        assertEquals(ProtectionGaps.RESTARTED, gap.detail)
+        assertTrue(gap.unknownStart)
+        // Told once: the note went with the record.
+        newProcess(afterForceStop = false)
+        ProtectionGaps.onEngineUp(context)
+        assertEquals(1, gaps.size)
+    }
+
+    @Test
+    fun aClearingStillToRecordIsToldAsAClearingOnly() {
+        // Cleared, set up again with no engine yet, then started stopped once more: one record.
+        clearedStorage()
+        exits = listOf(now - 60_000L to ApplicationExitInfo.REASON_USER_REQUESTED)
+        ProtectionGaps.checkStorageCleared(context)
+        SecurityVault.getInstance(context).setSetupCompletedSync(true)
+        newProcess(afterForceStop = true)
+        ProtectionGaps.noteStart(context)
+        ProtectionGaps.onEngineUp(context)
+        assertEquals(ProtectionGaps.Kind.DATA_CLEARED, gaps.single().kind)
     }
 
     @Test

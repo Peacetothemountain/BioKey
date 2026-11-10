@@ -14,7 +14,9 @@ import com.android.BioKey.core.security.SecurityVault
 import java.util.concurrent.Executors
 
 /**
- * Warms up settings after boot or an app update.
+ * After a restart or an update of BioKey: starts the engine that should run (compatibility mode;
+ * Android connects the accessibility service itself), gives one a few seconds to come up, and
+ * alerts if none does ([ProtectionAlerts.serviceStopped]). Nothing before the phone's first unlock.
  */
 class BioKeyBootReceiver : BroadcastReceiver() {
 

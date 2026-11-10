@@ -49,8 +49,8 @@ body:
     id: biokey-version
     attributes:
       label: BioKey version
-      description: In Android's Settings > Apps > Bio Key, at the bottom of the page.
-      placeholder: "1.0"
+      description: In Android's Settings > Apps > BioKey, at the bottom of the page.
+      placeholder: "1.0.4"
     validations:
       required: true
 

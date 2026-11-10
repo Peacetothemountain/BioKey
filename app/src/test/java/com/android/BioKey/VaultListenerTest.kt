@@ -25,7 +25,6 @@ class VaultListenerTest {
 
     private val listener = object : SecurityVault.Listener {
         override fun onLocked(context: Context, packages: Collection<String>) { heard += "locked ${packages.sorted()}" }
-        override fun onUnlocked(packages: Collection<String>) { heard += "unlocked ${packages.sorted()}" }
         override fun onPaused() { heard += "paused" }
     }
 
@@ -44,12 +43,16 @@ class VaultListenerTest {
     }
 
     @Test
-    fun lockingAndUnlockingAreHeard() {
+    fun lockingIsHeardEachTimeAnAppBecomesLocked() {
         vault.setSetupCompletedSync(true)
+        fun times() = heard.count { it == "locked [com.example.bank]" }
         vault.setAppLock("com.example.bank", true)
-        assertTrue(heard.toString(), "locked [com.example.bank]" in heard)
+        assertEquals(heard.toString(), 1, times())
+        // Switched off, nothing to make ready; switched on again, heard again.
         vault.setAppLock("com.example.bank", false)
-        assertTrue(heard.toString(), "unlocked [com.example.bank]" in heard)
+        assertEquals(1, times())
+        vault.setAppLock("com.example.bank", true)
+        assertEquals(2, times())
     }
 
     @Test

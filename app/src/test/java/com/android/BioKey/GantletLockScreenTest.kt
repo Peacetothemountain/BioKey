@@ -1,5 +1,6 @@
 package com.android.BioKey
 
+import android.accessibilityservice.AccessibilityService
 import android.app.Application
 import android.app.KeyguardManager
 import android.content.Context
@@ -7,9 +8,14 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Rect
 import android.os.Looper
+import android.view.WindowManager
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.feature.lock.BioKeyAccessibilityService
+import com.android.BioKey.feature.lock.ForegroundRules
+import com.android.BioKey.feature.lock.InstantShieldOverlay
 import com.android.BioKey.feature.lock.LockScreenActivity
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -139,6 +145,114 @@ class GantletLockScreenTest {
         controller.pause().stop()
         shadowOf(Looper.getMainLooper()).idle()
         assertTrue("Still held for the phone's lock after another app's lock", controller.get().isFinishing)
+    }
+
+    @Test
+    fun thePhonesPinScreenOpeningOverItsPromptIsNotLeavingIt() {
+        // Some phones open the PIN screen a prompt hands over to as an activity, which stops the
+        // lock screen under it: closing then would cancel the prompt, and the PIN could never be typed.
+        val lock = lockScreenFor()
+        SecurityEngine.INSTANCE.setPromptForTests(x)
+        BioKeyAccessibilityService.setConfirmingDeviceCredentialForTests(true)
+        try {
+            lock.pause().stop()
+            assertFalse(lock.get().isFinishing)
+            assertTrue(SecurityEngine.INSTANCE.isAuthenticatingFor(x))
+            assertEquals(0, homes())
+        } finally {
+            BioKeyAccessibilityService.setConfirmingDeviceCredentialForTests(false)
+            SecurityEngine.INSTANCE.setPromptForTests(null)
+        }
+    }
+
+    /** Whether [lock]'s window asks Android to hide other apps' overlays while it shows. */
+    private fun hidesOverlays(lock: ActivityController<LockScreenActivity>): Boolean {
+        val flags = WindowManager.LayoutParams::class.java.getField("privateFlags").getInt(lock.get().window.attributes)
+        // WindowManager.LayoutParams.SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS
+        return flags and 0x00080000 != 0
+    }
+
+    /** As installed: BioKey holds the permission to hide other apps' overlays (Robolectric grants nothing). */
+    private fun mayHideOverlays() = shadowOf(context).grantPermissions(android.Manifest.permission.HIDE_OVERLAY_WINDOWS)
+
+    @Test
+    fun otherAppsOverlaysAreHiddenOverTheLockScreen() {
+        mayHideOverlays()
+        assertTrue(hidesOverlays(lockScreenFor()))
+    }
+
+    @Test
+    fun aCoverHeldOverTheLockScreenIsntHiddenWithOtherAppsOverlays() {
+        // Compatibility mode's cover over a locked app in picture-in-picture, which floats above
+        // the lock screen too: an application overlay, which Android through 15 hides along with
+        // other apps' whenever a window asks for those to be hidden.
+        mayHideOverlays()
+        var held = true
+        val cover = InstantShieldOverlay(
+            context, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, goHome = {}, onTimeout = { _, _ -> false }, holdWhile = { held }
+        )
+        try {
+            assertTrue(cover.show(x) {})
+            val lock = lockScreenFor()
+            assertFalse(hidesOverlays(lock))
+            assertTrue(cover.isShowing)
+            // The window gone, the cover goes, and other apps' overlays are hidden again.
+            held = false
+            cover.hide()
+            assertFalse(cover.isShowing)
+            assertTrue(hidesOverlays(lock))
+            // Held again later, under the same lock screen.
+            held = true
+            assertTrue(cover.show(x) {})
+            assertFalse(hidesOverlays(lock))
+        } finally {
+            cover.destroy()
+        }
+    }
+
+    @Test
+    fun theAccessibilityEnginesCoverIsNeverAReasonToShowOtherAppsOverlays() {
+        // An accessibility overlay isn't hidden with other apps' overlays, held or not.
+        mayHideOverlays()
+        val cover = InstantShieldOverlay(
+            context, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, goHome = {}, onTimeout = { _, _ -> false }, holdWhile = { true }
+        )
+        try {
+            assertTrue(cover.show(x) {})
+            assertTrue(hidesOverlays(lockScreenFor()))
+        } finally {
+            cover.destroy()
+        }
+    }
+
+    @Test
+    fun lockPhoneKeepsTheCoverUpUntilThePhoneHasLocked() {
+        // The accessibility engine runs: it can lock the phone, which Android does a moment later.
+        val engine = Robolectric.buildService(BioKeyAccessibilityService::class.java).create()
+        try {
+            BioKeyAccessibilityService::class.java.getDeclaredMethod("onServiceConnected").apply { isAccessible = true }.invoke(engine.get())
+            shadowOf(Looper.getMainLooper()).idle()
+            val lock = lockScreenFor()
+            LockScreenActivity::class.java.getDeclaredMethod("lockDeviceOrHome").apply { isAccessible = true }.invoke(lock.get())
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN in shadowOf(engine.get()).globalActionsPerformed)
+            // Closed now, the app would show until the keyguard draws.
+            assertFalse(lock.get().isFinishing)
+            assertEquals(0, homes())
+        } finally {
+            engine.destroy()
+            ForegroundRules.resetSystemLists()
+        }
+    }
+
+    @Test
+    fun lockPhoneGoesHomeWhereThePhoneCantBeLockedFromHere() {
+        // Compatibility mode: no accessibility service to lock the phone with.
+        val lock = lockScreenFor()
+        LockScreenActivity::class.java.getDeclaredMethod("lockDeviceOrHome").apply { isAccessible = true }.invoke(lock.get())
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(lock.get().isFinishing)
+        assertEquals(1, homes())
     }
 
     @Test

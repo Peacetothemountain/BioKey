@@ -86,13 +86,17 @@ internal fun HomeHeader(
     var headerOrigin by remember { mutableStateOf(Offset.Zero) }
     val quietZones = remember { mutableStateMapOf<Int, Rect>() }
     Box(Modifier.onGloballyPositioned { headerOrigin = it.positionInRoot() }) {
-        val shift = headerOrigin - Offset(sidePadPx.toFloat(), 0f)
         HeaderMatrixDotsExpressive(
             Modifier
                 .matchParentSize()
                 .horizontalBleed(sidePadPx),
             animated = animated,
-            quiet = { quietZones.values.map { it.translate(-shift) } }
+            // Where the header is, read as the field is drawn: read here, every frame of a
+            // scroll (which moves it) would compose the whole header again.
+            quiet = {
+                val shift = headerOrigin - Offset(sidePadPx.toFloat(), 0f)
+                quietZones.values.map { it.translate(-shift) }
+            }
         )
         Column(Modifier.statusBarsPadding()) {
             MainHeader(

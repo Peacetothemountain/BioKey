@@ -1,7 +1,8 @@
 #!/bin/sh
 # Runs the lock screen's gantlet (tools/gantlet_tests.sh) before anything is pushed to main, and
-# refuses the push if it fails. GitHub can't require CI to pass on this private repository without
-# GitHub Pro, so this is what holds main to it on a computer that pushes.
+# refuses the push if it fails. A pull request into main must pass CI (its "build" check is
+# required there), but the owner can still push to main directly, which no check holds back:
+# this is what holds such a push to the gantlet, on a computer that has the hook on.
 #
 # The gantlet tests the checkout, not the commits being pushed, so it only lets a push to main
 # through when the two are the same: the commit pushed is the one checked out, with nothing changed,

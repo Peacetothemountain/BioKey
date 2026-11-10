@@ -36,6 +36,7 @@ import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.diagnostics.LatencyMarks
+import com.android.BioKey.core.security.FrontApp
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
@@ -127,8 +128,25 @@ class UsageWatchService : Service() {
         @Volatile
         private var stopRequested = false
 
+        /** Android refused the last start its place in the foreground ([onCreate]): the next refusal isn't tried again. */
+        @Volatile
+        private var refusedOnce = false
+
         /** The running service, for [lockedAppsOnScreenWith]. Main thread. */
         private var instance: UsageWatchService? = null
+
+        /**
+         * The app in front, for "Lock this app": as the engine running last saw it ([FrontApp.last]).
+         * Compatibility mode with nothing to protect (paused, or no app locked yet) reads nothing
+         * ([UsageReader.read]), so it saw nothing: then usage access is asked now, for that tap,
+         * rather than every poll while there is nothing to lock.
+         */
+        fun appInFrontForTile(context: Context): String? {
+            if (!isRunning) return FrontApp.last
+            val vault = SecurityVault.getInstance(context)
+            val reading = vault.globalLockEnabledFlow.value && vault.getLockedPackages().isNotEmpty()
+            return if (reading) FrontApp.last else UsageReader.appInFrontNow(context)
+        }
 
         /**
          * The other locked apps on screen with [pkg], none of them unlocked (the other half of a
@@ -219,6 +237,8 @@ class UsageWatchService : Service() {
     }
 
     private val handler = Handler(Looper.getMainLooper())
+    /** Refused its place in the foreground, this service asked for another start before stopping ([onCreate]). */
+    private var startingAgain = false
     /** Usage queries are binder calls that can take a while: they run here, not where covers are drawn. */
     private lateinit var worker: HandlerThread
     private lateinit var workerHandler: Handler
@@ -336,13 +356,23 @@ class UsageWatchService : Service() {
                     stopPolling()
                     // Waiting: the app in front is still there once the phone locks, and covered then.
                     val waiting = LockStateTracker.awaitingPhoneLock
-                    leftAtScreenOff = appInFront()?.takeIf { waiting }
+                    val left = appInFront()
+                    leftAtScreenOff = left?.takeIf { waiting }
                     // And what showed with it (a split screen's other half): asked for with it then.
                     // Paused ones too: as the screen times out, it dims first, and the apps on it pause.
-                    onScreenAtScreenOff = if (waiting) activities.visibleApps() + listOfNotNull(appInFront()) else emptySet()
+                    onScreenAtScreenOff = activities.visibleApps() + listOfNotNull(left)
                     forgetScreen(keepFront = waiting)
                     shield.hide()
-                    if (waiting) checkPhoneLockInTheDark()
+                    if (waiting) {
+                        checkPhoneLockInTheDark()
+                    } else {
+                        // The phone locked with the screen: the app left on it gets its lock screen
+                        // behind the keyguard now, as the accessibility engine's does, so unlocking
+                        // the phone shows that and never the app. After forgetScreen, which also
+                        // forgets what a lock screen hides.
+                        left?.let { coverBehindKeyguard(it, "on screen as the phone locked") }
+                        onScreenAtScreenOff = emptySet()
+                    }
                 }
                 Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
                     dreaming = false
@@ -374,10 +404,15 @@ class UsageWatchService : Service() {
                     // The app it came over, if locked: its lock screen goes up behind the
                     // keyguard now, so the screensaver ending never shows it.
                     // A lock screen already up: the app it's for.
-                    appInFront()?.let { coverBehindKeyguard(it, "on screen as a screensaver started") }
+                    val left = appInFront()
+                    // What shows with it (a split screen's other half) is asked for with it. Forgetting
+                    // the screen also forgets what a lock screen hides, so the cover comes after it.
+                    onScreenAtScreenOff = activities.resumedApps()
                     // The app in front is there again when it ends: kept, so it is covered then
                     // even if it doesn't report opening again (see recheck).
                     forgetScreen(keepFront = true)
+                    left?.let { coverBehindKeyguard(it, "on screen as a screensaver started") }
+                    onScreenAtScreenOff = emptySet()
                     shield.hide()
                 }
                 Intent.ACTION_DREAMING_STOPPED -> {
@@ -513,13 +548,25 @@ class UsageWatchService : Service() {
             }
             startForeground(NOTIFICATION_ID, buildNotification(), type)
         } catch (e: Exception) {
-            // Refused (restarted by Android from the background, say): nothing can cover apps.
             Log.e(TAG, "Compatibility mode couldn't start: ${e.javaClass.simpleName}")
+            stopSelf()
+            // Refused: restarted by Android from the background (after a crash, say), which
+            // Android 15 and later allow an app holding "display over other apps" only while an
+            // overlay of its own shows. Once more, under one, as a start from the background is
+            // ([start]). Refused again, nothing can cover apps.
+            val again = Build.VERSION.SDK_INT >= 35 && !refusedOnce && Settings.canDrawOverlays(this)
+            refusedOnce = true
+            if (again && runCatching { start(applicationContext) }.isSuccess) {
+                // This one's end mustn't take back the start now on its way ([onDestroy]).
+                startingAgain = true
+                DiagnosticLog.log("Compatibility engine was refused in the background: starting again under an overlay")
+                return
+            }
             DiagnosticLog.log("Compatibility engine couldn't start in the background")
             ProtectionAlerts.serviceStopped(this)
-            stopSelf()
             return
         }
+        refusedOnce = false
         vault = SecurityVault.getInstance(this)
         // A stop, or the accessibility engine taking over, can come before this service exists.
         if (BioKeyAccessibilityService.isRunning || !ProtectionEngine.shouldRunCompatibility(this)) {
@@ -602,7 +649,7 @@ class UsageWatchService : Service() {
         isRunning = false
         if (instance === this) instance = null
         pauseWatch.cancel()
-        startPending = false
+        if (!startingAgain) startPending = false
         stopRequested = false
         if (wasRunning) {
             stopPolling()

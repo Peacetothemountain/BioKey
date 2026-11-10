@@ -186,6 +186,8 @@ fun SettingsScreenExpressive(
     var showRelockSheet by remember { mutableStateOf(false) }
     /** Private space's page can be opened from here (Android 15+, where Settings allows it). */
     var privateSpace by remember { mutableStateOf(false) }
+    /** The protection alerts' own channel is switched off in Android's settings: their row says so, as home does. */
+    var alertsChannelOff by remember { mutableStateOf(false) }
     val activity = LocalActivity.current as ComponentActivity
     val disclosures = rememberDisclosureGate()
     val notifications = rememberNotificationPermission()
@@ -200,6 +202,7 @@ fun SettingsScreenExpressive(
                 strongBiometric = SecurityEngine.hasStrongBiometric(context)
                 shortcutAssigned = SelfProtectionDetector.isShortcutAssigned(context)
                 privateSpace = IntentNavigationHelper.hasPrivateSpacePage(context)
+                alertsChannelOff = ProtectionAlerts.channelOff(context)
             }
         }
     }
@@ -310,12 +313,18 @@ fun SettingsScreenExpressive(
                 }
             )
         )
+        // Off when BioKey may post nothing at all, or when this one channel is off: either way the
+        // alerts don't come. The first is asked for here; the second is switched back on its own page.
+        val alertsOn = notifications.allowed && !alertsChannelOff
         add(
             SettingItem(
-                icon = if (notifications.allowed) Icons.Default.Notifications else Icons.Default.NotificationsOff,
+                icon = if (alertsOn) Icons.Default.Notifications else Icons.Default.NotificationsOff,
                 title = stringResource(R.string.alerts_channel_name),
-                subtitle = if (notifications.allowed) stringResource(R.string.settings_alerts_on)
-                else stringResource(R.string.settings_alerts_off),
+                subtitle = when {
+                    alertsOn -> stringResource(R.string.settings_alerts_on)
+                    notifications.allowed -> stringResource(R.string.settings_alerts_channel_off)
+                    else -> stringResource(R.string.settings_alerts_off)
+                },
                 onClick = if (notifications.allowed) {
                     { IntentNavigationHelper.openChannelSettings(context, ProtectionAlerts.CHANNEL_ID); Unit }
                 } else notifications::requestOrOpenSettings,
@@ -392,7 +401,11 @@ fun SettingsScreenExpressive(
                 mode == ProtectionEngine.Mode.OFF || selfProtectionEnabled,
             onChange = { on ->
                 when {
-                    !on -> vault.setAccessibilitySelfProtectionEnabled(false)
+                    !on -> {
+                        // Less protected: recorded when it's maybe someone who only knows the PIN.
+                        ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.SELF_PROTECTION_OFF)
+                        vault.setAccessibilitySelfProtectionEnabled(false)
+                    }
                     // Switched on already (running or not): saved now, guarding once it runs.
                     mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> {
                         vault.setAccessibilitySelfProtectionEnabled(true)

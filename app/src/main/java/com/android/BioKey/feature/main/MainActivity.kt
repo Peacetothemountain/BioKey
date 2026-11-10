@@ -282,6 +282,9 @@ class MainActivity : ComponentActivity() {
         } else {
             LockStateTracker.lockOwnApp()
             isAuthenticated = false
+            // A pause sheet left open goes with the session, as home's other sheets do: it doesn't
+            // come back by itself after the next unlock.
+            pauseRequested = false
         }
     }
 

@@ -48,16 +48,21 @@ object WindowProtection {
     fun applyWindowProtections(activity: Activity) {
         val window = activity.window
         window.addFlags(secureFlag(activity))
-        try {
-            window.setHideOverlayWindows(true)
-        } catch (e: Exception) {
-            Log.w(TAG, "setHideOverlayWindows failed: ${e.message}")
-        }
+        hideOtherOverlays(window, true)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             activity.setRecentsScreenshotEnabled(false)
         }
         window.decorView.filterTouchesWhenObscured = true
         hideFromNonToolAccessibilityServices(window.decorView)
+    }
+
+    /** Whether other apps' overlays are hidden while [window] is visible (needs HIDE_OVERLAY_WINDOWS). */
+    fun hideOtherOverlays(window: Window, hide: Boolean) {
+        try {
+            window.setHideOverlayWindows(hide)
+        } catch (e: Exception) {
+            Log.w(TAG, "setHideOverlayWindows failed: ${e.message}")
+        }
     }
 
     /**

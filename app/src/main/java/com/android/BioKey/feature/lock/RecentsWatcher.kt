@@ -262,6 +262,11 @@ internal class RecentsWatcher(
         }
     }
 
+    /** The phone's language changed: the launcher's "Clear all" is worded in the new one. */
+    fun onLanguage() {
+        clearAllLabels = null
+    }
+
     /** "Clear all", lower-cased, as the launcher labels it in the phone's language (English too). */
     private fun clearAllLabels(pkg: String): Set<String> {
         clearAllLabels?.takeIf { it.first == pkg }?.let { return it.second }

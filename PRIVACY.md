@@ -1,6 +1,6 @@
 # BioKey privacy policy
 
-_Effective 31 October 2026_
+_Effective 10 November 2026_
 
 BioKey is an app lock for Android, made by NB Designs. It keeps the apps you choose behind your
 face, fingerprint or screen lock. This policy explains what BioKey can see on your phone, what it
@@ -192,7 +192,7 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   paused; an app's lock switched off; a locked app moved or added into a profile that's off or
   that re-locks later, or taken out of its profile so it's locked less; a profile switched off or
   deleted; a longer re-lock delay, for a
-  profile or the default; and, within a day of a face
+  profile or the default; the camera let open over the lock screen; and, within a day of a face
   or fingerprint change, "Face or fingerprint only" switched off. Those that concern an app or profile name it. Opening the diagnostic log
   for sharing from such a session is recorded too, though it changes nothing.
   (Restoring a backup, stopping the reminders, and switching off face or fingerprint only, the
@@ -206,7 +206,9 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   restart) and the phone's restart count; to tell a force stop from Android stopping BioKey on
   its own, it reads Android's record of why its own process last ended (the reason and the
   time; which of Android's last few it has looked at), and when BioKey itself was last updated
-  (an update stops it too). A number orders these records and failed unlocks, whatever the phone's
+  (an update stops it too); from Android 15 it also reads whether its process started with
+  BioKey left force-stopped, and keeps that (a yes, nothing more) until app locking is next on,
+  since Android can lose its record of the stop when the phone restarts. A number orders these records and failed unlocks, whatever the phone's
   clock says. These records are kept for everyone; only the ones about changes from a screen-lock
   session name an app or profile.
 - **Diagnostic log** (on by default; turn it off in Settings > Diagnostic log): a short record of
@@ -244,9 +246,10 @@ BioKey can save your settings to a backup file, and restore them, from its setti
 settings, Restore from a backup). This happens only when you ask for it.
 
 - **What's in it:** which apps you've locked, your profiles and their re-lock delays, and BioKey's
-  settings (default re-lock delay, face or fingerprint only, auto-sort and
+  settings (default re-lock delay, face or fingerprint only, the camera over the lock screen,
+  auto-sort and
   the apps you've told it to leave alone, failed unlock alerts and their screen lock option,
-  new-app offers, and
+  new-app offers, whether the diagnostic log is on, and
   the self-protection setting, which is always off in the Play version). Nothing else: no diagnostic log, no failed unlocks or
   times protection was off, no authentication data. Restoring a backup never
   deletes the failed unlocks kept on the phone, and always asks for your face or fingerprint first

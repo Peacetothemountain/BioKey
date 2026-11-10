@@ -288,6 +288,11 @@ internal fun HomeDialogs(
         )
     }
 
+    if (overlays.showUnlocked && unlockedNowApps.isEmpty()) {
+        // The last one locked here, or its session ran out: closed for good, not waiting to come
+        // back by itself the next time an app is unlocked.
+        LaunchedEffect(Unit) { overlays.showUnlocked = false }
+    }
     if (overlays.showUnlocked && unlockedNowApps.isNotEmpty()) {
         UnlockedAppsDialog(
             apps = unlockedNowApps,
@@ -480,8 +485,8 @@ internal fun ProtectionSheetContent(
             modifier = Modifier.semantics { heading() }
         )
         Spacer(Modifier.height(8.dp))
-        // The summary centred; anything more (compatibility mode, apps not covered, notifications
-        // showing) as a short start-aligned list under it, easier to read than centred lines.
+        // The summary centred; anything more (compatibility mode, apps not covered) as a short
+        // start-aligned list under it, easier to read than centred lines.
         val lines = look.body.lines()
         Text(
             lines.first(),

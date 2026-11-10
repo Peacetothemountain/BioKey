@@ -63,7 +63,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
         private const val TAG = "BioKeyA11yService"
         /** How long a cover for an app that provides the screensaver waits to tell the two apart. */
         private const val SCREENSAVER_SETTLE_MS = 300L
-        /** A screensaver app coming forward this shortly before a screensaver starts is taken to be the screensaver. */
         /** A window taken for a screensaver's ([isScreensaverWindow]) is a screensaver's only if one starts this soon. */
         private const val SCREENSAVER_WINDOW_MS = 3_000L
         /** How long an app seen on display is taken to still be there for [hasScreenShowing]. */
@@ -109,8 +108,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
         /** With sessions kept through a screen-off, how often the phone is asked whether it has locked ([checkPhoneLockInTheDark]). */
         private const val PHONE_LOCK_CHECK_MS = 2_000L
 
-
-
         /** Window events, always on. Clicks and content changes only while needed: see [applyEventTypes]. */
         private const val BASE_EVENT_TYPES = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
 
@@ -135,6 +132,12 @@ class BioKeyAccessibilityService : AccessibilityService() {
         var isConfirmingDeviceCredential: Boolean = false
             get() = field && SecurityEngine.INSTANCE.isAuthenticating()
             private set
+
+        /** Tests: the engine saw the phone's PIN screen come up for the running prompt, or go. */
+        @VisibleForTesting
+        internal fun setConfirmingDeviceCredentialForTests(confirming: Boolean) {
+            isConfirmingDeviceCredential = confirming
+        }
 
         fun lockDevice(): Boolean {
             return activeService?.performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN) ?: false
@@ -2064,7 +2067,6 @@ class BioKeyAccessibilityService : AccessibilityService() {
     // Lock screen launching
     // -------------------------------------------------------------------------------------------
 
-    /** Shield timed out: relaunch the lock if the locked app is still on screen, else let it go. */
     /** Whether [target] (or, for [SELF_PROTECTION_PENDING_KEY], a guarded settings page) is still on the phone's screen, uncovered by an unlock. */
     private fun isStillExposed(target: String): Boolean = if (target == SELF_PROTECTION_PENDING_KEY) {
         val foreground = activeRoot()?.let { root -> root.packageName?.toString().also { root.release() } }
@@ -2074,6 +2076,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         !LockStateTracker.isAppUnlocked(target, vault.getTimeoutMode(target)) && isUnderShield(target)
     }
 
+    /** Shield timed out: relaunch the lock if the locked app is still on screen, else let it go. */
     private fun onShieldTimeout(target: String, attempt: Int): Boolean {
         try {
             val stillExposed = isStillExposed(target)
@@ -2203,8 +2206,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (::maskControl.isInitialized) maskControl.refreshPalette()
         if (::vault.isInitialized && AppInfoCache.onConfiguration(newConfig)) {
             AppInfoCache.reload(this, vault.getLockedPackages())
-            // In the new language, as Android's prompt now is.
+            // In the new language, as Android's prompt and the launcher's "Clear all" now are.
             androidLock.onLanguage()
+            recents.onLanguage()
         }
     }
 
@@ -2253,6 +2257,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
         if (::shield.isInitialized) shield.destroy()
         if (::maskControl.isInitialized) maskControl.clear()
         if (::labels.isInitialized) labels.shutdown()
+        androidLock.shutdown()
         if (::vault.isInitialized && vault.isSetupCompleted()) {
             // Hand over to compatibility mode if it's set up (e.g. Advanced Protection was just turned on).
             ProtectionEngine.refresh(this)

@@ -27,6 +27,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.security.FrontApp
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
@@ -532,6 +533,104 @@ class CompatibilityEngineTest {
             // Its prompt, once the phone is unlocked, names the other half too.
             assertEquals(listOf(if (target == bank) chat else bank), UsageWatchService.lockedAppsOnScreenWith(target))
         }
+    }
+
+    @Test
+    fun anAppLeftOnScreenAsThePhoneLocksWithTheScreenIsCoveredBehindTheKeyguard() {
+        unlockBank()
+        started()
+        // The power button: the phone is locked by the time the screen is off.
+        val keyguard = shadowOf(context.getSystemService(KeyguardManager::class.java))
+        keyguard.setKeyguardLocked(true)
+        keyguard.setIsDeviceLocked(true)
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(false)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        step()
+        assertFalse(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+        // Its lock screen is asked for there and then, so unlocking the phone shows that, not the bank.
+        assertEquals("Covered $bank (on screen as the phone locked)", covered(bank).last())
+        val behind = started().filter { it.component?.className == lockScreen && it.getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false) }
+        assertEquals(bank, behind.single().getStringExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE))
+        // Once: nothing more as the screen comes back with the phone still locked.
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
+        repeat(3) { step() }
+        assertEquals(0, lockScreensFor(started(), bank))
+    }
+
+    @Test
+    fun anAppNotLockedLeftOnScreenAsThePhoneLocksIsLeftAlone() {
+        event(ACTIVITY_RESUMED, chat)
+        step()
+        started()
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(false)
+        screenOffPhoneLocks()
+        assertTrue(started().none { it.component?.className == lockScreen })
+    }
+
+    @Test
+    fun aSplitLeftOnScreenAsThePhoneLocksWithTheScreenIsAskedForInOnePrompt() {
+        vault.setAppLock(chat, true)
+        LockStateTracker.onAppUnlocked(bank)
+        LockStateTracker.onAppUnlocked(chat)
+        event(ACTIVITY_RESUMED, bank)
+        event(ACTIVITY_RESUMED, chat)
+        step()
+        started()
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(false)
+        screenOffPhoneLocks()
+        val behind = started().filter { it.component?.className == lockScreen && it.getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false) }
+        val target = behind.single().getStringExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE)!!
+        assertEquals(listOf(if (target == bank) chat else bank), UsageWatchService.lockedAppsOnScreenWith(target))
+    }
+
+    @Test
+    fun aSplitUnderAScreensaverIsAskedForInOnePrompt() {
+        vault.setAppLock(chat, true)
+        LockStateTracker.onAppUnlocked(bank)
+        LockStateTracker.onAppUnlocked(chat)
+        event(ACTIVITY_RESUMED, bank)
+        event(ACTIVITY_RESUMED, chat)
+        step()
+        started()
+        context.sendBroadcast(Intent(Intent.ACTION_DREAMING_STARTED))
+        step()
+        val behind = started().filter { it.component?.className == lockScreen && it.getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false) }
+        val target = behind.single().getStringExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE)!!
+        // What its lock screen hides is still known once the screensaver ends: one prompt for both.
+        assertEquals(listOf(if (target == bank) chat else bank), UsageWatchService.lockedAppsOnScreenWith(target))
+        context.sendBroadcast(Intent(Intent.ACTION_DREAMING_STOPPED))
+        step()
+    }
+
+    @Test
+    fun lockThisAppKnowsTheAppInFrontWhileNothingIsRead() {
+        // Paused from BioKey's own screen: the last thing the engine saw in front.
+        event(ACTIVITY_RESUMED, context.packageName, bioKeysScreen)
+        step()
+        vault.pauseProtection(null)
+        repeat(3) { step() }
+        event(ACTIVITY_RESUMED, chat)
+        repeat(3) { step() }
+        // Nothing to protect, so nothing was read: the engine never saw the chat app come forward.
+        assertEquals(context.packageName, FrontApp.last)
+        // The tile asks usage access itself then.
+        assertEquals(chat, UsageWatchService.appInFrontForTile(context))
+        // Reading again, the engine's own word counts.
+        vault.resumeProtection()
+        repeat(3) { step() }
+        assertEquals(FrontApp.last, UsageWatchService.appInFrontForTile(context))
+        assertEquals(chat, FrontApp.last)
+    }
+
+    @Test
+    fun lockThisAppCanLockAFirstApp() {
+        // Nothing locked yet: the engine runs, but reads nothing.
+        vault.setAppLock(bank, false)
+        repeat(3) { step() }
+        event(ACTIVITY_RESUMED, chat)
+        repeat(3) { step() }
+        assertEquals(chat, UsageWatchService.appInFrontForTile(context))
     }
 
     @Test

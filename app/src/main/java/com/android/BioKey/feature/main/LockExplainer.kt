@@ -16,7 +16,7 @@ import com.android.BioKey.feature.lock.ForegroundRules
 /**
  * What locking an app does and doesn't do, said honestly the first time the owner locks it by hand
  * (and again from its options): a lock covers the app, not its data. Like Android's own App lock
- * sheet, it says what still shows (notifications without the shield, its home-screen widgets),
+ * sheet, it says what still shows (its notifications, its home-screen widgets),
  * that assistants and apps given access keep it, and, for a gallery, a files app or the messaging
  * app, which other apps can read the same photos, files or messages.
  *

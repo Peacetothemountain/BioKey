@@ -8,6 +8,7 @@ import android.service.quicksettings.TileService
 import com.android.BioKey.R
 import com.android.BioKey.core.security.FrontApp
 import com.android.BioKey.feature.lock.ForegroundRules
+import com.android.BioKey.feature.lock.UsageWatchService
 import com.android.BioKey.feature.main.MainActivity
 
 /**
@@ -28,7 +29,7 @@ class LockThisAppTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
-        val outcome = FrontApp.lock(this, FrontApp.last) { ForegroundRules.isLauncher(this, it, isLocked = { false }) }
+        val outcome = FrontApp.lock(this, UsageWatchService.appInFrontForTile(this)) { ForegroundRules.isLauncher(this, it, isLocked = { false }) }
         val named = !isLocked
         render(
             subtitle = when (outcome) {
@@ -72,7 +73,7 @@ class LockThisAppTileService : TileService() {
         val tile = qsTile ?: return
         tile.label = getString(R.string.lock_app_tile_label)
         tile.state = if (done) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-        tile.subtitle = subtitle ?: FrontApp.last?.takeIf { !isLocked && canLock(it) }?.let { FrontApp.label(this, it) }
+        tile.subtitle = subtitle ?: UsageWatchService.appInFrontForTile(this)?.takeIf { !isLocked && canLock(it) }?.let { FrontApp.label(this, it) }
         tile.updateTile()
     }
 

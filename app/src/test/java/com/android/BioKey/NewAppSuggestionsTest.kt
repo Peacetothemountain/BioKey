@@ -55,6 +55,31 @@ class NewAppSuggestionsTest {
     }
 
     @Test
+    fun twoAppsOfferedAtOnceNeverShareANotification() {
+        // Their package names' hashes agree in the 15 bits the id was once made of.
+        val pair = listOf("com.example.app1000", "com.example.app2331")
+        assertEquals(pair[0].hashCode() and 0x7fff, pair[1].hashCode() and 0x7fff)
+        for (pkg in pair) {
+            val activity = ComponentName(pkg, "$pkg.Main")
+            shadowOf(context.packageManager).addActivityIfNotPresent(activity)
+            shadowOf(context.packageManager).addIntentFilterForActivity(activity, IntentFilter(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) })
+        }
+        NewAppSuggestions.onInstalled(context, pair[0], "First")
+        NewAppSuggestions.onInstalled(context, pair[1], "Second")
+        val titles = notifications.allNotifications.map { it.extras.getCharSequence("android.title").toString() }
+        assertTrue(titles.toString(), "Lock First?" in titles && "Lock Second?" in titles)
+        // Each Lock button locks its own app and takes down its own offer.
+        NewAppSuggestions.LockReceiver().onReceive(
+            context,
+            Intent("com.android.BioKey.action.LOCK_NEW_APP").setData(Uri.fromParts("package", pair[0], null))
+        )
+        assertTrue(pair[0] in vault.selectedAppsFlow.value)
+        assertTrue(pair[1] !in vault.selectedAppsFlow.value)
+        val left = notifications.allNotifications.map { it.extras.getCharSequence("android.title").toString() }
+        assertTrue(left.toString(), "Lock Second?" in left && "Lock First?" !in left)
+    }
+
+    @Test
     fun anAppAlreadyLockedIsNotOffered() {
         vault.setAppLock(app, true)
         NewAppSuggestions.onInstalled(context, app, "New Bank")

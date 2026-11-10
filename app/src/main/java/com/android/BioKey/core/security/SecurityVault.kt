@@ -51,8 +51,6 @@ class SecurityVault private constructor(private val context: Context) {
     interface Listener {
         /** These apps are locked (all of them as the vault loads, or newly): worth having ready. */
         fun onLocked(context: Context, packages: Collection<String>) {}
-        /** These apps aren't locked any more. */
-        fun onUnlocked(packages: Collection<String>) {}
         /** Protection paused: nothing should stay covered. */
         fun onPaused() {}
     }
@@ -260,16 +258,14 @@ class SecurityVault private constructor(private val context: Context) {
 
     /**
      * Applies a change to the app switches and profiles, restores the invariants, then reacts to
-     * what actually changed: apps that just became locked lose any session, apps that just
-     * stopped being locked get their notifications back.
+     * what actually changed: apps that just became locked lose any session.
      *
      * [change] runs under [lock], before the save, so anything else it sets (auto-sort exclusions,
      * preferences) is saved with it. Must not be called holding [lock]: the reactions run after it
-     * is released, as they are slow (notification rescans) and would block every other write.
+     * is released, as they call into the engine and home and would block every other write.
      */
     private fun mutate(change: (selected: MutableSet<String>, profiles: MutableList<SecurityProfile>) -> Unit) {
         val newlyLocked: Set<String>
-        val newlyUnlocked: Set<String>
         synchronized(lock) {
             val before = _lockedAppsFlow.value
             val selected = _selectedAppsFlow.value.toMutableSet()
@@ -280,7 +276,6 @@ class SecurityVault private constructor(private val context: Context) {
             val clean = PasswordManager.expand(selected)
             val locked = effectiveLocks(clean, cleanProfiles)
             newlyLocked = locked - before
-            newlyUnlocked = before - locked
 
             // An old session must not outlive a lock switched back on: end it before anything
             // can see the app locked.
@@ -295,7 +290,6 @@ class SecurityVault private constructor(private val context: Context) {
             LockStateTracker.notifyLocked(newlyLocked)
             listeners.forEach { it.onLocked(context, newlyLocked) }
         }
-        if (newlyUnlocked.isNotEmpty()) listeners.forEach { it.onUnlocked(newlyUnlocked) }
     }
 
     private fun MutableList<SecurityProfile>.removePackages(targets: Set<String>) {

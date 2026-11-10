@@ -7,7 +7,7 @@ protect. Please report one privately, and give us a chance to fix it before it's
 
 | Version | Supported |
 |---|---|
-| 1.0 (the current release on Google Play) | Yes |
+| The latest 1.0.x release (1.0.4 now) | Yes |
 
 Fixes go into the latest release. Please check that a problem still happens there before
 reporting it.

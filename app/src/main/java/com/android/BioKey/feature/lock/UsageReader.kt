@@ -232,6 +232,42 @@ internal class UsageReader(
 
     companion object {
         /**
+         * The app last brought to the front, asked of usage access now: for "Lock this app" while
+         * compatibility mode has nothing to protect (paused, or no app locked yet) and so reads
+         * nothing ([read]). Found as a look back finds it: in the last 10 s first, then further,
+         * never before this boot. Windows floating over an app aren't it. Null if nothing says,
+         * or it can't be read.
+         */
+        fun appInFrontNow(context: Context, now: Long = System.currentTimeMillis()): String? {
+            val usage = context.getSystemService(UsageStatsManager::class.java) ?: return null
+            val floor = maxOf(now - STARTUP_LOOKBACK_MS, now - SystemClock.elapsedRealtime())
+            val event = UsageEvents.Event()
+            var span = FIRST_LOOKBACK_MS
+            while (true) {
+                val from = maxOf(now - span, floor).coerceIn(0L, now)
+                val events = try {
+                    if (Build.VERSION.SDK_INT >= 35) {
+                        usage.queryEvents(UsageEventsQuery.Builder(from, now).setEventTypes(UsageEvents.Event.ACTIVITY_RESUMED).build())
+                    } else {
+                        @Suppress("DEPRECATION")
+                        usage.queryEvents(from, now)
+                    }
+                } catch (_: Exception) {
+                    null
+                } ?: return null
+                var last: String? = null
+                while (events.hasNextEvent()) {
+                    events.getNextEvent(event)
+                    if (event.eventType != UsageEvents.Event.ACTIVITY_RESUMED || event.className == ForegroundRules.DREAM_ACTIVITY) continue
+                    val pkg = event.packageName ?: continue
+                    UsageEvent(event.eventType, pkg, event.className, event.timeStamp).app?.let { last = it }
+                }
+                if (last != null || from <= floor) return last
+                span *= LOOKBACK_GROWTH
+            }
+        }
+
+        /**
          * Re-read a little of the past each time, so no event slips between two polls: Android can
          * log an event after a poll that ends later than it happened. Generous, as how late events
          * really come hasn't been measured on enough phones; debug builds log the latest seen

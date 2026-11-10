@@ -117,6 +117,8 @@ class BioKeyApplication : Application() {
                 ProtectionGaps.load(app)
                 // Early, before anything else is written: a cleared storage is told from an empty one here.
                 ProtectionGaps.checkStorageCleared(app)
+                // And whether BioKey was left force-stopped, before anything can end this process.
+                ProtectionGaps.noteStart(app)
                 BiometricEnrollment.checkSoon(app)
                 // Channel names and descriptions as this version words them, before any is posted.
                 ProtectionAlerts.ensureChannels(app)

@@ -162,10 +162,9 @@ object LockStateTracker {
     private val lockAllListeners = CopyOnWriteArraySet<() -> Unit>()
     private val appUnlockListeners = CopyOnWriteArraySet<(String) -> Unit>()
     private val appLockListeners = CopyOnWriteArraySet<(String) -> Unit>()
-    private val appsLockListeners = CopyOnWriteArraySet<(Set<String>) -> Unit>()
     private val lockAbandonedListeners = CopyOnWriteArraySet<(String) -> Unit>()
 
-    /** Notified after every [lockAll] (screen-off, manual lock), e.g. to re-redact notifications. */
+    /** Notified after every [lockAll] (screen-off, manual lock): the engines cover what's still on screen, home lists nothing unlocked. */
     fun addLockAllListener(listener: () -> Unit) { lockAllListeners += listener }
     fun removeLockAllListener(listener: () -> Unit) { lockAllListeners -= listener }
 
@@ -173,17 +172,9 @@ object LockStateTracker {
     fun addAppUnlockListener(listener: (String) -> Unit) { appUnlockListeners += listener }
     fun removeAppUnlockListener(listener: (String) -> Unit) { appUnlockListeners -= listener }
 
-    /** Notified whenever an app's session ends, e.g. to re-mask notifications. */
+    /** Notified whenever an app's session ends: home's list of unlocked apps, the engine's watch of the launcher. */
     fun addAppLockListener(listener: (String) -> Unit) { appLockListeners += listener }
     fun removeAppLockListener(listener: (String) -> Unit) { appLockListeners -= listener }
-
-    /**
-     * Like [addAppLockListener], but told once per batch ([lockPackages]): turning on 40 locks
-     * from a backup is one call, so a listener that rescans everything does it once rather than
-     * 40 times.
-     */
-    fun addAppsLockListener(listener: (Set<String>) -> Unit) { appsLockListeners += listener }
-    fun removeAppsLockListener(listener: (Set<String>) -> Unit) { appsLockListeners -= listener }
 
     /**
      * Notified when a lock screen is left without authenticating ([markLockAbandoned]). The app
@@ -215,7 +206,7 @@ object LockStateTracker {
     @Volatile
     var timeoutModeOf: ((String) -> LockTimeoutMode)? = null
 
-    /** Re-checks a session when its away time runs out so notifications re-mask on time. */
+    /** Looks at a session as its away time runs out, so it ends then (and its listeners hear), not whenever it's next asked about. */
     private fun scheduleExpiry(packageName: String, delayMs: Long, timeoutMode: LockTimeoutMode) {
         cancelExpiry(packageName)
         val job = timerScope.launch {
@@ -473,7 +464,8 @@ object LockStateTracker {
     /**
      * The first half of [lockPackages]: ends the sessions without telling anyone. The vault does
      * this under its own lock, before anything can see the apps locked, and calls [notifyLocked]
-     * once it has let go of it (the listeners are slow: they rescan notifications).
+     * once it has let go of it (the listeners call into the engine and home, which mustn't run
+     * under the vault's lock).
      */
     fun endSessions(packages: Set<String>, reason: String? = null) {
         for (packageName in packages) {
@@ -494,7 +486,6 @@ object LockStateTracker {
     fun notifyLocked(packages: Set<String>) {
         if (packages.isEmpty()) return
         for (pkg in packages) appLockListeners.forEach { runCatching { it(pkg) } }
-        appsLockListeners.forEach { runCatching { it(packages) } }
     }
 
     /**
