@@ -60,7 +60,7 @@ class SessionRulesTest {
 
     @Before
     fun reset() {
-        LockStateTracker.lockAll()
+        LockStateTracker.resetForTests()
         rules.reset()
     }
 

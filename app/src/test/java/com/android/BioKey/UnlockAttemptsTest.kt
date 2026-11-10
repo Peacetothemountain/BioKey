@@ -55,10 +55,7 @@ class UnlockAttemptsTest {
 
     @After
     fun restore() {
-        UnlockAttempts.clock = System::currentTimeMillis
-        TrustedClock.wall = System::currentTimeMillis
-        TrustedClock.elapsed = android.os.SystemClock::elapsedRealtime
-        TrustedClock.resetForTests()
+        TestClocks.restoreTrustedClock()
         UnlockAttempts.resetForTests()
     }
 
@@ -87,7 +84,7 @@ class UnlockAttemptsTest {
     @Test
     fun offUntilTheOwnerSaysSo() {
         context.getSharedPreferences("biokey_unlock_attempts", Context.MODE_PRIVATE).edit().clear().commit()
-        UnlockAttempts.resetForTests()
+        UnlockAttempts.resetForTests(hooks = false)
         UnlockAttempts.load(context)
         assertFalse(UnlockAttempts.chosen.value)
         Prompt().miss()
@@ -216,7 +213,7 @@ class UnlockAttemptsTest {
         now += 30L * 24 * 60 * 60_000L
         Prompt("com.example.chat").miss()
         assertEquals(2, kept.size)
-        UnlockAttempts.resetForTests()
+        UnlockAttempts.resetForTests(hooks = false)
         UnlockAttempts.load(context)
         assertEquals(2, kept.size)
     }
@@ -466,7 +463,7 @@ class UnlockAttemptsTest {
     @Test
     fun keptAcrossARestartOfBioKey() {
         Prompt().apply { miss(); miss() }
-        UnlockAttempts.resetForTests()
+        UnlockAttempts.resetForTests(hooks = false)
         UnlockAttempts.load(context)
         assertEquals(2, kept.single().failures)
         assertEquals("Bank", kept.single().label)

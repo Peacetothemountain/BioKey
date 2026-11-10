@@ -82,7 +82,7 @@ class DesignScreenshotTest {
         vault.moveAppToProfile("com.example.chase", "profile_finance")
         vault.moveAppToProfile("com.example.venmo", "profile_finance")
         vault.moveAppToProfile("com.example.signal", "profile_social")
-        LockStateTracker.lockAll()
+        LockStateTracker.resetForTests()
         // Asked and answered, so the one-time question isn't on every screen; mainIntro shows it.
         context.getSharedPreferences("biokey_unlock_attempts", android.content.Context.MODE_PRIVATE).edit().clear().commit()
         UnlockAttempts.resetForTests()
@@ -98,8 +98,7 @@ class DesignScreenshotTest {
     fun tearDown() {
         ProtectionEngine.overrideModeForTests = null
         SecurityVault.selfProtectionRemovedForTests = false
-        UnlockAttempts.clock = System::currentTimeMillis
-        UnlockAttempts.hasStrongBiometric = com.android.BioKey.core.security.SecurityEngine::hasEnrolledStrongBiometric
+        UnlockAttempts.resetForTests()
         ProtectionGaps.clock = System::currentTimeMillis
     }
 

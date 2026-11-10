@@ -51,7 +51,7 @@ class GantletLockScreenTest {
         SecurityVault.getInstance(context).awaitPendingWrites()
         context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE).edit().clear().commit()
         SecurityVault.resetForTests()
-        LockStateTracker.lockAll()
+        LockStateTracker.resetForTests()
         SecurityVault.getInstance(context).apply {
             setSetupCompletedSync(true)
             setAppLock(x, true)

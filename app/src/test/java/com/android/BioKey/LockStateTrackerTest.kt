@@ -34,8 +34,7 @@ class LockStateTrackerTest {
 
     @Before
     fun reset() {
-        LockStateTracker.onDeviceLockState(false)
-        LockStateTracker.lockAll()
+        LockStateTracker.resetForTests()
     }
 
     private fun advance(ms: Long) = ShadowSystemClock.advanceBy(Duration.ofMillis(ms))

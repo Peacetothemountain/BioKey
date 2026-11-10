@@ -25,8 +25,7 @@ class DiagnosticLogTest {
 
     @Before
     fun reset() {
-        LockStateTracker.onDeviceLockState(false)
-        LockStateTracker.lockAll()
+        LockStateTracker.resetForTests()
     }
 
     private fun waitUntil(what: String, condition: () -> Boolean) {

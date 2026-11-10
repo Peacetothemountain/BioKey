@@ -46,10 +46,24 @@ class HomeViewModelTest {
     fun restore() {
         com.android.BioKey.core.security.SecurityEngine.INSTANCE.ownAppOpenedWithBiometric = false
         com.android.BioKey.core.security.SecurityEngine.enrolledForProof = { com.android.BioKey.core.security.SecurityEngine.hasEnrolledStrongBiometric(it) }
-        UnlockAttempts.hasStrongBiometric = com.android.BioKey.core.security.SecurityEngine::hasEnrolledStrongBiometric
+        UnlockAttempts.resetForTests()
     }
 
     private fun idle() = shadowOf(Looper.getMainLooper()).idle()
+
+    /**
+     * Review's state is worked out on another thread, then set on the main one: the main looper is
+     * run until it is there, however long a busy machine takes, up to 5 seconds.
+     */
+    private fun awaitReview() {
+        val until = System.nanoTime() + 5_000_000_000L
+        while (true) {
+            idle()
+            if (vm.review.value != null) return
+            check(System.nanoTime() < until) { "Review's state was never worked out" }
+            Thread.sleep(10)
+        }
+    }
 
     @Test
     fun bioKeyLockingItselfForgetsHowItWasOpened() {
@@ -67,9 +81,7 @@ class HomeViewModelTest {
         var opened = 0
         vm.openReview { opened++ }
         vm.openReview { opened++ }
-        idle()
-        Thread.sleep(200)
-        idle()
+        awaitReview()
         assertEquals(1, opened)
         assertNotNull(vm.review.value)
     }
@@ -79,9 +91,7 @@ class HomeViewModelTest {
         UnlockAttempts.onBiometricFailed(app, "com.example.bank", "Bank", null)
         val shown = UnlockAttempts.attempts.value.single().seq
         vm.openReview { }
-        idle()
-        Thread.sleep(200)
-        idle()
+        awaitReview()
         runBlocking { vm.reviewShowing(shown, shown) }
         assertEquals(shown, UnlockAttempts.seenSeq(app))
     }
@@ -91,9 +101,7 @@ class HomeViewModelTest {
         UnlockAttempts.onBiometricFailed(app, "com.example.bank", "Bank", null)
         val shown = UnlockAttempts.attempts.value.single().seq
         vm.openReview { }
-        idle()
-        Thread.sleep(200)
-        idle()
+        awaitReview()
         // A hold that has just ended: worked out again, the owner proven, so it counts as seen.
         runBlocking { vm.recheckWhenHoldEnds(TrustedClock.now() - 2_000L) { shown } }
         assertTrue(UnlockAttempts.seenSeq(app) >= shown)

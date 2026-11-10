@@ -30,7 +30,7 @@ class PickerHopTest {
 
     @Before
     fun reset() {
-        LockStateTracker.lockAll()
+        LockStateTracker.resetForTests()
         // The picker list is cached process-wide: one read by another test, before these apps
         // were registered, mustn't be the one asked here.
         ForegroundRules.resetSystemLists()

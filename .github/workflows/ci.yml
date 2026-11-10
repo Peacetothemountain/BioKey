@@ -54,13 +54,20 @@ jobs:
 
       # Robolectric downloads each Android version's jar from Maven Central the first time a test
       # asks for it, with no retry, so one dropped connection failed whole runs (AppLabelsTest,
-      # BrandArtTest... "MavenArtifactFetcher"). Kept between runs, they're downloaded once; a
-      # Robolectric update starts from the last run's jars and fetches only what's new.
+      # BrandArtTest... "MavenArtifactFetcher"). Kept between runs, they're downloaded once. Keyed
+      # on Robolectric's version alone: another dependency's update reuses the same copy, and a
+      # Robolectric update starts a fresh one rather than piling its jars onto the old version's.
+      - name: Robolectric's version
+        id: robolectric
+        run: |
+          version=$(sed -n 's/^robolectric = "\(.*\)"/\1/p' gradle/libs.versions.toml)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.m2/repository/org/robolectric
-          key: robolectric-${{ hashFiles('gradle/libs.versions.toml') }}
-          restore-keys: robolectric-
+          key: robolectric-${{ steps.robolectric.outputs.version }}
 
       # The lock screen's gantlet: the tests that stand between a release and a locked app being
       # sent Home, or shown, on some phone. Every screen size (phones, foldables' cover and main
@@ -74,9 +81,10 @@ jobs:
 
       - name: Device and emulator gantlet tools still run
         run: |
-          python3 -m py_compile tools/device_gantlet.py tools/emulator_gantlet.py
+          python3 -m py_compile tools/device_gantlet.py tools/emulator_gantlet.py tools/engine_cost.py
           python3 tools/device_gantlet.py --help > /dev/null
           python3 tools/emulator_gantlet.py --help > /dev/null
+          python3 tools/engine_cost.py --help > /dev/null
           ./gradlew -p tools/gantlet-targets assembleDebug --stacktrace
 
       # The rest of the unit tests (the gantlet's already passed, so they're left out) and the

@@ -58,7 +58,7 @@ class ProfilePickingTest {
         vault = SecurityVault.getInstance(context)
         vault.setSetupCompletedSync(true)
         listOf("Chase", "Venmo", "Wallet").forEach { vault.moveAppToProfile(pkg(it), "profile_finance") }
-        LockStateTracker.lockAll()
+        LockStateTracker.resetForTests()
         ProtectionEngine.overrideModeForTests = ProtectionEngine.Mode.ACCESSIBILITY
         rule.setContent { BioKeyTheme { MainScreenExpressive(mode = ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) } }
         rule.onNodeWithContentDescription("Finance profile, 3 apps").performClick()

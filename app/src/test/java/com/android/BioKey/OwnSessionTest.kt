@@ -44,7 +44,7 @@ class OwnSessionTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 
     @Before
-    fun reset() = LockStateTracker.lockAll()
+    fun reset() = LockStateTracker.resetForTests()
 
     private fun advance(ms: Long) = ShadowSystemClock.advanceBy(Duration.ofMillis(ms))
 

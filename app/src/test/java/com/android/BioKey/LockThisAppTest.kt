@@ -43,7 +43,7 @@ class LockThisAppTest {
         SecurityVault.resetForTests()
         vault = SecurityVault.getInstance(context)
         vault.setSetupCompletedSync(true)
-        LockStateTracker.lockAll()
+        LockStateTracker.resetForTests()
         FrontApp.setForTests(null)
         for (pkg in listOf(bank, game, launcher)) {
             val activity = ComponentName(pkg, "$pkg.Main")

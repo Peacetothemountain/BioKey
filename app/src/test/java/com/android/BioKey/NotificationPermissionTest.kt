@@ -33,7 +33,7 @@ class NotificationPermissionTest {
 
     @Before
     fun reset() {
-        LockStateTracker.lockAll()
+        LockStateTracker.resetForTests()
         shadowOf(context.getSystemService(NotificationManager::class.java)).setNotificationsEnabled(false)
     }
 

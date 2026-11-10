@@ -136,7 +136,18 @@ class Emulator:
     def sh(self, command, check=True, timeout=60):
         return self.adb("shell", command, check=check, timeout=timeout)
 
+    def in_use(self):
+        """Whether adb already lists this serial: an emulator left by an earlier run, or one of the user's own."""
+        out = subprocess.run([ADB, "devices"], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=30).stdout
+        return any(line.split()[0] == self.serial for line in out.splitlines()[1:] if line.strip())
+
     def boot(self):
+        # Every command goes to this serial: another emulator already on it would be set up (its
+        # PIN, fingerprint and settings changed) and then killed in this one's place.
+        if self.in_use():
+            raise RuntimeError(f"{self.serial} is already in use (an earlier run's emulator, or one of yours): "
+                               "stop it first")
         logfile = open(os.path.join(ROOT, "tools", "out", f"{self.avd}.emulator.log"), "w")
         self.proc = subprocess.Popen([EMULATOR, "-avd", self.avd, "-port", str(self.port), "-no-window", "-no-audio",
                                       "-no-boot-anim", "-no-snapshot", "-wipe-data", "-gpu", "swiftshader_indirect"],
@@ -154,12 +165,18 @@ class Emulator:
         else:
             raise RuntimeError("didn't boot in 10 minutes")
         time.sleep(15)  # The home screen and the system's own first-boot work.
+        # What answered must be the emulator this run started, not another that took its port.
+        if self.proc.poll() is not None:
+            raise RuntimeError("the emulator quit while booting (see its log in tools/out)")
         self.sh("settings put system screen_off_timeout 1800000; svc power stayon true; input keyevent KEYCODE_WAKEUP; "
                 "wm dismiss-keyguard")
         ids = re.findall(r"^Display (\d+)", self.sh("dumpsys SurfaceFlinger --display-id"), re.M)
         self.display = f"-d {ids[0]}" if len(ids) > 1 else ""
 
     def kill(self):
+        # Only the emulator this run started, while it runs: never one that was on this serial before.
+        if self.proc is None or self.proc.poll() is not None:
+            return
         try:
             self.adb("emu", "kill", check=False, timeout=20)
         except Exception:

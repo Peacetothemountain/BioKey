@@ -951,4 +951,49 @@ object LockStateTracker {
         ownLockScreenHopAt = 0L
         ownLocksFlow.update { it + 1 }
     }
+
+    /**
+     * Everything back as it was when the process started, for a test to start from: [lockAll]
+     * leaves what one test did to the phone's lock state, BioKey's own session and the lock-all
+     * log's dedupe for the next, whose clock starts again at the same time. The listeners and
+     * [timeoutModeOf] are kept: they are wiring, set by the services and the vault as they start,
+     * and a test may reset this after starting them. Tells no one.
+     */
+    @androidx.annotation.VisibleForTesting
+    internal fun resetForTests() {
+        expiryJobs.values.forEach { it.cancel() }
+        expiryJobs.clear()
+        sessions.clear()
+        pendingLocks.clear()
+        abandonedAt.clear()
+        displacedAt.clear()
+        displacedCovers.clear()
+        leftAt.clear()
+        namedAlongside.clear()
+        generation = 0
+        lastLockAllLogged = null
+        selfProtectionGrantedAt = 0L
+        selfProtectionVisitedGuardedScreen = false
+        ownScreenShowing = false
+        ownUnlockedAt = 0L
+        ownLastActiveAt = 0L
+        ownInForeground = false
+        externalNavigationAt = 0L
+        ownPickerAt = 0L
+        ownPickers = emptySet()
+        ownLockScreenHopAt = 0L
+        ownLockScreenHopFor = null
+        ownSessionTimedOut = false
+        ownTripRanOut = false
+        ownLocksFlow.value = 0
+        // The own session's proof goes with it, as when it ends ([lockOwnApp]).
+        SecurityEngine.INSTANCE.forgetOwnProof()
+        awaitingPhoneLock = false
+        trustedKeyguardSeen = false
+        trustedKeyguardFirstAt = 0L
+        screenBackAt = 0L
+        deviceLocked = false
+        screensaverFlow.value = false
+        phoneUnlocks = 0
+    }
 }

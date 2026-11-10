@@ -63,7 +63,7 @@ class GantletAccessibilityTest {
         SecurityVault.getInstance(context).awaitPendingWrites()
         context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE).edit().clear().commit()
         SecurityVault.resetForTests()
-        LockStateTracker.lockAll()
+        LockStateTracker.resetForTests()
         // Robolectric's clock starts again for each test; a lock screen "resumed" in an earlier one
         // in this JVM would otherwise look newer than anything started here.
         LockScreenActivity.forgetResumeForTests()

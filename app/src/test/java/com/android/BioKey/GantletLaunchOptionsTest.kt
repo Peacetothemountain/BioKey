@@ -1,13 +1,17 @@
 package com.android.BioKey
 
+import android.app.ActivityOptions
 import android.app.Application
+import android.app.PendingIntent
 import android.content.pm.PackageManager
 import android.graphics.Rect
+import android.os.Build
 import android.os.Bundle
 import android.view.Display
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.feature.lock.LockLauncher
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -88,6 +92,42 @@ class GantletLaunchOptionsTest {
         val options = lastStartOptions()
         assertNull(options.keySet().toString(), options.launchBounds())
         assertEquals(monitor, options.launchDisplay())
+    }
+
+    /** The options the lock screen's PendingIntent was made with (its creator's), for the start just made. */
+    private fun creatorOptions(started: android.content.Intent): Bundle {
+        val record = PendingIntent.getActivity(context, bank.hashCode(), started, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
+        assertNotNull("No PendingIntent was made", record)
+        return shadowOf(record).options ?: Bundle.EMPTY
+    }
+
+    /** [options] read back as Android reads them (ActivityOptions.fromBundle isn't public). */
+    private fun read(options: Bundle): ActivityOptions =
+        ActivityOptions::class.java.getMethod("fromBundle", Bundle::class.java).invoke(null, options) as ActivityOptions
+
+    /**
+     * Every lock screen from the background rests on this grant on Android 14 and later: without
+     * it Android refuses the start without an error, and the locked app stays in front. Both the
+     * PendingIntent's maker and its sender grant it, as each version asks: ALLOWED on 14 and 15,
+     * ALLOW_ALWAYS (ALLOWED's replacement) from 16. Before 14 there is nothing to grant.
+     */
+    @Test
+    @Config(sdk = [31, 34, 35, 36, 37])
+    fun theLockScreenIsGrantedItsStartFromTheBackground() {
+        assertTrue(LockLauncher.launch(context, bank, isSelfProtection = false))
+        val started = shadowOf(context).nextStartedActivityForResult
+        assertNotNull("Nothing was started", started)
+        val sent = started.options ?: Bundle.EMPTY
+        val made = creatorOptions(started.intent)
+        val sdk = Build.VERSION.SDK_INT
+        if (sdk < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            assertFalse(made.keySet().toString(), made.keySet().any { it.contains("BackgroundActivityStartMode") })
+            return
+        }
+        @Suppress("DEPRECATION")
+        val expected = if (sdk >= 36) ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS else ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+        assertEquals("sent, on $sdk", expected, read(sent).pendingIntentBackgroundActivityStartMode)
+        assertEquals("made, on $sdk", expected, read(made).pendingIntentCreatorBackgroundActivityStartMode)
     }
 
     @Test

@@ -148,13 +148,22 @@ internal class EngineReplay(private val context: Application) {
         setLockScreen(resumed = false, target = null)
         setPrompt(null)
         ForegroundRules.resetSystemLists()
+        // The next trace played here starts from nothing: not with this one's destroyed engines
+        // (an accessibility trace's service would take the next compatibility trace's inputs), its
+        // worker thread, its displays or the last broadcast and usage time it sent.
+        a11y = null
+        compat = null
+        worker = null
+        displaysSet.clear()
+        lastBroadcast = null
+        lastUsageTime = 0L
     }
 
     private fun setUp(env: List<Record>) {
         SecurityVault.getInstance(context).awaitPendingWrites()
         context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE).edit().clear().commit()
         SecurityVault.resetForTests()
-        LockStateTracker.lockAll()
+        LockStateTracker.resetForTests()
         // Robolectric's clock starts again for each test; a lock screen "resumed" in an earlier one
         // in this JVM would otherwise look newer than anything started here.
         LockScreenActivity.forgetResumeForTests()

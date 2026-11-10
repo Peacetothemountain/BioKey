@@ -33,6 +33,7 @@ import java.io.File
 import java.time.Duration
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -51,7 +52,7 @@ import org.robolectric.shadows.ShadowUsageStatsManager
  * say, with the bug it shows fixed) still decides what it did when it was recorded there.
  *
  * A trace from a phone: with the debug build installed, reproduce the problem, then
- * `adb shell run-as com.android.BioKey cat files/engine-trace.txt > app/src/test/resources/traces/<name>.trace`.
+ * `adb shell run-as com.nbdesigns.biokey cat files/engine-trace.txt > app/src/test/resources/traces/<name>.trace`.
  * Its decisions (`o.*` records) are what the engine did then: if that was the bug, change those
  * records to what it should have done, and this test fails until the engine does.
  */
@@ -83,7 +84,7 @@ class EngineReplayTest {
         SecurityVault.getInstance(context).awaitPendingWrites()
         context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE).edit().clear().commit()
         SecurityVault.resetForTests()
-        LockStateTracker.lockAll()
+        LockStateTracker.resetForTests()
         DiagnosticLog.clear()
         shadowOf(context.packageManager).installPackage(PackageInfo().apply {
             packageName = locked
@@ -278,8 +279,12 @@ class EngineReplayTest {
 
     @Test
     fun everyKeptTraceStillDecidesWhatItDid() {
-        val dir = javaClass.classLoader?.getResource("traces")?.let { File(it.toURI()) } ?: return
-        for (file in dir.listFiles { f -> f.name.endsWith(".trace") }.orEmpty().sortedBy { it.name }) {
+        // The kept traces are this test: none found is a failure, not a pass.
+        val dir = javaClass.classLoader?.getResource("traces")?.let { File(it.toURI()) }
+        assertNotNull("app/src/test/resources/traces isn't on the test classpath", dir)
+        val traces = dir!!.listFiles { f -> f.name.endsWith(".trace") }.orEmpty().sortedBy { it.name }
+        assertTrue("No traces in $dir", traces.isNotEmpty())
+        for (file in traces) {
             val records = EngineReplay.parse(file.readLines())
             val expected = EngineReplay.decisions(records)
             val played = replay.play(records)

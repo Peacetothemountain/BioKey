@@ -1,5 +1,6 @@
-# Weekly update pull requests for the CI actions (pinned by commit SHA in workflows/ci.yml) and
-# the Gradle plugins and libraries in gradle/libs.versions.toml.
+# Weekly update pull requests for the CI actions (pinned by commit SHA in workflows/ci.yml), the
+# Gradle plugins and libraries in gradle/libs.versions.toml, and the Android Gradle plugin of the
+# gantlet's target apps (tools/gantlet-targets, a build of its own), so it keeps up with BioKey's.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -9,5 +10,10 @@ updates:
 
   - package-ecosystem: gradle
     directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gradle
+    directory: /tools/gantlet-targets
     schedule:
       interval: weekly

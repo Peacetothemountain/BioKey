@@ -40,7 +40,7 @@ class LockAllNowTest {
         SecurityVault.resetForTests()
         vault = SecurityVault.getInstance(context)
         vault.setSetupCompletedSync(true)
-        LockStateTracker.lockAll()
+        LockStateTracker.resetForTests()
     }
 
     /** Compatibility mode, its permissions granted: an engine that counts as running. */

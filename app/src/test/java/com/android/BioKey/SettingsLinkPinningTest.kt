@@ -32,7 +32,7 @@ class SettingsLinkPinningTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 
     @Before
-    fun reset() = LockStateTracker.lockAll()
+    fun reset() = LockStateTracker.resetForTests()
 
     private fun handler(pkg: String, cls: String, system: Boolean, exported: Boolean = true) = ResolveInfo().apply {
         activityInfo = ActivityInfo().apply {

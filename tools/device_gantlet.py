@@ -88,9 +88,16 @@ def find_adb():
 
 
 class Display:
-    """The phone's own size and density overrides, put back at the end."""
+    """
+    The phone's own size and density overrides, put back at the end. Nothing is ever written to
+    the phone unless --emulate-foldables was given (may_emulate) and this run emulated a screen:
+    resizing a phone's screen can rearrange its home screen for good.
+    """
 
-    def __init__(self):
+    def __init__(self, may_emulate):
+        self.may_emulate = may_emulate
+        # Whether this run has resized the screen since it was last put back.
+        self.emulated = False
         out = sh("wm size") + sh("wm density")
         self.size = re.search(r"Override size: (\S+)", out)
         self.density = re.search(r"Override density: (\d+)", out)
@@ -98,14 +105,21 @@ class Display:
         self.physical_density = int(re.search(r"Physical density: (\d+)", out).group(1))
 
     def emulate(self, screen):
+        if not self.may_emulate:
+            raise RuntimeError("screen sizes are only emulated with --emulate-foldables")
         name, size, density = screen
+        # Set first: a size written before a failure is still put back.
+        self.emulated = True
         sh(f"wm size {size}")
         sh(f"wm density {density}")
         time.sleep(2.5)  # Everything on screen is laid out again.
 
     def restore(self):
+        if not self.may_emulate or not self.emulated:
+            return
         sh(f"wm size {self.size.group(1)}" if self.size else "wm size reset")
         sh(f"wm density {self.density.group(1)}" if self.density else "wm density reset")
+        self.emulated = False
 
 
 class Hinge:
@@ -867,8 +881,7 @@ def main():
     device = f"{sh('getprop ro.product.model').strip()}, Android {sh('getprop ro.build.version.release').strip()}"
     print(f"BioKey {version.group(1) if version else '?'} on {device}, home screen {launcher}")
 
-    display = Display()
-    display.may_emulate = args.emulate_foldables
+    display = Display(may_emulate=args.emulate_foldables)
     if display.may_emulate:
         print("Emulating foldables' screens: the home screen's layout may lose icons that don't fit them.")
     watcher = ExposureWatcher(tuple(map(int, args.watch_exposure.split(",")))) if args.watch_exposure else None

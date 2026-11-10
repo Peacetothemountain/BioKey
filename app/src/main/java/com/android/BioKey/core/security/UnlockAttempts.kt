@@ -188,10 +188,24 @@ object UnlockAttempts {
         return prefs
     }
 
+    /**
+     * Forgets what was loaded, as a restart of BioKey does. With [hooks], the clocks and the
+     * biometric check go back to their own too (the defaults above, repeated here), so a test's
+     * replacements don't outlive it into the next test class; without, a test can restart BioKey
+     * on the clocks it set.
+     */
     @VisibleForTesting
-    internal fun resetForTests() {
+    internal fun resetForTests(hooks: Boolean = true) {
         synchronized(lock) { prefs = null }
         main.removeCallbacksAndMessages(NOTIFY_TOKEN)
+        if (!hooks) return
+        clock = TrustedClock::now
+        elapsed = SystemClock::elapsedRealtime
+        cachedBoot = null
+        bootCount = { context ->
+            cachedBoot ?: Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, 0).also { cachedBoot = it }
+        }
+        hasStrongBiometric = SecurityEngine::hasEnrolledStrongBiometric
     }
 
     /** The next number in the order of events, shared with [ProtectionGaps]. */

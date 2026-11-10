@@ -32,11 +32,7 @@ class TrustedClockTest {
     }
 
     @After
-    fun restore() {
-        TrustedClock.wall = System::currentTimeMillis
-        TrustedClock.elapsed = android.os.SystemClock::elapsedRealtime
-        TrustedClock.resetForTests()
-    }
+    fun restore() = TestClocks.restoreTrustedClock()
 
     @Test
     fun changingThePhonesDateDoesntMoveIt() {

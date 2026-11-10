@@ -27,7 +27,7 @@ import java.util.concurrent.Executors
  * started), `o.home` (sent Home).
  *
  * Kept in memory (the last [MAX_LINES]) and written to `files/engine-trace.txt` a moment after
- * each change, where `adb shell run-as com.android.BioKey cat files/engine-trace.txt` reads it.
+ * each change, where `adb shell run-as com.nbdesigns.biokey cat files/engine-trace.txt` reads it.
  * Release builds record nothing: these lines name locked apps and what was on screen.
  */
 object EngineTrace {

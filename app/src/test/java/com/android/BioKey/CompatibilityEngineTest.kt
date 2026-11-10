@@ -111,7 +111,7 @@ class CompatibilityEngineTest {
         SecurityVault.resetForTests()
         Settings.Secure.putString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, "")
         ShadowSettings.setCanDrawOverlays(true)
-        LockStateTracker.lockAll()
+        LockStateTracker.resetForTests()
         vault = SecurityVault.getInstance(context)
         vault.setSetupCompletedSync(true)
         vault.setAppLock(bank, true)

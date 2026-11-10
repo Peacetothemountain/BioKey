@@ -72,7 +72,7 @@ class SystemAppLockTest {
         SecurityVault.getInstance(context).awaitPendingWrites()
         context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE).edit().clear().commit()
         SecurityVault.resetForTests()
-        LockStateTracker.lockAll()
+        LockStateTracker.resetForTests()
         LockScreenActivity.forgetResumeForTests()
         AlsoLockedByAndroid.clear(context)
         UnlockAttempts.load(context)
