@@ -65,9 +65,12 @@ object ProtectionGaps {
         /** Notification access taken away while "Hide notification content" was on: no longer recorded (hiding is gone); kept to word old records. */
         SHIELD_ACCESS_REVOKED,
         /**
-         * Protection weakened (paused, an app's lock off, a profile off or deleted: every [Change])
-         * from BioKey opened with the screen lock, not a face or fingerprint, on a phone that has
-         * one: maybe someone who knows the PIN. [Gap.detail] says what.
+         * Mostly protection weakened (paused, an app's lock off, a profile off or deleted) from
+         * BioKey opened with the screen lock, not a face or fingerprint, on a phone that has one:
+         * maybe someone who knows the PIN. Also, whatever opened BioKey, a change made during a
+         * hold; and three things that weaken no lock: the reminders stopped, the diagnostic log
+         * opened for sharing, and the screen lock let in because the sensor couldn't be used.
+         * [Gap.detail] says which ([Change]).
          */
         CHANGED_WITH_SCREEN_LOCK,
         /**

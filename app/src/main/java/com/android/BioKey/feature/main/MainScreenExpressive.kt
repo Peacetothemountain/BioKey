@@ -404,9 +404,12 @@ fun MainScreenExpressive(
         onPauseOrDispose { }
     }
     var unlockedNow by remember { mutableStateOf(emptySet<String>()) }
+    /** [unlockedNow] has been worked out: until then it is empty for want of a look, not for want of apps. */
+    var unlockedNowRead by remember { mutableStateOf(false) }
     LaunchedEffect(sessionsChanged, lockedApps, profiles, defaultTimeout, globalLockEnabled) {
         // Paused, nothing is locked, so nothing is "unlocked" either.
         unlockedNow = if (globalLockEnabled) LockStateTracker.unlockedApps(vault::getTimeoutMode) else emptySet()
+        unlockedNowRead = true
     }
     fun isUnlockedNow(pkg: String) = PasswordManager.aliasesOf(pkg).any { it in unlockedNow }
     val unlockedNowApps = remember(unlockedNow, installedApps, lockedApps, profiles) {
@@ -916,6 +919,7 @@ fun MainScreenExpressive(
         lockedApps = lockedApps,
         homeScreens = homeScreens,
         unlockedNowApps = unlockedNowApps,
+        unlockedNowKnown = unlockedNowRead && !isLoadingApps,
         attempts = attempts,
         gaps = gaps,
         labelByPackage = labelByPackage,

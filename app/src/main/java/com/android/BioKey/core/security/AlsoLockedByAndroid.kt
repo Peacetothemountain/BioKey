@@ -54,6 +54,31 @@ object AlsoLockedByAndroid {
         }
     }
 
+    /**
+     * Forgets what has aged past [FORGET_AFTER_MS] since it was last looked at: nothing else does
+     * while BioKey's process lives on (an engine keeps it for weeks) and Android's App lock
+     * shows it no prompt. Asked as BioKey's own screen comes up, off the main thread.
+     */
+    fun refresh(context: Context) {
+        load(context)
+        synchronized(lock) {
+            if (dropForgotten(clock())) {
+                write(context)
+                publishLocked()
+            }
+        }
+    }
+
+    /** Tests: as a new process finds it, with what is on the phone still to read ([load]). */
+    @VisibleForTesting
+    internal fun forgetLoadedForTests() {
+        synchronized(lock) {
+            loaded = false
+            seenAt.clear()
+            _apps.value = emptySet()
+        }
+    }
+
     /** Drops every app not seen locked by Android for [FORGET_AFTER_MS]. True if any went. Under [lock]. */
     private fun dropForgotten(now: Long): Boolean = seenAt.values.removeAll { now - it >= FORGET_AFTER_MS }
 

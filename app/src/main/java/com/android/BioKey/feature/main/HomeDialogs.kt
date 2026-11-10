@@ -138,6 +138,8 @@ internal fun HomeDialogs(
     lockedApps: Set<String>,
     homeScreens: Set<String>,
     unlockedNowApps: List<AppItem>,
+    /** [unlockedNowApps] is what it is: the apps are loaded and their sessions read (until then it is empty either way). */
+    unlockedNowKnown: Boolean,
     attempts: List<UnlockAttempts.Attempt>,
     gaps: List<ProtectionGaps.Gap>,
     labelByPackage: Map<String, String>,
@@ -289,14 +291,14 @@ internal fun HomeDialogs(
     }
 
     if (overlays.showUnlocked) {
+        // Nothing to show, and that is known: closed for good, not left to come back by itself the
+        // next time an app is unlocked. Its list emptied under it (the last app locked from it, its
+        // last session run out), or it was brought back with BioKey's screen (made again after a
+        // font size change, or after Android ended BioKey) to sessions that have ended since. Not
+        // while the list is only empty for not being read yet, as it is when the screen is first made.
         val none = unlockedNowApps.isEmpty()
-        // Its list emptied under it (the last app locked from it, its last session run out): closed
-        // for good, not left to come back by itself the next time an app is unlocked. Only once it
-        // has had apps to show: brought back as BioKey's screen is made again (a font size or
-        // language change), its list is empty until the apps and their sessions are read.
-        var hadApps by remember { mutableStateOf(false) }
-        LaunchedEffect(none) {
-            if (!none) hadApps = true else if (hadApps) overlays.showUnlocked = false
+        LaunchedEffect(none, unlockedNowKnown) {
+            if (none && unlockedNowKnown) overlays.showUnlocked = false
         }
         if (!none) {
             UnlockedAppsDialog(

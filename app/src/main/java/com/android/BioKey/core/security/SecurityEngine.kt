@@ -127,6 +127,15 @@ class SecurityEngine private constructor() {
         val ownMisses = mutableMapOf<Long, Int>()
     }
 
+    /**
+     * Tests: stands in for Android's prompt in [showBiometricPrompt]. Given the prompt's own
+     * callback, it answers when the test says (a match, a cancel, an error), so what follows a
+     * prompt ending runs as it does on a phone.
+     */
+    @VisibleForTesting
+    @Volatile
+    internal var promptForTests: ((BiometricPrompt.AuthenticationCallback) -> Unit)? = null
+
     /** Tests: a prompt up for [packageName] (no window of its own: the phone's display), or none with null. */
     @VisibleForTesting
     internal fun setPromptForTests(packageName: String?) {
@@ -328,6 +337,8 @@ class SecurityEngine private constructor() {
             }
         }
 
+        // Tests have no prompt of Android's: theirs keeps this one up until they answer it.
+        promptForTests?.let { return it(callback) }
         try {
             BiometricPrompt.Builder(activity)
                 .setTitle(promptTitle ?: activity.getString(R.string.prompt_unlock, name))

@@ -151,7 +151,7 @@ Which apps you’ve locked, your profiles and their re-lock delays, whether prot
 
 <h3 id="unlock-sessions">Unlock sessions</h3>
 
-Which apps are unlocked right now lives only in memory, and ends whenever the phone locks. So does the app last in front, for the "Lock this app" tile: one package name, replaced as you switch apps.
+Which apps are unlocked right now lives only in memory, and ends whenever the phone locks. The app last in front, for the "Lock this app" tile, is kept in memory too: one package name, replaced as you switch apps.
 
 <h3 id="uninstalled-apps">Locked apps that were uninstalled</h3>
 

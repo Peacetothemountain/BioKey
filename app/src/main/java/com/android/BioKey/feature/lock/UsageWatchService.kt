@@ -350,16 +350,22 @@ class UsageWatchService : Service() {
             stir()
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> {
+                    val lockedNow = runCatching { deviceLockedNow() }.getOrNull()
+                    // The screen going off from the keyguard: the phone was locked before, and still is.
+                    val fromKeyguard = lockedNow != false && LockStateTracker.phoneSeenLocked
                     // Whatever order the broadcast reaches BioKey's receivers in: sessions end now,
                     // or, with the phone not locked yet, wait for it.
-                    LockStateTracker.onScreenTurnedOff(phoneLocked = runCatching { deviceLockedNow() }.getOrNull())
+                    LockStateTracker.onScreenTurnedOff(phoneLocked = lockedNow)
                     stopPolling()
                     // Waiting: the app in front is still there once the phone locks, and covered then.
                     val waiting = LockStateTracker.awaitingPhoneLock
-                    // Not the lock-screen camera let open over the keyguard if it has closed since:
-                    // the keyguard coming back is no app coming forward, so it's still the last
-                    // one heard of in front, with nothing of it left to cover.
-                    val left = appInFront()?.takeUnless { it == keyguardLetThrough && !activities.isVisible(it) }
+                    // The app left on screen: the one in front, unless the screen goes off from the
+                    // keyguard. There nothing new is left to cover: an app still over the keyguard
+                    // was let through (the lock-screen camera, which closes with the screen) or has
+                    // its lock screen already, and nothing comes forward as one closes, so the last
+                    // app heard of in front may be long gone. Nor the camera let through over a
+                    // keyguard that hadn't locked the phone (Smart Lock): it closes with the screen too.
+                    val left = appInFront()?.takeUnless { fromKeyguard || it == keyguardLetThrough }
                     leftAtScreenOff = left?.takeIf { waiting }
                     // And what showed with it (a split screen's other half): asked for with it then.
                     // Paused ones too: as the screen times out, it dims first, and the apps on it pause.
@@ -382,9 +388,15 @@ class UsageWatchService : Service() {
                     // Sessions kept through the screen-off: the phone locked meanwhile (or, unlocked
                     // again unseen, maybe) ends them; the first look then covers the app behind the keyguard.
                     if (intent.action == Intent.ACTION_SCREEN_ON) {
-                        LockStateTracker.onScreenOn(runCatching { deviceLockedNow() }.getOrDefault(true))
+                        val locked = runCatching { deviceLockedNow() }.getOrDefault(true)
+                        LockStateTracker.onScreenOn(locked)
+                        // Back within Android's lock delay: the apps are in use again, and what a
+                        // later lock finds on screen is what's there then, not what was at screen-off.
+                        // (Locked, the cover that follows still goes by it: [onLockAll].)
+                        if (!locked) forgetScreenOff()
                     } else {
                         LockStateTracker.onUserPresent()
+                        forgetScreenOff()
                         // A lock screen waiting behind the keyguard prompts now, for what it hid then.
                         if (lockedAtLock.isNotEmpty() && LockScreenActivity.activeLockedTarget in lockedAtLock) {
                             lockedAtLockAt = SystemClock.elapsedRealtime()
@@ -732,6 +744,12 @@ class UsageWatchService : Service() {
     private fun appInFront(): String? =
         if (foreground == packageName) lockScreenTarget.takeIf { foregroundClass == LOCK_SCREEN_CLASS } else foreground
 
+    /** The screen is in use again: what was on it as it went off ([leftAtScreenOff], [onScreenAtScreenOff]) says nothing any more. */
+    private fun forgetScreenOff() {
+        leftAtScreenOff = null
+        onScreenAtScreenOff = emptySet()
+    }
+
     /**
      * [pkg] was in front as the phone locked (with the screen, in the dark after it, or with the
      * screen still on: Lockdown, a foldable folded) or as a screensaver came over it: locked, its
@@ -746,8 +764,11 @@ class UsageWatchService : Service() {
         LockStateTracker.setRegularLockPending(pkg)
         // What it hides behind the keyguard: the apps on screen with it (a split screen's other half),
         // now or, after a screen-off that waited for the phone to lock, as it went off. Its prompt,
-        // once the phone is unlocked, asks for them all at once ([lockedOnScreenWith]).
-        lockedAtLock = activities.resumedApps() + onScreenAtScreenOff + pkg
+        // once the phone is unlocked, asks for them all at once ([lockedOnScreenWith]). Its lock
+        // screen up already (asked for before the screen went off): what that one hides, stopped
+        // under it since, still counts.
+        val hiddenAlready = if (LockScreenActivity.activeLockedTarget == pkg) lockedAtLock else emptySet()
+        lockedAtLock = hiddenAlready + activities.resumedApps() + onScreenAtScreenOff + pkg
         lockedAtLockAt = SystemClock.elapsedRealtime()
         onScreenAtScreenOff = emptySet()
         if (!LockLauncher.launch(this, pkg, isSelfProtection = false, behindKeyguard = true)) noBehindKeyguard(pkg)

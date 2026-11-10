@@ -51,11 +51,9 @@ object BiometricEnrollment {
 
     enum class KeyState { VALID, INVALIDATED, MISSING }
 
+    /** Puts back every hook a test replaced ([realHooks]), so none outlives it into the next test class in the JVM. */
     @VisibleForTesting
-    internal fun resetForTests() {
-        hasBiometric = SecurityEngine::hasEnrolledStrongBiometric
-        keyState = ::checkKey
-    }
+    internal fun resetForTests() = realHooks()
 
     /** Off in tests that call [check] themselves, so BioKey's own start-up look can't run alongside. */
     @VisibleForTesting
@@ -148,6 +146,18 @@ object BiometricEnrollment {
         if (checkKey() != KeyState.VALID) {
             if (store.containsAlias(ALIAS)) store.deleteEntry(ALIAS)
             makeKey()
+        }
+    }
+
+    /** The hooks above as they are outside tests ([resetForTests]): taken as BioKey starts, so they are said once. */
+    private val realHooks: () -> Unit = run {
+        val hasBiometric = hasBiometric
+        val keyState = keyState
+        val renewKeyIfNeeded = renewKeyIfNeeded
+        return@run {
+            this.hasBiometric = hasBiometric
+            this.keyState = keyState
+            this.renewKeyIfNeeded = renewKeyIfNeeded
         }
     }
 

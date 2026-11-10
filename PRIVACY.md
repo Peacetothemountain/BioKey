@@ -151,8 +151,8 @@ backup and from device-to-device transfer, so it never leaves the phone that way
 - **Your settings:** which apps you've locked, your profiles and their re-lock delays, whether
   protection is paused, and BioKey's other settings.
 - **Unlock sessions** (which apps are unlocked right now) live only in memory, and end whenever
-  the phone locks. So does the app last in front, for the "Lock this app" tile: one package name,
-  replaced as you switch apps.
+  the phone locks. The app last in front, for the "Lock this app" tile, is kept in memory too:
+  one package name, replaced as you switch apps.
 - **Locked apps that were uninstalled:** for each app you've locked, the SHA-256 of its signing
   certificate. When one is uninstalled with its data, its package name, that certificate
   fingerprint, its profile and the time are kept for 30 days, so that installing the same app

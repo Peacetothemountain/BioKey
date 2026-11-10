@@ -127,7 +127,7 @@
     <string name="disclosure_accessibility_used_recents_session">Ending a locked app\'s session when you close it from Recents</string>
     <string name="disclosure_accessibility_used_self_protection">Asking for authentication before BioKey can be switched off, if you turn that on</string>
     <string name="disclosure_compatibility_title">BioKey uses usage access and display over other apps</string>
-    <string name="disclosure_compatibility_reads">Which app was just opened, and whether a locked app is still on screen (app usage events on this phone)</string>
+    <string name="disclosure_compatibility_reads">Which app was just opened, and whether a locked app is still on screen (app usage events on this phone). And, to put them first in BioKey\'s list, which apps were used in the last 24 hours: read as the list is shown, never kept</string>
     <string name="disclosure_compatibility_used_covering">Covering apps you\'ve locked until you authenticate, without the Accessibility service</string>
     <string name="disclosure_compatibility_used_drawing">Drawing BioKey\'s lock cover over a locked app as it opens</string>
     <string name="disclosure_keeps_log">A log of its own lock decisions about your locked apps, pauses, and security activity as it\'s recorded, on this phone for 3 days, at most 500 entries (after a restart with no network time, the last 500 until it\'s back). You can turn it off in Settings</string>

@@ -534,6 +534,35 @@ class SystemAppLockTest {
     }
 
     @Test
+    fun whatHasAgedIsForgottenAsBioKeyStartsAndWhileItRuns() {
+        val start = System.currentTimeMillis()
+        val kept = context.getSharedPreferences("biokey_android_app_lock", Context.MODE_PRIVATE)
+        try {
+            // Seen once, and Android's App lock switched off for it since: no prompt ever notes it again.
+            AlsoLockedByAndroid.clock = { start }
+            AlsoLockedByAndroid.note(context, x)
+            assertEquals(setOf(x), kept.all.keys)
+            // BioKey's screen is looked at within the month, then after it, in the same process.
+            AlsoLockedByAndroid.clock = { start + AlsoLockedByAndroid.FORGET_AFTER_MS - 1 }
+            AlsoLockedByAndroid.refresh(context)
+            assertEquals(setOf(x), AlsoLockedByAndroid.apps.value)
+            AlsoLockedByAndroid.clock = { start + AlsoLockedByAndroid.FORGET_AFTER_MS + 1 }
+            AlsoLockedByAndroid.refresh(context)
+            assertEquals(emptySet<String>(), AlsoLockedByAndroid.apps.value)
+            assertEquals(emptySet<String>(), kept.all.keys)
+            // And one still on the phone as BioKey next starts, a month on, goes then.
+            kept.edit().putLong(other, start).commit()
+            AlsoLockedByAndroid.forgetLoadedForTests()
+            AlsoLockedByAndroid.load(context)
+            assertEquals(emptySet<String>(), AlsoLockedByAndroid.apps.value)
+            assertEquals(emptySet<String>(), kept.all.keys)
+        } finally {
+            AlsoLockedByAndroid.clock = System::currentTimeMillis
+            AlsoLockedByAndroid.clear(context)
+        }
+    }
+
+    @Test
     fun anAppNotSeenLockedByAndroidForAMonthIsForgotten() {
         val start = System.currentTimeMillis()
         try {

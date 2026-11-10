@@ -214,6 +214,8 @@ class MainActivity : ComponentActivity() {
         NewAppSuggestions.refreshSummarySoon(this)
         // Reset and not set up again, notifications allowed again (setup asks): the reminders start.
         if (!vault.isSetupCompleted()) appScope.launch(Dispatchers.Default) { ProtectionAlerts.resumeStorageClearedReminders(application) }
+        // What home marks as also locked by Android, forgotten after 30 days: aged as it's looked at.
+        appScope.launch(Dispatchers.IO) { AlsoLockedByAndroid.refresh(application) }
 
         // Back from setting a screen lock during setup: that step's done, and setup can finish.
         if (setupNeedsScreenLock && getSystemService(android.app.KeyguardManager::class.java)?.isDeviceSecure == true) {

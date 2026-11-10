@@ -323,7 +323,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                         keyguardScreenUnnamed.clear()
                         // Sessions that went on, still on screen, are noticed leaving as before.
                         if (!waiting) rules.reset()
-                        isConfirmingDeviceCredential = false
+                        pinScreenGone()
                         maskControl.arm()
                     }
                     // A screensaver (a charging phone's hub, say) comes over the keyguard with the
@@ -744,7 +744,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                     eventPkg !in ForegroundRules.inputMethods(this) &&
                     eventPkg !in ForegroundRules.SYSTEM_OVERLAYS
                 ) {
-                    isConfirmingDeviceCredential = false
+                    pinScreenGone()
                 }
                 val inSelfProtHost = SelfProtectionDetector.isHostPackage(eventPkg) && !isConfirmingDeviceCredential
                 if (inSelfProtHost) {
@@ -2042,6 +2042,16 @@ class BioKeyAccessibilityService : AccessibilityService() {
     }
 
     private fun isLauncher(pkg: String): Boolean = ForegroundRules.isLauncher(this, pkg)
+
+    /**
+     * The phone's PIN screen a prompt handed over to is no longer what's in front (another app
+     * is, or the screen went off). A lock screen left stopped under it, waiting for that prompt,
+     * is told: the prompt may never say it ended.
+     */
+    private fun pinScreenGone() {
+        isConfirmingDeviceCredential = false
+        LockScreenActivity.onPinScreenGone()
+    }
 
     /** The PIN, pattern or password screen BioKey's prompt hands over to; the classes are the detector's, so both agree. */
     private fun isDeviceCredentialScreen(pkg: String, cls: String): Boolean {

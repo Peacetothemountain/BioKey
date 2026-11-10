@@ -576,6 +576,9 @@ object LockStateTracker {
 
     @Volatile private var deviceLocked = false
 
+    /** The phone was locked when an engine last looked ([onDeviceLockState]). */
+    val phoneSeenLocked: Boolean get() = deviceLocked
+
     /**
      * The device's locked state, as last seen. Locking the device (screen off, screensaver, the
      * power menu's Lockdown, a lock with the screen still on) ends every session, every time.

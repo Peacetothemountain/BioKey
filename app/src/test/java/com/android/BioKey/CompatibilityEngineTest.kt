@@ -722,6 +722,82 @@ class CompatibilityEngineTest {
     }
 
     @Test
+    fun aLockScreenCameraStillOpenIsntCoveredAsTheScreenGoesOffEither() {
+        // It closes itself with the screen: a lock screen waiting behind the keyguard would ask
+        // for a camera that isn't there once the phone is unlocked.
+        val secure = "$bank.SecureCameraActivity"
+        bankIsTheLockScreenCamera(secure)
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).apply {
+            setKeyguardLocked(true)
+            setIsDeviceLocked(true)
+        }
+        val power = shadowOf(context.getSystemService(PowerManager::class.java))
+        power.setIsInteractive(true)
+        repeat(4) { step() }
+        event(ACTIVITY_RESUMED, bank, secure)
+        repeat(8) { step(150) }
+        started()
+        power.setIsInteractive(false)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        repeat(3) { step() }
+        assertEquals(emptyList<String>(), covered(bank))
+        assertTrue(started().none { it.component?.className == lockScreen })
+    }
+
+    @Test
+    fun aLockScreenAlreadyUpAsTheScreenGoesOffStillAsksForBothHalves() {
+        vault.setAppLock(chat, true)
+        // A pair opened from Recents, neither unlocked: one is covered, and its lock screen comes
+        // up over both, which stop under it.
+        event(ACTIVITY_RESUMED, bank)
+        event(ACTIVITY_RESUMED, chat)
+        step()
+        val target = started().last { it.component?.className == lockScreen }.getStringExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE)!!
+        val other = if (target == bank) chat else bank
+        lockScreenOpensOverPair(target, bank to "$bank.MainActivity", chat to "$chat.MainActivity")
+        assertEquals(listOf(other), UsageWatchService.lockedAppsOnScreenWith(target))
+        // The power button, before it's answered: the phone locks with the lock screen still up.
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(false)
+        screenOffPhoneLocks()
+        // Its prompt, once the phone is unlocked, still names the other half.
+        assertEquals(listOf(other), UsageWatchService.lockedAppsOnScreenWith(target))
+    }
+
+    @Test
+    fun whatWasOnScreenAsTheScreenWentOffIsForgottenOnceItIsBackInUse() {
+        vault.setAppLock(chat, true)
+        LockStateTracker.onAppUnlocked(bank)
+        LockStateTracker.onAppUnlocked(chat)
+        event(ACTIVITY_RESUMED, bank)
+        event(ACTIVITY_RESUMED, chat)
+        step()
+        val keyguard = shadowOf(context.getSystemService(KeyguardManager::class.java))
+        val power = shadowOf(context.getSystemService(PowerManager::class.java))
+        // The screen times out and comes back within Android's lock delay: never locked.
+        keyguard.setIsDeviceLocked(false)
+        power.setIsInteractive(false)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        step()
+        power.setIsInteractive(true)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
+        repeat(2) { step() }
+        assertTrue(LockStateTracker.isAppUnlocked(bank, LockTimeoutMode.IMMEDIATE))
+        // The chat half is closed; the bank goes on, full screen.
+        event(ACTIVITY_PAUSED, chat)
+        event(ACTIVITY_STOPPED, chat)
+        event(ACTIVITY_RESUMED, bank)
+        repeat(2) { step() }
+        started()
+        // Lockdown: the phone locks with the screen on.
+        keyguard.setKeyguardLocked(true)
+        keyguard.setIsDeviceLocked(true)
+        repeat(6) { step() }
+        assertEquals("Covered $bank (on screen as the phone locked)", covered(bank).last())
+        // Only the bank was on screen: its prompt names nothing that had gone by then.
+        assertEquals(emptyList<String>(), UsageWatchService.lockedAppsOnScreenWith(bank))
+    }
+
+    @Test
     fun aLockScreenCameraClosedSinceIsntCoveredAsThePhoneIsUnlocked() {
         theLockScreenCameraOpensAndClosesOverTheKeyguard("$bank.SecureCameraActivity")
         shadowOf(context.getSystemService(KeyguardManager::class.java)).apply {

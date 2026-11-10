@@ -448,6 +448,9 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         primaryButton.isVisible = !permanentLockout || BioKeyAccessibilityService.isRunning
     }
 
+    /** The buttons are showing ([setActionsVisible]). */
+    val actionsVisible: Boolean get() = actions.visibility == VISIBLE
+
     /** Hides the buttons while the system prompt is up, like Android's own App Lock. */
     fun setActionsVisible(visible: Boolean) {
         actions.visibility = if (visible) VISIBLE else INVISIBLE

@@ -97,6 +97,11 @@ class LockScreenActivity : ComponentActivity() {
             else -> res.getQuantityString(R.plurals.prompt_apps_more, names.size - 3, names[0], names[1], names[2], names.size - 3)
         }
 
+        /** The accessibility engine saw the phone's PIN screen, which a prompt had handed over to, go ([stopIfNotBackSoon]). Main thread. */
+        fun onPinScreenGone() {
+            current?.get()?.stopIfNotBackSoon()
+        }
+
         /** The other locked apps on screen with [pkg], as the engine running sees them: see [BioKeyAccessibilityService.lockedAppsOnScreenWith]. */
         private fun lockedAppsOnScreenWith(pkg: String): List<String> =
             BioKeyAccessibilityService.lockedAppsOnScreenWith(pkg) ?: UsageWatchService.lockedAppsOnScreenWith(pkg) ?: emptyList()
@@ -486,8 +491,16 @@ class LockScreenActivity : ComponentActivity() {
     }
 
     /** This screen's prompt ended without an unlock (an error, a cancel). */
-    private fun promptEnded() {
-        if (stopDeferred) mainHandler.postDelayed(deferredStop, PIN_SCREEN_RETURN_MS)
+    private fun promptEnded() = stopIfNotBackSoon()
+
+    /**
+     * The engine saw the phone's PIN screen go, with something else in front or the screen off
+     * ([onPinScreenGone]): the same, should the prompt left running there never say it ended.
+     */
+    private fun stopIfNotBackSoon() {
+        if (!stopDeferred) return
+        mainHandler.removeCallbacks(deferredStop)
+        mainHandler.postDelayed(deferredStop, PIN_SCREEN_RETURN_MS)
     }
 
     /** What being stopped, not finishing, does: the cover stays behind the keyguard, or closes under whatever came over it. */
