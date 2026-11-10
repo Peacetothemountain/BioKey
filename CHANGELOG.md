@@ -2,6 +2,44 @@
 
 BioKey's releases, newest first. The version is the `versionName` in `app/build.gradle.kts`.
 
+## Unreleased
+
+- **A force stop the phone restarted after is recorded** (Android 15 and later). Android can lose
+  its record of the stop with the restart, but still says BioKey was left stopped: home then
+  shows that app locking was off, until when, though not from when. The note is kept until app
+  locking is next on, even if BioKey is closed again before that.
+- **Compatibility mode covers the app left on screen before the phone is unlocked.** When the
+  phone locked as the screen went off (the power button), the app in front was covered only once
+  the phone was unlocked again, so it could show for a moment. Its lock screen now waits behind
+  the keyguard, as it already did with the accessibility engine. A split screen under a
+  screensaver is asked for in one prompt.
+- **"Lock this app" works while protection is paused, or before any app is locked**, in
+  compatibility mode: the tile asks Android which app is in front, rather than saying there is
+  nothing to lock.
+- **Compatibility mode comes back by itself** when Android restarts BioKey in the background and
+  refuses it its place in the foreground (Android 15 and later): it tries once more under a
+  1-pixel overlay, as a start from the background already did, before alerting you.
+- **Picture-in-picture stays covered over the lock screen** in compatibility mode on Android 15
+  and earlier, where hiding other apps' overlays also hid BioKey's own cover.
+- **The phone's PIN screen no longer closes the lock screen** on phones that open it as a screen
+  of its own, where the PIN could not be typed. **"Lock phone"**, after too many misses, keeps the
+  app covered until the phone has locked.
+- **Too many wrong fingers is not "fingerprints removed":** where Android reports the lockout,
+  BioKey no longer records a removal (and a day's hold), nor accepts the screen lock under "Face
+  or fingerprint only".
+- **After a change of language,** an app locked with Android's own App lock too still asks once,
+  and "Clear all" in Recents still ends every session.
+- **Settings and home:** the Protection alerts row says when its channel is switched off in
+  Android's settings; a pause sheet, or the "Unlocked now" list, left open no longer comes back by
+  itself; long setting names wrap with large text instead of being cut short.
+- **New-app offers** can no longer replace one another when several apps are installed at once.
+- **What BioKey says about itself:** the in-app disclosure, the accessibility service's
+  description, the privacy policy (now dated 10 November 2026) and this README list what 1.0.4
+  keeps and reads (times the phone had no screen lock, which locked apps Android's App lock was
+  seen locking, signing-certificate fingerprints, the camera-over-lock-screen setting in backups),
+  and no longer mention notification access. BioKey no longer asks Android which apps handle the
+  App lock and notification-access settings pages, which it stopped opening in 1.0.4.
+
 ## 1.0.4 (31 October 2026)
 
 - **Re-lock delays hold through the Home gesture:** on a Pixel, swiping up to go Home could count
