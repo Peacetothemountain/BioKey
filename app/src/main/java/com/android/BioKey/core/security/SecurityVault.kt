@@ -136,6 +136,10 @@ class SecurityVault private constructor(private val context: Context) {
             // still running, it would make one of its own after this reset, from whatever storage
             // the test hasn't written yet, and that one's first write would wipe the test's.
             com.android.BioKey.BioKeyApplication.awaitInitForTests()
+            // Start-up also queues a look at the phone's faces and fingerprints on a thread of its
+            // own (BiometricEnrollment.checkSoon), which asks for the vault too, after start-up
+            // itself has finished: ProfileLockRulesTest still failed now and then on CI.
+            BiometricEnrollment.awaitBackgroundForTests()
             // Its writes still queued would otherwise land in the next test's storage.
             INSTANCE?.awaitPendingWrites()
             INSTANCE = null

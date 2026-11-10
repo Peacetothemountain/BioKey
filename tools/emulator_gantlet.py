@@ -323,6 +323,16 @@ def set_up(emu):
         if todo:
             emu.tap(todo[0])
             time.sleep(1.5)
+            # The first lock of an app opens "What locking does" over the list (1.0.3): "Don't show
+            # again" closes it for good; if that can't be tapped (scrolled off), Back closes it.
+            nodes = emu.nodes()
+            if emu.find(r"what a lock doesn.t cover|got it", nodes) is not None:
+                again = emu.find(r"don.t show again", nodes)
+                if again is not None and emu.center(again) != (0, 0):
+                    emu.tap(again)
+                else:
+                    emu.sh("input keyevent KEYCODE_BACK")
+                time.sleep(1.5)
         else:
             emu.sh("input swipe 500 1600 500 900 400")
             time.sleep(1.5)
