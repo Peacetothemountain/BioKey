@@ -75,11 +75,6 @@ object ProtectionAlerts {
         DiagnosticLog.log("Reminders that app locking is off stopped by the owner")
     }
 
-    /** The protection alerts' own channel is switched off in Android's settings, with BioKey's notifications otherwise allowed. */
-    fun channelOff(context: Context): Boolean = runCatching {
-        context.getSystemService(NotificationManager::class.java).getNotificationChannel(CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE
-    }.getOrDefault(false)
-
     fun ensureChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
         // Created, or updated: Android takes a new name and description, never touches the importance
@@ -226,7 +221,7 @@ object ProtectionAlerts {
     }
 
     /**
-     * BioKey's process just started (the notification shield rebinding, the tile, an alarm). With
+     * BioKey's process just started (a tile, a job, a broadcast). With
      * the accessibility switch on, the service still not running [CONNECT_WAIT_MS] later means
      * Android stopped restarting it after repeated crashes: nothing covers apps, and the switch
      * still reads as on in Settings. Alerts then, as when an engine stops; the alert goes as soon

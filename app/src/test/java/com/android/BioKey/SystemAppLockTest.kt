@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.LauncherApps
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.graphics.Rect
@@ -274,6 +275,66 @@ class SystemAppLockTest {
         assertEquals(emptyList<String>(), covered(x))
     }
 
+    /** The apps' names are read when the test says, on another thread, as they are on a phone. */
+    private class QueuedReads : Executor {
+        val waiting = ArrayList<Runnable>()
+        override fun execute(read: Runnable) {
+            waiting += read
+        }
+
+        fun run() {
+            val reads = waiting.toList()
+            waiting.clear()
+            Thread { reads.forEach(Runnable::run) }.apply { start(); join() }
+        }
+    }
+
+    @Test
+    fun aPromptThatCameBeforeTheNamesWereReadIsPlacedOnceTheyAre() {
+        val reads = QueuedReads()
+        engine.get().androidLock.namesReader = reads
+        androidCoverComesUp()
+        // Asked for as the cover comes, before its prompt is even up.
+        assertEquals(1, reads.waiting.size)
+        androidAsksForNotes()
+        // Not read yet, the prompt can't be placed, not now and not at the look a moment later.
+        idle(1_000)
+        assertEquals(1, reads.waiting.size)
+        assertEquals(emptySet<String>(), AlsoLockedByAndroid.apps.value)
+        reads.run()
+        idle()
+        // Read: the prompt still up is looked at again, and names Notes.
+        assertEquals(setOf(x), AlsoLockedByAndroid.apps.value)
+        androidLetsThrough(x)
+        assertTrue(LockStateTracker.isAppUnlocked(x, LockTimeoutMode.IMMEDIATE))
+        assertEquals(emptyList<String>(), covered(x))
+    }
+
+    @Test
+    fun theNamesAreReadAgainAsThePhonesAppsChangeNotAsAPromptWaits() {
+        val reads = QueuedReads()
+        engine.get().androidLock.namesReader = reads
+        // The engine starting: read once, ahead of any prompt.
+        engine.get().androidLock.warmUp()
+        assertEquals(1, reads.waiting.size)
+        reads.run()
+        idle()
+        // An app is installed (in any profile: the launcher's own list says so). A moment after
+        // the last such change they are read again, with no prompt in sight.
+        shadowOf(context.getSystemService(LauncherApps::class.java)).notifyPackageAdded("com.example.new")
+        idle(100)
+        assertEquals(0, reads.waiting.size)
+        idle(2_500)
+        assertEquals(1, reads.waiting.size)
+        reads.run()
+        idle()
+        // So the next prompt is placed at once.
+        androidCoverComesUp()
+        androidAsksForNotes()
+        assertEquals(0, reads.waiting.size)
+        assertEquals(setOf(x), AlsoLockedByAndroid.apps.value)
+    }
+
     @Test
     fun aLaunchWithoutATapIsPlacedByAndroidsPrompt() {
         androidCoverComesUp()
@@ -481,6 +542,8 @@ class SystemAppLockTest {
             AlsoLockedByAndroid.clock = { start + AlsoLockedByAndroid.FORGET_AFTER_MS + 1 }
             AlsoLockedByAndroid.note(context, other)
             assertEquals(setOf(other), AlsoLockedByAndroid.apps.value)
+            // Forgotten on the phone too, not only left off the screen.
+            assertEquals(setOf(other), context.getSharedPreferences("biokey_android_app_lock", Context.MODE_PRIVATE).all.keys)
         } finally {
             AlsoLockedByAndroid.clock = System::currentTimeMillis
         }

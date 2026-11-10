@@ -55,19 +55,23 @@ jobs:
       # Robolectric downloads each Android version's jar from Maven Central the first time a test
       # asks for it, with no retry, so one dropped connection failed whole runs (AppLabelsTest,
       # BrandArtTest... "MavenArtifactFetcher"). Kept between runs, they're downloaded once. Keyed
-      # on Robolectric's version alone: another dependency's update reuses the same copy, and a
-      # Robolectric update starts a fresh one rather than piling its jars onto the old version's.
-      - name: Robolectric's version
+      # on Robolectric's version and on the Android versions the tests ask for: another
+      # dependency's update reuses the same copy, a Robolectric update starts a fresh one rather
+      # than piling its jars onto the old version's, and a test on an Android version new to the
+      # tests saves its jar too (a cache found by its exact key is never saved again).
+      - name: Robolectric's version, and the Android versions the tests run on
         id: robolectric
         run: |
           version=$(sed -n 's/^robolectric = "\(.*\)"/\1/p' gradle/libs.versions.toml)
           test -n "$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          sdks=$(grep -rhoE 'sdk = \[[^]]*\]' app/src/test | grep -oE '[0-9]+' | sort -un | tr '\n' '.')
+          test -n "$sdks"
+          echo "key=$version-sdk.$sdks" >> "$GITHUB_OUTPUT"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.m2/repository/org/robolectric
-          key: robolectric-${{ steps.robolectric.outputs.version }}
+          key: robolectric-${{ steps.robolectric.outputs.key }}
 
       # The lock screen's gantlet: the tests that stand between a release and a locked app being
       # sent Home, or shown, on some phone. Every screen size (phones, foldables' cover and main

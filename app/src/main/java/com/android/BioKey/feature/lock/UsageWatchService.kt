@@ -356,7 +356,10 @@ class UsageWatchService : Service() {
                     stopPolling()
                     // Waiting: the app in front is still there once the phone locks, and covered then.
                     val waiting = LockStateTracker.awaitingPhoneLock
-                    val left = appInFront()
+                    // Not the lock-screen camera let open over the keyguard if it has closed since:
+                    // the keyguard coming back is no app coming forward, so it's still the last
+                    // one heard of in front, with nothing of it left to cover.
+                    val left = appInFront()?.takeUnless { it == keyguardLetThrough && !activities.isVisible(it) }
                     leftAtScreenOff = left?.takeIf { waiting }
                     // And what showed with it (a split screen's other half): asked for with it then.
                     // Paused ones too: as the screen times out, it dims first, and the apps on it pause.
@@ -389,9 +392,11 @@ class UsageWatchService : Service() {
                     }
                     if (checkPermissions()) wake()
                     // Unlocked from inside the lock-screen camera, say: it's covered now, not at the next look.
+                    // Only if it's still there: closed since (back to the keyguard), nothing came
+                    // forward to say so, and it's still the last app heard of in front.
                     if (intent.action == Intent.ACTION_USER_PRESENT) keyguardLetThrough?.let { app ->
                         keyguardLetThrough = null
-                        if (isRunning && foreground == app) handleForeground(app, foregroundClass)
+                        if (isRunning && foreground == app && activities.isVisible(app)) handleForeground(app, foregroundClass)
                     }
                 }
                 // A screensaver covers everything and ends every session (ScreenReceiver): there
@@ -728,9 +733,10 @@ class UsageWatchService : Service() {
         if (foreground == packageName) lockScreenTarget.takeIf { foregroundClass == LOCK_SCREEN_CLASS } else foreground
 
     /**
-     * [pkg] was in front as a screensaver came over it, or as the phone locked with the screen on
-     * (Lockdown, a foldable folded): locked, its lock screen starts behind the keyguard now (no
-     * cover: that would show over the screensaver), as the accessibility engine's.
+     * [pkg] was in front as the phone locked (with the screen, in the dark after it, or with the
+     * screen still on: Lockdown, a foldable folded) or as a screensaver came over it: locked, its
+     * lock screen starts behind the keyguard now (no cover: that would show over the keyguard or
+     * the screensaver), as the accessibility engine's.
      */
     private fun coverBehindKeyguard(pkg: String, why: String) {
         if (pkg == packageName || ForegroundRules.isLauncher(this, pkg) || !vault.isAppLocked(pkg) ||
@@ -747,7 +753,11 @@ class UsageWatchService : Service() {
         if (!LockLauncher.launch(this, pkg, isSelfProtection = false, behindKeyguard = true)) noBehindKeyguard(pkg)
     }
 
-    /** The apps on screen as the screen went off with sessions kept until the phone locks ([coverBehindKeyguard]). */
+    /**
+     * The apps on screen as the screen went off or a screensaver started, for the lock screen
+     * then started behind the keyguard to ask for with its own ([coverBehindKeyguard], which takes
+     * them): by then nothing else says what was on screen ([forgetScreen]).
+     */
     private var onScreenAtScreenOff: Set<String> = emptySet()
 
     /** Nothing known about the screen holds any more, except, with [keepFront], which app is in front. */
@@ -766,7 +776,10 @@ class UsageWatchService : Service() {
         deferred = null
         frontSeeThrough = false
         keyguardLetThrough = null
-        lockedAtLock = emptySet()
+        // What a lock screen still up hides stays known for as long as it is up (it asks for them
+        // with its own app once the phone is unlocked): the screen waking and going off again
+        // behind the keyguard changes nothing under it.
+        if (LockScreenActivity.activeLockedTarget !in lockedAtLock) lockedAtLock = emptySet()
     }
 
     // -------------------------------------------------------------------------------------------

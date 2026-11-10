@@ -46,7 +46,7 @@ class ScreenLockWatchTest {
     @After
     fun restore() {
         ScreenLockWatch.resetForTests(context)
-        ProtectionGaps.clock = TrustedClock::now
+        TestClocks.restore()
     }
 
     @Test

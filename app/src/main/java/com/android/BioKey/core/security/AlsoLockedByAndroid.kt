@@ -47,8 +47,22 @@ object AlsoLockedByAndroid {
             if (loaded) return
             seenAt.clear()
             for ((pkg, at) in prefs(context).all) if (at is Long) seenAt[pkg] = at
+            // Forgotten on the phone as well as on screen.
+            if (dropForgotten(clock())) write(context)
             loaded = true
             publishLocked()
+        }
+    }
+
+    /** Drops every app not seen locked by Android for [FORGET_AFTER_MS]. True if any went. Under [lock]. */
+    private fun dropForgotten(now: Long): Boolean = seenAt.values.removeAll { now - it >= FORGET_AFTER_MS }
+
+    /** Writes what's kept. Under [lock]. */
+    private fun write(context: Context) {
+        val kept = HashMap(seenAt)
+        prefs(context).edit {
+            clear()
+            for ((p, at) in kept) putLong(p, at)
         }
     }
 
@@ -60,12 +74,9 @@ object AlsoLockedByAndroid {
             val before = seenAt.put(pkg, now)
             // Seen moments ago already: nothing worth a write.
             if (before != null && now - before in 0 until 60_000L) return
+            dropForgotten(now)
             while (seenAt.size > MAX_KEPT) seenAt.remove(seenAt.minBy { it.value }.key)
-            val kept = HashMap(seenAt)
-            prefs(context).edit {
-                clear()
-                for ((p, at) in kept) putLong(p, at)
-            }
+            write(context)
             publishLocked()
         }
     }

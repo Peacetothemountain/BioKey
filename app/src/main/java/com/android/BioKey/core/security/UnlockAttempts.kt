@@ -188,24 +188,30 @@ object UnlockAttempts {
         return prefs
     }
 
-    /**
-     * Forgets what was loaded, as a restart of BioKey does. With [hooks], the clocks and the
-     * biometric check go back to their own too (the defaults above, repeated here), so a test's
-     * replacements don't outlive it into the next test class; without, a test can restart BioKey
-     * on the clocks it set.
-     */
+    /** The hooks above as they are outside tests ([restoreHooksForTests]): taken as BioKey starts, so they are said once. */
+    private val realHooks: () -> Unit = run {
+        val clock = clock
+        val elapsed = elapsed
+        val bootCount = bootCount
+        val hasStrongBiometric = hasStrongBiometric
+        return@run {
+            this.clock = clock
+            this.elapsed = elapsed
+            this.bootCount = bootCount
+            this.hasStrongBiometric = hasStrongBiometric
+            cachedBoot = null
+        }
+    }
+
+    /** Puts back every hook a test replaced, so none outlives it into the next test class in the JVM. */
     @VisibleForTesting
-    internal fun resetForTests(hooks: Boolean = true) {
+    internal fun restoreHooksForTests() = realHooks()
+
+    /** Forgets what was loaded, as a restart of BioKey does (on whatever clocks a test has set). */
+    @VisibleForTesting
+    internal fun resetForTests() {
         synchronized(lock) { prefs = null }
         main.removeCallbacksAndMessages(NOTIFY_TOKEN)
-        if (!hooks) return
-        clock = TrustedClock::now
-        elapsed = SystemClock::elapsedRealtime
-        cachedBoot = null
-        bootCount = { context ->
-            cachedBoot ?: Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, 0).also { cachedBoot = it }
-        }
-        hasStrongBiometric = SecurityEngine::hasEnrolledStrongBiometric
     }
 
     /** The next number in the order of events, shared with [ProtectionGaps]. */

@@ -691,6 +691,83 @@ class CompatibilityEngineTest {
         assertTrue(started().any { it.component?.className == lockScreen })
     }
 
+    /** The lock-screen camera opens over the keyguard and is closed again: back on the keyguard, where nothing comes forward to say so. */
+    private fun theLockScreenCameraOpensAndClosesOverTheKeyguard(secure: String) {
+        bankIsTheLockScreenCamera(secure)
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).apply {
+            setKeyguardLocked(true)
+            setIsDeviceLocked(true)
+        }
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        // The phone has been locked a while: the engine knows before anything opens over the keyguard.
+        repeat(4) { step() }
+        event(ACTIVITY_RESUMED, bank, secure)
+        repeat(8) { step(150) }
+        assertEquals(emptyList<String>(), covered(bank))
+        event(ACTIVITY_PAUSED, bank, secure)
+        event(ACTIVITY_STOPPED, bank, secure)
+        repeat(3) { step() }
+        started()
+    }
+
+    @Test
+    fun aLockScreenCameraClosedSinceIsntCoveredAsTheScreenGoesOff() {
+        theLockScreenCameraOpensAndClosesOverTheKeyguard("$bank.SecureCameraActivity")
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(false)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        repeat(3) { step() }
+        // Nothing of it is on screen: no lock screen waits behind the keyguard to ask for it.
+        assertEquals(emptyList<String>(), covered(bank))
+        assertTrue(started().none { it.component?.className == lockScreen })
+    }
+
+    @Test
+    fun aLockScreenCameraClosedSinceIsntCoveredAsThePhoneIsUnlocked() {
+        theLockScreenCameraOpensAndClosesOverTheKeyguard("$bank.SecureCameraActivity")
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).apply {
+            setKeyguardLocked(false)
+            setIsDeviceLocked(false)
+        }
+        context.sendBroadcast(Intent(Intent.ACTION_USER_PRESENT))
+        repeat(3) { step() }
+        assertEquals(emptyList<String>(), covered(bank))
+        assertTrue(started().none { it.component?.className == lockScreen })
+        assertFalse(shield().isShowing)
+    }
+
+    @Test
+    fun whatALockScreenHidesIsStillKnownAfterTheScreenWakesAndGoesOffAgain() {
+        vault.setAppLock(chat, true)
+        LockStateTracker.onAppUnlocked(bank)
+        LockStateTracker.onAppUnlocked(chat)
+        event(ACTIVITY_RESUMED, bank)
+        event(ACTIVITY_RESUMED, chat)
+        step()
+        started()
+        val power = shadowOf(context.getSystemService(PowerManager::class.java))
+        power.setIsInteractive(false)
+        screenOffPhoneLocks()
+        val behind = started().filter { it.component?.className == lockScreen && it.getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false) }
+        val target = behind.single().getStringExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE)!!
+        val other = if (target == bank) chat else bank
+        // Under the keyguard both halves stop; the lock screen is up there. A notification wakes
+        // the screen, which then times out again: still locked, nothing new on screen.
+        for (pkg in listOf(bank, chat)) {
+            event(ACTIVITY_PAUSED, pkg)
+            event(ACTIVITY_STOPPED, pkg)
+        }
+        lockScreenFor(target)
+        power.setIsInteractive(true)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
+        repeat(2) { step() }
+        power.setIsInteractive(false)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        repeat(2) { step() }
+        // The prompt, once the phone is unlocked, still asks for both.
+        assertEquals(listOf(other), UsageWatchService.lockedAppsOnScreenWith(target))
+        assertEquals(0, lockScreensFor(started(), other))
+    }
+
     @Test
     fun withTheSettingOffTheLockScreenCameraIsCoveredOverTheKeyguard() {
         vault.setKeyguardCameraAllowed(false)

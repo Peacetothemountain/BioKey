@@ -56,7 +56,13 @@ class StrongBiometricStatusTest {
 
     @Test
     fun aSensorThatCantBeUsedForNowStillHasItsFingerprints() {
-        for (status in listOf(BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE, BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED)) {
+        // A fault, an update pending, or (Android 15+) "Use for apps" switched off in Android's settings.
+        val unusable = listOf(
+            BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE,
+            BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED,
+            BiometricManager.BIOMETRIC_ERROR_NOT_ENABLED_FOR_APPS
+        )
+        for (status in unusable) {
             androidAnswers(status)
             // The screen lock is let in meanwhile, or the owner would be locked out of everything.
             assertFalse(SecurityEngine.hasStrongBiometric(context))

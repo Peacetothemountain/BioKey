@@ -288,22 +288,28 @@ internal fun HomeDialogs(
         )
     }
 
-    if (overlays.showUnlocked && unlockedNowApps.isEmpty()) {
-        // The last one locked here, or its session ran out: closed for good, not waiting to come
-        // back by itself the next time an app is unlocked.
-        LaunchedEffect(Unit) { overlays.showUnlocked = false }
-    }
-    if (overlays.showUnlocked && unlockedNowApps.isNotEmpty()) {
-        UnlockedAppsDialog(
-            apps = unlockedNowApps,
-            timeoutOf = vault::getTimeoutMode,
-            onLock = onLockOne,
-            onLockAll = {
-                overlays.showUnlocked = false
-                onLockAll(false)
-            },
-            onDismiss = { overlays.showUnlocked = false }
-        )
+    if (overlays.showUnlocked) {
+        val none = unlockedNowApps.isEmpty()
+        // Its list emptied under it (the last app locked from it, its last session run out): closed
+        // for good, not left to come back by itself the next time an app is unlocked. Only once it
+        // has had apps to show: brought back as BioKey's screen is made again (a font size or
+        // language change), its list is empty until the apps and their sessions are read.
+        var hadApps by remember { mutableStateOf(false) }
+        LaunchedEffect(none) {
+            if (!none) hadApps = true else if (hadApps) overlays.showUnlocked = false
+        }
+        if (!none) {
+            UnlockedAppsDialog(
+                apps = unlockedNowApps,
+                timeoutOf = vault::getTimeoutMode,
+                onLock = onLockOne,
+                onLockAll = {
+                    overlays.showUnlocked = false
+                    onLockAll(false)
+                },
+                onDismiss = { overlays.showUnlocked = false }
+            )
+        }
     }
 
     if (overlays.showNewProfile) {

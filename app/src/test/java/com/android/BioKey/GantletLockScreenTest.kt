@@ -255,6 +255,63 @@ class GantletLockScreenTest {
         assertEquals(1, homes())
     }
 
+    /** The lock screen for X, stopped under the phone's PIN screen with its prompt running there. */
+    private fun stoppedUnderThePinScreen(): ActivityController<LockScreenActivity> {
+        val lock = lockScreenFor()
+        // Its prompt came up by itself, as it does once the cover is drawn, and went to the PIN screen.
+        LockScreenActivity::class.java.getDeclaredField("promptAutoLaunched").apply { isAccessible = true }.setBoolean(lock.get(), true)
+        SecurityEngine.INSTANCE.setPromptForTests(x)
+        BioKeyAccessibilityService.setConfirmingDeviceCredentialForTests(true)
+        lock.pause().stop()
+        return lock
+    }
+
+    /** That prompt ends without an unlock (cancelled, or the phone locked under it). */
+    private fun thePromptEnds(lock: ActivityController<LockScreenActivity>) {
+        SecurityEngine.INSTANCE.setPromptForTests(null)
+        BioKeyAccessibilityService.setConfirmingDeviceCredentialForTests(false)
+        LockScreenActivity::class.java.getDeclaredMethod("promptEnded").apply { isAccessible = true }.invoke(lock.get())
+    }
+
+    private fun autoPromptDue(lock: ActivityController<LockScreenActivity>): Boolean =
+        !LockScreenActivity::class.java.getDeclaredField("promptAutoLaunched").apply { isAccessible = true }.getBoolean(lock.get())
+
+    @Test
+    fun backOnThePhonesPinScreenBringsTheLockScreenBackWithItsButtons() {
+        val lock = stoppedUnderThePinScreen()
+        thePromptEnds(lock)
+        // The PIN screen closes onto this one within the moment it's given.
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(200))
+        lock.start().resume()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(1_000))
+        assertFalse(lock.get().isFinishing)
+        assertEquals(0, homes())
+    }
+
+    @Test
+    fun leavingFromThePhonesPinScreenIsLeavingTheLockScreen() {
+        // Home on the PIN screen: its prompt ends, and this screen doesn't come back.
+        val lock = stoppedUnderThePinScreen()
+        thePromptEnds(lock)
+        assertFalse(lock.get().isFinishing)
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(1_000))
+        // Closed, as a lock screen stopped any other way is: the next one asks by itself.
+        assertTrue(lock.get().isFinishing)
+    }
+
+    @Test
+    fun thePhoneLockingOnItsPinScreenLeavesACoverThatAsksAgain() {
+        val lock = stoppedUnderThePinScreen()
+        assertFalse(autoPromptDue(lock))
+        // Power: the phone locks, which ends the prompt on the PIN screen.
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(true)
+        thePromptEnds(lock)
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(1_000))
+        // Kept, behind the keyguard, and due to ask again by itself once the phone is unlocked.
+        assertFalse(lock.get().isFinishing)
+        assertTrue(autoPromptDue(lock))
+    }
+
     @Test
     fun anOrdinaryCoverStoppedByAnotherScreenCloses() {
         val lockScreen = lockScreenFor()

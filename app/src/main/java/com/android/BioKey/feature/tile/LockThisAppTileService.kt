@@ -3,6 +3,8 @@ package com.android.BioKey.feature.tile
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import com.android.BioKey.R
@@ -10,6 +12,8 @@ import com.android.BioKey.core.security.FrontApp
 import com.android.BioKey.feature.lock.ForegroundRules
 import com.android.BioKey.feature.lock.UsageWatchService
 import com.android.BioKey.feature.main.MainActivity
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
 
 /**
  * Quick Settings "Lock this app": locks the app the shade was pulled down over, without opening
@@ -22,14 +26,49 @@ import com.android.BioKey.feature.main.MainActivity
  */
 class LockThisAppTileService : TileService() {
 
+    private companion object {
+        /** Where the app in front is asked for ([appInFront]). */
+        val lookups: Executor = Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-lock-app-tile").apply { isDaemon = true } }
+    }
+
+    private val main = Handler(Looper.getMainLooper())
+    /** The showing of the tile a name is being looked up for: an answer for an earlier one is dropped. */
+    private var shown = 0
+
     override fun onStartListening() {
         super.onStartListening()
+        val showing = ++shown
         render(subtitle = null)
+        // Over the phone's lock screen it names no app: nothing to look up.
+        if (!isLocked) appInFront { app -> if (showing == shown) render(subtitle = null, app = app) }
+    }
+
+    override fun onStopListening() {
+        shown++
+        super.onStopListening()
     }
 
     override fun onClick() {
         super.onClick()
-        val outcome = FrontApp.lock(this, UsageWatchService.appInFrontForTile(this)) { ForegroundRules.isLauncher(this, it, isLocked = { false }) }
+        // A tap is always acted on, whatever the tile is showing by the time the answer comes.
+        appInFront(::lock)
+    }
+
+    /**
+     * The app in front ([UsageWatchService.appInFrontForTile]), then [then] on the main thread.
+     * Asked off it: with compatibility mode reading nothing, that is a look through Android's
+     * usage events, which can take a while.
+     */
+    private fun appInFront(then: (String?) -> Unit) {
+        val app = applicationContext
+        lookups.execute {
+            val pkg = runCatching { UsageWatchService.appInFrontForTile(app) }.getOrNull()
+            main.post { then(pkg) }
+        }
+    }
+
+    private fun lock(app: String?) {
+        val outcome = FrontApp.lock(this, app) { ForegroundRules.isLauncher(this, it, isLocked = { false }) }
         val named = !isLocked
         render(
             subtitle = when (outcome) {
@@ -66,14 +105,15 @@ class LockThisAppTileService : TileService() {
     }
 
     /**
-     * An action, not a switch: it rests inactive. Its subtitle says which app a tap locks (not
-     * over the lock screen), or, after a tap, what happened ([done]: shown as active a moment).
+     * An action, not a switch: it rests inactive. Its subtitle says which app a tap locks ([app],
+     * the one in front; not over the lock screen), or, after a tap, what happened ([done]: shown
+     * as active a moment).
      */
-    private fun render(subtitle: String?, done: Boolean = false) {
+    private fun render(subtitle: String?, done: Boolean = false, app: String? = null) {
         val tile = qsTile ?: return
         tile.label = getString(R.string.lock_app_tile_label)
         tile.state = if (done) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-        tile.subtitle = subtitle ?: UsageWatchService.appInFrontForTile(this)?.takeIf { !isLocked && canLock(it) }?.let { FrontApp.label(this, it) }
+        tile.subtitle = subtitle ?: app?.takeIf { !isLocked && canLock(it) }?.let { FrontApp.label(this, it) }
         tile.updateTile()
     }
 

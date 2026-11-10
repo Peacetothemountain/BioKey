@@ -4,12 +4,14 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.SecurityProfile
 import com.android.BioKey.core.security.FrontApp
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.feature.tile.LockThisAppTileService
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -17,6 +19,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
@@ -50,6 +53,22 @@ class LockThisAppTest {
             shadowOf(context.packageManager).addActivityIfNotPresent(activity)
             shadowOf(context.packageManager).addIntentFilterForActivity(activity, IntentFilter(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) })
         }
+    }
+
+    @Test
+    fun aTapOnTheTileLocksTheAppInFront() {
+        vault.setAutoSortProfilesEnabled(false)
+        FrontApp.setForTests(bank)
+        val tile = Robolectric.buildService(LockThisAppTileService::class.java).create().get()
+        tile.onClick()
+        // The app in front is asked for on a thread of the tile's own, and acted on back on the main one.
+        val until = System.nanoTime() + 5_000_000_000L
+        while (bank !in vault.getLockedPackages()) {
+            check(System.nanoTime() < until) { "The tap never locked the app in front" }
+            Thread.sleep(10)
+            shadowOf(Looper.getMainLooper()).idle()
+        }
+        assertEquals(setOf(bank), vault.getLockedPackages())
     }
 
     @Test

@@ -24,6 +24,22 @@ object TrustedClock {
         } else null
     }
 
+    /** The hooks above as they are outside tests ([restoreHooksForTests]): taken as BioKey starts, so they are said once. */
+    private val realHooks: () -> Unit = run {
+        val wall = wall
+        val elapsed = elapsed
+        val networkTime = networkTime
+        return@run {
+            this.wall = wall
+            this.elapsed = elapsed
+            this.networkTime = networkTime
+        }
+    }
+
+    /** Puts back every hook a test replaced, so none outlives it into the next test class in the JVM. */
+    @VisibleForTesting
+    internal fun restoreHooksForTests() = realHooks()
+
     @Volatile private var anchor: Pair<Long, Long>? = null
     /** The anchor came from the phone's clock: network time is tried again (once a minute) until it's there. */
     @Volatile private var anchoredOnWall = false

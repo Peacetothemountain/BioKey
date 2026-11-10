@@ -23,7 +23,9 @@ It applies to BioKey 1.0 and later, as published on Google Play
   fingerprints added or removed, a face or fingerprint that couldn't be used under "Face or fingerprint only", changes
   made from BioKey opened with the screen lock or within a day of a face or fingerprint change or a reset,
   reminders stopped meanwhile, the diagnostic log opened for sharing from such a session, times
-  the phone had no screen lock, locked apps uninstalled in the last 30 days, and, if you turn them
+  the phone had no screen lock, which of your locked apps Android's own App lock was seen locking
+  too, the signing-certificate fingerprints of the apps you've locked, locked apps uninstalled in
+  the last 30 days, and, if you turn them
   on, failed unlock alerts) stays in its private storage, unless you choose to save a
   backup file or share the log yourself.
 
@@ -52,7 +54,8 @@ called "BioKey App Lock Service". BioKey is not an accessibility tool, and says 
   window, never the notification shade or a notification), to find the app it names, so an app
   you've locked in both BioKey and Android asks you only once. To be sure which app that is,
   BioKey compares that name with the names of the apps on the phone, as it reads them from
-  Android. Nothing read there is kept.
+  Android. The words aren't kept, only which of your locked apps they named (see "Android's own
+  App lock" below).
 - Not in the Google Play version: builds made from BioKey's source code can include
   self-protection (off by default). Turned on, it reads the text of Android's Settings pages about
   BioKey itself (its App info page, its accessibility switch and the
@@ -80,7 +83,10 @@ reserves it for accessibility tools), BioKey uses compatibility mode instead.
   screen (Android's app usage events on this phone). BioKey reads them while the screen is on, to
   cover apps you've locked. While usage access is granted, BioKey's app list also asks Android
   which apps were used in the last 24 hours, to put them first; that's read as the list is shown,
-  held only in memory and never kept. It doesn't keep a usage history.
+  held only in memory and never kept. And while compatibility mode has nothing to watch
+  (protection paused, or no app locked yet), the "Lock this app" tile asks Android which app was
+  opened last (looking back up to 6 hours, never before the phone last started) as it is shown or
+  tapped; that too is held only in memory. It doesn't keep a usage history.
 - **Display over other apps** lets BioKey draw its cover over a locked app as it opens. It reads
   nothing.
 - While compatibility mode runs, Android requires BioKey to show a low-priority notification.
@@ -192,7 +198,8 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   paused; an app's lock switched off; a locked app moved or added into a profile that's off or
   that re-locks later, or taken out of its profile so it's locked less; a profile switched off or
   deleted; a longer re-lock delay, for a
-  profile or the default; the camera let open over the lock screen; and, within a day of a face
+  profile or the default; the camera let open over the lock screen; in builds with
+  self-protection, its switch turned off; and, within a day of a face
   or fingerprint change, "Face or fingerprint only" switched off. Those that concern an app or profile name it. Opening the diagnostic log
   for sharing from such a session is recorded too, though it changes nothing.
   (Restoring a backup, stopping the reminders, and switching off face or fingerprint only, the

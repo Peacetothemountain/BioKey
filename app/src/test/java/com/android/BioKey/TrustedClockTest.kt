@@ -32,7 +32,7 @@ class TrustedClockTest {
     }
 
     @After
-    fun restore() = TestClocks.restoreTrustedClock()
+    fun restore() = TestClocks.restore()
 
     @Test
     fun changingThePhonesDateDoesntMoveIt() {

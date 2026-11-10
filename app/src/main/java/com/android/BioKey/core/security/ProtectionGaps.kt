@@ -65,9 +65,9 @@ object ProtectionGaps {
         /** Notification access taken away while "Hide notification content" was on: no longer recorded (hiding is gone); kept to word old records. */
         SHIELD_ACCESS_REVOKED,
         /**
-         * Protection weakened (paused, an app's lock off, a profile off or deleted, the notification
-         * shield off) from BioKey opened with the screen lock, not a face or
-         * fingerprint, on a phone that has one: maybe someone who knows the PIN. [Gap.detail] says what.
+         * Protection weakened (paused, an app's lock off, a profile off or deleted: every [Change])
+         * from BioKey opened with the screen lock, not a face or fingerprint, on a phone that has
+         * one: maybe someone who knows the PIN. [Gap.detail] says what.
          */
         CHANGED_WITH_SCREEN_LOCK,
         /**
@@ -348,6 +348,36 @@ object ProtectionGaps {
         }
     }
 
+    /** The hooks above as they are outside tests ([restoreHooksForTests]): taken as BioKey starts, so they are said once. */
+    private val realHooks: () -> Unit = run {
+        val clock = clock
+        val elapsed = elapsed
+        val bootCount = bootCount
+        val sdk = sdk
+        val wallNow = wallNow
+        val updatedAt = updatedAt
+        val storageFromBefore = storageFromBefore
+        val exits = exits
+        val startedAfterForceStop = startedAfterForceStop
+        return@run {
+            this.clock = clock
+            this.elapsed = elapsed
+            this.bootCount = bootCount
+            this.sdk = sdk
+            this.wallNow = wallNow
+            this.updatedAt = updatedAt
+            this.storageFromBefore = storageFromBefore
+            this.exits = exits
+            this.startedAfterForceStop = startedAfterForceStop
+            cachedBoot = null
+        }
+    }
+
+    /** Puts back every hook a test replaced, so none outlives it into the next test class in the JVM. */
+    @VisibleForTesting
+    internal fun restoreHooksForTests() = realHooks()
+
+    /** Forgets what was loaded, as a restart of BioKey does (on whatever clocks a test has set). */
     @VisibleForTesting
     internal fun resetForTests() {
         synchronized(lock) {

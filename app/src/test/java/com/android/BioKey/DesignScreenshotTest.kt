@@ -98,8 +98,9 @@ class DesignScreenshotTest {
     fun tearDown() {
         ProtectionEngine.overrideModeForTests = null
         SecurityVault.selfProtectionRemovedForTests = false
+        TestClocks.restore()
         UnlockAttempts.resetForTests()
-        ProtectionGaps.clock = System::currentTimeMillis
+        ProtectionGaps.resetForTests()
     }
 
     private fun icon(label: String, color: Int, size: Int): Bitmap {

@@ -46,6 +46,7 @@ class HomeViewModelTest {
     fun restore() {
         com.android.BioKey.core.security.SecurityEngine.INSTANCE.ownAppOpenedWithBiometric = false
         com.android.BioKey.core.security.SecurityEngine.enrolledForProof = { com.android.BioKey.core.security.SecurityEngine.hasEnrolledStrongBiometric(it) }
+        TestClocks.restore()
         UnlockAttempts.resetForTests()
     }
 
@@ -82,6 +83,11 @@ class HomeViewModelTest {
         vm.openReview { opened++ }
         vm.openReview { opened++ }
         awaitReview()
+        // Were the second tap working its own out, it would land a moment after the first: given that moment.
+        repeat(20) {
+            Thread.sleep(10)
+            idle()
+        }
         assertEquals(1, opened)
         assertNotNull(vm.review.value)
     }

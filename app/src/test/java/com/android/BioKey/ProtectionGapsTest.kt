@@ -61,11 +61,9 @@ class ProtectionGapsTest {
 
     @After
     fun restore() {
-        ProtectionGaps.storageFromBefore = { true }
-        ProtectionGaps.sdk = { android.os.Build.VERSION.SDK_INT }
-        ProtectionGaps.clock = System::currentTimeMillis
-        ProtectionGaps.startedAfterForceStop = { false }
+        TestClocks.restore()
         ProtectionGaps.resetForTests()
+        UnlockAttempts.resetForTests()
     }
 
     private val gaps get() = ProtectionGaps.gaps.value

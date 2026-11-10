@@ -22,19 +22,23 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
 - **Picture-in-picture stays covered over the lock screen** in compatibility mode on Android 15
   and earlier, where hiding other apps' overlays also hid BioKey's own cover.
 - **The phone's PIN screen no longer closes the lock screen** on phones that open it as a screen
-  of its own, where the PIN could not be typed. **"Lock phone"**, after too many misses, keeps the
-  app covered until the phone has locked.
+  of its own, where the PIN could not be typed. **"Lock screen"**, after too many misses, keeps
+  the app covered until the phone has locked.
 - **Too many wrong fingers is not "fingerprints removed":** where Android reports the lockout,
   BioKey no longer records a removal (and a day's hold), nor accepts the screen lock under "Face
   or fingerprint only".
 - **After a change of language,** an app locked with Android's own App lock too still asks once,
-  and "Clear all" in Recents still ends every session.
-- **Settings and home:** the Protection alerts row says when its channel is switched off in
-  Android's settings; a pause sheet, or the "Unlocked now" list, left open no longer comes back by
-  itself; long setting names wrap with large text instead of being cut short.
+  and "Clear all" in Recents still ends every session. An app installed in a work profile is
+  recognised on Android's prompt as well.
+- **"Also locked by Android" is forgotten on the phone too** once an app hasn't been seen locked
+  by Android for 30 days, not only left off the screen.
+- **Settings and home:** the Protection alerts row says when one of BioKey's alert channels is
+  switched off in Android's settings, and opens it; a pause sheet, or the "Unlocked now" list,
+  left open no longer comes back by itself; long setting names wrap with large text instead of
+  being cut short.
 - **New-app offers** can no longer replace one another when several apps are installed at once.
 - **What BioKey says about itself:** the in-app disclosure, the accessibility service's
-  description, the privacy policy (now dated 10 November 2026) and this README list what 1.0.4
+  description, the privacy policy (now dated 10 November 2026) and the README list what 1.0.4
   keeps and reads (times the phone had no screen lock, which locked apps Android's App lock was
   seen locking, signing-certificate fingerprints, the camera-over-lock-screen setting in backups),
   and no longer mention notification access. BioKey no longer asks Android which apps handle the

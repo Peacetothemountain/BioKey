@@ -55,8 +55,9 @@ class UnlockAttemptsTest {
 
     @After
     fun restore() {
-        TestClocks.restoreTrustedClock()
+        TestClocks.restore()
         UnlockAttempts.resetForTests()
+        ProtectionGaps.resetForTests()
     }
 
     private val kept get() = UnlockAttempts.attempts.value
@@ -84,7 +85,7 @@ class UnlockAttemptsTest {
     @Test
     fun offUntilTheOwnerSaysSo() {
         context.getSharedPreferences("biokey_unlock_attempts", Context.MODE_PRIVATE).edit().clear().commit()
-        UnlockAttempts.resetForTests(hooks = false)
+        UnlockAttempts.resetForTests()
         UnlockAttempts.load(context)
         assertFalse(UnlockAttempts.chosen.value)
         Prompt().miss()
@@ -213,7 +214,7 @@ class UnlockAttemptsTest {
         now += 30L * 24 * 60 * 60_000L
         Prompt("com.example.chat").miss()
         assertEquals(2, kept.size)
-        UnlockAttempts.resetForTests(hooks = false)
+        UnlockAttempts.resetForTests()
         UnlockAttempts.load(context)
         assertEquals(2, kept.size)
     }
@@ -260,8 +261,7 @@ class UnlockAttemptsTest {
             UnlockAttempts.markSeen(context)
             assertTrue(UnlockAttempts.seenSeq(context) >= seq)
         } finally {
-            ProtectionGaps.clock = TrustedClock::now
-            ProtectionGaps.elapsed = android.os.SystemClock::elapsedRealtime
+            ProtectionGaps.restoreHooksForTests()
         }
     }
 
@@ -275,8 +275,7 @@ class UnlockAttemptsTest {
     }
 
     private fun restoreGapClocks() {
-        ProtectionGaps.clock = TrustedClock::now
-        ProtectionGaps.elapsed = android.os.SystemClock::elapsedRealtime
+        ProtectionGaps.restoreHooksForTests()
     }
 
     @Test
@@ -401,8 +400,7 @@ class UnlockAttemptsTest {
             UnlockAttempts.markSeen(context)
             assertTrue(UnlockAttempts.seenSeq(context) >= seq)
         } finally {
-            ProtectionGaps.clock = TrustedClock::now
-            ProtectionGaps.elapsed = android.os.SystemClock::elapsedRealtime
+            ProtectionGaps.restoreHooksForTests()
         }
     }
 
@@ -463,7 +461,7 @@ class UnlockAttemptsTest {
     @Test
     fun keptAcrossARestartOfBioKey() {
         Prompt().apply { miss(); miss() }
-        UnlockAttempts.resetForTests(hooks = false)
+        UnlockAttempts.resetForTests()
         UnlockAttempts.load(context)
         assertEquals(2, kept.single().failures)
         assertEquals("Bank", kept.single().label)

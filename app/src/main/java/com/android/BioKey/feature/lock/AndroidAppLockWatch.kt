@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
+import android.os.UserHandle
 import android.os.UserManager
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.annotation.VisibleForTesting
@@ -56,6 +57,8 @@ internal class AndroidAppLockWatch(
         /** At most this many looks at a cover's prompt, and this many of its nodes each time: it has a handful. */
         private const val MAX_PROMPT_READS = 6
         private const val MAX_PROMPT_NODES = 80
+        /** The apps' names are read again this long after the last change to the phone's apps: an update of many is one read. */
+        private const val APPS_SETTLE_MS = 2_000L
     }
 
     /** Android's App lock cover, and which locked app it's for. */
@@ -75,8 +78,38 @@ internal class AndroidAppLockWatch(
     private var promptReads = 0
     private val readPromptLater = Runnable { host.guarded("Android's App lock prompt") { readPrompt() } }
 
-    /** What the names of the apps that can be opened were read for: the phone's apps ([BioKeyApplication.packageChangeVersion]) and its language. */
-    private data class NamesFor(val packages: Int, val locales: String)
+    /**
+     * What the names of the apps that can be opened were read for: the phone's apps (this
+     * profile's, [BioKeyApplication.packageChangeVersion], and every profile's, [appsChanged]) and
+     * its language.
+     */
+    private data class NamesFor(val packages: Int, val changes: Int, val locales: String)
+
+    /**
+     * Counts the changes to the apps the launcher shows, in any of the phone's profiles (a work
+     * app installed is heard of only this way), and reads their names again a moment after the
+     * last of a run of them ([APPS_SETTLE_MS]): ahead of the next prompt, which is passed in less
+     * time than the read can take. Engine's thread.
+     */
+    private var appsChanged = 0
+    private var watchingApps = false
+    private val readNamesSoon = Runnable { warmUp() }
+    private val appsWatch = object : LauncherApps.Callback() {
+        override fun onPackageAdded(packageName: String, user: UserHandle) = changed()
+        override fun onPackageChanged(packageName: String, user: UserHandle) = changed()
+        override fun onPackageRemoved(packageName: String, user: UserHandle) = changed()
+        override fun onPackagesAvailable(packageNames: Array<out String>, user: UserHandle, replacing: Boolean) = changed()
+        override fun onPackagesUnavailable(packageNames: Array<out String>, user: UserHandle, replacing: Boolean) = changed()
+
+        private fun changed() {
+            appsChanged++
+            handler.removeCallbacks(readNamesSoon)
+            handler.postDelayed(readNamesSoon, APPS_SETTLE_MS)
+        }
+    }
+
+    /** The read asked for last ([namesNow]): one queued before it reads nothing. */
+    @Volatile private var namesWanted: NamesFor? = null
 
     /** Every app that can be opened, by name ([namesNow]), and what that was read for. Engine's thread. */
     private var launchableNames: Pair<NamesFor, Map<String, List<String>>>? = null
@@ -100,14 +133,27 @@ internal class AndroidAppLockWatch(
         warmUp()
     }
 
-    /** Reads the apps' names ahead of the first prompt, where the phone has Android's App lock at all. */
+    /**
+     * Reads the apps' names ahead of the first prompt, and from then on whenever the phone's apps
+     * change ([appsWatch]). Only where the phone has Android's App lock at all.
+     */
     fun warmUp() {
-        if (promptWords != null) namesNow()
+        if (promptWords == null) return
+        if (!watchingApps) {
+            val apps = context.getSystemService(LauncherApps::class.java)
+            watchingApps = apps != null && runCatching { apps.registerCallback(appsWatch, handler) }.isSuccess
+        }
+        namesNow()
     }
 
     /** The engine is going: nothing more is read. */
     fun shutdown() {
         clear()
+        handler.removeCallbacks(readNamesSoon)
+        if (watchingApps) {
+            watchingApps = false
+            runCatching { context.getSystemService(LauncherApps::class.java)?.unregisterCallback(appsWatch) }
+        }
         (namesReader as? ExecutorService)?.shutdownNow()
     }
 
@@ -141,6 +187,8 @@ internal class AndroidAppLockWatch(
         if (!wasPending) DiagnosticLog.log(
             state.guessed?.let { "Android's App lock is asking, just after a tap on $it" } ?: "Android's App lock is asking for an app"
         )
+        // Its prompt names an app by name: the names, if they aren't read yet, are from now.
+        if (promptWords != null) namesNow()
         // Its prompt names the app: read as it comes ([readPrompt]), and once more in a moment, in
         // case it came without saying so.
         promptReads = 0
@@ -176,7 +224,8 @@ internal class AndroidAppLockWatch(
      * shade or a heads-up, which could show any words. A name counts only if exactly one app on
      * the phone that can be opened (in any of its profiles) is called that, and BioKey locks it;
      * a prompt naming one app must name exactly one. A prompt naming none of them means the cover
-     * isn't for any of BioKey's. Nothing read is kept.
+     * isn't for any of BioKey's. The words read aren't kept: only which locked app they named
+     * ([AlsoLockedByAndroid], and the diagnostic log).
      */
     fun readPrompt() {
         val now = SystemClock.elapsedRealtime()
@@ -218,14 +267,21 @@ internal class AndroidAppLockWatch(
      * installed in both is two). Android's prompt names an app by its name alone, so only a name
      * one app has says which. Read once per change of the phone's apps or language, on
      * [namesReader]; null until that read is done, which then looks at a waiting prompt again.
+     * (Until then that prompt can't be placed, and passed meanwhile, BioKey asks too: the reason
+     * the names are read as the apps change, [appsWatch], not as a prompt waits.)
      */
     private fun namesNow(): Map<String, List<String>>? {
-        val wanted = NamesFor(BioKeyApplication.packageChangeVersion.value, context.resources.configuration.locales.toLanguageTags())
+        val wanted = NamesFor(
+            BioKeyApplication.packageChangeVersion.value, appsChanged, context.resources.configuration.locales.toLanguageTags()
+        )
         launchableNames?.takeIf { it.first == wanted }?.let { return it.second }
         if (readingNamesFor == wanted) return null
         readingNamesFor = wanted
+        namesWanted = wanted
         runCatching {
             namesReader.execute {
+                // Overtaken while it waited its turn (more apps changed): the read after it is the one.
+                if (namesWanted != wanted) return@execute
                 val read = readLaunchableNames()
                 val done = Runnable {
                     launchableNames = wanted to read
