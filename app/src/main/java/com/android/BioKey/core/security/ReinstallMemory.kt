@@ -164,6 +164,19 @@ object ReinstallMemory {
         return Outcome.LOCKED_AGAIN
     }
 
+    /**
+     * Drops what was remembered longer ago than [KEEP_MS]. Asked at each unlock of the phone:
+     * otherwise an entry stays on the phone until the next app is installed or uninstalled,
+     * which can be long after its 30 days.
+     */
+    @Synchronized
+    fun prune(context: Context) {
+        val app = context.applicationContext
+        val all = readRemembered(app)
+        val kept = fresh(all)
+        if (kept.size != all.size) writeRemembered(app, kept)
+    }
+
     /** A backup was restored: it says what's locked now, apps uninstalled before it included. */
     @Synchronized
     fun forget(context: Context) {

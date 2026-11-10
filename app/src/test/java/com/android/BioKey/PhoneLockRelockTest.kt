@@ -93,6 +93,21 @@ class PhoneLockRelockTest {
     }
 
     @Test
+    fun thePhoneLockedWithTheScreenIsntSeenLockingAgainAsTheScreenComesBack() {
+        LockStateTracker.onScreenTurnedOff(phoneLocked = true)
+        // The first look as the screen wakes on the keyguard: nothing new, so no second end of
+        // every session (which would void a prompt already up over the keyguard, and have the
+        // engines take whatever just opened there for an app left on screen).
+        val generation = LockStateTracker.lockGeneration()
+        LockStateTracker.onDeviceLockState(true)
+        assertEquals(generation, LockStateTracker.lockGeneration())
+        // Unlocked, and locked again with the screen on (Lockdown): that is a lock.
+        LockStateTracker.onDeviceLockState(false)
+        LockStateTracker.onDeviceLockState(true)
+        assertEquals(generation + 1, LockStateTracker.lockGeneration())
+    }
+
+    @Test
     fun aScreensaverStillLocksEverything() {
         LockStateTracker.onAppUnlocked(x)
         LockStateTracker.onScreenTurnedOff()

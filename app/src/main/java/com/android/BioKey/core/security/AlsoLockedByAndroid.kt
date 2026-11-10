@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Locked apps that Android's own App lock (Android 17 QPR3 and later) was seen locking too, for
- * home and Settings to say "Also locked by Android". BioKey can't ask Android which apps it locks
+ * home to say "Also locked by Android". BioKey can't ask Android which apps it locks
  * (that needs LOCK_APPS); the accessibility engine sees its cover come up for an app, and notes it
  * here ([note]). Only apps BioKey locks itself, as the diagnostic log names only those.
  *
@@ -57,7 +57,8 @@ object AlsoLockedByAndroid {
     /**
      * Forgets what has aged past [FORGET_AFTER_MS] since it was last looked at: nothing else does
      * while BioKey's process lives on (an engine keeps it for weeks) and Android's App lock
-     * shows it no prompt. Asked as BioKey's own screen comes up, off the main thread.
+     * shows it no prompt. Asked at each unlock of the phone and as BioKey's own screen comes up,
+     * off the main thread.
      */
     fun refresh(context: Context) {
         load(context)
@@ -106,7 +107,7 @@ object AlsoLockedByAndroid {
         }
     }
 
-    /** Forgets everything (BioKey's storage cleared from inside, tests). */
+    /** Tests: forgets everything. */
     @VisibleForTesting
     internal fun clear(context: Context) {
         synchronized(lock) {

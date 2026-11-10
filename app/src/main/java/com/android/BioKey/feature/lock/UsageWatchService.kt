@@ -352,7 +352,7 @@ class UsageWatchService : Service() {
                 Intent.ACTION_SCREEN_OFF -> {
                     val lockedNow = runCatching { deviceLockedNow() }.getOrNull()
                     // The screen going off from the keyguard: the phone was locked before, and still is.
-                    val fromKeyguard = lockedNow != false && LockStateTracker.phoneSeenLocked
+                    val fromKeyguard = lockedNow != false && lockedAtLastLook
                     // Whatever order the broadcast reaches BioKey's receivers in: sessions end now,
                     // or, with the phone not locked yet, wait for it.
                     LockStateTracker.onScreenTurnedOff(phoneLocked = lockedNow)
@@ -389,12 +389,14 @@ class UsageWatchService : Service() {
                     // again unseen, maybe) ends them; the first look then covers the app behind the keyguard.
                     if (intent.action == Intent.ACTION_SCREEN_ON) {
                         val locked = runCatching { deviceLockedNow() }.getOrDefault(true)
+                        lockedAtLastLook = locked
                         LockStateTracker.onScreenOn(locked)
                         // Back within Android's lock delay: the apps are in use again, and what a
                         // later lock finds on screen is what's there then, not what was at screen-off.
                         // (Locked, the cover that follows still goes by it: [onLockAll].)
                         if (!locked) forgetScreenOff()
                     } else {
+                        lockedAtLastLook = false
                         LockStateTracker.onUserPresent()
                         forgetScreenOff()
                         // A lock screen waiting behind the keyguard prompts now, for what it hid then.
@@ -434,6 +436,11 @@ class UsageWatchService : Service() {
                 }
                 Intent.ACTION_DREAMING_STOPPED -> {
                     dreaming = false
+                    // The lock screen that waited under it asks now, for what it hid then, as one
+                    // behind the keyguard does when the phone is unlocked.
+                    if (lockedAtLock.isNotEmpty() && LockScreenActivity.activeLockedTarget in lockedAtLock) {
+                        lockedAtLockAt = SystemClock.elapsedRealtime()
+                    }
                     wake()
                 }
                 // Usage events carry wall-clock times: after the clock is set, read afresh from
@@ -464,7 +471,14 @@ class UsageWatchService : Service() {
             if (keyguardLocked()) {
                 // The phone locked with the screen on: the app on screen gets its lock screen
                 // behind the keyguard, so the keyguard going (a foldable unfolded) never shows it.
-                if (isInteractive()) appInFront()?.let { coverBehindKeyguard(it, "on screen as the phone locked") }
+                // Not one over the keyguard: the camera let through there, or an app whose lock
+                // screen is already up over it or on its way (an alarm ringing, say), which this
+                // would send behind the keyguard instead.
+                if (isInteractive()) {
+                    appInFront()?.takeUnless {
+                        it == keyguardLetThrough || LockStateTracker.isRegularLockPending(it) || LockScreenActivity.activeLockedTarget == it
+                    }?.let { coverBehindKeyguard(it, "on screen as the phone locked") }
+                }
                 return@post
             }
             foreground?.let { fg ->
@@ -576,7 +590,7 @@ class UsageWatchService : Service() {
             if (again && runCatching { start(applicationContext) }.isSuccess) {
                 // This one's end mustn't take back the start now on its way ([onDestroy]).
                 startingAgain = true
-                DiagnosticLog.log("Compatibility engine was refused in the background: starting again under an overlay")
+                DiagnosticLog.log("Compatibility engine was refused its place in the foreground: started again")
                 return
             }
             DiagnosticLog.log("Compatibility engine couldn't start in the background")
@@ -839,8 +853,17 @@ class UsageWatchService : Service() {
         Log.d(TAG, "An activity event was first read $late ms after it happened (the latest so far)")
     }
 
+    /**
+     * Whether the phone was locked at this engine's last look with the screen on (a poll, the
+     * screen coming on, the phone being unlocked): a lock that comes with the screen going off
+     * isn't in it until the screen is back. Tells a screen going off from the keyguard from one
+     * that locks the phone, whichever of BioKey's receivers the screen-off reaches first.
+     */
+    private var lockedAtLastLook = false
+
     private fun applyBatch(batch: Batch) {
         if (batch.epoch != epoch || !isRunning || permissionLost) return
+        lockedAtLastLook = batch.deviceLocked
         LockStateTracker.onDeviceLockState(batch.deviceLocked)
         batch.missing?.let {
             onPermissionLost(it)

@@ -560,6 +560,10 @@ object LockStateTracker {
     fun onScreenTurnedOff(phoneLocked: Boolean? = null) {
         if (phoneLocked != false) {
             lockAll(reason = "screen off")
+            // Seen locked: the next look at it, as the screen comes back, isn't the phone locking
+            // again (which would end every session a second time, and cover whatever has just
+            // come over the keyguard as if it had been left on screen).
+            if (phoneLocked == true) deviceLocked = true
             return
         }
         if (!awaitingPhoneLock) {
@@ -575,9 +579,6 @@ object LockStateTracker {
     }
 
     @Volatile private var deviceLocked = false
-
-    /** The phone was locked when an engine last looked ([onDeviceLockState]). */
-    val phoneSeenLocked: Boolean get() = deviceLocked
 
     /**
      * The device's locked state, as last seen. Locking the device (screen off, screensaver, the

@@ -11,6 +11,7 @@ import com.android.BioKey.core.security.UnlockAttempts.Ending
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -404,13 +405,42 @@ class UnlockAttemptsTest {
         }
     }
 
+    /** The owner switches [channel] off, or back on, in Android's settings. */
+    private fun switchChannel(channel: String, on: Boolean) {
+        val nm = context.getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(
+            nm.getNotificationChannel(channel).apply { importance = if (on) NotificationManager.IMPORTANCE_HIGH else NotificationManager.IMPORTANCE_NONE }
+        )
+    }
+
     @Test
     fun aMutedChannelTellsNothingAndCountsNothingAsTold() {
         UnlockAttempts.ensureChannel(context)
-        val nm = context.getSystemService(NotificationManager::class.java)
-        nm.getNotificationChannel(UnlockAttempts.CHANNEL_ID).importance.let { }
-        nm.createNotificationChannel(nm.getNotificationChannel(UnlockAttempts.CHANNEL_ID).apply { importance = NotificationManager.IMPORTANCE_NONE })
+        assertFalse(UnlockAttempts.channelMuted(context))
+        switchChannel(UnlockAttempts.CHANNEL_ID, on = false)
         assertTrue(UnlockAttempts.channelMuted(context))
+        assertEquals(UnlockAttempts.CHANNEL_ID, UnlockAttempts.mutedChannel(context))
+        Prompt().miss()
+        pass(UnlockAttempts.OWNER_RETRY_MS + 1_000L)
+        told()
+        assertTrue("nothing is posted on a channel switched off", notifications.allNotifications.isEmpty())
+        // Switched back on: the miss wasn't counted as told, so it is told now, as new.
+        switchChannel(UnlockAttempts.CHANNEL_ID, on = true)
+        assertNull(UnlockAttempts.mutedChannel(context))
+        told()
+        assertEquals(1, notifications.allNotifications.size)
+    }
+
+    @Test
+    fun theProtectionAlertsChannelSwitchedOffIsSaidToo() {
+        // Home's card and the Settings row go by either channel: the alert that app locking
+        // stopped comes on this one.
+        UnlockAttempts.ensureChannel(context)
+        com.android.BioKey.core.security.ProtectionAlerts.ensureChannels(context)
+        assertNull(UnlockAttempts.mutedChannel(context))
+        switchChannel(com.android.BioKey.core.security.ProtectionAlerts.CHANNEL_ID, on = false)
+        assertTrue(UnlockAttempts.channelMuted(context))
+        assertEquals(com.android.BioKey.core.security.ProtectionAlerts.CHANNEL_ID, UnlockAttempts.mutedChannel(context))
     }
 
     @Test

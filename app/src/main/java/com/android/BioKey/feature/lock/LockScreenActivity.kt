@@ -64,8 +64,6 @@ class LockScreenActivity : ComponentActivity() {
         const val EXTRA_BEHIND_KEYGUARD = "extra_behind_keyguard"
         /** How long a cover in a window waits to be given the whole display before failing closed. */
         private const val FULLSCREEN_WAIT_MS = 1_500L
-        /** How long this screen has to come back once its prompt ended on the phone's PIN screen ([deferredStop]). */
-        private const val PIN_SCREEN_RETURN_MS = 500L
         /** The longest the shield waits for this screen to come in ([onCoverShown]), and over the keyguard. */
         private const val ENTRY_WAIT_MS = 600L
         private const val KEYGUARD_ENTRY_WAIT_MS = 1_000L
@@ -95,11 +93,6 @@ class LockScreenActivity : ComponentActivity() {
             2 -> res.getString(R.string.prompt_apps_two, names[0], names[1])
             3 -> res.getString(R.string.prompt_apps_three, names[0], names[1], names[2])
             else -> res.getQuantityString(R.plurals.prompt_apps_more, names.size - 3, names[0], names[1], names[2], names.size - 3)
-        }
-
-        /** The accessibility engine saw the phone's PIN screen, which a prompt had handed over to, go ([stopIfNotBackSoon]). Main thread. */
-        fun onPinScreenGone() {
-            current?.get()?.stopIfNotBackSoon()
         }
 
         /** The other locked apps on screen with [pkg], as the engine running sees them: see [BioKeyAccessibilityService.lockedAppsOnScreenWith]. */
@@ -208,7 +201,6 @@ class LockScreenActivity : ComponentActivity() {
     private var shownAt = 0L
 
     private val isCurrent get() = current?.get() === this
-    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (WindowProtection.isMotionEventObscured(ev)) return true
@@ -457,54 +449,8 @@ class LockScreenActivity : ComponentActivity() {
         // anywhere else (an app the engine can't see among them) the session ends with it.
         if (isCurrent) LockStateTracker.endOwnLockScreenHop(shownAt)
         if (isFinishing) return
-        // Its prompt, still running, handed over to the phone's PIN screen, which some phones open
-        // as an activity over this one: the prompt goes on there and answers here, so this screen
-        // and it stay, as BioKey's own do (MainActivity.onStop). The engine doesn't count that
-        // screen as leaving the app either. What a stop does waits for that prompt to end.
-        if (engine.isAuthenticatingFor(lockedPackage) && BioKeyAccessibilityService.isConfirmingDeviceCredential) {
-            stopDeferred = true
-            return
-        }
-        stopped()
-    }
-
-    /**
-     * Stopped under the phone's PIN screen with the prompt still running on it ([onStop]). Once
-     * that prompt has ended ([promptEnded]) and this screen isn't back a moment later, it wasn't
-     * Back on the PIN screen (which brings this one straight back, with its buttons) but the owner
-     * leaving, or the phone locking: the stop it would have been then, so the next showing asks
-     * again by itself.
-     */
-    private var stopDeferred = false
-    private val deferredStop = Runnable {
-        if (stopDeferred && !isFinishing && !isDestroyed) {
-            stopDeferred = false
-            stopped()
-        }
-    }
-
-    override fun onStart() {
-        super.onStart()
-        // Back from under the PIN screen: nothing was left undone.
-        stopDeferred = false
-        mainHandler.removeCallbacks(deferredStop)
-    }
-
-    /** This screen's prompt ended without an unlock (an error, a cancel). */
-    private fun promptEnded() = stopIfNotBackSoon()
-
-    /**
-     * The engine saw the phone's PIN screen go, with something else in front or the screen off
-     * ([onPinScreenGone]): the same, should the prompt left running there never say it ended.
-     */
-    private fun stopIfNotBackSoon() {
-        if (!stopDeferred) return
-        mainHandler.removeCallbacks(deferredStop)
-        mainHandler.postDelayed(deferredStop, PIN_SCREEN_RETURN_MS)
-    }
-
-    /** What being stopped, not finishing, does: the cover stays behind the keyguard, or closes under whatever came over it. */
-    private fun stopped() {
+        // (The prompt's own PIN, pattern or password entry doesn't stop this screen: since
+        // Android 11 it is part of the prompt's window, not a screen of its own over this one.)
         engine.resetAuthenticatingStateFor(this)
         // The screen went off, or the keyguard came up over the cover (Lockdown with the screen
         // on): keep the cover, behind the keyguard, so nothing of the app shows once the phone is
@@ -533,7 +479,6 @@ class LockScreenActivity : ComponentActivity() {
 
     override fun onDestroy() {
         LockStateTracker.removeLockAllListener(onLockAll)
-        mainHandler.removeCallbacks(deferredStop)
         if (::cover.isInitialized) cover.removeCallbacks(fullscreenTimeout)
         if (InstantShieldOverlay.onCoverChanged === syncOverlayHiding) InstantShieldOverlay.onCoverChanged = null
         if (isCurrent) {
@@ -733,7 +678,6 @@ class LockScreenActivity : ComponentActivity() {
                 cover.setActionsVisible(true)
                 // A cover held over this screen hides it: it says the same.
                 InstantShieldOverlay.onPrompt(pkg, showing = false, message = text, permanentLockout = isPermanentLockout)
-                promptEnded()
             }
         )
     }
@@ -769,7 +713,7 @@ class LockScreenActivity : ComponentActivity() {
     }
 
     /**
-     * "Lock phone", after too many misses. Android locks the phone a moment after it's asked, so
+     * "Lock screen", after too many misses. Android locks the phone a moment after it's asked, so
      * the cover stays up meanwhile (closed now, the app would show until the keyguard draws), and
      * is then a cover behind the keyguard like any other ([onStop]): the lockout is forgotten and
      * it asks again once the phone is unlocked. Where the phone can't be locked from here

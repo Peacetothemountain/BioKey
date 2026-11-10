@@ -8,9 +8,11 @@ import android.content.IntentFilter
 import androidx.core.content.ContextCompat
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.diagnostics.EngineTrace
+import com.android.BioKey.core.security.AlsoLockedByAndroid
 import com.android.BioKey.core.security.BiometricEnrollment
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionAlerts
+import com.android.BioKey.core.security.ReinstallMemory
 import com.android.BioKey.core.security.UnlockAttempts
 
 /**
@@ -68,7 +70,10 @@ class ScreenReceiver private constructor() : BroadcastReceiver() {
                         listOf(
                             { UnlockAttempts.onUserPresent(app) },
                             { ProtectionAlerts.remindIfOff(app) },
-                            { BiometricEnrollment.checkSoon(app) }
+                            { BiometricEnrollment.checkSoon(app) },
+                            // What is kept 30 days goes from the phone then, not whenever it's next read.
+                            { AlsoLockedByAndroid.refresh(app) },
+                            { ReinstallMemory.prune(app) }
                         ).forEach { step ->
                             runCatching(step).onFailure { DiagnosticLog.log("Unlock check failed: ${it.javaClass.simpleName}") }
                         }

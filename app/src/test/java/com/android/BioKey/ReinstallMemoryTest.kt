@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import androidx.test.core.app.ApplicationProvider
+import com.android.BioKey.core.security.AlsoLockedByAndroid
 import com.android.BioKey.core.security.NewAppSuggestions
 import com.android.BioKey.core.security.ReinstallMemory
 import com.android.BioKey.core.security.SecurityVault
@@ -112,6 +113,48 @@ class ReinstallMemoryTest {
         installed[bank] = setOf("aa11")
         assertEquals(ReinstallMemory.Outcome.NOTHING, ReinstallMemory.onInstalled(context, bank))
         assertFalse(bank in vault.selectedAppsFlow.value)
+    }
+
+    @Test
+    fun afterThirtyDaysItIsGoneFromThePhoneAtTheNextUnlock() {
+        lockThenUninstall()
+        val kept = { context.getSharedPreferences("biokey_reinstall", Context.MODE_PRIVATE).getString("remembered", null).orEmpty() }
+        assertTrue(kept(), bank in kept())
+        // Within the month an unlock of the phone changes nothing.
+        now += ReinstallMemory.KEEP_MS - 1
+        ReinstallMemory.prune(context)
+        assertTrue(kept(), bank in kept())
+        // After it, no app need be installed or uninstalled for it to go: the next unlock does it.
+        now += 2
+        ReinstallMemory.prune(context)
+        assertFalse(kept(), bank in kept())
+    }
+
+    @Test
+    fun whatIsKeptThirtyDaysIsAgedEachTimeThePhoneIsUnlocked() {
+        // The phone being unlocked is heard of by BioKey's own receiver, which ages both lists
+        // on a thread of its own.
+        lockThenUninstall()
+        val start = System.currentTimeMillis()
+        val seen = context.getSharedPreferences("biokey_android_app_lock", Context.MODE_PRIVATE)
+        try {
+            AlsoLockedByAndroid.clear(context)
+            AlsoLockedByAndroid.clock = { start }
+            AlsoLockedByAndroid.note(context, bank)
+            now += ReinstallMemory.KEEP_MS + 1
+            AlsoLockedByAndroid.clock = { start + AlsoLockedByAndroid.FORGET_AFTER_MS + 1 }
+            context.sendBroadcast(Intent(Intent.ACTION_USER_PRESENT))
+            val until = System.nanoTime() + 5_000_000_000L
+            val remembered = { context.getSharedPreferences("biokey_reinstall", Context.MODE_PRIVATE).getString("remembered", null).orEmpty() }
+            while (bank in remembered() || seen.all.isNotEmpty()) {
+                check(System.nanoTime() < until) { "Nothing was aged at the unlock: ${remembered()} ${seen.all}" }
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+                Thread.sleep(10)
+            }
+        } finally {
+            AlsoLockedByAndroid.clock = System::currentTimeMillis
+            AlsoLockedByAndroid.clear(context)
+        }
     }
 
     @Test

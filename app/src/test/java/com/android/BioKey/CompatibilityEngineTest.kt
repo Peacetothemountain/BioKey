@@ -798,6 +798,88 @@ class CompatibilityEngineTest {
     }
 
     @Test
+    fun anAppThatClosedOverTheKeyguardIsntCoveredAsTheScreenGoesOff() {
+        // The phone has been locked a while. The bank (not the camera) comes up over the keyguard
+        // and is covered there; its lock screen is cancelled and it closes: back to the keyguard,
+        // where nothing comes forward, so the bank is still the last app heard of in front.
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setIsDeviceLocked(true)
+        val power = shadowOf(context.getSystemService(PowerManager::class.java))
+        power.setIsInteractive(true)
+        repeat(4) { step() }
+        assertEquals(1, bankComesForwardOnTheKeyguard { }.size)
+        lockScreenUp(null)
+        event(ACTIVITY_PAUSED, bank)
+        event(ACTIVITY_STOPPED, bank)
+        repeat(3) { step() }
+        started()
+        val before = covered(bank).size
+        power.setIsInteractive(false)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        repeat(3) { step() }
+        // The screen went off from the keyguard: nothing was left on it to cover.
+        assertEquals(before, covered(bank).size)
+        assertTrue(started().none { it.component?.className == lockScreen })
+    }
+
+    @Test
+    fun lockAllOverTheKeyguardLeavesTheLockScreenCameraAlone() {
+        val secure = "$bank.SecureCameraActivity"
+        bankIsTheLockScreenCamera(secure)
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).apply {
+            setKeyguardLocked(true)
+            setIsDeviceLocked(true)
+        }
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        repeat(4) { step() }
+        event(ACTIVITY_RESUMED, bank, secure)
+        repeat(8) { step(150) }
+        started()
+        // "Lock all" from the tile, with the camera open over the lock screen.
+        LockStateTracker.lockAll(reason = "test")
+        repeat(4) { step() }
+        assertEquals(emptyList<String>(), covered(bank))
+        assertTrue(started().none { it.component?.className == lockScreen })
+    }
+
+    @Test
+    fun lockAllOverTheKeyguardDoesntSendALockScreenAlreadyThereBehindIt() {
+        // The bank over the keyguard (an alarm ringing, say) has its lock screen over it too.
+        val over = bankComesForwardOnTheKeyguard { }
+        assertTrue(over.none { it.getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false) })
+        lockScreenOpensOver(bank, bank)
+        started()
+        LockStateTracker.lockAll(reason = "test")
+        repeat(4) { step() }
+        assertTrue(started().none { it.getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false) })
+    }
+
+    @Test
+    fun aSplitUnderALongScreensaverIsStillAskedForInOnePrompt() {
+        vault.setAppLock(chat, true)
+        LockStateTracker.onAppUnlocked(bank)
+        LockStateTracker.onAppUnlocked(chat)
+        event(ACTIVITY_RESUMED, bank)
+        event(ACTIVITY_RESUMED, chat)
+        step()
+        started()
+        context.sendBroadcast(Intent(Intent.ACTION_DREAMING_STARTED))
+        step()
+        val behind = started().filter { it.component?.className == lockScreen && it.getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false) }
+        val target = behind.single().getStringExtra(LockScreenActivity.EXTRA_LOCKED_PACKAGE)!!
+        val other = if (target == bank) chat else bank
+        for (pkg in listOf(bank, chat)) {
+            event(ACTIVITY_PAUSED, pkg)
+            event(ACTIVITY_STOPPED, pkg)
+        }
+        lockScreenFor(target)
+        // It runs for minutes, with no keyguard at its end (Android's lock delay is longer).
+        step(5 * 60_000L)
+        context.sendBroadcast(Intent(Intent.ACTION_DREAMING_STOPPED))
+        step()
+        assertEquals(listOf(other), UsageWatchService.lockedAppsOnScreenWith(target))
+    }
+
+    @Test
     fun aLockScreenCameraClosedSinceIsntCoveredAsThePhoneIsUnlocked() {
         theLockScreenCameraOpensAndClosesOverTheKeyguard("$bank.SecureCameraActivity")
         shadowOf(context.getSystemService(KeyguardManager::class.java)).apply {

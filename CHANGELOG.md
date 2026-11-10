@@ -21,9 +21,7 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
   1-pixel overlay, as a start from the background already did, before alerting you.
 - **Picture-in-picture stays covered over the lock screen** in compatibility mode on Android 15
   and earlier, where hiding other apps' overlays also hid BioKey's own cover.
-- **The phone's PIN screen no longer closes the lock screen** on phones that open it as a screen
-  of its own, where the PIN could not be typed. **"Lock screen"**, after too many misses, keeps
-  the app covered until the phone has locked.
+- **"Lock screen"**, after too many misses, keeps the app covered until the phone has locked.
 - **Too many wrong fingers is not "fingerprints removed":** where Android reports the lockout,
   BioKey no longer records a removal (and a day's hold), nor accepts the screen lock under "Face
   or fingerprint only".

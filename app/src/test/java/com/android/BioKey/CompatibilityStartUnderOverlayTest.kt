@@ -25,6 +25,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
@@ -94,6 +95,52 @@ class CompatibilityStartUnderOverlayTest {
     @After
     fun forgetStartRequest() {
         UsageWatchService::class.java.getDeclaredField("startPending").apply { isAccessible = true }.setBoolean(null, false)
+        // Nor a refusal: the next test's first start is its first.
+        UsageWatchService::class.java.getDeclaredField("refusedOnce").apply { isAccessible = true }.setBoolean(null, false)
+    }
+
+    /** Android restarts the service (after a crash, say) and refuses it its place in the foreground. */
+    private fun restartedAndRefused(): org.robolectric.android.controller.ServiceController<UsageWatchService> {
+        val restarted = Robolectric.buildService(UsageWatchService::class.java)
+        shadowOf(restarted.get()).setThrowInStartForeground(ForegroundServiceStartNotAllowedException("startForeground() not allowed"))
+        return restarted.create()
+    }
+
+    @Test
+    fun aRestartRefusedTheForegroundIsStartedOnceMore() {
+        val refused = restartedAndRefused()
+        // Asked for again, and that start isn't taken back as the refused one goes.
+        assertEquals(ComponentName(app, UsageWatchService::class.java), startedService()?.component)
+        assertTrue(shadowOf(refused.get()).isStoppedBySelf)
+        refused.destroy()
+        assertTrue(UsageWatchService.startPending)
+        assertFalse(UsageWatchService.isRunning)
+        // It comes up this time: a later refusal is a first one again.
+        Robolectric.buildService(UsageWatchService::class.java).create().destroy()
+        assertFalse(UsageWatchService.startPending)
+        restartedAndRefused().destroy()
+        assertEquals(ComponentName(app, UsageWatchService::class.java), startedService()?.component)
+    }
+
+    @Test
+    fun refusedAgainItSaysSoRatherThanTryForEver() {
+        restartedAndRefused().destroy()
+        assertEquals(ComponentName(app, UsageWatchService::class.java), startedService()?.component)
+        restartedAndRefused().destroy()
+        assertNull("no third start", startedService())
+        assertFalse(UsageWatchService.startPending)
+        advance(60_000)
+        assertTrue(alerts().toString(), alerts().isNotEmpty())
+    }
+
+    @Test
+    @Config(sdk = [34])
+    fun beforeAndroid15ARefusalIsFinal() {
+        // There an app that may draw over others may start in the background: a refusal is something else.
+        restartedAndRefused().destroy()
+        assertNull(startedService())
+        advance(60_000)
+        assertTrue(alerts().toString(), alerts().isNotEmpty())
     }
 
     private fun overlays(): List<View> = Shadow.extract<ShadowWindowManagerImpl>(app.getSystemService(WindowManager::class.java)).views

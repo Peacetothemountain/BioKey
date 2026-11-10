@@ -15,6 +15,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.lock.ForegroundRules
@@ -122,6 +123,40 @@ class OnePromptTest {
         LockScreenActivity.setStateForTests(pkg)
         onScreen(window(4, null, whole, active = true))
         idle()
+    }
+
+    @Test
+    fun thePhonesPinScreenForARunningPromptIsKnownUntilAnotherAppComesForward() {
+        // Where a prompt's PIN entry opens as a screen of Settings' own, the engine knows it for
+        // what it is (BioKey's own screen doesn't count it as being left, nor does self-protection
+        // take it for a Settings page to guard), until something else comes to the front.
+        fun window(pkg: String, cls: String) = engine.get().onAccessibilityEvent(
+            AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply {
+                packageName = pkg
+                className = cls
+            }
+        )
+        val pinScreen = "com.android.settings.password.ConfirmDeviceCredentialActivity"
+        // No prompt running: a screen of that name is just Settings.
+        window("com.android.settings", pinScreen)
+        assertFalse(BioKeyAccessibilityService.isConfirmingDeviceCredential)
+        SecurityEngine.INSTANCE.setPromptForTests(x)
+        try {
+            window("com.android.settings", pinScreen)
+            assertTrue(BioKeyAccessibilityService.isConfirmingDeviceCredential)
+            // Another app in front: it has gone.
+            val launcher = "com.google.android.apps.nexuslauncher"
+            onScreen(window(1, launcher, whole, active = true))
+            window(launcher, "$launcher.NexusLauncherActivity")
+            assertFalse(BioKeyAccessibilityService.isConfirmingDeviceCredential)
+            // And it never outlives the prompt it was for.
+            window("com.android.settings", pinScreen)
+            assertTrue(BioKeyAccessibilityService.isConfirmingDeviceCredential)
+            SecurityEngine.INSTANCE.setPromptForTests(null)
+            assertFalse(BioKeyAccessibilityService.isConfirmingDeviceCredential)
+        } finally {
+            SecurityEngine.INSTANCE.setPromptForTests(null)
+        }
     }
 
     @Test

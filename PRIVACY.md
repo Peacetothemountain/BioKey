@@ -110,9 +110,11 @@ face or fingerprint was set up when it last looked.
 
 BioKey can see the names and icons of apps you can launch, so you can choose which to lock. It
 can also see which home screens, keyboards, photo and file pickers, galleries and cameras are
-installed, whether Google Play services and Credential Manager are installed, and the Settings
+installed, which apps answer the lock screen's camera and emergency-call shortcuts, whether
+Google Play services and Credential Manager are installed, and the Settings
 app's own labels. This is used only on the phone: to tell going Home (which ends a locked app's
-session) apart from a short trip to a keyboard, a picker or the camera (which doesn't), to
+session) apart from a short trip to a keyboard, a picker or the camera (which doesn't), to let
+the lock screen's camera and emergency dialer open over the lock screen, to
 recognise Google Password Manager, to open Settings pages in the Settings app itself, and, for
 self-protection (not in the Google Play version), to recognise BioKey's own Settings pages. When
 you install an app that nothing locked, BioKey can offer to lock it (a notification naming it;
@@ -137,7 +139,10 @@ list of installed packages (`QUERY_ALL_PACKAGES`).
 - **Advanced Protection status** (`QUERY_ADVANCED_PROTECTION_MODE`): so BioKey knows to switch to
   compatibility mode.
 - **Hide other apps' overlays** (`HIDE_OVERLAY_WINDOWS`): while BioKey's own screens are showing,
-  so another app can't draw over them.
+  so another app can't draw over them. One exception: in compatibility mode, while BioKey's cover
+  has to stay up over a lock screen (a locked app in picture-in-picture floats above it), that
+  lock screen doesn't hide overlays, because Android would hide BioKey's own cover with them.
+  Touches through anything drawn over it are still rejected.
 - **Foreground service** (`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`): lets
   compatibility mode keep running while the screen is on.
 

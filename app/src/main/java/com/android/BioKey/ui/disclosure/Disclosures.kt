@@ -104,7 +104,7 @@ enum class Disclosure(
     COMPATIBILITY(
         Icons.Default.AppSettingsAlt,
         R.string.disclosure_compatibility_title,
-        reads = listOf(R.string.disclosure_compatibility_reads),
+        reads = listOf(R.string.disclosure_compatibility_reads, R.string.disclosure_compatibility_reads_recent),
         usedFor = listOf(
             R.string.disclosure_compatibility_used_covering,
             R.string.disclosure_compatibility_used_drawing
