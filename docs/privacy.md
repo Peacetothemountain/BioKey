@@ -71,6 +71,7 @@ description: BioKey collects no data and has no internet access. What it can see
 <li><a href="#your-settings">Your settings</a></li>
 <li><a href="#unlock-sessions">Unlock sessions</a></li>
 <li><a href="#uninstalled-apps">Locked apps that were uninstalled</a></li>
+<li><a href="#what-locking-does">"What locking does"</a></li>
 <li><a href="#androids-app-lock">Android’s own App lock</a></li>
 <li><a href="#failed-unlock-alerts">Failed unlock alerts</a></li>
 <li><a href="#times-off-and-changes">Times app locking was off, and other changes</a></li>
@@ -157,7 +158,9 @@ Which apps are unlocked right now lives only in memory, and ends whenever the ph
 
 For each app you’ve locked, the SHA-256 of its signing certificate. When one is uninstalled with its data, its package name, that certificate fingerprint, its profile and the time are kept for 30 days, so that installing the same app again locks it again (or, if someone else signed it, offers to). Not in backups; forgotten when a backup is restored.
 
-**"What locking does":** which apps you’ve been told about when locking them (their package names, at most 300) and whether you chose "Don’t show again", kept until BioKey’s storage is cleared, so the same app isn’t explained twice.
+<h3 id="what-locking-does">"What locking does"</h3>
+
+Which apps you’ve been told about when locking them (their package names, at most 300) and whether you chose "Don’t show again", kept until BioKey’s storage is cleared, so the same app isn’t explained twice.
 
 <h3 id="androids-app-lock">Android’s own App lock</h3>
 

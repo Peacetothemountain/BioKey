@@ -13,6 +13,9 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
   the phone was unlocked again, so it could show for a moment. Its lock screen now waits behind
   the keyguard, as it already did with the accessibility engine. A split screen under a
   screensaver is asked for in one prompt.
+- **Compatibility mode coming back while the phone is locked** (starting, or a pause ending)
+  covers a locked app that is showing over the lock screen (navigation, a call); it was left
+  uncovered until it was next opened.
 - **"Lock this app" works while protection is paused, or before any app is locked**, in
   compatibility mode: the tile asks Android which app is in front, rather than saying there is
   nothing to lock.
