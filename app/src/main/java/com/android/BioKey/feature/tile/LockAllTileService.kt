@@ -52,6 +52,7 @@ class LockAllTileService : TileService() {
         // nothing protecting opens BioKey to fix it).
         tile.state = Tile.STATE_INACTIVE
         tile.subtitle = subtitle ?: when {
+            isLocked -> null
             !protecting -> getString(R.string.lock_all_tile_not_protecting)
             !vault.isProtectionActive() -> getString(R.string.lock_all_tile_paused)
             else -> null

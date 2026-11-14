@@ -236,6 +236,11 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         applyPalette()
     }
 
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (WindowProtection.isMotionEventObscured(ev)) return true
+        return super.dispatchTouchEvent(ev)
+    }
+
     /** Every touch on the cover ends here, tap listener or not: none may reach the app below. */
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {

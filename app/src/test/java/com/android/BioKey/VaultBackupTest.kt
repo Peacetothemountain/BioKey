@@ -176,7 +176,19 @@ class VaultBackupTest {
     fun aRoundCountBioKeyWouldNeverUseIsRefused() {
         val file = VaultBackup.seal(freshVault().exportState(), password)
         assertThrows(VaultBackup.NotABackupException::class.java) { VaultBackup.open(file.withRounds(1), password) }
+        assertThrows(VaultBackup.NotABackupException::class.java) { VaultBackup.open(file.withRounds(1_200_001), password) }
         assertThrows(VaultBackup.NotABackupException::class.java) { VaultBackup.open(file.withRounds(Int.MAX_VALUE), password) }
+    }
+
+    @Test
+    fun oversizedFilesAndPasswordsAreRefusedBeforeKeyDerivation() {
+        val file = VaultBackup.seal(freshVault().exportState(), password)
+        assertThrows(VaultBackup.NotABackupException::class.java) {
+            VaultBackup.open(ByteArray(VaultBackup.MAX_BACKUP_BYTES + 1), password)
+        }
+        val hugePassword = CharArray(VaultBackup.MAX_PASSWORD_LENGTH + 1) { 'a' }
+        assertThrows(IllegalArgumentException::class.java) { VaultBackup.seal(freshVault().exportState(), hugePassword) }
+        assertThrows(VaultBackup.WrongPasswordException::class.java) { VaultBackup.open(file, hugePassword) }
     }
 
     @Test

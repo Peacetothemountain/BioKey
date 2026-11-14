@@ -10,6 +10,7 @@ import com.android.BioKey.BuildConfig
 import com.android.BioKey.R
 import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.data.AppClassifier
+import com.android.BioKey.core.data.AppText
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.data.SecurityProfile
@@ -77,7 +78,7 @@ class SecurityVault private constructor(private val context: Context) {
          */
         val selfProtectionAvailable: Boolean
             // A constant in release builds, so R8 drops what only self-protection uses.
-            get() = BuildConfig.SELF_PROTECTION && !selfProtectionRemovedForTests
+            get() = BuildConfig.SELF_PROTECTION && !(BuildConfig.DEBUG && selfProtectionRemovedForTests)
 
         /** Tests of the Play build's behaviour, in a debug build. */
         @VisibleForTesting
@@ -115,7 +116,11 @@ class SecurityVault private constructor(private val context: Context) {
         private const val PROFILE_ID_PREFIX = "profile_"
         private const val MAX_PROFILES = 64
         private const val MAX_PROFILE_NAME = 40
+        private const val MAX_ICON_KEY = 32
         private const val MAX_PACKAGES = 2_000
+        private const val MAX_PACKAGE_LENGTH = 255
+        private const val MIN_PAUSE_MS = 1_000L
+        private const val MAX_PAUSE_MS = 24 * 60 * 60_000L
         private val PACKAGE_NAME = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$")
 
         @SuppressLint("StaticFieldLeak") // Holds only the application context, which lives as long as the process.
@@ -345,8 +350,8 @@ class SecurityVault private constructor(private val context: Context) {
     fun createProfile(name: String, iconKey: String, timeoutMode: LockTimeoutMode? = null): SecurityProfile {
         val profile = SecurityProfile(
             id = "$PROFILE_ID_PREFIX${UUID.randomUUID()}",
-            name = name.trim().ifBlank { context.getString(R.string.profile_default_name) },
-            iconKey = iconKey,
+            name = AppText.cleanLabel(name, MAX_PROFILE_NAME).ifBlank { context.getString(R.string.profile_default_name) },
+            iconKey = AppText.cleanLabel(iconKey, MAX_ICON_KEY).ifBlank { "shield" },
             timeoutMode = timeoutMode
         )
         mutate { _, profiles -> profiles += profile }
@@ -356,7 +361,10 @@ class SecurityVault private constructor(private val context: Context) {
     fun updateProfileDetails(profileId: String, name: String? = null, iconKey: String? = null) {
         mutate { _, profiles ->
             profiles.update(profileId) { p ->
-                p.copy(name = name?.trim()?.ifBlank { null } ?: p.name, iconKey = iconKey ?: p.iconKey)
+                p.copy(
+                    name = name?.let { AppText.cleanLabel(it, MAX_PROFILE_NAME) }?.ifBlank { null } ?: p.name,
+                    iconKey = iconKey?.let { AppText.cleanLabel(it, MAX_ICON_KEY) }?.ifBlank { null } ?: p.iconKey
+                )
             }
         }
     }
@@ -449,11 +457,24 @@ class SecurityVault private constructor(private val context: Context) {
     fun restoreState(state: JSONObject) {
         fun strings(key: String): Set<String> {
             val array = state.optJSONArray(key) ?: return emptySet()
-            return buildSet { for (i in 0 until array.length()) add(array.getString(i)) }
+            val limit = minOf(array.length(), MAX_PACKAGES * 2)
+            return buildSet {
+                for (i in 0 until limit) {
+                    val value = array.opt(i) as? String ?: throw IllegalArgumentException("Expected package string in $key")
+                    add(value)
+                }
+            }
         }
         val profiles = state.optJSONArray("profiles")?.let { array ->
-            List(array.length()) { i ->
-                SecurityProfile.fromJson(array.optJSONObject(i) ?: throw IllegalArgumentException("A profile in the backup isn't one"))
+            val limit = minOf(array.length(), MAX_PROFILES * 4)
+            List(limit) { i ->
+                try {
+                    SecurityProfile.fromJson(array.optJSONObject(i) ?: throw IllegalArgumentException("A profile in the backup isn't one"))
+                } catch (e: IllegalArgumentException) {
+                    throw e
+                } catch (e: Exception) {
+                    throw IllegalArgumentException("Malformed profile in backup", e)
+                }
             }
         } ?: throw IllegalArgumentException("No profiles in backup")
         val selected = validPackages(strings("selected"))
@@ -554,13 +575,14 @@ class SecurityVault private constructor(private val context: Context) {
 
     /** Pauses protection, for [durationMillis] or until resumed when null. */
     fun pauseProtection(durationMillis: Long?): Boolean {
-        DiagnosticLog.log(if (durationMillis == null) "Protection paused until turned back on" else "Protection paused for ${durationMillis / 60_000} min")
+        val bounded = durationMillis?.coerceIn(MIN_PAUSE_MS, MAX_PAUSE_MS)
+        DiagnosticLog.log(if (bounded == null) "Protection paused until turned back on" else "Protection paused for ${bounded / 60_000} min")
         synchronized(lock) {
             _globalLockEnabledFlow.value = false
-            _pausedUntilFlow.value = durationMillis?.let { System.currentTimeMillis() + it } ?: 0L
-            pausedUntilElapsed = durationMillis?.let { SystemClock.elapsedRealtime() + it } ?: 0L
-            pauseDurationMs = durationMillis ?: 0L
-            schedulePauseExpiry(durationMillis ?: 0L)
+            _pausedUntilFlow.value = bounded?.let { System.currentTimeMillis() + it } ?: 0L
+            pausedUntilElapsed = bounded?.let { SystemClock.elapsedRealtime() + it } ?: 0L
+            pauseDurationMs = bounded ?: 0L
+            schedulePauseExpiry(bounded ?: 0L)
             persist()
         }
         listeners.forEach { it.onPaused() }
@@ -608,6 +630,8 @@ class SecurityVault private constructor(private val context: Context) {
             persist()
         }
         runCatching { saved.get() }
+        // Arms biometric-change watching at once, even on a PIN-only phone where setup made no key.
+        if (completed) BiometricEnrollment.checkSoon(context)
     }
 
     private inline fun setPreference(change: () -> Unit) {
@@ -648,7 +672,7 @@ class SecurityVault private constructor(private val context: Context) {
 
     /** What looks like a package name, but not BioKey's own, at most [MAX_PACKAGES]. */
     private fun validPackages(packages: Collection<String>): Set<String> =
-        packages.asSequence().filter { it != context.packageName && PACKAGE_NAME.matches(it) }.take(MAX_PACKAGES).toSet()
+        packages.asSequence().filter { it.length <= MAX_PACKAGE_LENGTH && it != context.packageName && PACKAGE_NAME.matches(it) }.take(MAX_PACKAGES).toSet()
 
     /**
      * Stored or restored profiles made safe to show: each id unique and prefixed (a repeated id
@@ -657,18 +681,25 @@ class SecurityVault private constructor(private val context: Context) {
     private fun sanitizeProfiles(profiles: List<SecurityProfile>): List<SecurityProfile> {
         val ids = HashSet<String>()
         return profiles.take(MAX_PROFILES).map { p ->
-            val id = p.id.takeIf { it.length > PROFILE_ID_PREFIX.length && it.startsWith(PROFILE_ID_PREFIX) && ids.add(it) }
+            val id = p.id.takeIf { it.length in (PROFILE_ID_PREFIX.length + 1)..64 && it.startsWith(PROFILE_ID_PREFIX) && ids.add(it) }
                 ?: "$PROFILE_ID_PREFIX${UUID.randomUUID()}".also { ids.add(it) }
-            p.copy(id = id, name = p.name.trim().take(MAX_PROFILE_NAME).ifBlank { "Profile" }, packages = validPackages(p.packages))
+            p.copy(
+                id = id,
+                name = AppText.cleanLabel(p.name, MAX_PROFILE_NAME).ifBlank { "Profile" },
+                iconKey = AppText.cleanLabel(p.iconKey, MAX_ICON_KEY).ifBlank { "shield" },
+                packages = validPackages(p.packages)
+            )
         }
     }
 
     private fun load() {
-        val stored = prefs.getString(KEY_PROFILES_JSON, null)?.let { json ->
+        val rawProfiles = prefs.getString(KEY_PROFILES_JSON, null)
+        var profilesCorrupted = false
+        val stored = rawProfiles?.let { json ->
             runCatching {
                 val array = JSONArray(json)
-                List(array.length()) { SecurityProfile.fromJson(array.getJSONObject(it)) }
-            }.getOrNull()
+                List(minOf(array.length(), MAX_PROFILES * 4)) { SecurityProfile.fromJson(array.getJSONObject(it)) }
+            }.onFailure { profilesCorrupted = true }.getOrNull()
         } ?: SecurityProfile.DEFAULTS
         // Enforce the invariants on whatever was stored.
         val version = prefs.getInt(KEY_MODEL_VERSION, 1)
@@ -683,7 +714,8 @@ class SecurityVault private constructor(private val context: Context) {
         autoSortExcluded = PasswordManager.expand(validPackages(prefs.getStringSet(KEY_AUTO_SORT_EXCLUDED, emptySet()).orEmpty()))
         rebuildProfileTimeouts()
 
-        _timeoutModeFlow.value = LockTimeoutMode.fromName(prefs.getString(KEY_TIMEOUT, null))
+        // Corrupted profile JSON could have lost a strict profile's IMMEDIATE re-lock: fail closed.
+        _timeoutModeFlow.value = if (profilesCorrupted) LockTimeoutMode.IMMEDIATE else LockTimeoutMode.fromName(prefs.getString(KEY_TIMEOUT, null))
         _biometricOnlyFlow.value = prefs.getBoolean(KEY_BIOMETRIC_ONLY, false)
         _setupCompletedFlow.value = prefs.getBoolean(KEY_SETUP_COMPLETED, false)
         // Opt-in (Play policy: no blocking of uninstall/disable unless the user chose it).
@@ -721,7 +753,7 @@ class SecurityVault private constructor(private val context: Context) {
         }
         // Only now is everything read: saving any earlier would write defaults over the owner's
         // settings (setup, self-protection, re-lock delay, auto-sort and its exclusions).
-        if (migrating || pauseExpired || pauseRestored || clean != stored) persist()
+        if (migrating || profilesCorrupted || pauseExpired || pauseRestored || clean != stored) persist()
     }
 
     /**

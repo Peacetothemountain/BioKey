@@ -103,11 +103,15 @@ class BioKeyTileService : TileService() {
         // Inactive rather than unavailable when setup is missing: SystemUI ignores taps on
         // unavailable tiles, and a tap should open BioKey to finish it.
         tile.state = if (status == Status.PROTECTING) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-        tile.subtitle = when (status) {
-            Status.SETUP_REQUIRED -> getString(R.string.tile_setup_required)
-            Status.NOT_PROTECTING -> getString(R.string.lock_all_tile_not_protecting)
-            Status.PROTECTING -> getString(R.string.tile_protecting)
-            Status.PAUSED -> getString(R.string.common_paused)
+        tile.subtitle = if (isLocked && status != Status.PROTECTING) {
+            null
+        } else {
+            when (status) {
+                Status.SETUP_REQUIRED -> getString(R.string.tile_setup_required)
+                Status.NOT_PROTECTING -> getString(R.string.lock_all_tile_not_protecting)
+                Status.PROTECTING -> getString(R.string.tile_protecting)
+                Status.PAUSED -> getString(R.string.common_paused)
+            }
         }
         tile.updateTile()
     }

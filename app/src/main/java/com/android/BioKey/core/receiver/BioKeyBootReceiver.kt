@@ -66,7 +66,7 @@ class BioKeyBootReceiver : BroadcastReceiver() {
                     if (!protecting) ProtectionAlerts.serviceStopped(appContext, now = true)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to complete boot initialization", e)
+                Log.e(TAG, "Failed to complete boot initialization: ${e.javaClass.simpleName}")
             } finally {
                 pending.finish()
             }

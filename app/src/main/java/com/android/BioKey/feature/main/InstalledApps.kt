@@ -123,7 +123,7 @@ internal suspend fun loadInstalledApps(context: Context): List<AppItem> {
                 val pkg = activity.applicationInfo.packageName
                 if (pkg == context.packageName || pkg == PasswordManager.CREDENTIAL_MANAGER) continue
                 if (user != myUser) otherProfilePkgs += pkg
-                val label = activity.label.toString()
+                val label = com.android.BioKey.core.data.AppText.cleanLabel(activity.label.toString()).ifEmpty { pkg }
                 items += AppItem(
                     packageName = pkg,
                     label = label,
@@ -143,7 +143,7 @@ internal suspend fun loadInstalledApps(context: Context): List<AppItem> {
             currentCoroutineContext().ensureActive()
             val pkg = info.activityInfo.packageName
             if (pkg == context.packageName || pkg == PasswordManager.CREDENTIAL_MANAGER) continue
-            val label = info.loadLabel(pm).toString()
+            val label = com.android.BioKey.core.data.AppText.cleanLabel(info.loadLabel(pm).toString()).ifEmpty { pkg }
             items += AppItem(
                 packageName = pkg,
                 label = label,
@@ -153,7 +153,7 @@ internal suspend fun loadInstalledApps(context: Context): List<AppItem> {
     }
 
     passwordManagerItem(pm)?.let(items::add)
-    return items.distinctBy { it.packageName }.sortedBy { it.label.lowercase() }
+    return items.distinctBy { it.packageName }.sortedBy { it.label.lowercase(java.util.Locale.ROOT) }
 }
 
 /**

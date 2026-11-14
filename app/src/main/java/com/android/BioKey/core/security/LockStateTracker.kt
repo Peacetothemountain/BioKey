@@ -793,7 +793,9 @@ object LockStateTracker {
     fun onOwnAppResumed() {
         externalNavigationAt = 0L
         ownPickerAt = 0L
+        ownPickers = emptySet()
         ownLockScreenHopAt = 0L
+        ownLockScreenHopFor = null
         clearSelfProtection()
         if (!isOwnAppUnlocked()) return
         ownInForeground = true
@@ -853,6 +855,7 @@ object LockStateTracker {
         if (started == 0L) return false
         if (now() - started < OWN_PICKER_LEASE_MS && isOwnAppUnlocked()) return true
         ownPickerAt = 0L
+        ownPickers = emptySet()
         endTripAway()
         return false
     }
@@ -952,7 +955,9 @@ object LockStateTracker {
         ownInForeground = false
         externalNavigationAt = 0L
         ownPickerAt = 0L
+        ownPickers = emptySet()
         ownLockScreenHopAt = 0L
+        ownLockScreenHopFor = null
         ownLocksFlow.update { it + 1 }
     }
 
@@ -990,6 +995,7 @@ object LockStateTracker {
         ownSessionTimedOut = false
         ownTripRanOut = false
         ownLocksFlow.value = 0
+        FrontApp.clear()
         // The own session's proof goes with it, as when it ends ([lockOwnApp]).
         SecurityEngine.INSTANCE.forgetOwnProof()
         awaitingPhoneLock = false

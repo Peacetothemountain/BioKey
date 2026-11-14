@@ -2,6 +2,7 @@ package com.android.BioKey.ui.security
 
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.os.Build
 import android.util.Log
 import android.view.KeyEvent
@@ -104,16 +105,24 @@ object WindowProtection {
      * reach the activity's own window), and screen readers' too ([countAccessibilityInteractions]).
      * Returns how to stop.
      */
-    internal fun countOwnerInteractions(window: Window): () -> Unit {
+    internal fun countOwnerInteractions(
+        window: Window,
+        enforceOwnerSession: () -> Boolean = { false }
+    ): () -> Unit {
         val original = window.callback ?: return {}
         val counting = object : Window.Callback by original {
             override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-                if (event.actionMasked == MotionEvent.ACTION_DOWN) LockStateTracker.onOwnAppInteraction()
+                if (isMotionEventObscured(event)) return true
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                    val active = LockStateTracker.onOwnAppInteraction()
+                    if (!active && enforceOwnerSession()) return true
+                }
                 return original.dispatchTouchEvent(event)
             }
 
             override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-                LockStateTracker.onOwnAppInteraction()
+                val active = LockStateTracker.onOwnAppInteraction()
+                if (!active && enforceOwnerSession()) return true
                 return original.dispatchKeyEvent(event)
             }
 
@@ -177,7 +186,20 @@ fun ProtectDialogWindow() {
             it.decorView.filterTouchesWhenObscured = true
             WindowProtection.hideFromNonToolAccessibilityServices(it.decorView)
         }
-        val stopCounting = window?.let(WindowProtection::countOwnerInteractions)
+        val hostActivity = view.context.findActivity()
+        val appContext = view.context.applicationContext
+        val stopCounting = window?.let {
+            WindowProtection.countOwnerInteractions(it) {
+                hostActivity is com.android.BioKey.feature.main.MainActivity &&
+                    com.android.BioKey.core.security.SecurityVault.getInstance(appContext).isSetupCompleted()
+            }
+        }
         onDispose { stopCounting?.invoke() }
     }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

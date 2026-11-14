@@ -646,7 +646,7 @@ class LockScreenActivity : ComponentActivity() {
         // Other locked apps on screen with this one (split screen, another display): one prompt
         // names them all and unlocks them all, rather than one prompt after another. Its misses
         // and its unlock are recorded under all their names.
-        val others = if (selfProtection) emptyList() else lockedAppsOnScreenWith(pkg)
+        val others = if (selfProtection) emptyList() else lockedAppsOnScreenWith(pkg).take(2)
         val name = if (selfProtection) getString(R.string.brand_name) else appsNamed(resources, (listOf(pkg) + others).map { AppInfoCache.quickLabel(this, it) })
         cover.setStatus(null, permanentLockout = false)
         cover.setActionsVisible(false)

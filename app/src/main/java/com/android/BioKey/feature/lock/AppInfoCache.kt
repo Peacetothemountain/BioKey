@@ -142,7 +142,8 @@ object AppInfoCache {
         cachedLabel(pkg)?.let { return it }
         return runCatching {
             val pm = context.packageManager
-            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+            com.android.BioKey.core.data.AppText.cleanLabel(pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString())
+                .takeIf { it.isNotEmpty() }
         }.getOrNull()?.also { labels[pkg] = it } ?: context.getString(R.string.app_label_unknown)
     }
 
@@ -159,7 +160,11 @@ object AppInfoCache {
         val px = (ICON_DP * context.resources.displayMetrics.density).roundToInt()
         val rendered: Drawable = AppIcons.render(raw, px).toDrawable(context.resources)
         val icon = if (user != null) pm.getUserBadgedIcon(rendered, user) else rendered
-        val name = if (passwordManager) PasswordManager.LABEL else label
+        val name = if (passwordManager) {
+            PasswordManager.LABEL
+        } else {
+            com.android.BioKey.core.data.AppText.cleanLabel(label).ifEmpty { context.getString(R.string.app_label_unknown) }
+        }
         // Not for an app in another profile only, whose resources this user can't open.
         val dark = if (user == null) launchBackgroundIsDark(pm, PasswordManager.launchPackage(pkg)) else null
         CachedAppInfo(pkg, name, icon, accentOf(icon, context.resources), dark).also { cache[pkg] = it }

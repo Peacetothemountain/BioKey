@@ -21,7 +21,7 @@ description: Set up BioKey in a few steps, find answers to common questions, and
     <li>
       <span class="icon icon--blue" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 20h16"/></svg></span>
       <h3>Install BioKey</h3>
-      <p>Get it from <a href="https://play.google.com/store/apps/details?id=com.nbdesigns.biokey">Google Play</a>. It needs Android 12 or later.</p>
+      <p>Get it from <a href="https://play.google.com/store/apps/details?id=com.nbdesigns.biokey" rel="noopener noreferrer">Google Play</a>. It needs Android 12 or later.</p>
     </li>
     <li>
       <span class="icon icon--violet" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="2.5" y="7" width="19" height="10" rx="5"/><circle cx="16" cy="12" r="3"/></svg></span>
@@ -295,14 +295,14 @@ Uninstall it as you would any app. Uninstalling deletes everything BioKey kept o
       <span class="icon icon--blue" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 7l-5 5 5 5"/><path d="M16 7l5 5-5 5"/><path d="M14 4l-4 16"/></svg></span>
       <div>
         <h3>Bugs and feature requests</h3>
-        <p>These can also go to <a href="https://github.com/Peacetothemountain/BioKey/issues">GitHub issues</a>. BioKey’s source code is <a href="https://github.com/Peacetothemountain/BioKey">on GitHub</a>.</p>
+        <p>These can also go to <a href="https://github.com/Peacetothemountain/BioKey/issues" rel="noopener noreferrer">GitHub issues</a>. BioKey’s source code is <a href="https://github.com/Peacetothemountain/BioKey" rel="noopener noreferrer">on GitHub</a>.</p>
       </div>
     </li>
     <li>
       <span class="icon icon--orange" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5.5c0 4.4-3 8-7 9.5-4-1.5-7-5.1-7-9.5V6z"/><path d="M12 8v4"/><path d="M12 15h.01"/></svg></span>
       <div>
         <h3>Security problems</h3>
-        <p>Please report them privately by email, not in a public issue. See the <a href="https://github.com/Peacetothemountain/BioKey/blob/main/SECURITY.md">security policy</a>.</p>
+        <p>Please report them privately by email, not in a public issue. See the <a href="https://github.com/Peacetothemountain/BioKey/blob/main/SECURITY.md" rel="noopener noreferrer">security policy</a>.</p>
       </div>
     </li>
     <li>

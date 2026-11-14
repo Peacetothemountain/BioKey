@@ -67,9 +67,15 @@ object UnlockMethods {
         }
     }
 
-    @VisibleForTesting
-    internal fun resetForTests() {
-        systemPromptMessage = { null }
-        strongBiometricMissing = { false }
+    private val realHooks: () -> Unit = run {
+        val systemPromptMessage = systemPromptMessage
+        val strongBiometricMissing = strongBiometricMissing
+        return@run {
+            this.systemPromptMessage = systemPromptMessage
+            this.strongBiometricMissing = strongBiometricMissing
+        }
     }
+
+    @VisibleForTesting
+    internal fun resetForTests() = realHooks()
 }

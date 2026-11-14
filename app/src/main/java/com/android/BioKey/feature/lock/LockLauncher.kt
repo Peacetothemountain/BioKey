@@ -151,8 +151,13 @@ object LockLauncher {
  * Sends the user Home: how a cover that can't do its job fails closed (Home takes the locked app
  * off screen). Never throws.
  */
-internal fun Context.goHome() {
+internal fun Context.goHome(displayId: Int? = null) {
     runCatching {
-        startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (displayId != null && displayId != Display.DEFAULT_DISPLAY) {
+            startActivity(intent, ActivityOptions.makeBasic().setLaunchDisplayId(displayId).toBundle())
+        } else {
+            startActivity(intent)
+        }
     }
 }

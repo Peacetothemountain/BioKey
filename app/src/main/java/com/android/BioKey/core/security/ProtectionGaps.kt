@@ -16,6 +16,7 @@ import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.edit
 import com.android.BioKey.R
+import com.android.BioKey.core.data.AppText
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import java.io.File
 import java.nio.file.Files
@@ -124,7 +125,7 @@ object ProtectionGaps {
         /** Not a change from a session: the sensor couldn't be used, so the screen lock was allowed. */
         BIOMETRIC_UNAVAILABLE(R.string.change_biometric_unavailable, fromScreenLock = false);
 
-        fun encode(vararg args: String) = (listOf(CODE_MARK + name) + args).joinToString(SEPARATOR)
+        fun encode(vararg args: String) = (listOf(CODE_MARK + name) + args.map { AppText.cleanLabel(it, 80) }).joinToString(SEPARATOR)
 
         /**
          * As [encode], for a change made during a hold ([UnlockAttempts.holding]): within a day of a
@@ -721,7 +722,7 @@ object ProtectionGaps {
 
     private fun save(p: SharedPreferences, list: List<Gap>) {
         _gaps.value = list
-        p.edit {
+        p.edit(commit = list.any { it.kind.holds }) {
             putString(KEY_GAPS, JSONArray().apply {
                 list.forEach {
                     put(

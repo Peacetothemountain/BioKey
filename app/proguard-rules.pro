@@ -3,6 +3,7 @@
 # Strip verbose/debug/info/warning logging from release builds: those messages can name locked
 # apps, and logcat ends up in bug reports and adb sessions. Errors stay for diagnosis, so Log.e
 # must never name an app.
+-maximumremovedandroidloglevel 5
 -assumenosideeffects class android.util.Log {
     public static int v(...);
     public static int d(...);

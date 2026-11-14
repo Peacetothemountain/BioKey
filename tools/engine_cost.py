@@ -19,6 +19,7 @@ compatibility mode is chosen), which the owner's phone mustn't have done to it.
 """
 import argparse
 import json
+import shlex
 import subprocess
 import sys
 import time
@@ -115,7 +116,7 @@ def main():
     finally:
         # As it was: the accessibility service on or off.
         if before and before != "null":
-            sh(f"settings put secure enabled_accessibility_services {before}; settings put secure accessibility_enabled 1")
+            sh(f"settings put secure enabled_accessibility_services {shlex.quote(before)}; settings put secure accessibility_enabled 1")
         else:
             engine(False)
     if args.json:

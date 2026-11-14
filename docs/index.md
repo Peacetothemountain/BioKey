@@ -23,7 +23,7 @@ description: An app lock for Android. The apps you choose open only after your f
     <h1>Lock any app behind your face or fingerprint.</h1>
     <p class="lead">BioKey is an app lock for Android. The apps you choose open only after your face, fingerprint or screen lock, and stay unlocked while you’re using them. Nothing leaves your phone.</p>
     <div class="btn-row">
-      <a class="btn btn--primary" href="https://play.google.com/store/apps/details?id=com.nbdesigns.biokey">
+      <a class="btn btn--primary" href="https://play.google.com/store/apps/details?id=com.nbdesigns.biokey" rel="noopener noreferrer">
         <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M4 3.5v17a1 1 0 0 0 1.5.87l14.6-8.5a1 1 0 0 0 0-1.74L5.5 2.63A1 1 0 0 0 4 3.5z"/></svg>
         Get it on Google Play
       </a>
@@ -96,7 +96,7 @@ description: An app lock for Android. The apps you choose open only after your f
       <p>BioKey’s code is public under the Apache 2.0 license. Read it, build it, or file an issue.</p>
     </div>
     <div class="btn-row">
-      <a class="btn btn--secondary" href="https://github.com/Peacetothemountain/BioKey">Source on GitHub</a>
+      <a class="btn btn--secondary" href="https://github.com/Peacetothemountain/BioKey" rel="noopener noreferrer">Source on GitHub</a>
       <a class="btn btn--secondary" href="{{ '/privacy/' | relative_url }}">Privacy policy</a>
     </div>
   </div>

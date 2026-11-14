@@ -7,13 +7,19 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: gradle
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: gradle
     directory: /tools/gantlet-targets
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7

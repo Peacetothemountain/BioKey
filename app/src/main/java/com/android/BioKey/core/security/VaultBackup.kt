@@ -24,6 +24,8 @@ import org.json.JSONObject
 object VaultBackup {
 
     const val MIN_PASSWORD_LENGTH = 8
+    const val MAX_PASSWORD_LENGTH = 256
+    const val MAX_BACKUP_BYTES = 1 shl 20
     const val FILE_EXTENSION = "biokey"
 
     private val MAGIC = "BIOKEYBK".toByteArray(Charsets.US_ASCII)
@@ -31,7 +33,7 @@ object VaultBackup {
     private const val V1_ITERATIONS = 310_000
     private const val ITERATIONS = 600_000
     /** A file asking for fewer or more rounds than this was not made by BioKey. */
-    private val ACCEPTED_ITERATIONS = 100_000..10_000_000
+    private val ACCEPTED_ITERATIONS = 100_000..1_200_000
     private const val SALT_BYTES = 16
     private const val NONCE_BYTES = 12
     private const val TAG_BITS = 128
@@ -41,6 +43,7 @@ object VaultBackup {
     class WrongPasswordException : Exception("Wrong password, or the file was changed")
 
     fun seal(state: JSONObject, password: CharArray): ByteArray {
+        require(password.size <= MAX_PASSWORD_LENGTH) { "Password is too long" }
         val random = SecureRandom()
         val salt = ByteArray(SALT_BYTES).also(random::nextBytes)
         val nonce = ByteArray(NONCE_BYTES).also(random::nextBytes)
@@ -49,13 +52,21 @@ object VaultBackup {
             init(Cipher.ENCRYPT_MODE, key(password, salt, ITERATIONS), GCMParameterSpec(TAG_BITS, nonce))
             updateAAD(header)
         }
-        val sealed = cipher.doFinal(state.toString().toByteArray(Charsets.UTF_8))
+        val plain = state.toString().toByteArray(Charsets.UTF_8)
+        val sealed = try {
+            cipher.doFinal(plain)
+        } finally {
+            plain.fill(0)
+        }
         return ByteBuffer.allocate(header.size + SALT_BYTES + NONCE_BYTES + sealed.size)
             .put(header).put(salt).put(nonce).put(sealed).array()
     }
 
     fun open(file: ByteArray, password: CharArray): JSONObject {
-        if (file.size <= MAGIC.size || !file.copyOfRange(0, MAGIC.size).contentEquals(MAGIC)) throw NotABackupException()
+        if (file.size <= MAGIC.size || file.size > MAX_BACKUP_BYTES || !file.copyOfRange(0, MAGIC.size).contentEquals(MAGIC)) {
+            throw NotABackupException()
+        }
+        if (password.size > MAX_PASSWORD_LENGTH) throw WrongPasswordException()
         val version = file[MAGIC.size].toInt() and 0xFF
         val headerSize: Int
         val iterations: Int
@@ -92,6 +103,8 @@ object VaultBackup {
             JSONObject(String(plain, Charsets.UTF_8))
         } catch (_: Exception) {
             throw NotABackupException()
+        } finally {
+            plain.fill(0)
         }
     }
 

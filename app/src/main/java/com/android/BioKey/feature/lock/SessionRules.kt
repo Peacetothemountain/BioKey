@@ -148,16 +148,26 @@ internal class SessionRules(private val env: Env) {
     }
 
     fun reconcile(screen: Screen): Outcome {
-        val visible = screen.visible
+        val resolvedFront = titledFront(screen)
+        val front = resolvedFront ?: screen.front
+        val unreadableOwner = resolvedFront ?: screen.lastForeground?.takeIf {
+            front == UNIDENTIFIED_APP && env.isLocked(it) && LockStateTracker.isAppUnlocked(it, env.timeoutOf(it))
+        }
+        val visible = if (unreadableOwner != null && UNIDENTIFIED_APP in screen.visible) {
+            LinkedHashSet<String>(screen.visible.size).apply {
+                for (pkg in screen.visible) add(if (pkg == UNIDENTIFIED_APP) unreadableOwner else pkg)
+            }
+        } else {
+            screen.visible
+        }
         val now = screen.now
         var recheck: Long? = null
         fun recheckIn(ms: Long) {
             recheck = minOf(recheck ?: ms, ms)
         }
 
-        val front = titledFront(screen) ?: screen.front
-
         // 1. On screen: in use, nothing ages.
+        if (resolvedFront != null) LockStateTracker.claimNamed(resolvedFront)
         for (pkg in visible) {
             pendingLeaves.remove(pkg)
             arriving.remove(pkg)
@@ -232,7 +242,8 @@ internal class SessionRules(private val env: Env) {
         val title = screen.frontTitle?.takeIf { it.isNotBlank() } ?: return null
         val app = env.appTitled(title) ?: return null
         val last = screen.lastForeground ?: return app
-        if (app in PasswordManager.aliasesOf(last) || env.isTitleOf(last, title)) return null
+        val lastOpen = !env.isLocked(last) || LockStateTracker.isAppUnlocked(last, env.timeoutOf(last))
+        if (lastOpen && (app in PasswordManager.aliasesOf(last) || env.isTitleOf(last, title))) return null
         return app
     }
 

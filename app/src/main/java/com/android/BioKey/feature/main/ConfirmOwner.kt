@@ -38,6 +38,7 @@ internal fun confirmOwner(
             return
         }
     }
+    val generation = com.android.BioKey.core.security.LockStateTracker.lockGeneration()
     SecurityEngine.INSTANCE.confirmWithBiometric(
         activity,
         title,
@@ -54,7 +55,10 @@ internal fun confirmOwner(
                 }
                 when {
                     until != null -> BioKeyMessages.show(heldRefused(app, until), Icons.Default.ErrorOutline)
-                    activity.isDestroyed -> BioKeyMessages.show(app.getString(R.string.confirm_try_again), Icons.Default.ErrorOutline)
+                    activity.isFinishing || activity.isDestroyed ||
+                        com.android.BioKey.core.security.LockStateTracker.lockGeneration() != generation ||
+                        !com.android.BioKey.core.security.LockStateTracker.isOwnAppUnlocked() ->
+                        BioKeyMessages.show(app.getString(R.string.confirm_try_again), Icons.Default.ErrorOutline)
                     else -> action()
                 }
             }

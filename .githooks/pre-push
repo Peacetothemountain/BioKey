@@ -10,6 +10,7 @@
 #
 # Turn it on once per clone:   git config core.hooksPath .githooks
 # Skip it in an emergency:     git push --no-verify
+set -eu
 zero=0000000000000000000000000000000000000000
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ "$remote_ref" = "refs/heads/main" ] || continue

@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Looper
 import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -242,5 +243,44 @@ class OwnSessionTest {
         assertTrue(IntentNavigationHelper.launchFallbackCascade(context, listOf(Intent("com.example.SETTINGS_PAGE"))))
         assertTrue(LockStateTracker.isExternalNavigationActive())
         assertTrue(LockStateTracker.isSelfProtectionGranted())
+    }
+
+    @Test
+    fun obscuredTouchesOnADialogAreDropped() {
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        var dialogSawTouch = false
+        val dialog = object : Dialog(activity) {
+            override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+                dialogSawTouch = true
+                return super.dispatchTouchEvent(ev)
+            }
+        }.apply {
+            setContentView(View(activity))
+            show()
+        }
+        val window = dialog.window!!
+        val stopCounting = WindowProtection.countOwnerInteractions(window) { true }
+        LockStateTracker.onOwnAppUnlocked()
+
+        val now = SystemClock.uptimeMillis()
+        val props = arrayOf(MotionEvent.PointerProperties().apply { id = 0 })
+        val coords = arrayOf(MotionEvent.PointerCoords().apply { x = 1f; y = 1f })
+        val obscured = MotionEvent.obtain(
+            now, now, MotionEvent.ACTION_DOWN, 1, props, coords,
+            0, 0, 1f, 1f, 0, 0, 0, MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED
+        )
+        assertTrue(WindowProtection.isMotionEventObscured(obscured))
+        assertTrue(window.callback.dispatchTouchEvent(obscured))
+        assertFalse(dialogSawTouch)
+
+        // And once BioKey's own session ends, an unobscured tap on an open dialog is dropped too.
+        LockStateTracker.lockOwnApp(timedOut = true)
+        val plain = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, 1f, 1f, 0)
+        assertTrue(window.callback.dispatchTouchEvent(plain))
+        assertFalse(dialogSawTouch)
+
+        stopCounting()
+        dialog.dismiss()
+        shadowOf(Looper.getMainLooper()).idle()
     }
 }

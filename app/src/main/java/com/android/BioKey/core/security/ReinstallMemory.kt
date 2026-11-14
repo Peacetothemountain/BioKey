@@ -55,7 +55,7 @@ object ReinstallMemory {
     private class Remembered(val pkg: String, val signers: Set<String>, val profileId: String?, val at: Long)
 
     @VisibleForTesting
-    internal var now: () -> Long = System::currentTimeMillis
+    internal var now: () -> Long = TrustedClock::now
 
     /** An installed app's certificates' SHA-256s (current and past, as Android vouches for them); null if it can't be read. */
     @VisibleForTesting
@@ -148,16 +148,26 @@ object ReinstallMemory {
             if (kept.size != all.size) writeRemembered(app, kept)
             return Outcome.NOTHING
         }
-        // Remembered once only, whatever comes of it.
-        writeRemembered(app, kept.filterNot { it.pkg == pkg })
         val vault = SecurityVault.getInstance(app)
         // Locked meanwhile (a backup restored, say): what's there stays.
-        if (!vault.isSetupCompleted() || pkg in vault.selectedAppsFlow.value) return Outcome.NOTHING
+        if (!vault.isSetupCompleted() || pkg in vault.selectedAppsFlow.value) {
+            writeRemembered(app, kept.filterNot { it.pkg == pkg })
+            return Outcome.NOTHING
+        }
         val current = signersOf(app, pkg).orEmpty()
-        if (entry.signers.isEmpty() || current.none { it in entry.signers }) {
+        if (entry.signers.isEmpty()) {
+            writeRemembered(app, kept.filterNot { it.pkg == pkg })
             DiagnosticLog.log("$pkg was locked before it was uninstalled; reinstalled with another signature, so it's offered, not locked")
             return Outcome.OFFER
         }
+        if (current.none { it in entry.signers }) {
+            // Keep the remembered signature: an impostor APK signed by someone else must not clear
+            // the record before the real developer's build comes back.
+            if (kept.size != all.size) writeRemembered(app, kept)
+            DiagnosticLog.log("$pkg was locked before it was uninstalled; reinstalled with another signature, so it's offered, not locked")
+            return Outcome.OFFER
+        }
+        writeRemembered(app, kept.filterNot { it.pkg == pkg })
         val profile = entry.profileId?.takeIf { id -> vault.profilesFlow.value.any { it.id == id } }
         if (profile != null) vault.moveAppToProfile(pkg, profile) else vault.setAppLock(pkg, true)
         DiagnosticLog.log("Locked $pkg again: reinstalled with the same signature within 30 days of being uninstalled")
@@ -192,7 +202,7 @@ object ReinstallMemory {
         // A note an earlier test queued mustn't land in this one's storage.
         worker.submit {}.get()
         prefs(context).edit(commit = true) { clear() }
-        now = System::currentTimeMillis
+        now = TrustedClock::now
         signersOf = ::readSigners
     }
 

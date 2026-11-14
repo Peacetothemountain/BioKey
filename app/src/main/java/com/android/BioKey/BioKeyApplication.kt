@@ -130,7 +130,7 @@ class BioKeyApplication : Application() {
                 ProtectionEngine.refresh(app)
                 ProtectionAlerts.checkAccessibilityConnects(app)
             } catch (e: Exception) {
-                Log.e(TAG, "Error initializing credential-protected components", e)
+                Log.e(TAG, "Error initializing credential-protected components: ${e.javaClass.simpleName}")
             }
         }
         registerPackageChangeReceiver()

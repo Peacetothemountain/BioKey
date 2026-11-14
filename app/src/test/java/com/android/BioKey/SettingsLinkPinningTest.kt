@@ -141,4 +141,25 @@ class SettingsLinkPinningTest {
         // Pixel's Settings doesn't let other apps open it: nothing answers, nothing is offered.
         assertFalse(IntentNavigationHelper.hasPrivateSpacePage(context))
     }
+
+    @Test
+    fun openingAWebPageDoesNotGrantExternalNavigationOrSelfProtection() {
+        LockStateTracker.onOwnAppUnlocked()
+        IntentNavigationHelper.openWebPage(context, IntentNavigationHelper.PRIVACY_POLICY_URL)
+        assertFalse(LockStateTracker.isExternalNavigationActive())
+        assertFalse(LockStateTracker.isSelfProtectionGranted())
+    }
+
+    @Test
+    fun openingAnotherAppsNotificationSettingsDoesNotPreAuthorizeSelfProtection() {
+        val notif = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        shadowOf(context.packageManager).addResolveInfoForIntent(
+            notif,
+            handler("com.android.settings", "com.android.settings.NotificationAppDetails", system = true)
+        )
+        LockStateTracker.onOwnAppUnlocked()
+        assertTrue(IntentNavigationHelper.openAppNotificationSettings(context, "com.example.other"))
+        assertTrue(LockStateTracker.isExternalNavigationActive())
+        assertFalse(LockStateTracker.isSelfProtectionGranted())
+    }
 }

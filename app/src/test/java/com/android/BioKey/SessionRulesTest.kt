@@ -357,4 +357,23 @@ class SessionRulesTest {
         val outcome = rules.reconcile(SessionRules.Screen(linkedSetOf(bank), now = SystemClock.elapsedRealtime(), coverAllowed = false))
         assertNull(outcome.cover)
     }
+
+    @Test
+    fun anUnreadableLockedAppOpenedWithoutATapIsCoveredAndTracksItsSession() {
+        // A locked app with accessibilityDataSensitive="yes" opened from a notification or deep link:
+        // its window is unreadable, so only its title identifies it.
+        val opened = screen(UNIDENTIFIED_APP, last = launcher, title = "Bank")
+        assertEquals(bank, opened.cover)
+
+        // Once unlocked, staying on its own unreadable screen arrives and re-locks on leaving.
+        LockStateTracker.onAppUnlocked(bank)
+        assertNull(screen(UNIDENTIFIED_APP, last = bank, title = "Bank").cover)
+        advance(ARRIVAL_GRACE_MS + 1_000)
+        assertTrue(unlocked(bank))
+
+        screen(launcher, last = launcher)
+        advance(LEAVE_CONFIRM_MS + 50)
+        screen(launcher, last = launcher)
+        assertFalse(unlocked(bank))
+    }
 }

@@ -50,8 +50,12 @@ class LockThisAppTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
-        // A tap is always acted on, whatever the tile is showing by the time the answer comes.
-        appInFront(::lock)
+        // Over the locked keyguard, require device unlock before mutating vault locks.
+        if (isLocked) {
+            unlockAndRun { appInFront(::lock) }
+        } else {
+            appInFront(::lock)
+        }
     }
 
     /**

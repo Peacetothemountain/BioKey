@@ -82,6 +82,10 @@ android {
             // Marked too, so a build with self-protection is never mistaken for the Play build.
             if (selfProtectionInRelease) versionNameSuffix = (versionNameSuffix ?: "") + "-selfprotection"
         }
+        configureEach {
+            if (name == "nonMinifiedRelease") versionNameSuffix = "-nonminified-debugsigned"
+            if (name == "benchmarkRelease") versionNameSuffix = "-benchmark-debugsigned"
+        }
     }
 
     // What only self-protection needs (the accessibility config's view IDs): in the builds that have it.

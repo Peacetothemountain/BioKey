@@ -112,17 +112,18 @@ object BiometricEnrollment {
         }
         // Noted durably before the key is replaced and the record is written.
         if (change != Change.NONE) prefs.edit(commit = true) { putString(KEY_PENDING, change.name) }
-        if (has) runCatching { renewKeyIfNeeded() }.onSuccess { prefs.edit { putBoolean(KEY_MADE, true) } }
-        prefs.edit {
+        if (has) runCatching { renewKeyIfNeeded() }.onSuccess { prefs.edit(commit = true) { putBoolean(KEY_MADE, true) } }
+        val setUp = SecurityVault.getInstance(context).isSetupCompleted()
+        prefs.edit(commit = true) {
             putBoolean(KEY_HAD_BIOMETRIC, has)
-            if (SecurityVault.getInstance(context).isSetupCompleted()) putBoolean(KEY_WATCHING, true)
+            if (setUp) putBoolean(KEY_WATCHING, true)
         }
-        when (change) {
-            Change.CHANGED -> ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.BIOMETRICS_CHANGED)
-            Change.REMOVED -> ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.BIOMETRICS_REMOVED)
-            Change.NONE -> Unit
+        val recorded = when (change) {
+            Change.CHANGED -> ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.BIOMETRICS_CHANGED) != null
+            Change.REMOVED -> ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.BIOMETRICS_REMOVED) != null
+            Change.NONE -> false
         }
-        if (change != Change.NONE) prefs.edit { remove(KEY_PENDING) }
+        if (change != Change.NONE && (recorded || !setUp)) prefs.edit(commit = true) { remove(KEY_PENDING) }
         return change
     }
 

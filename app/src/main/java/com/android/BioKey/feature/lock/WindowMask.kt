@@ -214,7 +214,12 @@ internal class WindowMask(
         runCatching { if (patch.added) patch.windowManager.removeViewImmediate(patch.view) }
     }
 
-    private fun buildView(context: Context): View = FrameLayout(context).apply {
+    private fun buildView(context: Context): View = object : FrameLayout(context) {
+        override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+            if (WindowProtection.isMotionEventObscured(ev)) return true
+            return super.dispatchTouchEvent(ev)
+        }
+    }.apply {
         isClickable = true
         contentDescription = context.getString(R.string.shield_public_title)
         WindowProtection.hideFromNonToolAccessibilityServices(this)

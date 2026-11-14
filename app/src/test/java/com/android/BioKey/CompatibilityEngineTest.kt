@@ -662,14 +662,34 @@ class CompatibilityEngineTest {
         assertEquals(emptyList<String>(), UsageWatchService.lockedAppsOnScreenWith(bank))
     }
 
-    /** The bank's [cls] is the phone's lock-screen camera (it answers the secure camera intent). */
-    private fun bankIsTheLockScreenCamera(cls: String) {
+    /** The bank's [cls] is the phone's lock-screen camera (a preinstalled system camera answering the secure camera intent). */
+    private fun bankIsTheLockScreenCamera(cls: String, systemApp: Boolean = true) {
         val secure = ComponentName(bank, cls)
         shadowOf(context.packageManager).apply {
+            installPackage(android.content.pm.PackageInfo().apply {
+                packageName = bank
+                applicationInfo = android.content.pm.ApplicationInfo().apply {
+                    packageName = bank
+                    if (systemApp) flags = android.content.pm.ApplicationInfo.FLAG_SYSTEM
+                }
+            })
             addActivityIfNotPresent(secure)
             addIntentFilterForActivity(secure, IntentFilter(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE).apply { addCategory(Intent.CATEGORY_DEFAULT) })
         }
         ForegroundRules.resetSystemLists()
+    }
+
+    @Test
+    fun aDownloadedAppClaimingTheCameraIntentIsStillCoveredOverTheKeyguard() {
+        val secure = "$bank.SecureCameraActivity"
+        bankIsTheLockScreenCamera(secure, systemApp = false)
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(true)
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        started()
+        event(ACTIVITY_RESUMED, bank, secure)
+        repeat(9) { step(150) }
+        assertEquals(listOf("Covered $bank (opened)"), covered(bank))
+        assertTrue(started().any { it.component?.className == lockScreen })
     }
 
     @Test

@@ -130,6 +130,7 @@ class SecurityEngine private constructor() {
     /** Tests: a prompt up for [packageName] (no window of its own: the phone's display), or none with null. */
     @VisibleForTesting
     internal fun setPromptForTests(packageName: String?) {
+        if (packageName == null) activeConfirmation = null
         active = packageName?.let { Attempt(it, WeakReference(null), CancellationSignal()) }
     }
 
@@ -140,15 +141,25 @@ class SecurityEngine private constructor() {
             field = value
         }
 
-    fun isAuthenticating(): Boolean = active != null
+    @Volatile private var activeConfirmation: Pair<WeakReference<Activity>, CancellationSignal>? = null
+
+    fun isAuthenticating(): Boolean = active != null || activeConfirmation != null
+
+    fun isConfirmingOwnerFor(host: Activity): Boolean = activeConfirmation?.first?.get() === host
 
     fun isAuthenticatingFor(packageName: String): Boolean = active?.packageName == packageName
 
     /** The display of the screen showing the running prompt (a lock screen, BioKey), if one is and it is known. */
-    fun promptDisplayId(): Int? = runCatching { active?.host?.get()?.display?.displayId }.getOrNull()
+    fun promptDisplayId(): Int? = runCatching { (active?.host ?: activeConfirmation?.first)?.get()?.display?.displayId }.getOrNull()
 
     /** Cancels the running prompt (only if it belongs to [forPackage], when given). */
     fun resetAuthenticatingState(forPackage: String? = null) {
+        if (forPackage == null) {
+            activeConfirmation?.let {
+                activeConfirmation = null
+                runCatching { it.second.cancel() }
+            }
+        }
         val attempt = active ?: return
         if (forPackage != null && attempt.packageName != forPackage) return
         active = null
@@ -160,6 +171,10 @@ class SecurityEngine private constructor() {
      * this, so it can't cancel the prompt of a newer screen for the same app.
      */
     fun resetAuthenticatingStateFor(host: Activity) {
+        activeConfirmation?.takeIf { it.first.get() === host }?.let {
+            activeConfirmation = null
+            runCatching { it.second.cancel() }
+        }
         val attempt = active ?: return
         if (attempt.host.get() !== host) return
         active = null
@@ -194,15 +209,21 @@ class SecurityEngine private constructor() {
         var record: Long? = null
         val ownMisses = mutableMapOf<Long, Int>()
         val cancel = CancellationSignal()
+        resetAuthenticatingStateFor(activity)
+        val entry = WeakReference(activity) to cancel
+        activeConfirmation = entry
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                if (activeConfirmation === entry) activeConfirmation = null
                 // Misses this prompt saw, then a match: the owner's, gone like on any prompt.
                 UnlockAttempts.onUnlocked(
                     app, activity.packageName, brand,
                     biometric = result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC,
                     ownMisses = ownMisses
                 )
-                if (result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC) {
+                if (result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC &&
+                    LockStateTracker.isOwnAppUnlocked()
+                ) {
                     ownAppOpenedWithBiometric = true
                 }
                 onConfirmed()
@@ -216,6 +237,7 @@ class SecurityEngine private constructor() {
             }
 
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                if (activeConfirmation === entry) activeConfirmation = null
                 if (errorCode == BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT || errorCode == ERROR_LOCKOUT_PERMANENT) {
                     UnlockAttempts.onLockedOut(app, activity.packageName, brand, record)
                 }
@@ -241,6 +263,7 @@ class SecurityEngine private constructor() {
                 .build()
                 .authenticate(cancel, activity.mainExecutor, callback)
         } catch (e: Exception) {
+            if (activeConfirmation === entry) activeConfirmation = null
             onRefused(activity.getString(R.string.prompt_unavailable))
         }
     }

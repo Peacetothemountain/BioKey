@@ -48,8 +48,11 @@ class BaselineProfileGenerator {
         private const val ACCESSIBILITY_SERVICE = "$BIOKEY/com.android.BioKey.feature.lock.BioKeyAccessibilityService"
         private const val LOCK_SCREEN = "$BIOKEY/com.android.BioKey.feature.lock.LockScreenActivity"
         private const val DEFAULT_LOCKED_APP = "com.biokey.gantlet.plain"
-        private const val LOCK_SCREEN_WAIT_MS = 10_000L
+        private val PACKAGE_RE = Regex("^[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+$")
+        private val COMPONENT_RE = Regex("^[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+$")
+        private fun shQuote(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"
 
+        private const val LOCK_SCREEN_WAIT_MS = 10_000L
         /** The accessibility services on when the run started: BioKey's engine, if it is the one running. */
         private var accessibilityServices = ""
 
@@ -91,12 +94,13 @@ class BaselineProfileGenerator {
     fun lockPath() = rule.collect(packageName = BIOKEY, includeInStartupProfile = true) {
         restartEngine()
         pressHome()
+        require(PACKAGE_RE.matches(lockedApp)) { "Invalid package name: $lockedApp" }
         val component = device.executeShellCommand(
-            "cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER $lockedApp"
+            "cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER ${shQuote(lockedApp)}"
         ).trim().lines().last()
-        check("/" in component) { "$lockedApp isn't installed, or has no launcher activity" }
+        check(COMPONENT_RE.matches(component)) { "$lockedApp isn't installed, or has no launcher activity" }
         device.executeShellCommand(
-            "am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10200000 -n $component"
+            "am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10200000 -n ${shQuote(component)}"
         )
         check(waitForLockScreen()) { "No lock screen for $lockedApp: is it locked in BioKey, and is BioKey set up?" }
         // The prompt first, then the lock screen: each Back closes one.
@@ -117,7 +121,7 @@ class BaselineProfileGenerator {
         if (ACCESSIBILITY_SERVICE in accessibilityServices) {
             val now = device.executeShellCommand("settings get secure enabled_accessibility_services")
             if (ACCESSIBILITY_SERVICE in now) return
-            device.executeShellCommand("settings put secure enabled_accessibility_services $accessibilityServices")
+            device.executeShellCommand("settings put secure enabled_accessibility_services ${shQuote(accessibilityServices)}")
             device.executeShellCommand("settings put secure accessibility_enabled 1")
         } else {
             startActivityAndWait()

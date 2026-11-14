@@ -22,9 +22,14 @@ object RestrictedSettingsHelper {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
         return try {
             val installSource = context.packageManager.getInstallSourceInfo(context.packageName)
-            if (installSource.installingPackageName == "com.android.vending") return false
+            val installer = installSource.installingPackageName
+            if (installer == "com.android.vending") return false
             val packageSource = installSource.packageSource
-            if (packageSource == PackageInstaller.PACKAGE_SOURCE_STORE) return false
+            if (packageSource == PackageInstaller.PACKAGE_SOURCE_STORE && installer != null) {
+                val flags = runCatching { context.packageManager.getApplicationInfo(installer, 0).flags }.getOrDefault(0)
+                val systemStore = (flags and (android.content.pm.ApplicationInfo.FLAG_SYSTEM or android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0
+                if (systemStore) return false
+            }
             val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
                 ?: return true
             val mode = runCatching {

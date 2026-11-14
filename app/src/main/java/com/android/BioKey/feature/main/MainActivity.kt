@@ -118,7 +118,7 @@ class MainActivity : ComponentActivity() {
         }
         if (savedInstanceState == null) {
             pauseRequested = isPauseRequest(intent)
-            searchRequest = intent?.getStringExtra(EXTRA_SEARCH)?.take(80)
+            searchRequest = intent?.getStringExtra(EXTRA_SEARCH)?.let { com.android.BioKey.core.data.AppText.cleanLabel(it, 80) }?.takeIf { it.isNotEmpty() }
             // As in onNewIntent: the sheet follows a fresh check unless BioKey is already open and unlocked.
             if (pauseRequested && !LockStateTracker.hasActiveOwnerSession()) LockStateTracker.lockOwnApp()
         }
@@ -198,9 +198,10 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pauseRequested = isPauseRequest(intent)
-        searchRequest = intent.getStringExtra(EXTRA_SEARCH)?.take(80)
-        if (pauseRequested && !LockStateTracker.hasActiveOwnerSession()) {
+        val requestedNow = isPauseRequest(intent)
+        pauseRequested = pauseRequested || requestedNow
+        searchRequest = intent.getStringExtra(EXTRA_SEARCH)?.let { com.android.BioKey.core.data.AppText.cleanLabel(it, 80) }?.takeIf { it.isNotEmpty() }
+        if (requestedNow && !LockStateTracker.hasActiveOwnerSession()) {
             LockStateTracker.lockOwnApp()
             isAuthenticated = false
         }
@@ -267,7 +268,10 @@ class MainActivity : ComponentActivity() {
         if (isChangingConfigurations) return
         // BioKey's own prompt, still running, handed over to the phone's PIN screen (some phones
         // open it as an activity): that isn't leaving BioKey. Never once BioKey is unlocked.
-        if (!isAuthenticated && engine.isAuthenticatingFor(packageName) && BioKeyAccessibilityService.isConfirmingDeviceCredential) return
+        if ((!isAuthenticated && engine.isAuthenticatingFor(packageName) || engine.isConfirmingOwnerFor(this)) &&
+            BioKeyAccessibilityService.isConfirmingDeviceCredential
+        ) return
+        engine.resetAuthenticatingStateFor(this)
         engine.resetAuthenticatingState(packageName)
         // The cancelled prompt never reports back: nothing may wait for it.
         isSetupAuthenticating = false

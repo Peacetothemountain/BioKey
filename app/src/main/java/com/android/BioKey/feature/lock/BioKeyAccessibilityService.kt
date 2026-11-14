@@ -739,12 +739,15 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 if (isDeviceCredentialScreen(eventPkg, eventCls)) {
                     isConfirmingDeviceCredential = true
                 } else if (
-                    isConfirmingDeviceCredential &&
-                    eventPkg != packageName &&
-                    eventPkg != "com.android.settings" &&
-                    eventPkg != "com.android.systemui" &&
-                    eventPkg !in ForegroundRules.inputMethods(this) &&
-                    eventPkg !in ForegroundRules.SYSTEM_OVERLAYS
+                    isConfirmingDeviceCredential && (
+                        (eventPkg == "com.android.settings" && eventCls.isNotEmpty() && !isViewClass(eventCls)) || (
+                            eventPkg != packageName &&
+                                eventPkg != "com.android.settings" &&
+                                eventPkg != "com.android.systemui" &&
+                                eventPkg !in ForegroundRules.inputMethods(this) &&
+                                eventPkg !in ForegroundRules.SYSTEM_OVERLAYS
+                            )
+                        )
                 ) {
                     isConfirmingDeviceCredential = false
                 }
@@ -1064,7 +1067,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
     }
 
     private fun isOwnWindow(window: AccessibilityWindowInfo): Boolean =
-        ownTitle != null && window.title?.toString() == ownTitle
+        ownTitle != null && window.title?.toString() == ownTitle &&
+            (LockStateTracker.ownScreenShowing || LockScreenActivity.isLockScreenResumed || foregroundPackage == packageName) &&
+            (windowPackage(window) ?: packageName) == packageName &&
+            (windowPackages[window.id] ?: packageName) == packageName
 
     /**
      * BioKey's own screen is in front: the last window event was its main screen's, with no other
@@ -1289,8 +1295,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 // Beside BioKey's own screen, unlocked and in front (split screen, as protection
                 // resumes from it, say): its lock screen closes back onto BioKey, a trip BioKey
                 // starts itself rather than the owner leaving it.
-                if (cover != frontApp && isPhoneScreen(displayOf[cover]) && isOwnScreenInFront(frontApp)) LockStateTracker.beginOwnLockScreenHop(cover)
-                lock(cover, "on screen without a session", displayOf[cover])
+                val coverDisplay = displayOf[cover] ?: displayOf[SessionRules.UNIDENTIFIED_APP]
+                if (cover != frontApp && isPhoneScreen(coverDisplay) && isOwnScreenInFront(frontApp)) LockStateTracker.beginOwnLockScreenHop(cover)
+                lock(cover, "on screen without a session", coverDisplay)
             }
             return
         }
@@ -1438,7 +1445,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
      */
     private fun handleForeground(target: String, cls: String, exitTransition: Boolean? = null, displayId: Int? = null, identified: Boolean = true) {
         // A screensaver's own activity (in the Clock's package, say): see handleEvent.
-        if (cls == ForegroundRules.DREAM_ACTIVITY) return
+        if (cls == ForegroundRules.DREAM_ACTIVITY && screensaversOn() && target in screensaverApps()) return
         // BioKey's own windows (lock screen, main UI) have their own authentication.
         if (target == packageName) {
             if (cls == MainActivity::class.java.name) {
@@ -1862,8 +1869,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
     private fun isScreensaverWindow(event: AccessibilityEvent, pkg: String, cls: String): Boolean {
         val id = event.windowId
         if (id >= 0 && id in screensaverWindows) return true
-        val found = cls == ForegroundRules.DREAM_ACTIVITY ||
-            (isViewClass(cls) && id >= 0 && id !in activityWindows && screensaversOn() && pkg in screensaverApps())
+        val found = (cls == ForegroundRules.DREAM_ACTIVITY || (isViewClass(cls) && id >= 0 && id !in activityWindows)) &&
+            screensaversOn() && pkg in screensaverApps()
         if (!found) {
             if (id >= 0 && cls.isNotEmpty() && !isViewClass(cls)) activityWindows += id
             return false
@@ -2142,6 +2149,10 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 DiagnosticLog.log("Lock screen for $targetPkg couldn't be started; went Home")
                 goHomeAnyway()
                 shield.hide()
+            } else if (targetPkg !in maskControl.maskedApps) {
+                DiagnosticLog.log("Lock screen for $targetPkg couldn't be started on another display and it isn't masked; went Home")
+                goHome(displayId)
+                goHomeAnyway()
             } else {
                 DiagnosticLog.log("Lock screen for $targetPkg couldn't be started on another display; its patch stays")
             }

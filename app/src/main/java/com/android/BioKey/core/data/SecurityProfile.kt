@@ -50,11 +50,17 @@ data class SecurityProfile(
 
         fun fromJson(json: JSONObject): SecurityProfile {
             val pkgArray = json.optJSONArray("packages")
-            val packages = buildSet { for (i in 0 until (pkgArray?.length() ?: 0)) add(pkgArray!!.getString(i)) }
+            val limit = minOf(pkgArray?.length() ?: 0, 4_000)
+            val packages = buildSet {
+                for (i in 0 until limit) {
+                    val pkg = pkgArray?.opt(i) as? String ?: throw IllegalArgumentException("Expected package string in profile")
+                    add(pkg)
+                }
+            }
             return SecurityProfile(
                 id = json.optString("id"),
-                name = json.optString("name", "Profile"),
-                iconKey = json.optString("iconKey", "shield"),
+                name = AppText.cleanLabel(json.optString("name", "Profile"), 40).ifEmpty { "Profile" },
+                iconKey = AppText.cleanLabel(json.optString("iconKey", "shield"), 32).ifEmpty { "shield" },
                 packages = packages,
                 timeoutMode = json.optString("timeoutMode").takeIf { it.isNotEmpty() }?.let(LockTimeoutMode::fromName),
                 enabled = json.optBoolean("enabled", true)

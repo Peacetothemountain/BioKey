@@ -30,6 +30,10 @@ object FrontApp {
         last = pkg.takeIf { ':' !in it }
     }
 
+    fun clear() {
+        last = null
+    }
+
     @VisibleForTesting
     internal fun setForTests(pkg: String?) {
         last = pkg
@@ -84,6 +88,7 @@ object FrontApp {
     /** [pkg]'s name, as the launcher shows it. */
     fun label(context: Context, pkg: String): String {
         val pm = context.packageManager
-        return runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }.getOrDefault(pkg)
+        val raw = runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }.getOrDefault(pkg)
+        return com.android.BioKey.core.data.AppText.cleanLabel(raw).ifEmpty { com.android.BioKey.core.data.AppText.cleanLabel(pkg) }
     }
 }

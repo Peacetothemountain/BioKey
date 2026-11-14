@@ -148,10 +148,10 @@ class Emulator:
         if self.in_use():
             raise RuntimeError(f"{self.serial} is already in use (an earlier run's emulator, or one of yours): "
                                "stop it first")
-        logfile = open(os.path.join(ROOT, "tools", "out", f"{self.avd}.emulator.log"), "w")
-        self.proc = subprocess.Popen([EMULATOR, "-avd", self.avd, "-port", str(self.port), "-no-window", "-no-audio",
-                                      "-no-boot-anim", "-no-snapshot", "-wipe-data", "-gpu", "swiftshader_indirect"],
-                                     stdout=logfile, stderr=subprocess.STDOUT)
+        with open(os.path.join(ROOT, "tools", "out", f"{self.avd}.emulator.log"), "w", encoding="utf-8") as logfile:
+            self.proc = subprocess.Popen([EMULATOR, "-avd", self.avd, "-port", str(self.port), "-no-window", "-no-audio",
+                                          "-no-boot-anim", "-no-snapshot", "-wipe-data", "-gpu", "swiftshader_indirect"],
+                                         stdout=logfile, stderr=subprocess.STDOUT)
         deadline = time.time() + 600
         while time.time() < deadline:
             if self.proc.poll() is not None:
@@ -191,10 +191,14 @@ class Emulator:
     # UiAutomation suspends every other accessibility service, which BioKey reads as protection
     # stopping, and ends every session.
     def nodes(self):
+        ui_dump = "/data/local/tmp/biokey_gantlet_ui.xml"
         for _ in range(5):
-            self.sh("rm -f /sdcard/biokey_gantlet_ui.xml", check=False)
-            if "dumped to" in self.sh("uiautomator dump /sdcard/biokey_gantlet_ui.xml", check=False):
-                root = ET.fromstring(self.sh("cat /sdcard/biokey_gantlet_ui.xml"))
+            self.sh(f"rm -f {ui_dump}", check=False)
+            if "dumped to" in self.sh(f"uiautomator dump {ui_dump}", check=False):
+                try:
+                    root = ET.fromstring(self.sh(f"cat {ui_dump}"))
+                finally:
+                    self.sh(f"rm -f {ui_dump}", check=False)
                 return list(root.iter("node"))
             time.sleep(1)
         raise RuntimeError("uiautomator couldn't read the screen")

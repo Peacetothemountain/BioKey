@@ -36,6 +36,7 @@ object FeatureLinks {
     @Volatile private var accessibilityService: Class<out AccessibilityService>? = null
 
     fun install(engines: Engines, mainScreen: Class<out Activity>, accessibilityService: Class<out AccessibilityService>) {
+        check(com.android.BioKey.BuildConfig.DEBUG || installedEngines == null) { "FeatureLinks already installed" }
         installedEngines = engines
         this.mainScreen = mainScreen
         this.accessibilityService = accessibilityService

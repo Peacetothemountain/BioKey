@@ -18,7 +18,7 @@ name: Build and test
 on:
   push:
     branches: [main]
-    paths-ignore: ['**.md', LICENSE]
+    paths-ignore: ['README.md', 'PRIVACY.md', 'LICENSE']
   pull_request:
   workflow_dispatch:
 
@@ -43,7 +43,9 @@ jobs:
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: |
+            21
+            17
 
       # Installs the SDK and accepts its licences, so Gradle can fetch compileSdk 37.2 itself.
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
@@ -63,11 +65,11 @@ jobs:
       - name: Robolectric's version, and the Android versions the tests run on
         id: robolectric
         run: |
-          version=$(sed -n 's/^robolectric = "\(.*\)"/\1/p' gradle/libs.versions.toml)
+          version=$(sed -n 's/^robolectric = "\([0-9A-Za-z._-]*\)"/\1/p' gradle/libs.versions.toml | head -n 1)
           test -n "$version"
           sdks=$(grep -rhoE 'sdk = \[[^]]*\]' app/src/test | grep -oE '[0-9]+' | sort -un | tr '\n' '.')
           test -n "$sdks"
-          echo "key=$version-sdk.$sdks" >> "$GITHUB_OUTPUT"
+          printf 'key=%s-sdk.%s\n' "$version" "$sdks" >> "$GITHUB_OUTPUT"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -103,7 +105,7 @@ jobs:
           -Pbiokey.tests=others -Pbiokey.screenshots=true -Pbiokey.allowDebugSignedRelease=true
           -x lintVitalRelease --stacktrace
 
-      - name: Keep test reports, design screenshots and the R8 mapping
+      - name: Keep test reports and design screenshots
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -111,5 +113,4 @@ jobs:
           path: |
             app/build/reports/
             app/build/screenshots/
-            app/build/outputs/mapping/release/mapping.txt
           retention-days: 14

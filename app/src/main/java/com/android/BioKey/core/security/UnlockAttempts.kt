@@ -17,6 +17,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.edit
 import com.android.BioKey.R
 import com.android.BioKey.core.FeatureLinks
+import com.android.BioKey.core.data.AppText
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -271,6 +272,7 @@ object UnlockAttempts {
     fun onBiometricFailed(context: Context, packageName: String, label: String, promptRecord: Long? = null): Long? {
         val p = load(context) ?: return null
         if (!_enabled.value) return null
+        val safeLabel = AppText.cleanLabel(label).ifEmpty { packageName }
         val now = clock()
         val since = elapsed()
         val net = TrustedClock.onNetworkTime()
@@ -287,7 +289,7 @@ object UnlockAttempts {
             val updated = if (same != null) {
                 list.map { if (it === same) it.copy(lastAt = now, failures = it.failures + 1, lastElapsed = since, boot = boot, net = net) else it }
             } else {
-                listOf(Attempt(packageName, label, now, now, failures = 1, seq = nextSeqLocked(p), lastElapsed = since, boot = boot, net = net)) + list
+                listOf(Attempt(packageName, safeLabel, now, now, failures = 1, seq = nextSeqLocked(p), lastElapsed = since, boot = boot, net = net)) + list
             }
             id = (same ?: updated.first()).seq
             save(p, updated.fresh(p, bootCount(context)))
@@ -303,6 +305,7 @@ object UnlockAttempts {
     fun onLockedOut(context: Context, packageName: String, label: String, promptRecord: Long?) {
         val p = load(context) ?: return
         if (!_enabled.value) return
+        val safeLabel = AppText.cleanLabel(label).ifEmpty { packageName }
         val now = clock()
         val since = elapsed()
         val net = TrustedClock.onNetworkTime()
@@ -311,7 +314,7 @@ object UnlockAttempts {
             val list = _attempts.value
             val same = list.firstOrNull { it.seq == promptRecord && it.unanswered }
             val updated = if (same != null) list.map { if (it === same) it.copy(lastAt = now, lockedOut = true, lastElapsed = since, boot = boot, net = net) else it }
-            else listOf(Attempt(packageName, label, now, now, failures = 0, lockedOut = true, seq = nextSeqLocked(p), lastElapsed = since, boot = boot, net = net)) + list
+            else listOf(Attempt(packageName, safeLabel, now, now, failures = 0, lockedOut = true, seq = nextSeqLocked(p), lastElapsed = since, boot = boot, net = net)) + list
             save(p, updated.fresh(p, bootCount(context)))
         }
         DiagnosticLog.log("Face and fingerprint locked out on $packageName")
@@ -325,6 +328,7 @@ object UnlockAttempts {
     fun onUnlocked(context: Context, packageName: String, label: String, biometric: Boolean, ownMisses: Map<Long, Int> = emptyMap()) {
         val p = load(context) ?: return
         if (!_enabled.value) return
+        val safeLabel = AppText.cleanLabel(label).ifEmpty { packageName }
         val names = PasswordManager.aliasesOf(packageName)
         val now = clock()
         val since = elapsed()
@@ -346,7 +350,7 @@ object UnlockAttempts {
                 }
             }.toMutableList()
             if (!biometric && list.none(::recent) && _screenLockUnlocks.value && hasStrongBiometric(context)) {
-                updated.add(0, Attempt(packageName, label, now, now, failures = 0, ending = Ending.SCREEN_LOCK, seq = nextSeqLocked(p), lastElapsed = since, boot = boot, net = net))
+                updated.add(0, Attempt(packageName, safeLabel, now, now, failures = 0, ending = Ending.SCREEN_LOCK, seq = nextSeqLocked(p), lastElapsed = since, boot = boot, net = net))
                 DiagnosticLog.log("$packageName opened with the screen lock")
             }
             if (updated != list) save(p, updated.fresh(p, bootCount(context)))

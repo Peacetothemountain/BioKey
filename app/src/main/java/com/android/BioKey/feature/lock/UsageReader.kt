@@ -225,7 +225,7 @@ internal class UsageReader(
         val pkg = event.packageName ?: return null
         // A screensaver runs in an activity of its own (in the Clock's package, say): it isn't
         // that app opening, and it ends every session itself (ScreenReceiver).
-        if (event.className == ForegroundRules.DREAM_ACTIVITY) return null
+        if (ForegroundRules.isDreamActivity(context, pkg, event.className)) return null
         val lockedOverlay = pkg in ForegroundRules.SYSTEM_OVERLAYS && pkg in locked
         return UsageEvent(event.eventType, pkg, event.className, event.timeStamp, lockedOverlay)
     }
@@ -258,8 +258,8 @@ internal class UsageReader(
                 var last: String? = null
                 while (events.hasNextEvent()) {
                     events.getNextEvent(event)
-                    if (event.eventType != UsageEvents.Event.ACTIVITY_RESUMED || event.className == ForegroundRules.DREAM_ACTIVITY) continue
                     val pkg = event.packageName ?: continue
+                    if (event.eventType != UsageEvents.Event.ACTIVITY_RESUMED || ForegroundRules.isDreamActivity(context, pkg, event.className)) continue
                     UsageEvent(event.eventType, pkg, event.className, event.timeStamp).app?.let { last = it }
                 }
                 if (last != null || from <= floor) return last

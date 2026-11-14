@@ -35,6 +35,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import statistics
 import subprocess
@@ -191,12 +192,14 @@ class ExposureWatcher:
 
     def stop(self):
         """Stops watching. Returns (frames, frames where the app showed)."""
-        sh(f"rm -f {self.FLAG}", check=False)
+        sh(f"rm -f {self.FLAG} /data/local/tmp/biokey_gantlet.raw", check=False)
         try:
             out, _ = self.proc.communicate(timeout=15)
         except subprocess.TimeoutExpired:
             self.proc.kill()
             out, _ = self.proc.communicate()
+        finally:
+            sh("rm -f /data/local/tmp/biokey_gantlet.raw", check=False)
         frames = shown = 0
         for line in out.splitlines():
             if not line.startswith("F "):
@@ -387,9 +390,23 @@ def launcher_package():
     return out.strip().splitlines()[-1].split("/")[0]
 
 
+PACKAGE_RE = re.compile(r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)+$")
+COMPONENT_RE = re.compile(r"^[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+$")
+
+
+def check_package(pkg):
+    if not PACKAGE_RE.match(pkg):
+        raise ValueError(f"Invalid Android package name: {pkg!r}")
+    return pkg
+
+
 def launch_component(pkg):
-    out = sh(f"cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER {pkg}")
-    return out.strip().splitlines()[-1]
+    check_package(pkg)
+    out = sh(f"cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER {shlex.quote(pkg)}")
+    comp = out.strip().splitlines()[-1]
+    if not COMPONENT_RE.match(comp):
+        raise RuntimeError(f"Unexpected launcher component for {pkg}: {comp!r}")
+    return comp
 
 
 def home():
@@ -411,17 +428,22 @@ def go_home_fully():
 
 
 def open_app(pkg):
-    sh(f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10200000 -n {launch_component(pkg)}")
+    sh(f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10200000 -n {shlex.quote(launch_component(pkg))}")
 
 
 def find_app_on_home_screen(label):
     """Where [label]'s icon is on the home screen, opening the folder it's in if need be; None if nowhere."""
+    ui_dump = "/data/local/tmp/biokey_gantlet_ui.xml"
+
     def dump():
         # uiautomator sometimes finds no window to read ("null root node"), mid-animation: again.
         for _ in range(5):
-            sh("rm -f /sdcard/biokey_gantlet_ui.xml", check=False)
-            if "dumped to" in sh("uiautomator dump /sdcard/biokey_gantlet_ui.xml", check=False):
-                return sh("cat /sdcard/biokey_gantlet_ui.xml")
+            sh(f"rm -f {ui_dump}", check=False)
+            if "dumped to" in sh(f"uiautomator dump {ui_dump}", check=False):
+                try:
+                    return sh(f"cat {ui_dump}")
+                finally:
+                    sh(f"rm -f {ui_dump}", check=False)
             time.sleep(1)
         raise RuntimeError("uiautomator couldn't read the home screen")
 
@@ -469,8 +491,9 @@ def drawer_spots(labels):
     """
     go_home_fully()
     open_app_drawer()
-    sh("uiautomator dump /sdcard/biokey_gantlet_ui.xml", check=False)
-    xml = sh("cat /sdcard/biokey_gantlet_ui.xml", check=False)
+    ui_dump = "/data/local/tmp/biokey_gantlet_ui.xml"
+    sh(f"rm -f {ui_dump}; uiautomator dump {ui_dump}", check=False)
+    xml = sh(f"cat {ui_dump}; rm -f {ui_dump}", check=False)
     spots = {}
     # Only icons in the drawer's own list: the home screen is still in the dump, under the drawer,
     # and an app in its dock reads there too, where a tap lands on whatever drawer icon is on top.
@@ -493,7 +516,8 @@ def drawer_spots(labels):
 
 
 def app_label(pkg):
-    out = sh(f"dumpsys package {pkg}")
+    check_package(pkg)
+    out = sh(f"dumpsys package {shlex.quote(pkg)}")
     m = re.search(r"nonLocalizedLabel=([^\s]+)", out)
     return m.group(1) if m and m.group(1) != "null" else None
 

@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
 import androidx.core.content.edit
+import com.android.BioKey.core.data.AppText
 import com.android.BioKey.core.security.TrustedClock
 import com.android.BioKey.core.security.UnlockAttempts
 import java.io.File
@@ -123,7 +124,7 @@ object DiagnosticLog {
         val since = SystemClock.elapsedRealtime()
         val entry: Entry
         synchronized(entries) {
-            entry = Entry(at, text.replace('\n', ' '), since, boot, net)
+            entry = Entry(at, AppText.cleanLog(text), since, boot, net)
             entries.addLast(entry)
             while (entries.size > MAX_ENTRIES) entries.removeFirst()
             val number = ++logged

@@ -64,6 +64,13 @@ class LockScreenCameraTest {
         DiagnosticLog.clear()
         val secure = ComponentName(camera, secureScreen)
         shadowOf(context.packageManager).apply {
+            installPackage(android.content.pm.PackageInfo().apply {
+                packageName = camera
+                applicationInfo = android.content.pm.ApplicationInfo().apply {
+                    packageName = camera
+                    flags = android.content.pm.ApplicationInfo.FLAG_SYSTEM
+                }
+            })
             addActivityIfNotPresent(secure)
             addIntentFilterForActivity(secure, IntentFilter(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE).apply { addCategory(Intent.CATEGORY_DEFAULT) })
         }
@@ -270,5 +277,29 @@ class LockScreenCameraTest {
         windowEvent(camera, "$camera.MainActivity", wait = 1_500)
         assertEquals(listOf("Covered $camera (opened behind the keyguard)"), covered())
         assertTrue(lockScreensStarted().all { it.getBooleanExtra(LockScreenActivity.EXTRA_BEHIND_KEYGUARD, false) })
+    }
+
+    @Test
+    fun aDownloadedAppClaimingTheCameraIntentIsStillCoveredOverTheKeyguard() {
+        val impostor = "com.example.impostorcam"
+        val impostorScreen = "$impostor.SecureReviewActivity"
+        vault.setAppLock(impostor, true)
+        shadowOf(context.packageManager).apply {
+            installPackage(android.content.pm.PackageInfo().apply {
+                packageName = impostor
+                applicationInfo = android.content.pm.ApplicationInfo().apply { packageName = impostor }
+            })
+            val comp = ComponentName(impostor, impostorScreen)
+            addActivityIfNotPresent(comp)
+            addIntentFilterForActivity(comp, IntentFilter("android.provider.action.REVIEW_SECURE").apply {
+                addCategory(Intent.CATEGORY_DEFAULT)
+                addDataType("image/*")
+            })
+        }
+        ForegroundRules.resetSystemLists()
+        onScreen(appWindow(2, impostor), keyguardWindow())
+        windowEvent(impostor, impostorScreen, wait = 1_500)
+        val logs = DiagnosticLog.entries().map { it.text }
+        assertTrue(logs.toString(), logs.any { it.startsWith("Covered $impostor ") })
     }
 }

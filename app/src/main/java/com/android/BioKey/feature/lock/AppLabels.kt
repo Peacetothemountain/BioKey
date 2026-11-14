@@ -26,7 +26,8 @@ internal class AppLabels(context: Context) {
 
         /** The name part of a label, lower-cased: "Messages, 3 notifications" or a multi-line card -> "messages". */
         fun key(raw: CharSequence?): String? =
-            raw?.toString()?.lineSequence()?.firstOrNull()?.substringBefore(',')?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+            raw?.toString()?.lineSequence()?.firstOrNull()?.let { com.android.BioKey.core.data.AppText.cleanLabel(it) }
+                ?.substringBefore(',')?.trim()?.lowercase(java.util.Locale.ROOT)?.takeIf { it.isNotEmpty() }
     }
 
     private data class Stamp(val locked: Set<String>, val locales: String, val packages: Int)

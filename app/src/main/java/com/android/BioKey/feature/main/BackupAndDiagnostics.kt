@@ -328,21 +328,74 @@ private fun openPicker(res: Resources, launch: () -> Unit): Result<Unit> {
 
 /** Deletes the file the picker created for a backup that wasn't written. */
 private fun discard(context: Context, uri: Uri) {
+    if (runCatching { validateBackupUri(context, uri) }.isFailure) return
     runCatching { DocumentsContract.deleteDocument(context.contentResolver, uri) }
 }
 
-private fun write(context: Context, uri: Uri, bytes: ByteArray) {
-    // Some providers (cloud drives) refuse "wt"; the picker has just created the file, so "w" is
-    // as good there.
-    val out = runCatching { context.contentResolver.openOutputStream(uri, "wt") }.getOrNull()
-        ?: context.contentResolver.openOutputStream(uri, "w") ?: error("No output stream")
-    out.use { it.write(bytes) }
+/**
+ * Rejects non-`content://` URIs and any provider authority owned by BioKey itself, so a spoofed
+ * picker result cannot point backup reads or writes at BioKey's own files.
+ */
+internal fun validateBackupUri(context: Context, uri: Uri) {
+    require(uri.scheme == android.content.ContentResolver.SCHEME_CONTENT) { "Backup URI must use content://" }
+    val authority = uri.authority?.lowercase(Locale.ROOT).orEmpty()
+    val ownPkg = context.packageName.lowercase(Locale.ROOT)
+    require(authority.isNotEmpty() && authority != ownPkg && !authority.startsWith("$ownPkg.")) {
+        "Refusing internal backup URI authority"
+    }
 }
 
-private fun read(context: Context, uri: Uri): ByteArray {
-    val input = context.contentResolver.openInputStream(uri) ?: error("No input stream")
-    // A backup is a few kilobytes: anything far bigger isn't one.
-    return input.use { stream -> stream.readNBytesCompat(1 shl 20) }
+/**
+ * Rejects file descriptors owned by BioKey's own UID or resolving inside BioKey's private data
+ * directories (confused-deputy symlink/FD defense).
+ */
+internal fun checkSafeExternalFd(
+    context: Context,
+    fd: java.io.FileDescriptor,
+    myUid: Int = android.os.Process.myUid()
+) {
+    val stat = runCatching { android.system.Os.fstat(fd) }.getOrNull()
+    if (stat != null && myUid >= android.os.Process.FIRST_APPLICATION_UID) {
+        check(stat.st_uid != myUid) { "Refusing file descriptor owned by BioKey" }
+    }
+    val linkTarget = runCatching {
+        val fdNum = fd.javaClass.getDeclaredField("descriptor").apply { isAccessible = true }.getInt(fd)
+        java.io.File(android.system.Os.readlink("/proc/self/fd/$fdNum")).canonicalPath
+    }.getOrNull()
+    if (linkTarget != null) {
+        val ceDir = runCatching { context.dataDir.canonicalPath }.getOrNull()
+        val deDir = runCatching { context.createDeviceProtectedStorageContext().dataDir.canonicalPath }.getOrNull()
+        for (dir in listOfNotNull(ceDir, deDir)) {
+            check(linkTarget != dir && !linkTarget.startsWith("$dir${java.io.File.separator}")) {
+                "Refusing file descriptor inside BioKey private storage"
+            }
+        }
+    }
+}
+
+internal fun write(context: Context, uri: Uri, bytes: ByteArray) {
+    validateBackupUri(context, uri)
+    // Some providers (cloud drives) refuse "wt"; the picker has just created the file, so "w" is
+    // as good there.
+    val pfd = runCatching { context.contentResolver.openFileDescriptor(uri, "wt") }.getOrNull()
+        ?: context.contentResolver.openFileDescriptor(uri, "w") ?: error("No output file descriptor")
+    pfd.use {
+        checkSafeExternalFd(context, it.fileDescriptor)
+        android.os.ParcelFileDescriptor.AutoCloseOutputStream(it).use { out -> out.write(bytes) }
+    }
+}
+
+internal fun read(context: Context, uri: Uri): ByteArray {
+    validateBackupUri(context, uri)
+    val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: error("No input file descriptor")
+    return pfd.use {
+        checkSafeExternalFd(context, it.fileDescriptor)
+        // Read up to MAX_BACKUP_BYTES + 1 so oversized files fail fast as NotABackupException
+        // before running PBKDF2, rather than truncating to 1 MiB and failing as wrong password.
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(it).use { stream ->
+            stream.readNBytesCompat(VaultBackup.MAX_BACKUP_BYTES + 1)
+        }
+    }
 }
 
 private fun java.io.InputStream.readNBytesCompat(limit: Int): ByteArray {
@@ -377,7 +430,7 @@ private fun PasswordDialog(
     var password by remember { mutableStateOf("") }
     // Shown on request: with the password asked only once, a typo is caught by reading it.
     var shown by remember { mutableStateOf(false) }
-    val ready = password.length >= VaultBackup.MIN_PASSWORD_LENGTH && !busy
+    val ready = password.length in VaultBackup.MIN_PASSWORD_LENGTH..VaultBackup.MAX_PASSWORD_LENGTH && !busy
     val autofill = LocalAutofillManager.current
     val confirm = {
         if (ready) {
@@ -401,7 +454,7 @@ private fun PasswordDialog(
                             // Typing counts as using BioKey: the soft keyboard's input never passes
                             // through its own touch handling, so a long password could hit the idle lock.
                             LockStateTracker.onOwnAppInteraction()
-                            password = it
+                            if (it.length <= VaultBackup.MAX_PASSWORD_LENGTH) password = it
                         },
                         label = { Text(stringResource(R.string.backup_password)) },
                         singleLine = true,

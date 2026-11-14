@@ -29,8 +29,12 @@ private const val ACCESSIBILITY_DETAILS_SETTINGS = "android.settings.ACCESSIBILI
 object IntentNavigationHelper {
 
     /** Starts the first intent the device can handle. */
-    fun launchFallbackCascade(context: Context, intents: List<Intent>): Boolean {
-        LockStateTracker.beginExternalNavigation(preAuthorizeSelfProtection = true)
+    fun launchFallbackCascade(
+        context: Context,
+        intents: List<Intent>,
+        preAuthorizeSelfProtection: Boolean = true
+    ): Boolean {
+        LockStateTracker.beginExternalNavigation(preAuthorizeSelfProtection = preAuthorizeSelfProtection)
         for (intent in intents) {
             // A page opens only in the system's own app, never in whatever else answers: the next
             // page in the list is tried instead (every list ends with one the system always has).
@@ -78,7 +82,8 @@ object IntentNavigationHelper {
     /** Android's security page: faces, fingerprints and the screen lock, without choosing a new one. */
     fun openSecuritySettings(context: Context) = launchFallbackCascade(
         context,
-        listOf(Intent(Settings.ACTION_SECURITY_SETTINGS), Intent(Settings.ACTION_SETTINGS))
+        listOf(Intent(Settings.ACTION_SECURITY_SETTINGS), Intent(Settings.ACTION_SETTINGS)),
+        preAuthorizeSelfProtection = false
     )
 
     fun openScreenLockSetup(context: Context) = launchFallbackCascade(
@@ -87,7 +92,8 @@ object IntentNavigationHelper {
             Intent(DevicePolicyManager.ACTION_SET_NEW_PASSWORD),
             Intent(Settings.ACTION_SECURITY_SETTINGS),
             Intent(Settings.ACTION_SETTINGS)
-        )
+        ),
+        preAuthorizeSelfProtection = false
     )
 
     /**
@@ -101,7 +107,8 @@ object IntentNavigationHelper {
                 .putExtra(Settings.EXTRA_BIOMETRIC_AUTHENTICATORS_ALLOWED, BiometricManager.Authenticators.BIOMETRIC_STRONG),
             Intent(Settings.ACTION_SECURITY_SETTINGS),
             Intent(Settings.ACTION_SETTINGS)
-        )
+        ),
+        preAuthorizeSelfProtection = false
     )
 
     /**
@@ -123,10 +130,14 @@ object IntentNavigationHelper {
     fun hasPrivateSpacePage(context: Context): Boolean =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && hasSystemPage(context, privateSpaceIntent())
 
-    fun openPrivateSpace(context: Context) = launchFallbackCascade(context, listOf(privateSpaceIntent()))
+    fun openPrivateSpace(context: Context) = launchFallbackCascade(
+        context,
+        listOf(privateSpaceIntent()),
+        preAuthorizeSelfProtection = false
+    )
 
     /** BioKey's own accessibility toggle where the device has that page, else the accessibility list. */
-    fun accessibilitySettingsIntent(context: Context): Intent {
+    private fun accessibilitySettingsIntent(context: Context): Intent {
         val details = Intent(ACCESSIBILITY_DETAILS_SETTINGS).putExtra(
             Intent.EXTRA_COMPONENT_NAME,
             FeatureLinks.accessibilityServiceName(context)
@@ -147,7 +158,8 @@ object IntentNavigationHelper {
         listOf(
             Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, pkg),
             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null))
-        )
+        ),
+        preAuthorizeSelfProtection = pkg == context.packageName
     )
 
     /** A notification channel's own page ([channel]), else BioKey's notification settings. */
@@ -169,10 +181,8 @@ object IntentNavigationHelper {
 
     /** A web page (the privacy policy, help) in the browser, which does the fetching: BioKey can't. */
     fun openWebPage(context: Context, url: String) {
-        LockStateTracker.beginExternalNavigation(preAuthorizeSelfProtection = false)
         val intent = Intent(Intent.ACTION_VIEW, url.toUri()).apply { if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
         runCatching { context.startActivity(intent) }.onFailure {
-            LockStateTracker.onOwnAppResumed()
             BioKeyMessages.show(context.getString(R.string.nav_no_browser, url), Icons.Default.ErrorOutline)
         }
     }

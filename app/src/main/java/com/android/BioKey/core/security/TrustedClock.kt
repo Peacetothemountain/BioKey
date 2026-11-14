@@ -40,40 +40,39 @@ object TrustedClock {
     @VisibleForTesting
     internal fun restoreHooksForTests() = realHooks()
 
-    @Volatile private var anchor: Pair<Long, Long>? = null
-    /** The anchor came from the phone's clock: network time is tried again (once a minute) until it's there. */
-    @Volatile private var anchoredOnWall = false
-    /** When network time was last asked for (clock since boot): at most once a minute. */
-    @Volatile private var lastTry = Long.MIN_VALUE
+    private class State(val wallAt: Long, val elapsedAt: Long, val onWall: Boolean, val lastTry: Long)
+
+    @Volatile private var state: State? = null
 
     /** Whether "now" rests on the network's time, which changing the phone's date doesn't move. */
-    fun onNetworkTime(): Boolean {
-        now()
-        return !anchoredOnWall
-    }
+    fun onNetworkTime(): Boolean = !resolve().onWall
 
     fun now(): Long {
-        val current = anchor
+        val s = resolve()
+        return s.wallAt + (elapsed() - s.elapsedAt)
+    }
+
+    private fun resolve(): State {
+        val current = state
         val since = elapsed()
-        if (current == null || (anchoredOnWall && since - lastTry >= 60_000L)) {
-            lastTry = since
+        if (current != null && (!current.onWall || since - current.lastTry < 60_000L)) return current
+        return synchronized(this) {
+            val again = state
+            val nowSince = elapsed()
+            if (again != null && (!again.onWall || nowSince - again.lastTry < 60_000L)) return@synchronized again
             val network = networkTime()
-            if (network != null) {
-                anchor = network to elapsed()
-                anchoredOnWall = false
-            } else if (current == null) {
-                anchor = wall() to elapsed()
-                anchoredOnWall = true
+            val updated = when {
+                network != null -> State(network, elapsed(), onWall = false, lastTry = nowSince)
+                again == null -> State(wall(), elapsed(), onWall = true, lastTry = nowSince)
+                else -> State(again.wallAt, again.elapsedAt, onWall = true, lastTry = nowSince)
             }
+            state = updated
+            updated
         }
-        val (wallAt, elapsedAt) = anchor!!
-        return wallAt + (elapsed() - elapsedAt)
     }
 
     @VisibleForTesting
     internal fun resetForTests() {
-        anchor = null
-        anchoredOnWall = false
-        lastTry = Long.MIN_VALUE
+        synchronized(this) { state = null }
     }
 }

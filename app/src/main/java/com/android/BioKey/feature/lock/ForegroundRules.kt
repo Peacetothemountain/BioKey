@@ -108,6 +108,21 @@ object ForegroundRules {
     /** The activity every screensaver runs in, whichever app's it is. */
     const val DREAM_ACTIVITY = "android.service.dreams.DreamActivity"
 
+    /** Whether [cls] in [pkg] is an active configured screensaver's own activity, not a spoofed class name. */
+    fun isDreamActivity(context: Context, pkg: String, cls: String?): Boolean {
+        if (cls != DREAM_ACTIVITY) return false
+        val enabled = runCatching { android.provider.Settings.Secure.getInt(context.contentResolver, "screensaver_enabled", 0) == 1 }.getOrDefault(false)
+        if (!enabled) return false
+        if (pkg == "android") return true
+        val apps = runCatching {
+            val cr = context.contentResolver
+            val chosen = android.provider.Settings.Secure.getString(cr, "screensaver_components")?.takeIf { it.isNotBlank() }
+                ?: android.provider.Settings.Secure.getString(cr, "screensaver_default_component").orEmpty()
+            chosen.split(',').mapNotNull { android.content.ComponentName.unflattenFromString(it.trim())?.packageName }.toSet()
+        }.getOrDefault(emptySet())
+        return pkg in apps
+    }
+
     /** The system file picker: the one trip BioKey's own session survives ([com.android.BioKey.core.security.LockStateTracker.beginOwnPicker]). */
     val DOCUMENTS_UI = setOf("com.android.documentsui", "com.google.android.documentsui")
 
@@ -287,6 +302,10 @@ object ForegroundRules {
             val activity = pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo ?: continue
             // Android's chooser: no default handler.
             if (activity.packageName == "android") continue
+            // Only preinstalled system camera/dialer packages may open uncovered over the keyguard.
+            val flags = activity.applicationInfo?.flags ?: 0
+            val isSystem = (flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0
+            if (!isSystem) continue
             // An alias's own name, and the screen it opens, which is what its windows say.
             found.getOrPut(activity.packageName) { HashSet() } += listOfNotNull(activity.name, activity.targetActivity)
         }

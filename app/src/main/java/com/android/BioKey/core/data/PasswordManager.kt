@@ -1,6 +1,7 @@
 package com.android.BioKey.core.data
 
 import android.content.pm.PackageManager
+import java.util.Locale
 
 /**
  * Google Password Manager: one app to the owner, but reachable through two packages, the
@@ -71,11 +72,15 @@ object PasswordManager {
         val simple = cls.orEmpty().substringAfterLast('.')
         val isManagerActivity = MANAGER_ACTIVITY_HINTS.any { simple.contains(it, ignoreCase = true) }
         if (pkg == CREDENTIAL_MANAGER) {
-            return if (!isManagerActivity && SHEET_HINTS.any { simple.contains(it, ignoreCase = true) }) null else VIRTUAL_PACKAGE
+            val isManagementScreen = isManagerActivity ||
+                simple.contains("Manage", ignoreCase = true) ||
+                simple.contains("Settings", ignoreCase = true) ||
+                simple.contains("Checkup", ignoreCase = true)
+            return if (!isManagementScreen && SHEET_HINTS.any { simple.contains(it, ignoreCase = true) }) null else VIRTUAL_PACKAGE
         }
         if (isManagerActivity) return VIRTUAL_PACKAGE
         if (SHEET_HINTS.any { simple.contains(it, ignoreCase = true) } || simple.contains("Settings", ignoreCase = true)) return GMS
-        val heading = title?.toString()?.trim()?.lowercase()
-        return if (heading != null && heading in MANAGER_TITLES) VIRTUAL_PACKAGE else GMS
+        val heading = AppText.cleanLabel(title).lowercase(Locale.ROOT)
+        return if (heading.isNotEmpty() && heading in MANAGER_TITLES) VIRTUAL_PACKAGE else GMS
     }
 }

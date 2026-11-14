@@ -3,6 +3,7 @@ package com.android.BioKey.core.data
 import android.content.pm.ApplicationInfo
 import androidx.annotation.StringRes
 import com.android.BioKey.R
+import java.util.Locale
 
 /** What kind of app something is; [label] is its name on screen. */
 enum class AppCategory(@StringRes val label: Int) {
@@ -78,7 +79,7 @@ object AppClassifier {
     private val LABEL_SEPARATORS = Regex("[^\\p{L}\\p{N}]+")
 
     fun categorize(packageName: String, label: String, playCategory: Int = ApplicationInfo.CATEGORY_UNDEFINED): AppCategory {
-        val words = (packageName.lowercase().split('.', '_', '-') + label.lowercase().split(LABEL_SEPARATORS))
+        val words = (packageName.lowercase(Locale.ROOT).split('.', '_', '-') + label.lowercase(Locale.ROOT).split(LABEL_SEPARATORS))
             .filterTo(HashSet()) { it.isNotEmpty() }
         fun matches(keys: List<String>) = keys.any { key -> if (key in WHOLE_WORDS) key in words else words.any { it.contains(key) } }
         return when {
