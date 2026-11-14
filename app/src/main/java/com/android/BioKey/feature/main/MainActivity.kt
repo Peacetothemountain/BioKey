@@ -3,6 +3,7 @@ package com.android.BioKey.feature.main
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -25,6 +26,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
@@ -32,6 +34,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.android.BioKey.R
 import com.android.BioKey.core.FeatureLinks
@@ -39,14 +42,17 @@ import com.android.BioKey.core.security.BiometricEnrollment
 import com.android.BioKey.core.security.AlsoLockedByAndroid
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.NewAppSuggestions
+import com.android.BioKey.core.security.OwnerPassphrase
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.ScreenLockWatch
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.lock.BioKeyLockScreen
+import com.android.BioKey.feature.lock.PassphraseGateState
 import com.android.BioKey.feature.setup.SetupScreenExpressive
 import com.android.BioKey.ui.security.ProtectDialogWindow
 import com.android.BioKey.ui.security.WindowProtection
@@ -65,6 +71,11 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
 
     companion object {
+        /** Passphrase checks: slow on purpose, so never on the main thread, and one at a time. */
+        private val passphraseChecks = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "biokey-own-passphrase").apply { isDaemon = true }
+        }
+
         const val ACTION_PAUSE_PROTECTION = "com.android.BioKey.action.PAUSE_PROTECTION"
         /**
          * The Quick Settings tile's way in to the pause sheet: an alias of this activity that isn't
@@ -111,6 +122,7 @@ class MainActivity : ComponentActivity() {
         WindowProtection.applyWindowProtections(this)
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        watchPassphraseEntry()
         // Setup waiting for a screen lock, through a recreation (a font or language change, say).
         SetupWait.from(savedInstanceState).let {
             setupNeedsScreenLock = it.needsScreenLock
@@ -148,6 +160,14 @@ class MainActivity : ComponentActivity() {
 
             // No messages behind BioKey's own lock (the idle lock comes up with BioKey on screen).
             BioKeyTheme(showMessages = !setupCompleted || isAuthenticated) {
+                // The passphrase asked for in a face or fingerprint check's place ([confirmOwner]): only inside BioKey, unlocked.
+                if (setupCompleted && isAuthenticated) {
+                    PassphraseConfirmDialog(
+                        state = PassphraseConfirm.state,
+                        onSubmit = { typed -> PassphraseConfirm.submit(this, typed) },
+                        onDismiss = PassphraseConfirm::dismiss
+                    )
+                }
                 when {
                     !setupCompleted -> SetupScreenExpressive(
                         isAuthenticating = isSetupAuthenticating,
@@ -162,6 +182,8 @@ class MainActivity : ComponentActivity() {
                         onCancelClicked = { finishAffinity() },
                         statusMessage = lockMessage ?: lockReason,
                         isPermanentLockout = isPermanentLockout,
+                        passphrase = passphraseGate,
+                        onPassphraseSubmit = ::checkOwnPassphrase,
                         // Only the accessibility service can lock the phone: in compatibility
                         // mode the lockout leaves Cancel, and the power button the message names.
                         canLockPhone = accessibilityRunning,
@@ -250,7 +272,7 @@ class MainActivity : ComponentActivity() {
         if (!promptAutoLaunched && !isPermanentLockout && !engine.isAuthenticatingFor(packageName)) {
             promptAutoLaunched = true
             window.decorView.post {
-                if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) && !isAuthenticated && !isPermanentLockout) {
+                if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) && !isAuthenticated && !isPermanentLockout && !passphraseGate.open) {
                     authenticate()
                 }
             }
@@ -276,6 +298,9 @@ class MainActivity : ComponentActivity() {
         // The cancelled prompt never reports back: nothing may wait for it.
         isSetupAuthenticating = false
         promptAutoLaunched = false
+        // What was typed doesn't wait in memory behind another screen, and a check still running opens nothing.
+        closePassphrase()
+        PassphraseConfirm.dismiss()
         // Leaving to lock the phone, as the lockout message asks, ends the lockout: the next
         // visit prompts again.
         isPermanentLockout = false
@@ -389,14 +414,124 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    /** What BioKey's own lock shows of the passphrase ([BioKeyLockScreen]). */
+    private val passphraseGate = PassphraseGateState()
+    /** What the unlock in hand goes on to do, whichever way it is passed ([authenticate]). */
+    private var afterUnlock: () -> Unit = {}
+    /**
+     * One opening of the passphrase's entry on BioKey's own lock: the wrong tries it saw (the
+     * failed-unlock record they went to, and how many were its own). A check answers for the entry
+     * it was typed into only.
+     */
+    private class OwnPassphraseEntry {
+        var record: Long? = null
+        val misses = mutableMapOf<Long, Int>()
+    }
+
+    /** The entry as it is open now; null while it's closed ([watchPassphraseEntry]). */
+    private var ownPassphraseEntry: OwnPassphraseEntry? = null
+
+    /**
+     * Follows the entry opening and closing, which the lock screen does itself ("Use passphrase",
+     * Back): each opening starts afresh, and closing drops whatever is still being checked for it.
+     */
+    private fun watchPassphraseEntry() {
+        lifecycleScope.launch {
+            snapshotFlow { passphraseGate.open }.collect { open ->
+                ownPassphraseEntry = if (open) OwnPassphraseEntry() else null
+                if (!open) passphraseGate.busy = false
+            }
+        }
+    }
+
+    /** "Use passphrase" is among the lock's buttons exactly while the passphrase is a way in, with any wait still running. */
+    private fun offerPassphrase() {
+        passphraseGate.offered = SecurityEngine.passphraseStandsIn(this)
+        val wait = if (passphraseGate.offered) OwnerPassphrase.waitRemainingMs(this) else 0L
+        passphraseGate.waitUntilElapsed = if (wait > 0L) SystemClock.elapsedRealtime() + wait else 0L
+    }
+
+    private fun closePassphrase() {
+        ownPassphraseEntry = null
+        passphraseGate.open = false
+        passphraseGate.busy = false
+        passphraseGate.error = null
+    }
+
+    /** Checks what was typed on BioKey's own lock, off the main thread, and opens BioKey on a match only. */
+    private fun checkOwnPassphrase(typed: CharArray) {
+        // Typed before the entry's opening was seen ([watchPassphraseEntry] runs a moment after): it starts here.
+        val entry = ownPassphraseEntry ?: OwnPassphraseEntry().also { ownPassphraseEntry = it }
+        // Every session ended while it's checked ("Lock all", the phone locked): this unlock doesn't count.
+        val generation = LockStateTracker.lockGeneration()
+        passphraseGate.busy = true
+        val app = applicationContext
+        val brand = getString(R.string.brand_name)
+        passphraseChecks.execute {
+            val outcome = try {
+                OwnerPassphrase.verify(app, typed)
+            } catch (_: Exception) {
+                OwnerPassphrase.Outcome.Mismatch(0L)
+            } finally {
+                typed.fill('\u0000')
+            }
+            runOnUiThread {
+                // Counted and recorded whatever became of this screen meanwhile.
+                when (outcome) {
+                    is OwnerPassphrase.Outcome.Mismatch -> UnlockAttempts.onBiometricFailed(app, packageName, brand, entry.record, passphrase = true)?.let { id ->
+                        entry.record = id
+                        entry.misses[id] = (entry.misses[id] ?: 0) + 1
+                    }
+                    OwnerPassphrase.Outcome.Match ->
+                        UnlockAttempts.onUnlocked(app, packageName, brand, biometric = false, ownMisses = entry.misses, passphrase = true)
+                    else -> Unit
+                }
+                // Only for the entry it was typed into, still open on a screen still showing.
+                if (ownPassphraseEntry !== entry || isFinishing || isDestroyed || isAuthenticated || !passphraseGate.open ||
+                    !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+                ) return@runOnUiThread
+                passphraseGate.busy = false
+                when (outcome) {
+                    OwnerPassphrase.Outcome.Match -> {
+                        if (LockStateTracker.lockGeneration() != generation) {
+                            // Locked again meanwhile: asked for again, rather than opened behind the lock.
+                            passphraseGate.error = getString(R.string.confirm_try_again)
+                            return@runOnUiThread
+                        }
+                        closePassphrase()
+                        engine.ownAppOpenedWithPassphrase()
+                        LockStateTracker.onOwnAppUnlocked()
+                        isAuthenticated = true
+                        lockReason = null
+                        afterUnlock()
+                    }
+                    is OwnerPassphrase.Outcome.Mismatch -> {
+                        passphraseGate.error = getString(R.string.lock_passphrase_wrong)
+                        if (outcome.waitMs > 0L) passphraseGate.waitUntilElapsed = SystemClock.elapsedRealtime() + outcome.waitMs
+                    }
+                    is OwnerPassphrase.Outcome.Wait -> passphraseGate.waitUntilElapsed = SystemClock.elapsedRealtime() + outcome.waitMs
+                    // Removed meanwhile: back to the buttons, without it.
+                    OwnerPassphrase.Outcome.NotSet -> {
+                        closePassphrase()
+                        offerPassphrase()
+                    }
+                }
+            }
+        }
+    }
+
     private fun authenticate(onAuthenticated: () -> Unit = {}) {
         if (engine.isAuthenticating()) return
         lockMessage = null
         isPermanentLockout = false
+        afterUnlock = onAuthenticated
+        closePassphrase()
+        offerPassphrase()
         engine.showBiometricPrompt(
             activity = this,
             appName = getString(R.string.brand_name),
             packageName = packageName,
+            passphraseEntry = true,
             onSuccess = {
                 LockStateTracker.onOwnAppUnlocked()
                 isAuthenticated = true
@@ -404,6 +539,12 @@ class MainActivity : ComponentActivity() {
                 onAuthenticated()
             },
             onError = { code, message ->
+                // "Use passphrase" on the prompt, or no face or fingerprint to ask for: its entry, on the lock.
+                if (code == SecurityEngine.ERROR_USE_PASSPHRASE) {
+                    offerPassphrase()
+                    passphraseGate.open = passphraseGate.offered
+                    return@showBiometricPrompt
+                }
                 // The phone's screen lock was removed: nothing can check, and the owner isn't
                 // locked out of BioKey, which says so on home (recorded, [ScreenLockWatch]).
                 val noScreenLock = code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL || code == SecurityEngine.ERROR_NO_BIOMETRICS

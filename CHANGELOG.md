@@ -2,8 +2,97 @@
 
 BioKey's releases, newest first. The version is the `versionName` in `app/build.gradle.kts`.
 
-## Unreleased
+## 2.0.0 (14 November 2026)
 
+2.0 rather than 1.0.5, because how an unlock is decided has changed: a face, fingerprint or screen
+lock now counts only with proof from the phone's secure hardware, and "Face or fingerprint only"
+can have a way in that isn't the screen lock (your own passphrase). It also brings a round of
+security hardening and the audit fixes made since 1.0.4. Version code 21: codes 7 to 20 were
+never released.
+
+- **Proof of a match.** Each unlock prompt now carries a fresh random number (a "challenge") that
+  a key in the phone's secure hardware has to sign, and the hardware lets that key sign only
+  straight after it has checked you (face, fingerprint or screen lock). A match Android reports
+  without a correct signature opens nothing ("Couldn't confirm that was you. Try again."). The key
+  holds nothing about your face or fingerprint. It is no defence on a rooted phone, where BioKey
+  itself can be changed. Where the key can't be made or used (no screen lock, a Keystore that
+  fails), prompts run as before and the diagnostic log says so; after two failed signatures in a
+  row the check is left off until BioKey next starts, so faulty hardware costs two extra tries,
+  never your apps.
+- **Your own passphrase** (optional, Settings > Passphrase, with "Face or fingerprint only" on).
+  With face or fingerprint only, a wet finger or a locked-out sensor used to leave you stuck. A
+  passphrase is a second way in that belongs to BioKey alone, so knowing the phone's screen lock
+  isn't enough. It does nothing while "Face or fingerprint only" is off.
+  - Where it's asked for: the prompt's button reads "Use passphrase" in place of Cancel (Back
+    still cancels; from Android 16 QPR2 it uses the prompt's own place for another way in); the
+    lock cover has "Use passphrase" beside Cancel; and when no face or fingerprint can be used at
+    all, BioKey asks for the passphrase straight away instead of allowing the screen lock. Without
+    a passphrase, the screen lock is still allowed then, as before.
+  - Setting, changing or removing it asks for your face or fingerprint first. With no face or
+    fingerprint to use, it can only be removed, not set or changed, and removing it then asks for
+    the passphrase itself. The same goes for everything else in BioKey that asks who you are
+    (switching "Face or fingerprint only" off, clearing security activity, restoring a backup):
+    while the passphrase stands in, the screen lock alone never passes those checks.
+  - It is never offered to a password manager, and its fields allow no autofill or copying.
+  - At least 8 characters. Wrong tries are counted where a restart can't reset them: the 5th, 6th
+    and 7th wrong try in a row each mean a 30-second wait, the 8th and 9th 5 minutes, the 10th and
+    every one after 30 minutes. Changing the phone's date or restarting it doesn't shorten the
+    wait. The right passphrase clears the count.
+  - Never stored. BioKey keeps a check value made from it (PBKDF2-HMAC-SHA512, 210,000 rounds,
+    with a random salt, then mixed with a key held in the phone's Keystore, so a copy of the file
+    alone can't be guessed at off the phone), the salt, the round count, the count of wrong tries
+    and the wait, in its own storage: never in a backup, never sent anywhere, gone when BioKey's
+    storage is cleared or it's uninstalled. With failed unlock alerts on, wrong tries are noted
+    like a face or fingerprint that didn't match (and go, as those do, when the right passphrase
+    follows on the same lock screen); an unlock with it reads "then opened with your passphrase".
+  - Forgotten? Nothing is lost: change or remove it in Settings with your face or fingerprint.
+- **Names from other apps are cleaned.** App names, window titles, profile names (typed or from a
+  backup) and search text handed to BioKey lose invisible direction-changing characters and
+  control characters, and are cut to a sensible length, before BioKey shows, records or logs them:
+  an app can't name itself so that the words around its name on a prompt or in security activity
+  read differently. Diagnostic log lines are cleaned the same way.
+- **Backups:** a file over 1 MB is refused as not a backup before the password is tried, and one
+  asking for far more key-derivation rounds than BioKey uses is refused too. Passwords are 8 to 256
+  characters. The file is read and written through a file handle BioKey checks first: anything
+  that isn't a document from Android's picker, or that leads into BioKey's own storage, is refused.
+  A backup with something malformed in it (an entry that isn't an app, too many profiles) is
+  refused rather than half restored, and the opened settings are wiped from memory once read.
+- **Locked again after a reinstall:** a locked app reinstalled signed by someone else is still
+  only offered, and no longer erases the signature BioKey remembered, so if the real app comes back
+  within the 30 days it's locked again. The 30 days are counted on a clock that changing the
+  phone's date doesn't move.
+- **Over the lock screen:** only the preinstalled camera and phone apps count as the lock-screen
+  camera and the emergency dialer; a downloaded app set as the default camera is covered as usual.
+  A window counts as a screensaver only while screensavers are on and it belongs to the one the
+  phone is set to use. The "Lock this app" tile asks you to unlock the phone first when used from
+  the lock screen, and BioKey's tiles don't show there whether protection is paused or off.
+- **Touches and windows:** touches on BioKey's covers and patches are dropped while another app's
+  window is over them, and BioKey's own dialogs ignore touches once BioKey has locked itself. A
+  window from another app with BioKey's title isn't taken for BioKey's. A face or fingerprint check
+  for a change in BioKey that ends after the phone or BioKey has locked doesn't make the change
+  (it says to try again), and the check is cancelled when BioKey leaves the screen.
+- **One prompt names and unlocks at most three locked apps** on screen at once; any others stay
+  locked. A locked app on another display whose lock screen can't start there, and that has no
+  patch over it, sends that display Home.
+- **When something goes wrong, the stricter choice:** if BioKey's stored profiles can't be read,
+  the default re-lock delay becomes Immediately rather than a longer one. A timed pause lasts at
+  most 24 hours. A face or fingerprint change is saved at once and kept until it has been
+  recorded, and finishing setup starts watching for changes straight away, even on a phone with
+  only a screen lock. Google Password Manager's own screens reached through Credential Manager
+  (managing passwords, its settings, Password Checkup) count as Password Manager, locked if you
+  locked it, not as sign-in sheets over other apps.
+- **Builds with self-protection** (not the Play version): Android's security, screen lock, face
+  and fingerprint, and private space pages opened from BioKey are no longer let past it without
+  asking. Setup skips the "Allow restricted settings" step only for an install from Google Play or
+  from a store that came with the phone.
+- **Behind the scenes:** two error messages in the system log now give only the kind of error,
+  not its details; CI no longer keeps the R8 mapping with
+  its test reports; Dependabot waits 7 days before proposing a new version of a dependency; the
+  website loads nothing from other sites and sends no referrer.
+- **A phone that had the unreleased "2.0.0-fortress" build** (installed on its developer's own
+  phone only, never released, and abandoned) has that build's leftover files and its two Keystore
+  keys deleted when BioKey starts. That build had already discarded the settings before it, so
+  such a phone is set up again. Nobody else is affected.
 - **A force stop the phone restarted after is recorded** (Android 15 and later). Android can lose
   its record of the stop with the restart, but still says BioKey was left stopped: home then
   shows that app locking was off, until when, though not from when. The note is kept until app
@@ -49,7 +138,7 @@ BioKey's releases, newest first. The version is the `versionName` in `app/build.
   being cut short.
 - **New-app offers** can no longer replace one another when several apps are installed at once.
 - **What BioKey says about itself:** the in-app disclosure, the accessibility service's
-  description, the privacy policy (now dated 10 November 2026) and the README list what 1.0.4
+  description, the privacy policy (now dated 14 November 2026) and the README list what BioKey
   keeps and reads (times the phone had no screen lock, which locked apps Android's App lock was
   seen locking, signing-certificate fingerprints, the camera-over-lock-screen setting in backups),
   and no longer mention notification access. BioKey no longer asks Android which apps handle the

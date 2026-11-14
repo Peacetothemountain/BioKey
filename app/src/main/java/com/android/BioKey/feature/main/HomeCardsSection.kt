@@ -14,12 +14,15 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.BioKey.R
+import com.android.BioKey.core.security.OwnerPassphrase
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
@@ -237,10 +240,12 @@ internal fun LazyListScope.homeCards(
     if (biometricOnlyOn && home.hasStrongBiometric && look.action == null && SETTINGS_PACKAGE !in lockedApps && home.lockSettingsDismissed == false) {
         item(key = "lock_settings") {
             val res = LocalResources.current
+            // What really stands in when a face or fingerprint can't be used: the passphrase where one is set.
+            val passphraseSet by OwnerPassphrase.isSetFlow.collectAsStateWithLifecycle()
             ActionCard(
                 icon = Icons.Default.Lock,
                 title = stringResource(R.string.settings_lock_settings_title),
-                subtitle = stringResource(R.string.home_lock_settings_text),
+                subtitle = stringResource(if (passphraseSet) R.string.home_lock_settings_text_passphrase else R.string.home_lock_settings_text),
                 modifier = Modifier.animateItem()
             ) {
                 TextButton(onClick = { homeViewModel.dismissLockSettings() }) { Text(stringResource(R.string.common_not_now)) }

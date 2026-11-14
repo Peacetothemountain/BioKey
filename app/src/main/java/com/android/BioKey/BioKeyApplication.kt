@@ -14,16 +14,19 @@ import androidx.core.content.ContextCompat
 import com.android.BioKey.core.FeatureLinks
 import com.android.BioKey.core.data.AppClassifier
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.data.OldBuildLeftovers
 import com.android.BioKey.core.security.AlsoLockedByAndroid
 import com.android.BioKey.core.security.BiometricEnrollment
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.NewAppSuggestions
+import com.android.BioKey.core.security.OwnerPassphrase
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.ReinstallMemory
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.core.security.UnlockAttempts
+import com.android.BioKey.core.security.UnlockProof
 import com.android.BioKey.feature.lock.AppInfoCache
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.lock.LockEngines
@@ -122,6 +125,11 @@ class BioKeyApplication : Application() {
                 // And whether BioKey was left force-stopped, before anything can end this process.
                 ProtectionGaps.noteStart(app)
                 BiometricEnrollment.checkSoon(app)
+                // The key prompts are proved with, ready before the first one.
+                UnlockProof.prepareSoon(app)
+                // Whether a passphrase is set, read here so a lock screen's first ask finds it in memory.
+                OwnerPassphrase.isSet(app)
+                OldBuildLeftovers.clear(app)
                 // Channel names and descriptions as this version words them, before any is posted.
                 ProtectionAlerts.ensureChannels(app)
                 UnlockAttempts.ensureChannel(app)

@@ -1,6 +1,6 @@
 # BioKey privacy policy
 
-_Effective 10 November 2026_
+_Effective 14 November 2026_
 
 BioKey is an app lock for Android, made by NB Designs. It keeps the apps you choose behind your
 face, fingerprint or screen lock. This policy explains what BioKey can see on your phone, what it
@@ -25,7 +25,7 @@ It applies to BioKey 1.0 and later, as published on Google Play
   reminders stopped meanwhile, the diagnostic log opened for sharing from such a session, times
   the phone had no screen lock, which of your locked apps Android's own App lock was seen locking
   too, the signing-certificate fingerprints of the apps you've locked, locked apps uninstalled in
-  the last 30 days, and, if you turn them
+  the last 30 days, a check value made from your passphrase if you set one, and, if you turn them
   on, failed unlock alerts) stays in its private storage, unless you choose to save a
   backup file or share the log yourself.
 
@@ -98,13 +98,29 @@ sees, receives or stores your fingerprint, your face, or your PIN, pattern or pa
 tells it only whether authentication succeeded, whether it was a face or fingerprint or the
 screen lock, and when a face or fingerprint didn't match (not whose it was). BioKey accepts only
 strong (Class 3) biometrics or your screen lock; with "Face or fingerprint only" on, biometrics
-alone (your screen lock if they can't be used, which is recorded). Failed unlock alerts, if you turn them on, use those mismatches (see below). Android doesn't
+alone (if they can't be used, your passphrase if you've set one, otherwise your screen lock, which
+is recorded). Failed unlock alerts, if you turn them on, use those mismatches (see below). Android doesn't
 tell apps about a wrong PIN, pattern or password.
 
-To notice a face or fingerprint being added or removed in Android's settings, BioKey keeps one
-key in Android's Keystore that Android itself destroys when that happens; the key never encrypts
-anything and BioKey never learns anything about the biometrics. It also keeps whether a strong
-face or fingerprint was set up when it last looked.
+Your passphrase, if you set one (see "Your passphrase" below), is the one exception: it's typed
+into BioKey itself, never into Android's prompt. BioKey checks it on the phone and never keeps
+it.
+
+BioKey keeps two keys in Android's Keystore (the phone's store for keys, held in its secure
+hardware where the phone has it), and a third if you set a passphrase. None of them encrypts or
+stores anything of yours, and none holds anything about your face or fingerprint:
+
+- To notice a face or fingerprint being added or removed in Android's settings, one key that
+  Android itself destroys when that happens. BioKey only looks at whether it's still there.
+- To be sure a match really happened, one key (`biokey_unlock_proof`) that signs a fresh random
+  number for each unlock prompt. The hardware lets it sign only straight after it has checked you,
+  so, where the phone can make and use such a key, BioKey believes a match only with that
+  signature. Android destroys it if the screen lock is
+  removed, and BioKey makes a new one once there is a screen lock again.
+- If you set a passphrase, one key mixed into its check value, so that value is no use off the
+  phone.
+
+BioKey also keeps whether a strong face or fingerprint was set up when it last looked.
 
 ### Installed apps
 
@@ -163,6 +179,14 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   fingerprint, its profile and the time are kept for 30 days, so that installing the same app
   again locks it again (or, if someone else signed it, offers to). Not in backups; forgotten when
   a backup is restored.
+- **Your passphrase** (only if you set one, in Settings > Passphrase; it can be set while "Face or
+  fingerprint only" is on): never the passphrase itself. BioKey keeps a check value made from it
+  (with PBKDF2-HMAC-SHA512: 210,000 rounds and a random salt, which makes every guess slow; then
+  mixed with the Keystore key above, so a copy of the file alone can't be tested against guesses
+  off the phone), the salt, the number of rounds, how many wrong tries in a row there have been,
+  and until when the next try has to wait. Not in backups, never sent anywhere. Removing the
+  passphrase in Settings deletes all of it, and so does clearing BioKey's storage or uninstalling
+  it. While it stands in ("Face or fingerprint only" on, and a passphrase set), wherever this policy says BioKey asks for your screen lock because no face or fingerprint can be used, it asks for your passphrase instead: the screen lock alone never passes those checks. Wrong tries are also noted with failed unlocks, if you turn those on (below).
 - **"What locking does":** which apps you've been told about when locking them (their package
   names, at most 300) and whether you chose "Don't show again", kept until BioKey's storage is
   cleared, so the same app isn't explained twice.
@@ -171,9 +195,9 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   for 30 days is forgotten.
 - **Failed unlock alerts** (off until you turn them on; BioKey asks once): for each failed
   attempt on a locked app (or on BioKey's own prompts that confirm a change, listed as BioKey), which app (its package name and name), when, how many faces or
-  fingerprints didn't match, whether biometrics locked out, and how the app was then opened, if
-  it was. When your face or fingerprint matches on the same prompt, its misses were yours and
-  aren't kept. If you also turn on "Also note screen lock unlocks", each locked app opened with
+  fingerprints (or passphrases) didn't match, whether biometrics locked out, and how the app was
+  then opened, if it was. When your face or fingerprint matches on the same prompt, or your
+  passphrase on the same lock screen, its misses were yours and aren't kept. If you also turn on "Also note screen lock unlocks", each locked app opened with
   your PIN, pattern or password is listed too (not notified). BioKey's home screen lists them until
   you clear them. Once you've seen them (Review), each is deleted 7 days after it happened, and at
   most 50 seen ones are kept; until then none is deleted for its age, and none to make room for
@@ -198,8 +222,8 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   locked apps opened without a check), from when BioKey noticed until one was set again; when BioKey's storage was cleared (worked out
   from Android's record of BioKey's past process exits, read on the phone: after BioKey last ran),
   until it was set up again, which, like a face or fingerprint change, holds records for a day; when a face or fingerprint was added or removed
-  on the phone; when a face or fingerprint couldn't be used while "Face or fingerprint only" was on,
-  so the screen lock was allowed; and, on a phone with a face or fingerprint (or
+  on the phone; when a face or fingerprint couldn't be used while "Face or fingerprint only" was on
+  and no passphrase was set, so the screen lock was allowed; and, on a phone with a face or fingerprint (or
   within a day of one being added or removed), each way protection was weakened from
   BioKey opened with the screen lock and not confirmed with a face or fingerprint: protection
   paused; an app's lock switched off; a locked app moved or added into a profile that's off or
@@ -233,7 +257,7 @@ backup and from device-to-device transfer, so it never leaves the phone that way
   (how long app locking was off, a face or fingerprint added or removed, a change from a
   screen-lock session), pauses and how long they last, and, when failed unlock alerts are on,
   failed unlocks of locked apps and locked apps opened with the screen lock (which app, not whose
-  face or finger). It keeps at most 500 entries from the
+  face or finger); and a passphrase being set or removed, a wait starting after wrong tries, and a locked app opened with it. It keeps at most 500 entries from the
   last 3 days, measured like failed unlocks: on the time since the phone started, and across a
   restart on the network's time. After a restart with no network time, older entries aren't
   deleted for their age, only to stay within 500. You can view and
@@ -265,7 +289,7 @@ settings, Restore from a backup). This happens only when you ask for it.
   the apps you've told it to leave alone, failed unlock alerts and their screen lock option,
   new-app offers, whether the diagnostic log is on, and
   the self-protection setting, which is always off in the Play version). Nothing else: no diagnostic log, no failed unlocks or
-  times protection was off, no authentication data. Restoring a backup never
+  times protection was off, no passphrase, no authentication data. Restoring a backup never
   deletes the failed unlocks kept on the phone, and always asks for your face or fingerprint first
   (your screen lock where none is set up). Within a day of a face or fingerprint added or removed, it can't be done
   at all.
@@ -289,9 +313,11 @@ to the place you choose.
 ## Deleting your data
 
 - **Uninstall BioKey,** or use **Clear storage** on its App info page: this deletes everything
-  BioKey keeps on the phone (your settings, the diagnostic log, failed unlocks and times
-  protection was off).
+  BioKey keeps on the phone (your settings, your passphrase's check value, the diagnostic log,
+  failed unlocks and times protection was off).
 - **The diagnostic log** can be deleted on its own in BioKey's settings, or by turning it off.
+- **Your passphrase** can be removed in Settings > Passphrase (BioKey checks it's you first),
+  which deletes everything kept about it.
 - **Failed unlocks, times protection was off and changes** can be cleared from BioKey's home
   screen (Review > Clear), except a face or fingerprint added or removed, which ages out on its
   own. Turning failed unlock alerts off also deletes the failed unlocks. Both ask for your face or

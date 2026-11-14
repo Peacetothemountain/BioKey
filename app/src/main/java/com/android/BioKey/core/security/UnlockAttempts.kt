@@ -59,7 +59,7 @@ import org.json.JSONObject
  */
 object UnlockAttempts {
 
-    enum class Ending { NONE, BIOMETRIC, SCREEN_LOCK }
+    enum class Ending { NONE, BIOMETRIC, SCREEN_LOCK, PASSPHRASE }
 
     data class Attempt(
         val packageName: String,
@@ -83,7 +83,7 @@ object UnlockAttempts {
         val unanswered get() = ending == Ending.NONE
 
         /** Worth telling: misses nobody's face or fingerprint followed. */
-        val notifiable get() = ending != Ending.BIOMETRIC && (failures > 0 || lockedOut)
+        val notifiable get() = ending != Ending.BIOMETRIC && ending != Ending.PASSPHRASE && (failures > 0 || lockedOut)
     }
 
     /** Never notified sooner after a miss than this: the owner may still be retrying. */
@@ -268,8 +268,16 @@ object UnlockAttempts {
     /**
      * A face or fingerprint didn't match on [packageName]'s prompt. [promptRecord] is the record
      * this prompt added its last miss to, if any; returns the one it added this one to.
+     * [passphrase]: it was a wrong passphrase on its lock screen instead ([OwnerPassphrase]), kept
+     * and told the same way.
      */
-    fun onBiometricFailed(context: Context, packageName: String, label: String, promptRecord: Long? = null): Long? {
+    fun onBiometricFailed(
+        context: Context,
+        packageName: String,
+        label: String,
+        promptRecord: Long? = null,
+        passphrase: Boolean = false
+    ): Long? {
         val p = load(context) ?: return null
         if (!_enabled.value) return null
         val safeLabel = AppText.cleanLabel(label).ifEmpty { packageName }
@@ -294,7 +302,7 @@ object UnlockAttempts {
             id = (same ?: updated.first()).seq
             save(p, updated.fresh(p, bootCount(context)))
         }
-        DiagnosticLog.log("A face or fingerprint didn't match on $packageName")
+        DiagnosticLog.log(if (passphrase) "A wrong passphrase on $packageName" else "A face or fingerprint didn't match on $packageName")
         scheduleNotification(context.applicationContext, OWNER_RETRY_MS)
         return id
     }
@@ -324,8 +332,17 @@ object UnlockAttempts {
     /**
      * [packageName] was unlocked, with a face or fingerprint ([biometric]) or the screen lock.
      * [ownMisses]: the misses this very prompt saw, per record ([onBiometricFailed]'s ids).
+     * [passphrase]: with the owner's own passphrase ([OwnerPassphrase]), which says it was the
+     * owner as a face or fingerprint does, and the screen lock doesn't.
      */
-    fun onUnlocked(context: Context, packageName: String, label: String, biometric: Boolean, ownMisses: Map<Long, Int> = emptyMap()) {
+    fun onUnlocked(
+        context: Context,
+        packageName: String,
+        label: String,
+        biometric: Boolean,
+        ownMisses: Map<Long, Int> = emptyMap(),
+        passphrase: Boolean = false
+    ) {
         val p = load(context) ?: return
         if (!_enabled.value) return
         val safeLabel = AppText.cleanLabel(label).ifEmpty { packageName }
@@ -336,11 +353,16 @@ object UnlockAttempts {
         val boot = bootCount(context)
         synchronized(lock) {
             val list = _attempts.value
-            val ending = if (biometric) Ending.BIOMETRIC else Ending.SCREEN_LOCK
+            val proved = biometric || passphrase
+            val ending = when {
+                passphrase -> Ending.PASSPHRASE
+                biometric -> Ending.BIOMETRIC
+                else -> Ending.SCREEN_LOCK
+            }
             fun recent(a: Attempt) = a.packageName in names && a.unanswered && a.boot == boot && since - a.lastElapsed in 0..OWNER_RETRY_MS
             val updated = list.mapNotNull { a ->
                 // The misses this prompt saw were the owner's, when their face or finger then matched.
-                val own = if (biometric) ownMisses[a.seq] ?: 0 else 0
+                val own = if (proved) ownMisses[a.seq] ?: 0 else 0
                 val left = a.copy(failures = (a.failures - own).coerceAtLeast(0))
                 when {
                     !recent(a) && own == 0 -> a
@@ -349,7 +371,7 @@ object UnlockAttempts {
                     else -> left.copy(ending = ending, lastAt = now, lastElapsed = since, boot = boot, net = net)
                 }
             }.toMutableList()
-            if (!biometric && list.none(::recent) && _screenLockUnlocks.value && hasStrongBiometric(context)) {
+            if (!proved && list.none(::recent) && _screenLockUnlocks.value && hasStrongBiometric(context)) {
                 updated.add(0, Attempt(packageName, safeLabel, now, now, failures = 0, ending = Ending.SCREEN_LOCK, seq = nextSeqLocked(p), lastElapsed = since, boot = boot, net = net))
                 DiagnosticLog.log("$packageName opened with the screen lock")
             }
@@ -653,6 +675,7 @@ object UnlockAttempts {
             attempt.ending == Ending.SCREEN_LOCK && attempt.failures == 0 && !attempt.lockedOut -> res.getString(R.string.attempts_screen_lock_only)
             attempt.ending == Ending.SCREEN_LOCK -> res.getString(R.string.attempts_opened_with_screen_lock, tries)
             attempt.ending == Ending.BIOMETRIC -> res.getString(R.string.attempts_opened_with_biometric, tries)
+            attempt.ending == Ending.PASSPHRASE -> res.getString(R.string.attempts_opened_with_passphrase, tries)
             attempt.lockedOut && attempt.failures > 0 -> res.getString(R.string.attempts_locked_out_after, tries)
             attempt.lockedOut -> res.getString(R.string.attempts_locked_out)
             else -> res.getString(R.string.attempts_missed, tries)

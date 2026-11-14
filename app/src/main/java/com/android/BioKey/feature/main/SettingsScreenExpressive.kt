@@ -196,6 +196,7 @@ fun SettingsScreenExpressive(
     val disclosures = rememberDisclosureGate()
     val notifications = rememberNotificationPermission()
     val protecting = ProtectionEngine.isProtecting(mode)
+    val passphrase = rememberPassphraseSetting(activity)
 
     // Read on every visit (back from the system pages that change them), off the main thread:
     // each is a call into Android's services.
@@ -256,8 +257,12 @@ fun SettingsScreenExpressive(
             if (strongBiometric || biometricOnly) SettingItem(
                 icon = Icons.Default.Fingerprint,
                 title = stringResource(R.string.settings_biometric_only_title),
-                subtitle = if (biometricOnly && !strongBiometric) stringResource(R.string.settings_biometric_only_none_set_up)
-                else stringResource(R.string.settings_biometric_only_summary),
+                subtitle = when {
+                    // What really opens locked apps meanwhile: the passphrase where one is set, else the screen lock.
+                    biometricOnly && !strongBiometric && passphrase.isSet -> stringResource(R.string.settings_biometric_only_none_set_up_passphrase)
+                    biometricOnly && !strongBiometric -> stringResource(R.string.settings_biometric_only_none_set_up)
+                    else -> stringResource(R.string.settings_biometric_only_summary)
+                },
                 checked = biometricOnly,
                 // Either way, a face or fingerprint first: proof it works before relying on it, and no
                 // switching it off for someone who only knows the PIN.
@@ -271,6 +276,8 @@ fun SettingsScreenExpressive(
                     }
                 }
             ) else null,
+            // BioKey's own fallback for "Face or fingerprint only" (PassphraseSetting.kt).
+            passphrase.row(biometricOnly, strongBiometric)?.let { SettingItem(icon = it.icon, title = it.title, subtitle = it.subtitle, onClick = it.onClick) },
             // A suggestion, the same as home's card: where face or fingerprint only is on.
             if (biometricOnly && strongBiometric && SETTINGS_PACKAGE !in lockedApps) SettingItem(
                 icon = Icons.Default.Lock,
@@ -564,6 +571,7 @@ fun SettingsScreenExpressive(
     }
 
     if (showLog) DiagnosticLogScreen(onDismiss = { showLog = false })
+    passphrase.Dialogs()
 
     if (showRelockSheet) {
         RelockSheet(

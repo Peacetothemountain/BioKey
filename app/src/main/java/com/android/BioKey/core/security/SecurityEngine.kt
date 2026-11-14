@@ -7,6 +7,7 @@ import android.hardware.biometrics.BiometricManager
 import android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG
 import android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import android.hardware.biometrics.BiometricPrompt
+import android.os.Build
 import android.os.CancellationSignal
 import android.util.Log
 import androidx.annotation.VisibleForTesting
@@ -38,6 +39,13 @@ class SecurityEngine private constructor() {
         const val ERROR_HW_UNAVAILABLE = BiometricPrompt.BIOMETRIC_ERROR_HW_UNAVAILABLE
         /** The prompt's Cancel, when it has one (face or fingerprint only): Android's code 13. */
         const val ERROR_NEGATIVE_BUTTON = 13
+        /**
+         * BioKey's own, not Android's: the owner chose "Use passphrase" on the prompt, or the prompt
+         * wasn't shown because the passphrase is the only way in just now ([passphraseStandsIn]).
+         */
+        const val ERROR_USE_PASSPHRASE = -1001
+        /** BioKey's own: Android reported a match the phone's hardware didn't back up ([UnlockProof]). */
+        const val ERROR_UNPROVEN = -1002
 
 
         fun isUserCancel(code: Int) = code == ERROR_USER_CANCELED || code == ERROR_CANCELED ||
@@ -118,6 +126,14 @@ class SecurityEngine private constructor() {
          */
         fun biometricOnly(context: Context): Boolean =
             SecurityVault.getInstance(context).isBiometricOnly() && hasStrongBiometric(context)
+
+        /**
+         * "Face or fingerprint only" is on and the owner has set a passphrase: that, not the screen
+         * lock, is the other way into a locked app. Offered on the prompt, and what is asked for
+         * when no face or fingerprint can be used at all.
+         */
+        fun passphraseStandsIn(context: Context): Boolean =
+            SecurityVault.getInstance(context).isBiometricOnly() && OwnerPassphrase.isSet(context)
     }
 
     private class Attempt(val packageName: String, val host: WeakReference<Activity>, val cancel: CancellationSignal) {
@@ -199,6 +215,13 @@ class SecurityEngine private constructor() {
     ) {
         val app = activity.applicationContext
         val strong = hasStrongBiometric(activity)
+        // Where the passphrase stands in for a face or fingerprint, the screen lock never does:
+        // whoever asks is sent to the passphrase first ([ERROR_USE_PASSPHRASE]'s counterpart inside
+        // BioKey), and nothing here falls back to it.
+        if (!strong && passphraseStandsIn(activity)) {
+            onRefused(activity.getString(R.string.prompt_biometric_unavailable))
+            return
+        }
         // Set up but unusable right now (a fault, an update pending): not the screen lock instead.
         // Nothing here needs doing this minute, and the PIN mustn't be enough to erase records.
         if (!strong && hasEnrolledStrongBiometric(activity) && !screenLockIfSensorUnusable) {
@@ -212,9 +235,15 @@ class SecurityEngine private constructor() {
         resetAuthenticatingStateFor(activity)
         val entry = WeakReference(activity) to cancel
         activeConfirmation = entry
+        val proof = UnlockProof.arm(app)
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 if (activeConfirmation === entry) activeConfirmation = null
+                // A match with nothing from the phone's hardware behind it confirms nothing.
+                if (!UnlockProof.confirmed(proof)) {
+                    onRefused(activity.getString(R.string.prompt_unproven))
+                    return
+                }
                 // Misses this prompt saw, then a match: the owner's, gone like on any prompt.
                 UnlockAttempts.onUnlocked(
                     app, activity.packageName, brand,
@@ -261,7 +290,7 @@ class SecurityEngine private constructor() {
                 }
                 .setConfirmationRequired(false)
                 .build()
-                .authenticate(cancel, activity.mainExecutor, callback)
+                .authenticate(proof, cancel, activity, callback)
         } catch (e: Exception) {
             if (activeConfirmation === entry) activeConfirmation = null
             onRefused(activity.getString(R.string.prompt_unavailable))
@@ -274,6 +303,14 @@ class SecurityEngine private constructor() {
      */
     @Volatile var ownAppOpenedWithBiometric = false
         @androidx.annotation.VisibleForTesting internal set
+
+    /**
+     * BioKey was opened with the owner's passphrase: as much the owner's own doing as a face or
+     * fingerprint ([ownerProven]), since knowing the phone's screen lock isn't knowing it.
+     */
+    fun ownAppOpenedWithPassphrase() {
+        ownAppOpenedWithBiometric = true
+    }
 
     /** BioKey locked itself: whatever it was opened with no longer proves anything ([ownerProven]). */
     fun forgetOwnProof() {
@@ -290,7 +327,9 @@ class SecurityEngine private constructor() {
         packageName: String,
         onSuccess: () -> Unit,
         onError: (Int, CharSequence) -> Unit = { _, _ -> },
-        promptTitle: String? = null
+        promptTitle: String? = null,
+        /** Whether this screen can ask for the owner's passphrase itself ([ERROR_USE_PASSPHRASE]). */
+        passphraseEntry: Boolean = false
     ) {
         val running = active
         if (running != null && running.packageName == packageName && running.host.get() === activity && !activity.isFinishing) {
@@ -304,7 +343,16 @@ class SecurityEngine private constructor() {
         val app = activity.applicationContext
         val name = appName.ifBlank { activity.getString(R.string.brand_name) }
         val faceOrFingerOnly = biometricOnly(activity)
+        val passphrase = passphraseEntry && passphraseStandsIn(activity)
         BiometricEnrollment.checkSoon(activity)
+        // "Face or fingerprint only" with a passphrase set, and no face or fingerprint that can be
+        // used right now: the passphrase is asked for, not the screen lock, which is exactly what
+        // someone who had removed the fingerprints would know.
+        if (passphrase && !faceOrFingerOnly) {
+            active = null
+            onError(ERROR_USE_PASSPHRASE, "")
+            return
+        }
         // "Face or fingerprint only" is on, but the face or fingerprint can't be used right now (a
         // sensor fault, an update pending): the screen lock is allowed so the owner isn't locked out,
         // and that's recorded.
@@ -312,8 +360,16 @@ class SecurityEngine private constructor() {
             ProtectionGaps.recordOncePerProcess(activity, ProtectionGaps.Change.BIOMETRIC_UNAVAILABLE)
         }
 
+        val proof = UnlockProof.arm(app)
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                // A match with nothing from the phone's hardware behind it opens nothing.
+                if (!UnlockProof.confirmed(proof)) {
+                    if (active !== attempt) return
+                    active = null
+                    onError(ERROR_UNPROVEN, activity.getString(R.string.prompt_unproven))
+                    return
+                }
                 if (packageName == app.packageName) {
                     ownAppOpenedWithBiometric = result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC
                 }
@@ -359,8 +415,15 @@ class SecurityEngine private constructor() {
                     if (faceOrFingerOnly) {
                         // No "Use PIN": someone who knows the screen lock can't use it here.
                         setAllowedAuthenticators(BIOMETRIC_STRONG)
-                        setNegativeButton(activity.getString(R.string.prompt_cancel), activity.mainExecutor) { _, _ ->
-                            callback.onAuthenticationError(ERROR_NEGATIVE_BUTTON, "Cancel")
+                        if (passphrase) {
+                            // In Cancel's place (Back still cancels): the other way in.
+                            setOtherWayIn(activity.getString(R.string.prompt_use_passphrase), activity) {
+                                callback.onAuthenticationError(ERROR_USE_PASSPHRASE, "")
+                            }
+                        } else {
+                            setNegativeButton(activity.getString(R.string.prompt_cancel), activity.mainExecutor) { _, _ ->
+                                callback.onAuthenticationError(ERROR_NEGATIVE_BUTTON, "Cancel")
+                            }
                         }
                     } else {
                         setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
@@ -368,12 +431,38 @@ class SecurityEngine private constructor() {
                 }
                 .setConfirmationRequired(false)
                 .build()
-                .authenticate(attempt.cancel, activity.mainExecutor, callback)
+                .authenticate(proof, attempt.cancel, activity, callback)
             LatencyMarks.mark("prompt", packageName)
         } catch (e: Exception) {
             Log.e(TAG, "Failed starting BiometricPrompt: ${e.javaClass.simpleName}")
             if (active === attempt) active = null
             onError(ERROR_HW_UNAVAILABLE, activity.getString(R.string.prompt_unavailable))
         }
+    }
+
+    /** Starts the prompt, with [proof]'s challenge for the phone's hardware to sign if there is one. */
+    private fun BiometricPrompt.authenticate(
+        proof: UnlockProof.Armed?,
+        cancel: CancellationSignal,
+        activity: Activity,
+        callback: BiometricPrompt.AuthenticationCallback
+    ) {
+        if (proof != null) authenticate(proof.crypto, cancel, activity.mainExecutor, callback)
+        else authenticate(cancel, activity.mainExecutor, callback)
+    }
+
+    /**
+     * Another way in, where the prompt's Cancel would be. From Android 16 QPR2 the prompt has a
+     * place of its own for one (a "fallback option", shown with a key icon); before that it is the
+     * prompt's one button, a use Android's own documentation gives it.
+     */
+    private fun BiometricPrompt.Builder.setOtherWayIn(text: String, activity: Activity, onChosen: () -> Unit) {
+        if (Build.VERSION.SDK_INT_FULL >= Build.VERSION_CODES_FULL.BAKLAVA_1) {
+            val added = runCatching {
+                addFallbackOption(text, BiometricManager.ICON_TYPE_PASSWORD, activity.mainExecutor) { _, _ -> onChosen() }
+            }.isSuccess
+            if (added) return
+        }
+        setNegativeButton(text, activity.mainExecutor) { _, _ -> onChosen() }
     }
 }

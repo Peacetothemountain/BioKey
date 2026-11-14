@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The owner passphrase on the lock cover (LockCoverView, PassphraseEntryView). -->
+<resources>
+    <!-- Among the cover's buttons, after the face or fingerprint prompt is dismissed. -->
+    <string name="lock_passphrase_use">Use passphrase</string>
+    <!-- Inside the empty field; also what screen readers call the field. -->
+    <string name="lock_passphrase_hint">Passphrase</string>
+    <string name="lock_passphrase_show">Show passphrase</string>
+    <string name="lock_passphrase_hide">Hide passphrase</string>
+    <string name="lock_passphrase_unlock">Unlock</string>
+    <!-- On the Unlock button while the passphrase is checked. -->
+    <string name="lock_passphrase_checking">Checking…</string>
+    <!-- Leaves the passphrase for the cover's buttons. -->
+    <string name="lock_passphrase_back">Back</string>
+    <!-- Countdowns under the field while tries are paused, always rounded up. -->
+    <string name="lock_passphrase_wait_seconds">Try again in %1$d s</string>
+    <string name="lock_passphrase_wait_minutes">Try again in %1$d min</string>
+    <string name="lock_passphrase_wait_hours">Try again in %1$d h</string>
+    <!-- Said (and shown) when a pause in tries ends by itself. -->
+    <string name="lock_passphrase_wait_over">You can try again now</string>
+    <!-- What went wrong, then how long to wait: "Wrong passphrase. Try again in 28 s". -->
+    <string name="lock_passphrase_then">%1$s. %2$s</string>
+</resources>

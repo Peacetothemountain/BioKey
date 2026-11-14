@@ -43,7 +43,8 @@ description: An app lock for Android. The apps you choose open only after your f
       <li class="card feature">
         <span class="icon icon--blue" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 13a7 7 0 0 1 14 0v3"/><path d="M8 13a4 4 0 0 1 8 0v6"/><path d="M11 13a1 1 0 0 1 2 0v8"/><path d="M12 3.5v2"/></svg></span>
         <h3>Face, fingerprint or screen lock</h3>
-        <p>Lock the apps you choose behind face unlock, fingerprint, or your PIN, pattern or password. Android’s own prompt does the checking: BioKey never sees your face, fingerprint or PIN.</p>
+        <p>Lock the apps you choose behind face unlock, fingerprint, or your PIN, pattern or password. Android’s own prompt does the checking, and the phone’s secure hardware confirms each match: BioKey never sees your face, fingerprint or PIN.</p>
+        <p>Someone knows your PIN? Turn on face or fingerprint only, with a <a href="{{ '/support/#q-passphrase' | relative_url }}">passphrase</a> of your own for when your finger won’t work.</p>
       </li>
       <li class="card feature">
         <span class="icon icon--violet" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2"/><path d="M9.5 3h5"/></svg></span>

@@ -154,6 +154,46 @@ class UnlockAttemptsTest {
     }
 
     @Test
+    fun thePassphraseSaysItWasTheOwnerAsAFaceDoes() {
+        // Wrong passphrases, then the right one, on the same lock screen: the owner's own.
+        val p = Prompt()
+        p.miss(); p.miss()
+        UnlockAttempts.onUnlocked(context, bank, "Bank", biometric = false, ownMisses = p.own, passphrase = true)
+        assertTrue(kept.isEmpty())
+    }
+
+    @Test
+    fun someoneElsesMissesAreKeptWhenThePassphraseThenOpensIt() {
+        Prompt().apply { miss(); miss(); miss() }
+        pass(90_000L)
+        UnlockAttempts.onUnlocked(context, bank, "Bank", biometric = false, passphrase = true)
+        val attempt = kept.single()
+        assertEquals(Ending.PASSPHRASE, attempt.ending)
+        assertFalse("answered by the owner's passphrase: not notified", attempt.notifiable)
+        assertTrue(UnlockAttempts.describe(context, attempt).endsWith("then opened with your passphrase"))
+    }
+
+    @Test
+    fun aPassphraseUnlockIsNeverNotedAsAScreenLockOne() {
+        UnlockAttempts.setScreenLockUnlocks(context, true)
+        UnlockAttempts.onUnlocked(context, bank, "Bank", biometric = false, passphrase = true)
+        assertTrue(kept.isEmpty())
+    }
+
+    @Test
+    fun aRecordOpenedWithThePassphraseIsReadBackAfterARestart() {
+        Prompt().apply { miss() }
+        pass(90_000L)
+        UnlockAttempts.onUnlocked(context, bank, "Bank", biometric = false, passphrase = true)
+        UnlockAttempts.resetForTests()
+        UnlockAttempts.clock = { now }
+        UnlockAttempts.elapsed = { sinceBoot }
+        UnlockAttempts.bootCount = { 3 }
+        UnlockAttempts.load(context)
+        assertEquals(Ending.PASSPHRASE, kept.single().ending)
+    }
+
+    @Test
     fun screenLockUnlocksAreNotedOnlyWhenAskedFor() {
         Prompt().screenLock()
         assertTrue(kept.isEmpty())

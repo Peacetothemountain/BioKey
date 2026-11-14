@@ -347,21 +347,22 @@ internal fun validateBackupUri(context: Context, uri: Uri) {
 
 /**
  * Rejects file descriptors owned by BioKey's own UID or resolving inside BioKey's private data
- * directories (confused-deputy symlink/FD defense).
+ * directories (confused-deputy symlink/FD defense). [fdNumber] is the descriptor's number where
+ * the caller has it ([android.os.ParcelFileDescriptor.getFd]): what it leads to is looked up by it.
  */
 internal fun checkSafeExternalFd(
     context: Context,
     fd: java.io.FileDescriptor,
-    myUid: Int = android.os.Process.myUid()
+    myUid: Int = android.os.Process.myUid(),
+    fdNumber: Int? = null
 ) {
     val stat = runCatching { android.system.Os.fstat(fd) }.getOrNull()
     if (stat != null && myUid >= android.os.Process.FIRST_APPLICATION_UID) {
         check(stat.st_uid != myUid) { "Refusing file descriptor owned by BioKey" }
     }
-    val linkTarget = runCatching {
-        val fdNum = fd.javaClass.getDeclaredField("descriptor").apply { isAccessible = true }.getInt(fd)
-        java.io.File(android.system.Os.readlink("/proc/self/fd/$fdNum")).canonicalPath
-    }.getOrNull()
+    val linkTarget = fdNumber?.let { number ->
+        runCatching { java.io.File(android.system.Os.readlink("/proc/self/fd/$number")).canonicalPath }.getOrNull()
+    }
     if (linkTarget != null) {
         val ceDir = runCatching { context.dataDir.canonicalPath }.getOrNull()
         val deDir = runCatching { context.createDeviceProtectedStorageContext().dataDir.canonicalPath }.getOrNull()
@@ -380,7 +381,7 @@ internal fun write(context: Context, uri: Uri, bytes: ByteArray) {
     val pfd = runCatching { context.contentResolver.openFileDescriptor(uri, "wt") }.getOrNull()
         ?: context.contentResolver.openFileDescriptor(uri, "w") ?: error("No output file descriptor")
     pfd.use {
-        checkSafeExternalFd(context, it.fileDescriptor)
+        checkSafeExternalFd(context, it.fileDescriptor, fdNumber = it.fd)
         android.os.ParcelFileDescriptor.AutoCloseOutputStream(it).use { out -> out.write(bytes) }
     }
 }
@@ -389,7 +390,7 @@ internal fun read(context: Context, uri: Uri): ByteArray {
     validateBackupUri(context, uri)
     val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: error("No input file descriptor")
     return pfd.use {
-        checkSafeExternalFd(context, it.fileDescriptor)
+        checkSafeExternalFd(context, it.fileDescriptor, fdNumber = it.fd)
         // Read up to MAX_BACKUP_BYTES + 1 so oversized files fail fast as NotABackupException
         // before running PBKDF2, rather than truncating to 1 MiB and failing as wrong password.
         android.os.ParcelFileDescriptor.AutoCloseInputStream(it).use { stream ->

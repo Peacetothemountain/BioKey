@@ -30,6 +30,8 @@ import android.widget.TextView
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.ui.graphics.toArgb
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
 import androidx.core.view.isVisible
 import com.android.BioKey.R
 import com.android.BioKey.ui.brand.WordmarkView
@@ -71,6 +73,9 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         val onPrimary = scheme.onPrimary.toArgb()
         val tertiary = scheme.tertiary.toArgb()
         val error = scheme.error.toArgb()
+        /** The passphrase field's outline and hint, and its eye. */
+        val outline = scheme.outline.toArgb()
+        val onSurfaceVariant = scheme.onSurfaceVariant.toArgb()
     }
 
     private companion object {
@@ -97,6 +102,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     var onUnlock: (() -> Unit)? = null
     var onCancel: (() -> Unit)? = null
     var onLockDevice: (() -> Unit)? = null
+    /** The owner tapped "Use passphrase". */
+    var onUsePassphrase: (() -> Unit)? = null
 
     private val density = resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
@@ -162,13 +169,59 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         setOnClickListener { onCancel?.invoke() }
     }
 
+    /**
+     * The owner passphrase, for when the face or fingerprint can't be used: drawn as Cancel is,
+     * beside it (above it, where the two don't fit side by side), so Unlock stays the one obvious
+     * way in.
+     */
+    private val usePassphraseButton = TextView(context).apply {
+        text = context.getString(R.string.lock_passphrase_use)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        gravity = Gravity.CENTER
+        minWidth = dp(88)
+        setPadding(dp(16), 0, dp(16), 0)
+        isClickable = true
+        isFocusable = true
+        visibility = GONE
+        filterTouchesWhenObscured = true
+        WindowProtection.hideFromNonToolAccessibilityServices(this)
+        accessibilityDelegate = ButtonRole
+        setOnClickListener { onUsePassphrase?.invoke() }
+    }
+
+    /** Cancel alone, as it always was; with "Use passphrase", the two side by side, or stacked if they don't fit. */
+    private val secondaryActions = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER
+        addView(usePassphraseButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(48)))
+        addView(cancelButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(48)))
+    }
+
     private val actions = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
         addView(primaryButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)))
-        addView(cancelButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(48)).apply {
+        addView(secondaryActions, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(8)
         })
+    }
+
+    /** The passphrase's entry, in the buttons' place while it's open ([showPassphraseEntry]). */
+    private val passphraseEntry = PassphraseEntryView(context).apply {
+        visibility = GONE
+        onBack = { backOutOfPassphrase() }
+    }
+
+    private var passphraseOffered = false
+    /** What the cover's buttons were last set to ([setActionsVisible]): hidden regardless while the entry is open. */
+    private var actionsWanted = true
+    private var onPassphraseDismiss: (() -> Unit)? = null
+    /** How far the keyboard reaches above the bottom system bar: the entry stays above it. */
+    private var imeExtra = 0
+    /** Back, while the entry is open, goes back to the cover's buttons, not out of the lock screen. */
+    private val passphraseBack = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() = backOutOfPassphrase()
     }
 
     private val identity = LinearLayout(context).apply {
@@ -233,6 +286,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         // long as the service, through folds, unfolds and rotations.
         addView(actions, LayoutParams(dp(360), LayoutParams.WRAP_CONTENT,
             Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(24) })
+        addView(passphraseEntry, LayoutParams(dp(360), LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(24) })
         applyPalette()
     }
 
@@ -254,7 +309,12 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         // phone has since folded away.
         val available = MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight - dp(64)
         val width = minOf(available, dp(360)).coerceAtLeast(0)
-        if (MeasureSpec.getMode(widthMeasureSpec) != MeasureSpec.UNSPECIFIED) actions.layoutParams.width = width
+        if (MeasureSpec.getMode(widthMeasureSpec) != MeasureSpec.UNSPECIFIED) {
+            actions.layoutParams.width = width
+            passphraseEntry.layoutParams.width = width
+        }
+        (passphraseEntry.layoutParams as LayoutParams).bottomMargin = dp(24) + imeExtra
+        if (passphraseOffered) arrangeSecondaryActions(actions.layoutParams.width)
         fitIdentity(widthMeasureSpec, heightMeasureSpec)
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
@@ -277,6 +337,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         }
         val artHeight = if (logo.isVisible) dp(LOGO_HEIGHT_DP) else dp(ICON_DP)
         setArtScale(1f)
+        identityScroll.visibility = VISIBLE
         params.gravity = Gravity.CENTER
         params.topMargin = 0
         params.bottomMargin = dp(IDENTITY_BOTTOM_DP)
@@ -292,7 +353,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
             MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
         )
         val natural = identity.measuredHeight
-        val above = height - dp(ACTIONS_DP + ACTIONS_GAP_DP)
+        val above = height - reservedBelowIdentity(innerWidth)
         // As usual: centred, then raised by the margin (FrameLayout's centring takes it off whole).
         val top = (height - natural) / 2 - dp(IDENTITY_BOTTOM_DP)
         if (top >= 0 && top + natural <= above) return
@@ -305,6 +366,37 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
         params.topMargin = ((above - fitted) / 2).coerceAtLeast(0)
         params.bottomMargin = height - above
+        // The passphrase and keyboard leave too little room for even half the icon: the field
+        // matters more than a sliver of it.
+        if (isPassphraseEntryShowing && above < artHeight * MIN_ART_SCALE) identityScroll.visibility = INVISIBLE
+    }
+
+    /**
+     * The height kept under the icon and name: Unlock and Cancel's (with "Use passphrase" above
+     * Cancel, when stacked), or, while it's open, the passphrase entry's and the keyboard's.
+     */
+    private fun reservedBelowIdentity(width: Int): Int = when {
+        isPassphraseEntryShowing -> {
+            val entryWidth = passphraseEntry.layoutParams.width.takeIf { it > 0 } ?: width
+            passphraseEntry.measure(
+                MeasureSpec.makeMeasureSpec(entryWidth, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+            )
+            passphraseEntry.measuredHeight + dp(24) + imeExtra + dp(ACTIONS_GAP_DP)
+        }
+        passphraseOffered && secondaryActions.orientation == LinearLayout.VERTICAL -> dp(ACTIONS_DP + 48 + ACTIONS_GAP_DP)
+        else -> dp(ACTIONS_DP + ACTIONS_GAP_DP)
+    }
+
+    /** "Use passphrase" and Cancel side by side when both fit in [width] at the current text size; one above the other if not. */
+    private fun arrangeSecondaryActions(width: Int) {
+        val unspecified = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+        val exact48 = MeasureSpec.makeMeasureSpec(dp(48), MeasureSpec.EXACTLY)
+        usePassphraseButton.measure(unspecified, exact48)
+        cancelButton.measure(unspecified, exact48)
+        val sideBySide = usePassphraseButton.measuredWidth + cancelButton.measuredWidth <= width
+        val orientation = if (sideBySide) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        if (secondaryActions.orientation != orientation) secondaryActions.orientation = orientation
     }
 
     private val iconLocation = IntArray(2)
@@ -358,6 +450,9 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         status.setTextColor(p.error)
         cancelButton.setTextColor(p.primary)
         cancelButton.background = ripple(Color.TRANSPARENT, p.primary)
+        usePassphraseButton.setTextColor(p.primary)
+        usePassphraseButton.background = ripple(Color.TRANSPARENT, p.primary)
+        passphraseEntry.applyPalette(p)
         primaryButton.setTextColor(p.onPrimary)
         primaryButton.background = ripple(p.primary, p.onPrimary)
         // The glyph takes the text's colour, so it's drawn again with it.
@@ -397,7 +492,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         icon.visibility = if (isBioKey) GONE else VISIBLE
         name.visibility = icon.visibility
         name.text = label
-        brandMark.isVisible = !isBioKey && !actions.isVisible
+        brandMark.isVisible = !isBioKey && !actions.isVisible && !isPassphraseEntryShowing
         setIcon(appIcon, accent)
         describeLocked(if (isBioKey) "BioKey is locked" else "$label is locked")
         setStatus(null, permanentLockout = false)
@@ -455,9 +550,101 @@ class LockCoverView(context: Context) : FrameLayout(context) {
 
     /** Hides the buttons while the system prompt is up, like Android's own App Lock. */
     fun setActionsVisible(visible: Boolean) {
-        actions.visibility = if (visible) VISIBLE else INVISIBLE
-        brandMark.isVisible = !visible && !logo.isVisible
+        actionsWanted = visible
+        actions.visibility = if (visible && !isPassphraseEntryShowing) VISIBLE else INVISIBLE
+        brandMark.isVisible = !visible && !logo.isVisible && !isPassphraseEntryShowing
     }
+
+    /** Whether "Use passphrase" is among the cover's actions (shown only when the actions are). */
+    fun setPassphraseOffered(offered: Boolean) {
+        if (passphraseOffered == offered) return
+        passphraseOffered = offered
+        usePassphraseButton.isVisible = offered
+        if (!offered) secondaryActions.orientation = LinearLayout.HORIZONTAL
+        requestLayout()
+    }
+
+    /**
+     * Shows the entry in place of the cover's buttons, the field focused with the keyboard up.
+     * [onSubmit] gets what was typed (the caller zeroes it); [onDismiss] when the owner backs out
+     * of it (Back on screen, or the Back gesture).
+     */
+    fun showPassphraseEntry(onSubmit: (CharArray) -> Unit, onDismiss: () -> Unit) {
+        passphraseEntry.onSubmit = onSubmit
+        onPassphraseDismiss = onDismiss
+        if (isPassphraseEntryShowing) return
+        passphraseEntry.visibility = VISIBLE
+        actions.visibility = INVISIBLE
+        brandMark.isVisible = false
+        passphraseBack.isEnabled = true
+        registerPassphraseBack()
+        requestLayout()
+        passphraseEntry.open()
+    }
+
+    /** A check is running: the field and its button wait. */
+    fun setPassphraseBusy(busy: Boolean) = passphraseEntry.setBusy(busy)
+
+    /** Wrong, or tries are paused: says [message] under the field (announced to screen readers) and empties the field. Null clears it. */
+    fun setPassphraseError(message: String?) = passphraseEntry.setError(message)
+
+    /**
+     * Tries are paused until [untilElapsedRealtime] ([android.os.SystemClock.elapsedRealtime]):
+     * the field and Unlock are off and a countdown shows; they come back by themselves. Zero or a
+     * past time ends it.
+     */
+    fun setPassphraseWait(untilElapsedRealtime: Long) = passphraseEntry.setWait(untilElapsedRealtime)
+
+    /** Puts the entry away (what was typed is overwritten) and brings back the cover's buttons. */
+    @SuppressLint("AccessibilityFocus") // Asked for: back to the button the owner left from, not the top of the screen.
+    fun hidePassphraseEntry() {
+        if (!isPassphraseEntryShowing) return
+        passphraseEntry.close()
+        passphraseEntry.visibility = GONE
+        passphraseBack.isEnabled = false
+        passphraseBack.remove()
+        onPassphraseDismiss = null
+        passphraseEntry.onSubmit = null
+        setActionsVisible(actionsWanted)
+        requestLayout()
+        // Screen readers go back to where the owner came from.
+        val target = if (usePassphraseButton.isVisible) usePassphraseButton else primaryButton
+        if (actions.isVisible) target.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null)
+    }
+
+    val isPassphraseEntryShowing: Boolean get() = passphraseEntry.isVisible
+
+    private fun backOutOfPassphrase() {
+        val dismiss = onPassphraseDismiss
+        hidePassphraseEntry()
+        dismiss?.invoke()
+    }
+
+    /** Added after the lock screen's own Back handling, so it comes first while the entry is open. */
+    private fun registerPassphraseBack() {
+        passphraseBack.remove()
+        findViewTreeOnBackPressedDispatcherOwner()?.onBackPressedDispatcher?.addCallback(passphraseBack)
+    }
+
+    /** A tap on the cover around the entry (to put the keyboard away, say) doesn't ask again. */
+    override fun performClick(): Boolean = if (isPassphraseEntryShowing) true else super.performClick()
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (isPassphraseEntryShowing) registerPassphraseBack()
+    }
+
+    override fun onDetachedFromWindow() {
+        passphraseBack.remove()
+        super.onDetachedFromWindow()
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal val usePassphraseActionForTests: View get() = usePassphraseButton
+    @androidx.annotation.VisibleForTesting
+    internal val actionsForTests: View get() = actions
+    @androidx.annotation.VisibleForTesting
+    internal val passphraseEntryForTests: PassphraseEntryView get() = passphraseEntry
 
     /** Overlay windows don't always get insets dispatched; the shield passes them in. */
     fun applySystemBarInsets(left: Int, top: Int, right: Int, bottom: Int) {
@@ -467,6 +654,13 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     override fun onApplyWindowInsets(insets: WindowInsets): WindowInsets {
         val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
         setPadding(bars.left, bars.top, bars.right, bars.bottom)
+        // The keyboard, for the passphrase: the lock screen's window isn't resized for it (edge
+        // to edge), so the entry rises above it here.
+        val ime = (insets.getInsets(WindowInsets.Type.ime()).bottom - bars.bottom).coerceAtLeast(0)
+        if (ime != imeExtra) {
+            imeExtra = ime
+            requestLayout()
+        }
         return insets
     }
 
@@ -487,7 +681,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     }
 
     /** Unlock and Cancel are text drawn as buttons: screen readers are told they are buttons. */
-    private object ButtonRole : AccessibilityDelegate() {
+    internal object ButtonRole : AccessibilityDelegate() {
         override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
             super.onInitializeAccessibilityNodeInfo(host, info)
             info.className = Button::class.java.name

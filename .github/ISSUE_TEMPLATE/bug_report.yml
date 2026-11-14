@@ -50,7 +50,7 @@ body:
     attributes:
       label: BioKey version
       description: In Android's Settings > Apps > BioKey, at the bottom of the page.
-      placeholder: "1.0.4"
+      placeholder: "2.0.0"
     validations:
       required: true
 

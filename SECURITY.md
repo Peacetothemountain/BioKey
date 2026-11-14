@@ -7,7 +7,8 @@ protect. Please report one privately, and give us a chance to fix it before it's
 
 | Version | Supported |
 |---|---|
-| The latest 1.0.x release (1.0.4 now) | Yes |
+| The latest 2.0.x release (2.0.0 now) | Yes |
+| 1.0.x | No: please update to 2.0 |
 
 Fixes go into the latest release. Please check that a problem still happens there before
 reporting it.
@@ -33,7 +34,11 @@ on a fix, and credit you in the release notes if you'd like.
 
 Reports we especially want:
 
-- A way to use a locked app without authenticating, through ordinary use of the phone.
+- A way to use a locked app without authenticating, through ordinary use of the phone, including
+  a match BioKey accepts without the phone's hardware having signed its challenge (the proof of a
+  match described in the README).
+- A way round the passphrase's waits after wrong tries, or to learn the passphrase from what
+  BioKey keeps.
 - A way for another app to learn which apps are locked, read BioKey's settings, or switch BioKey
   off or pause it without the owner's authentication.
 - A weakness in the backup file's encryption, or a way to restore a backup without its password.

@@ -125,11 +125,52 @@ When you leave it: at once, or after the re-lock delay you chose for it or its p
 <summary>Someone knows my PIN. Can they open my locked apps?</summary>
 <div class="faq__body" markdown="block">
 
-Turn on **Face or fingerprint only** in BioKey’s settings (it appears once a face or fingerprint is set up on your phone): locked apps and BioKey then don’t offer the PIN at all.
+Turn on **Face or fingerprint only** in BioKey’s settings (it appears once a face or fingerprint is set up on your phone): locked apps and BioKey then don’t offer the PIN at all. For the days your finger won’t work, set a [passphrase](#q-passphrase) of your own.
 
 Lock **Settings** too (BioKey offers): with your PIN, someone could otherwise add their own fingerprint there. Android can’t be stopped from allowing that, but BioKey notices and tells you ("a face or fingerprint was added or removed"). Home suggests **Lock Android Settings too** while the option is on; **Not now** puts the suggestion away until you next turn the option on, and BioKey’s Settings keeps it under the option. If Settings is in a profile that’s switched off, locking it takes it out of that profile (Undo puts it back).
 
 After too many failed tries, Android pauses face and fingerprint for a while; if it locks them out for good, lock your phone and unlock it with your PIN to bring them back. With the option off, **Failed unlock alerts** and **Also note screen lock unlocks** at least show you when it happened.
+
+</div>
+</details>
+
+<details class="faq" id="q-passphrase" markdown="block">
+<summary>What is the passphrase?</summary>
+<div class="faq__body" markdown="block">
+
+A second way into your locked apps and BioKey, for when **Face or fingerprint only** is on and your face or fingerprint won’t work (a wet finger, a sensor locked out). It’s BioKey’s alone: knowing your phone’s PIN doesn’t help.
+
+- **Set it:** Settings > **Passphrase**, at least 8 characters. Make it different from your screen lock. BioKey asks for your face or fingerprint first.
+- **Use it:** tap **Use passphrase** on the unlock prompt or on the lock cover. If no face or fingerprint can be used at all, BioKey asks for it straight away.
+- **Only with Face or fingerprint only on.** With that off, your screen lock works as usual and the passphrase is never asked for.
+- **Never stored.** BioKey keeps only a check value made from it, on your phone, never in a backup. See the [privacy policy]({{ '/privacy/#your-passphrase' | relative_url }}).
+
+</div>
+</details>
+
+<details class="faq" id="q-passphrase-forgot" markdown="block">
+<summary>I forgot my passphrase</summary>
+<div class="faq__body" markdown="block">
+
+Nothing is lost. Open BioKey with your face or fingerprint, then Settings > **Passphrase**: change it or remove it.
+
+If your face or fingerprint can’t be used either, set one up again in Android’s settings (your screen lock lets you), then open BioKey with it. BioKey notes the new face or fingerprint in its security activity, as it does any.
+
+</div>
+</details>
+
+<details class="faq" id="q-passphrase-wait" markdown="block">
+<summary>Why do I have to wait after wrong passphrases?</summary>
+<div class="faq__body" markdown="block">
+
+So nobody can try guess after guess. After wrong tries in a row:
+
+- 4 or fewer: no wait.
+- 5th, 6th or 7th: 30 seconds each.
+- 8th or 9th: 5 minutes each.
+- 10th and after: 30 minutes each.
+
+Restarting the phone or changing its date doesn’t shorten the wait. The right passphrase clears the count. Your face or fingerprint still works while you wait.
 
 </div>
 </details>
@@ -261,9 +302,9 @@ Home screens can’t be locked, so you can always get back Home.
 
 BioKey uses Android’s own prompt, and accepts only strong (Class 3) face unlock, fingerprint, or your PIN, pattern or password. If your phone’s face unlock is the weaker kind, BioKey asks for your fingerprint or screen lock instead.
 
-After too many failed attempts, Android locks biometrics for a while; use your PIN, pattern or password. With **Face or fingerprint only** on, the PIN isn’t offered: wait, and if Android locks face and fingerprint out for good, lock your phone and unlock it with your PIN to bring them back.
+After too many failed attempts, Android locks biometrics for a while; use your PIN, pattern or password. With **Face or fingerprint only** on, the PIN isn’t offered: wait, or use your [passphrase](#q-passphrase) if you set one; if Android locks face and fingerprint out for good, lock your phone and unlock it with your PIN to bring them back.
 
-If the sensor itself stops working (a fault, an update pending), BioKey allows your screen lock again for locked apps and records that it did; clearing records, turning alerts off and restoring a backup wait until the sensor works again. If it’s broken for good, remove your faces and fingerprints in Android’s settings: BioKey then asks for your screen lock instead (and records the removal). On Android 15 and later, the same applies if **Use for apps** is switched off for face or fingerprint in Android’s settings.
+If the sensor itself stops working (a fault, an update pending), BioKey asks for your passphrase if you set one; otherwise it allows your screen lock again for locked apps and records that it did; clearing records, turning alerts off and restoring a backup wait until the sensor works again. If it’s broken for good, remove your faces and fingerprints in Android’s settings: BioKey then asks for your screen lock instead, or your passphrase if you set one (and records the removal). On Android 15 and later, the same applies if **Use for apps** is switched off for face or fingerprint in Android’s settings.
 
 </div>
 </details>

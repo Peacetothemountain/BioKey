@@ -26,11 +26,14 @@ import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.diagnostics.EngineTrace
 import com.android.BioKey.core.security.LockStateTracker
+import com.android.BioKey.core.security.OwnerPassphrase
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.ScreenLockWatch
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.core.security.UnlockAttempts
 import com.android.BioKey.ui.security.WindowProtection
 import java.lang.ref.WeakReference
+import java.util.concurrent.Executors
 import kotlinx.coroutines.launch
 
 /**
@@ -47,6 +50,9 @@ import kotlinx.coroutines.launch
 class LockScreenActivity : ComponentActivity() {
 
     companion object {
+        /** Passphrase checks: slow on purpose, so never on the main thread, and one at a time. */
+        private val passphraseChecks = Executors.newSingleThreadExecutor { r -> Thread(r, "biokey-passphrase").apply { isDaemon = true } }
+
         private const val TAG = "LockScreenActivity"
         const val EXTRA_LOCKED_PACKAGE = "extra_locked_package"
         const val EXTRA_SELF_PROTECTION = "extra_self_protection"
@@ -159,6 +165,9 @@ class LockScreenActivity : ComponentActivity() {
     private lateinit var vault: SecurityVault
     private lateinit var cover: LockCoverView
 
+    @get:VisibleForTesting
+    internal val coverForTests: LockCoverView get() = cover
+
     private var lockedPackage = ""
     private var isSelfProtection = false
     /** The prompt opens by itself once per showing; after a cancel the user taps Unlock. */
@@ -244,6 +253,7 @@ class LockScreenActivity : ComponentActivity() {
             onUnlock = ::showPrompt
             onCancel = ::goHomeAndFinish
             onLockDevice = ::lockDeviceOrHome
+            onUsePassphrase = ::openPassphrase
             setOnClickListener { onCoverTapped() }
             // Tappable, but never where a key press lands: the buttons are, when shown.
             isFocusable = false
@@ -425,6 +435,8 @@ class LockScreenActivity : ComponentActivity() {
             return
         }
         engine.resetAuthenticatingStateFor(this)
+        // Another app's lock now: a passphrase being typed, or checked, was for the one before.
+        closePassphraseEntry()
         setIntent(intent)
         if (!readIntent(intent)) {
             // The new target needs no lock, but the one this screen covered is still locked.
@@ -444,6 +456,8 @@ class LockScreenActivity : ComponentActivity() {
         if (::cover.isInitialized) cover.removeCallbacks(entryFallback)
         super.onStop()
         if (isChangingConfigurations) return
+        // What was typed doesn't wait in memory behind another screen.
+        closePassphraseEntry()
         // A trip BioKey's own session is on, this screen having come up over it, ends here, after
         // an unlock or not: closing back onto BioKey, its screen resumed first and ended it already;
         // anywhere else (an app the engine can't see among them) the session ends with it.
@@ -630,7 +644,7 @@ class LockScreenActivity : ComponentActivity() {
 
     private fun maybeAutoPrompt() {
         if (promptAutoLaunched || !firstFrameCommitted || !entered || awaitingFullscreen || isPermanentLockout || isFinishing) return
-        if (!isLockScreenResumed || engine.isAuthenticatingFor(lockedPackage)) return
+        if (!isLockScreenResumed || engine.isAuthenticatingFor(lockedPackage) || cover.isPassphraseEntryShowing) return
         // Never over a screensaver: it would take the tap meant to end it. Nor over the keyguard,
         // unless this cover is meant to be there (its app is): it would name the app there.
         if (LockStateTracker.screensaverShowing || (isKeyguardLocked() && !showsOverKeyguard)) return
@@ -648,6 +662,7 @@ class LockScreenActivity : ComponentActivity() {
         // and its unlock are recorded under all their names.
         val others = if (selfProtection) emptyList() else lockedAppsOnScreenWith(pkg).take(2)
         val name = if (selfProtection) getString(R.string.brand_name) else appsNamed(resources, (listOf(pkg) + others).map { AppInfoCache.quickLabel(this, it) })
+        closePassphraseEntry()
         cover.setStatus(null, permanentLockout = false)
         cover.setActionsVisible(false)
         // A cover held over this screen (picture-in-picture in compatibility mode) follows suit.
@@ -656,8 +671,17 @@ class LockScreenActivity : ComponentActivity() {
             activity = this,
             appName = name,
             packageName = pkg,
+            passphraseEntry = true,
             onSuccess = { onAuthenticated(pkg, selfProtection, generation, others) },
             onError = { code, message ->
+                // "Use passphrase" on the prompt, or no face or fingerprint to ask for: its entry, on the cover.
+                if (code == SecurityEngine.ERROR_USE_PASSPHRASE) {
+                    InstantShieldOverlay.onPrompt(pkg, showing = false)
+                    offerPassphrase()
+                    // The buttons are what Back from the entry returns to.
+                    cover.setActionsVisible(true)
+                    return@showBiometricPrompt openPassphrase()
+                }
                 // No screen lock on the phone any more: nothing can check who this is, so the app
                 // opens (recorded as a gap and said on home) rather than stay shut for good.
                 if ((code == SecurityEngine.ERROR_NO_DEVICE_CREDENTIAL || code == SecurityEngine.ERROR_NO_BIOMETRICS) &&
@@ -675,6 +699,7 @@ class LockScreenActivity : ComponentActivity() {
                     else -> message.toString()
                 }
                 cover.setStatus(text, isPermanentLockout)
+                offerPassphrase()
                 cover.setActionsVisible(true)
                 // A cover held over this screen hides it: it says the same.
                 InstantShieldOverlay.onPrompt(pkg, showing = false, message = text, permanentLockout = isPermanentLockout)
@@ -702,12 +727,114 @@ class LockScreenActivity : ComponentActivity() {
         finishSilently()
     }
 
+    /** "Use passphrase" is among the cover's buttons exactly while the passphrase is a way in ([SecurityEngine.passphraseStandsIn]). */
+    private fun offerPassphrase() = cover.setPassphraseOffered(SecurityEngine.passphraseStandsIn(this))
+
+    /**
+     * One opening of the passphrase's entry: what it would unlock, and the wrong tries it saw (the
+     * failed-unlock record they went to, and how many were its own, which a right one after them
+     * shows were the owner's). A check answers for the entry it was typed into only: closed since,
+     * or this screen now another app's, its answer opens nothing.
+     */
+    private class PassphraseEntry(val pkg: String, val selfProtection: Boolean, val generation: Int, val others: List<String>) {
+        var record: Long? = null
+        val misses = mutableMapOf<Long, Int>()
+    }
+
+    private var passphraseEntry: PassphraseEntry? = null
+
+    /** Puts the entry away, if it's open: whatever is still being checked for it no longer counts. */
+    private fun closePassphraseEntry() {
+        passphraseEntry = null
+        if (::cover.isInitialized) cover.hidePassphraseEntry()
+    }
+
+    /**
+     * The passphrase's entry, on the cover: from "Use passphrase" (on the prompt or the cover), or
+     * straight away where no face or fingerprint can be asked for. A wait still running from
+     * earlier misses shows at once.
+     */
+    private fun openPassphrase() {
+        if (isFinishing || isDestroyed || !SecurityEngine.passphraseStandsIn(this)) return
+        val pkg = lockedPackage
+        val selfProtection = isSelfProtection
+        // As for a prompt: a device lock while the entry is up ends every session, this one included.
+        val entry = PassphraseEntry(
+            pkg, selfProtection, LockStateTracker.lockGeneration(),
+            if (selfProtection) emptyList() else lockedAppsOnScreenWith(pkg).take(2)
+        )
+        engine.resetAuthenticatingStateFor(this)
+        cover.setStatus(null, permanentLockout = false)
+        passphraseEntry = entry
+        cover.showPassphraseEntry(
+            onSubmit = { typed -> checkPassphrase(typed, entry) },
+            // Backed out of: a check still running for it opens nothing.
+            onDismiss = { if (passphraseEntry === entry) passphraseEntry = null }
+        )
+        val wait = OwnerPassphrase.waitRemainingMs(this)
+        if (wait > 0L) cover.setPassphraseWait(SystemClock.elapsedRealtime() + wait)
+    }
+
+    /** Checks what was typed, off the main thread (it is slow on purpose), and unlocks on a match only. */
+    private fun checkPassphrase(typed: CharArray, entry: PassphraseEntry) {
+        if (passphraseEntry !== entry) return typed.fill('\u0000')
+        cover.setPassphraseBusy(true)
+        val app = applicationContext
+        val pkg = entry.pkg
+        val name = if (entry.selfProtection) getString(R.string.brand_name) else AppInfoCache.quickLabel(this, pkg)
+        passphraseChecks.execute {
+            val outcome = try {
+                OwnerPassphrase.verify(app, typed)
+            } catch (_: Exception) {
+                OwnerPassphrase.Outcome.Mismatch(0L)
+            } finally {
+                typed.fill('\u0000')
+            }
+            runOnUiThread {
+                // Counted and recorded whatever became of this screen meanwhile.
+                when (outcome) {
+                    is OwnerPassphrase.Outcome.Mismatch -> UnlockAttempts.onBiometricFailed(app, pkg, name, entry.record, passphrase = true)?.let { id ->
+                        entry.record = id
+                        entry.misses[id] = (entry.misses[id] ?: 0) + 1
+                    }
+                    OwnerPassphrase.Outcome.Match ->
+                        UnlockAttempts.onUnlocked(app, pkg, name, biometric = false, ownMisses = entry.misses, passphrase = true)
+                    else -> Unit
+                }
+                // Only for the entry it was typed into, still open, on the screen still covering that app.
+                if (passphraseEntry !== entry || isFinishing || isDestroyed || !cover.isPassphraseEntryShowing ||
+                    pkg != lockedPackage || entry.selfProtection != isSelfProtection
+                ) return@runOnUiThread
+                cover.setPassphraseBusy(false)
+                when (outcome) {
+                    OwnerPassphrase.Outcome.Match -> {
+                        DiagnosticLog.log("$pkg opened with the passphrase")
+                        closePassphraseEntry()
+                        onAuthenticated(pkg, entry.selfProtection, entry.generation, entry.others)
+                    }
+                    is OwnerPassphrase.Outcome.Mismatch -> {
+                        cover.setPassphraseError(getString(R.string.lock_passphrase_wrong))
+                        if (outcome.waitMs > 0L) cover.setPassphraseWait(SystemClock.elapsedRealtime() + outcome.waitMs)
+                    }
+                    is OwnerPassphrase.Outcome.Wait -> cover.setPassphraseWait(SystemClock.elapsedRealtime() + outcome.waitMs)
+                    // Removed meanwhile (in BioKey, on another display): back to the buttons, without it.
+                    OwnerPassphrase.Outcome.NotSet -> {
+                        closePassphraseEntry()
+                        offerPassphrase()
+                    }
+                }
+            }
+        }
+    }
+
     /**
      * Every session ended while the prompt was up (the phone was locked, say), so this unlock
      * doesn't count: the app stays covered until the owner unlocks it again.
      */
     private fun unlockVoided() {
+        closePassphraseEntry()
         cover.setStatus(null, permanentLockout = false)
+        offerPassphrase()
         cover.setActionsVisible(true)
         InstantShieldOverlay.onPrompt(lockedPackage, showing = false)
     }

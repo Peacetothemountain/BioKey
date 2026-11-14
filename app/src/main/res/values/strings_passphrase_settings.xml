@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Settings: the passphrase, BioKey's own way in when "Face or fingerprint only" is on and the face or fingerprint can't be used. -->
+    <string name="passphrase_title">Passphrase</string>
+    <string name="passphrase_row_not_set">Not set · for when your face or fingerprint won\'t work: something only you know, asked for instead of your screen lock</string>
+    <string name="passphrase_row_on">On · if your face or fingerprint won\'t work, locked apps and BioKey ask for it instead of your screen lock</string>
+    <string name="passphrase_row_unused_switch_off">Set, but not asked for: Face or fingerprint only is off, so your screen lock works instead</string>
+    <string name="passphrase_row_on_no_biometric">On · with no face or fingerprint to use, locked apps and BioKey ask for it, not your screen lock</string>
+    <!-- "Face or fingerprint only", on with none set up, where a passphrase is: it, not the screen lock, works meanwhile. -->
+    <string name="settings_biometric_only_none_set_up_passphrase">On, but no face or fingerprint is set up: your passphrase works meanwhile</string>
+
+    <!-- Titles of the face or fingerprint check before each change. -->
+    <string name="passphrase_confirm_set">Set a passphrase</string>
+    <string name="passphrase_confirm_change">Change or remove your passphrase</string>
+    <string name="passphrase_confirm_remove">Remove your passphrase</string>
+
+    <string name="passphrase_set_title">Set a passphrase</string>
+    <string name="passphrase_set_text">If your face or fingerprint won\'t work, locked apps and BioKey ask for this instead of your screen lock, so don\'t make it the same as your screen lock. If you forget it, nothing is lost: change or remove it here with your face or fingerprint.</string>
+    <string name="passphrase_change_title">Change your passphrase</string>
+    <string name="passphrase_change_text">The new one replaces the old one. Keep it different from your screen lock.</string>
+    <string name="passphrase_field">Passphrase</string>
+    <string name="passphrase_new_field">New passphrase</string>
+    <string name="passphrase_show">Show passphrase</string>
+    <string name="passphrase_hide">Hide passphrase</string>
+    <plurals name="passphrase_min_length">
+        <item quantity="one">At least %d character</item>
+        <item quantity="other">At least %d characters</item>
+    </plurals>
+    <string name="passphrase_save">Save</string>
+    <string name="passphrase_not_saved">Couldn\'t save it. Try again.</string>
+    <string name="passphrase_saved">Passphrase set</string>
+    <string name="passphrase_changed">Passphrase changed</string>
+
+    <string name="passphrase_remove">Remove</string>
+    <string name="passphrase_remove_title">Remove your passphrase?</string>
+    <string name="passphrase_remove_text_in_use">When your face or fingerprint won\'t work, there\'ll be no other way into locked apps and BioKey until it does. You can set a new passphrase here at any time.</string>
+    <string name="passphrase_remove_text_no_biometric">Your screen lock will open locked apps and BioKey until a face or fingerprint can be used again. You can set a new passphrase here once one can.</string>
+    <string name="passphrase_remove_text_unused">Locked apps and BioKey won\'t ask for it again. You can set a new passphrase here at any time.</string>
+    <string name="passphrase_removed">Passphrase removed</string>
+</resources>

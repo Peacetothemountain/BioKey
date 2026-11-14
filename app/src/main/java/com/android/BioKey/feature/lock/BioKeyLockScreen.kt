@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -57,6 +58,10 @@ private val LOGO_HEIGHT = 136.dp
  * After a permanent lockout the button locks the phone, so that the PIN can bring biometrics
  * back; only the accessibility service can do that, so without it ([canLockPhone] false) Cancel
  * is the way out and the message says what to do.
+ *
+ * With [passphrase] offered, "Use passphrase" sits beside Cancel, as on the cover; opened, its
+ * entry ([PassphraseEntry]) takes the buttons' place, above the keyboard. Without it (null), the
+ * screen is as it always was.
  */
 @Composable
 fun BioKeyLockScreen(
@@ -65,7 +70,9 @@ fun BioKeyLockScreen(
     statusMessage: String? = null,
     isPermanentLockout: Boolean = false,
     canLockPhone: Boolean = true,
-    onLockDeviceClicked: () -> Unit = {}
+    onLockDeviceClicked: () -> Unit = {},
+    passphrase: PassphraseGateState? = null,
+    onPassphraseSubmit: (CharArray) -> Unit = {}
 ) {
     val lockedTitle = stringResource(R.string.lock_screen_locked)
     Box(
@@ -78,7 +85,8 @@ fun BioKeyLockScreen(
     ) {
         // The logo and its words centred in the room above the buttons, and scrolling rather than
         // running under the status bar when that room is short (landscape, large text, a lockout).
-        Column(Modifier.fillMaxSize().systemBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
+        // Above the keyboard too, while the passphrase has it up: the logo's room shrinks and scrolls.
+        Column(Modifier.fillMaxSize().systemBarsPadding().imePadding(), horizontalAlignment = Alignment.CenterHorizontally) {
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 Column(
                     modifier = Modifier
@@ -102,24 +110,32 @@ fun BioKeyLockScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (!isPermanentLockout || canLockPhone) {
-                    Button(
-                        onClick = if (isPermanentLockout) onLockDeviceClicked else onUnlockClicked,
-                        shape = CircleShape,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 56.dp)
-                            .springPress()
-                    ) {
-                        if (!isPermanentLockout) {
-                            Icon(Icons.Default.Fingerprint, contentDescription = null, modifier = Modifier.size(22.dp))
-                            Spacer(Modifier.width(10.dp))
+                if (passphrase != null && passphrase.open) {
+                    PassphraseEntry(passphrase, onPassphraseSubmit, Modifier.fillMaxWidth())
+                } else {
+                    if (!isPermanentLockout || canLockPhone) {
+                        Button(
+                            onClick = if (isPermanentLockout) onLockDeviceClicked else onUnlockClicked,
+                            shape = CircleShape,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 56.dp)
+                                .springPress()
+                        ) {
+                            if (!isPermanentLockout) {
+                                Icon(Icons.Default.Fingerprint, contentDescription = null, modifier = Modifier.size(22.dp))
+                                Spacer(Modifier.width(10.dp))
+                            }
+                            Text(stringResource(if (isPermanentLockout) R.string.lock_screen_lock_phone else R.string.lock_screen_unlock), style = MaterialTheme.typography.titleMedium)
                         }
-                        Text(stringResource(if (isPermanentLockout) R.string.lock_screen_lock_phone else R.string.lock_screen_unlock), style = MaterialTheme.typography.titleMedium)
                     }
-                }
-                TextButton(onClick = onCancelClicked, modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text(stringResource(R.string.prompt_cancel), style = MaterialTheme.typography.titleSmall)
+                    if (passphrase != null && passphrase.offered) {
+                        PassphraseAndCancel(onUsePassphrase = { passphrase.open = true }, onCancel = onCancelClicked)
+                    } else {
+                        TextButton(onClick = onCancelClicked, modifier = Modifier.heightIn(min = 48.dp)) {
+                            Text(stringResource(R.string.prompt_cancel), style = MaterialTheme.typography.titleSmall)
+                        }
+                    }
                 }
             }
         }
