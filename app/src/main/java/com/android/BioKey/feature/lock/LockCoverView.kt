@@ -50,8 +50,8 @@ import com.android.BioKey.ui.security.WindowProtection
  * Plain Views on purpose: no Compose start-up cost on the path between a locked app appearing and
  * the fingerprint/face prompt.
  *
- * Its words ("Unlock", "Cancel", "Lock screen") are in English like the rest of BioKey, which has
- * no translations: they'd move to string resources together, never one alone.
+ * Its words come from the same string resources as BioKey's own lock screen ([BioKeyLockScreen]),
+ * and its labels are set as that screen's are (Material's title styles), so the two read as one.
  */
 @SuppressLint("ViewConstructor", "SetTextI18n")
 class LockCoverView(context: Context) : FrameLayout(context) {
@@ -78,25 +78,63 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         val onSurfaceVariant = scheme.onSurfaceVariant.toArgb()
     }
 
-    private companion object {
+    internal companion object {
         /** The phone's own light or dark mode. */
-        fun isNight(context: Context) =
+        private fun isNight(context: Context) =
             (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
 
-        const val ICON_DP = AppInfoCache.ICON_DP
+        private const val ICON_DP = AppInfoCache.ICON_DP
         /** Room kept under the icon and name, for the small mark (or the buttons, on a tall screen). */
-        const val IDENTITY_BOTTOM_DP = 96
+        private const val IDENTITY_BOTTOM_DP = 96
         /** Unlock (56), the gap (8), Cancel (48) and the margin under them (24). */
-        const val ACTIONS_DP = 136
+        private const val ACTIONS_DP = 136
         /** Kept between the name or status and Unlock in a short window. */
-        const val ACTIONS_GAP_DP = 12
-        /** The smallest the icon or logo gets in a short window, as a share of its size. */
-        const val MIN_ART_SCALE = 0.5f
+        private const val ACTIONS_GAP_DP = 12
+        /**
+         * The smallest the icon or logo gets in a short window, as a share of its size: smaller
+         * than that, an app's icon goes and its name stays (BioKey's logo, with no name under it,
+         * stays at this size and scrolls).
+         */
+        private const val MIN_ART_SCALE = 0.5f
+        /** Between the app's icon and its name; none when the icon has gone (a short window). */
+        private const val NAME_GAP_DP = 22
+        /** Kept above the icon in a short window: its ring is drawn a few dp outside it. */
+        private const val SHORT_TOP_DP = 12
         /** Round BioKey's key, shown in place of an app icon that couldn't be loaded. */
-        const val PLACEHOLDER_PADDING_DP = 26
+        private const val PLACEHOLDER_PADDING_DP = 26
         /** BioKey's own logo, when BioKey itself is locked. */
-        const val LOGO_WIDTH_DP = 120
-        const val LOGO_HEIGHT_DP = 136
+        private const val LOGO_WIDTH_DP = 120
+        private const val LOGO_HEIGHT_DP = 136
+        /** The fingerprint beside "Unlock", and the room after it, in sp: they grow with the text, as on [BioKeyLockScreen]. */
+        internal const val UNLOCK_GLYPH_SP = 18f
+        internal const val UNLOCK_GLYPH_GAP_SP = 8f
+        /** How long the icon and name glide, and the entry or buttons fade in, as the entry opens or closes or the keyboard comes. */
+        /**
+         * The passphrase's entry upright, under a name (no icon): the field, its line, Unlock and
+         * Back, their gaps and the margins round them, in dp, and the text in them, in sp. A
+         * wide window with less height than this has it in one row.
+         */
+        private const val ENTRY_UPRIGHT_DP = 56 + 8 + 12 + 56 + 8 + 48 + 24 + 12 + 12
+        private const val ENTRY_UPRIGHT_TEXT_SP = 20f + 28f
+        /** A window at least this wide can have the entry in one row; the widest the row gets. */
+        private const val COMPACT_ENTRY_MIN_WIDTH_DP = 480
+        private const val COMPACT_ENTRY_MAX_DP = 720
+        private const val MOVE_MS = 220L
+        private const val FADE_MS = 150L
+
+        /** Unlock's label, as Material's titleMedium (BioKeyLockScreen's): 16sp, medium, 0.15sp apart. */
+        internal fun styleAsPrimaryLabel(view: TextView) {
+            view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            view.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            view.letterSpacing = 0.15f / 16f
+        }
+
+        /** Cancel, "Use passphrase" and Back, as Material's titleSmall (BioKeyLockScreen's): 14sp, medium, 0.1sp apart. */
+        internal fun styleAsSecondaryLabel(view: TextView) {
+            view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            view.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            view.letterSpacing = 0.1f / 14f
+        }
     }
 
     var onUnlock: (() -> Unit)? = null
@@ -132,8 +170,11 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         gravity = Gravity.CENTER
-        maxLines = 1
+        // A long name wraps once, in two even lines, and ends in "…" after that: never wider than
+        // the screen, never more than two lines between the icon and the buttons.
+        maxLines = 2
         ellipsize = TextUtils.TruncateAt.END
+        breakStrategy = android.graphics.text.LineBreaker.BREAK_STRATEGY_BALANCED
     }
 
     /** A screen reader stop of its own: the shield's tappable cover would otherwise read it as part of itself. */
@@ -146,8 +187,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     }
 
     private val primaryButton = TextView(context).apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        styleAsPrimaryLabel(this)
         gravity = Gravity.CENTER
         isClickable = true
         isFocusable = true
@@ -156,9 +196,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     }
 
     private val cancelButton = TextView(context).apply {
-        text = "Cancel"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        text = context.getString(R.string.prompt_cancel)
+        styleAsSecondaryLabel(this)
         gravity = Gravity.CENTER
         // At least 48dp each way, as for any button: the word alone is narrower than a fingertip.
         minWidth = dp(88)
@@ -176,8 +215,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
      */
     private val usePassphraseButton = TextView(context).apply {
         text = context.getString(R.string.lock_passphrase_use)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        styleAsSecondaryLabel(this)
         gravity = Gravity.CENTER
         minWidth = dp(88)
         setPadding(dp(16), 0, dp(16), 0)
@@ -230,7 +268,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         addView(logo, LinearLayout.LayoutParams(dp(LOGO_WIDTH_DP), dp(LOGO_HEIGHT_DP)))
         addView(icon, LinearLayout.LayoutParams(dp(ICON_DP), dp(ICON_DP)))
         addView(name, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(22)
+            topMargin = dp(NAME_GAP_DP)
         })
         addView(status, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(16)
@@ -253,6 +291,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     }
 
     private var lockoutMode = false
+    /** BioKey itself is locked ([bind]): its logo in the icon's place, and no name under it. */
+    private var boundAsBioKey = false
     /** The icon is BioKey's key, padded inside the circle, as no app icon was loaded. */
     private var placeholderIcon = false
     private var palette = Palette(context)
@@ -273,6 +313,10 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
         WindowProtection.hideFromNonToolAccessibilityServices(this)
 
+        // The glow is light on the whole cover, under the system bars too ([onMeasure]): drawn
+        // past the padding, not cut off in a straight line where it starts. Everything else stays
+        // inside the padding by its own layout (the icon and the entry scroll inside their own bounds).
+        clipToPadding = false
         addView(backdrop, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(identityScroll, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply {
             leftMargin = dp(32)
@@ -311,32 +355,35 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         val width = minOf(available, dp(360)).coerceAtLeast(0)
         if (MeasureSpec.getMode(widthMeasureSpec) != MeasureSpec.UNSPECIFIED) {
             actions.layoutParams.width = width
-            passphraseEntry.layoutParams.width = width
+            // In one row, the entry takes the width it needs for the name, field and both buttons.
+            passphraseEntry.layoutParams.width =
+                if (passphraseEntry.compact) minOf(available, dp(COMPACT_ENTRY_MAX_DP)).coerceAtLeast(0) else width
         }
-        (passphraseEntry.layoutParams as LayoutParams).bottomMargin = dp(24) + imeExtra
+        // In one row, closer to the keyboard: the room is short. The row keeps its own room above
+        // and below it (up to 12dp), giving it up first ([PassphraseEntryView.setRoom]).
+        (passphraseEntry.layoutParams as LayoutParams).bottomMargin = (if (passphraseEntry.compact) 0 else dp(24)) + imeExtra
         if (passphraseOffered) arrangeSecondaryActions(actions.layoutParams.width)
         fitIdentity(widthMeasureSpec, heightMeasureSpec)
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        // The glow is light on the whole cover, under the status bar and beside a camera cutout
+        // too: never cut off in a straight line where the padding starts.
+        backdrop.measure(
+            MeasureSpec.makeMeasureSpec(measuredWidth, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(measuredHeight, MeasureSpec.EXACTLY)
+        )
     }
 
     /**
-     * Keeps the icon, name and status clear of Unlock and Cancel. As laid out for a phone held
-     * upright they're centred well above them; in a short window (landscape, large text, a
-     * lockout message) they move into the space above the buttons, the icon shrinking (to half
-     * at most) as far as they need, and scroll if even that isn't enough.
+     * Keeps the icon, name and status clear of Unlock and Cancel, or of the passphrase's entry. As
+     * laid out for a phone held upright they're centred well above them; in a short window
+     * (landscape, a split screen, large text, a lockout message, the keyboard up) they move into
+     * the space above, the icon shrinking (to half at most) as far as they need. Shorter still, an
+     * app's icon goes and its name stays; past that they scroll, or, over the passphrase's entry,
+     * step aside altogether: a sliver of them is worth less than the field.
      */
     private fun fitIdentity(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val params = identityScroll.layoutParams as LayoutParams
-        fun setArtScale(scale: Float) {
-            logo.layoutParams.width = (dp(LOGO_WIDTH_DP) * scale).toInt()
-            logo.layoutParams.height = (dp(LOGO_HEIGHT_DP) * scale).toInt()
-            icon.layoutParams.width = (dp(ICON_DP) * scale).toInt()
-            icon.layoutParams.height = icon.layoutParams.width
-            // BioKey's key in place of a missing icon keeps its proportions.
-            if (placeholderIcon) (dp(PLACEHOLDER_PADDING_DP) * scale).toInt().let { if (it != icon.paddingTop) icon.setPadding(it, it, it, it) }
-        }
-        val artHeight = if (logo.isVisible) dp(LOGO_HEIGHT_DP) else dp(ICON_DP)
-        setArtScale(1f)
+        setArt(1f, shown = true)
         identityScroll.visibility = VISIBLE
         params.gravity = Gravity.CENTER
         params.topMargin = 0
@@ -348,27 +395,64 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         val height = MeasureSpec.getSize(heightMeasureSpec) - paddingTop - paddingBottom
         val innerWidth = (MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight - params.leftMargin - params.rightMargin)
             .coerceAtLeast(0)
-        identity.measure(
-            MeasureSpec.makeMeasureSpec(innerWidth, MeasureSpec.EXACTLY),
-            MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
-        )
-        val natural = identity.measuredHeight
+        // The entry in one row says which app is locked itself: the icon and name step aside.
+        if (isPassphraseEntryShowing && passphraseEntry.compact) {
+            identityScroll.visibility = INVISIBLE
+            return
+        }
+        val natural = measureIdentity(innerWidth)
         val above = height - reservedBelowIdentity(innerWidth)
         // As usual: centred, then raised by the margin (FrameLayout's centring takes it off whole).
         val top = (height - natural) / 2 - dp(IDENTITY_BOTTOM_DP)
         if (top >= 0 && top + natural <= above) return
 
-        // A short window: centred in the space above the buttons, the icon as much smaller as it
-        // takes (to half at most), and scrolling past that.
-        val scale = ((artHeight - (natural - above)).toFloat() / artHeight).coerceIn(MIN_ART_SCALE, 1f)
-        setArtScale(scale)
-        val fitted = natural - (artHeight - (artHeight * scale).toInt())
+        // A short window: centred in the space above, the art as much smaller as it takes, and
+        // the icon's ring (drawn just outside it) kept clear of the top as well.
+        val room = above - dp(SHORT_TOP_DP)
+        val artHeight = if (boundAsBioKey) dp(LOGO_HEIGHT_DP) else dp(ICON_DP)
+        val scale = (artHeight - (natural - room)).toFloat() / artHeight
+        if (scale >= MIN_ART_SCALE || boundAsBioKey) setArt(scale.coerceIn(MIN_ART_SCALE, 1f), shown = true)
+        else setArt(1f, shown = false)
+        val fitted = measureIdentity(innerWidth)
         params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        params.topMargin = ((above - fitted) / 2).coerceAtLeast(0)
+        params.topMargin = dp(SHORT_TOP_DP) + ((room - fitted) / 2).coerceAtLeast(0)
         params.bottomMargin = height - above
-        // The passphrase and keyboard leave too little room for even half the icon: the field
-        // matters more than a sliver of it.
-        if (isPassphraseEntryShowing && above < artHeight * MIN_ART_SCALE) identityScroll.visibility = INVISIBLE
+        if (isPassphraseEntryShowing && fitted > room) identityScroll.visibility = INVISIBLE
+    }
+
+    /**
+     * The icon (or BioKey's logo) at [scale] of its size, or, not [shown], none at all, with no
+     * gap under it. By size alone, not visibility: this runs in every measure pass, and a
+     * visibility changed there would ask for another pass, and another.
+     */
+    private fun setArt(scale: Float, shown: Boolean) {
+        val s = if (shown) scale else 0f
+        (name.layoutParams as LinearLayout.LayoutParams).topMargin = if (shown) dp(NAME_GAP_DP) else 0
+        logo.layoutParams.width = (dp(LOGO_WIDTH_DP) * s).toInt()
+        logo.layoutParams.height = (dp(LOGO_HEIGHT_DP) * s).toInt()
+        icon.layoutParams.width = (dp(ICON_DP) * s).toInt()
+        icon.layoutParams.height = icon.layoutParams.width
+        // BioKey's key in place of a missing icon keeps its proportions.
+        if (placeholderIcon && shown) (dp(PLACEHOLDER_PADDING_DP) * s).toInt().let { if (it != icon.paddingTop) icon.setPadding(it, it, it, it) }
+    }
+
+    /**
+     * The icon, name and status's height at [width], as they're set now. Their sizes change here,
+     * inside a measure pass, so each is measured afresh: a view's measure cache would otherwise
+     * hand back the size it had at an earlier pass with the same constraints (the icon at full
+     * size in a window too short for it, and the name pushed out of sight).
+     */
+    private fun measureIdentity(width: Int): Int {
+        identityScroll.forceLayout()
+        identity.forceLayout()
+        icon.forceLayout()
+        logo.forceLayout()
+        name.forceLayout()
+        identity.measure(
+            MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+        )
+        return identity.measuredHeight
     }
 
     /**
@@ -401,22 +485,82 @@ class LockCoverView(context: Context) : FrameLayout(context) {
 
     private val iconLocation = IntArray(2)
     private val backdropLocation = IntArray(2)
+    private val entryLocation = IntArray(2)
+
+    /** The cover's size at the last layout: a new size (a rotation, a fold) moves things at once, not gliding. */
+    private var laidOutWidth = 0
+    private var laidOutHeight = 0
+    /** Whether the entry was on screen at the last layout: as it first shows it fades in rather than glides. */
+    private var entryLaidOut = false
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        val identityWas = identityScroll.top + identityScroll.translationY
+        val entryWas = passphraseEntry.top + passphraseEntry.translationY
+        val sameSize = width == laidOutWidth && height == laidOutHeight
+        val glide = sameSize && laidOutWidth > 0 && isShown && animationsOn()
+        val entryGlides = glide && entryLaidOut && isPassphraseEntryShowing
         super.onLayout(changed, left, top, right, bottom)
+        laidOutWidth = width
+        laidOutHeight = height
+        entryLaidOut = isPassphraseEntryShowing
+        // The entry opening or closing, the keyboard coming or going, a message: the icon and name
+        // (and the entry, above the keyboard) glide to their new place instead of jumping there.
+        backdrop.layout(0, 0, width, height)
+        if (glide) glideFrom(identityScroll, identityWas) else settle(identityScroll)
+        if (entryGlides) glideFrom(passphraseEntry, entryWas) else settle(passphraseEntry)
+        placeBackdropFocus()
+    }
+
+    private fun animationsOn() = android.animation.ValueAnimator.areAnimatorsEnabled()
+
+    private fun glideFrom(view: View, was: Float) {
+        val from = was - view.top
+        if (from == 0f) return settle(view)
+        view.animate().cancel()
+        view.translationY = from
+        view.animate().translationY(0f).setDuration(MOVE_MS)
+            .setInterpolator(android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f))
+            .setUpdateListener { placeBackdropFocus() }
+            .start()
+    }
+
+    private fun settle(view: View) {
+        if (view.translationY == 0f) return
+        view.animate().cancel()
+        view.translationY = 0f
+    }
+
+    /** Fades [view] in, as the entry or the buttons take each other's place (at once with animations off). */
+    private fun fadeIn(view: View) {
+        view.animate().cancel()
+        // Not with a screen reader on: it's moved to what fades in at once, and a view not yet
+        // drawn can't be landed on.
+        val screenReader = context.getSystemService(android.view.accessibility.AccessibilityManager::class.java)?.isTouchExplorationEnabled == true
+        if (!isShown || !animationsOn() || screenReader) {
+            view.alpha = 1f
+            return
+        }
+        view.alpha = 0f
+        view.animate().alpha(1f).setDuration(FADE_MS).setUpdateListener(null).start()
+    }
+
+    private fun placeBackdropFocus() {
         // The glow and ring surround the app icon. Measured in the backdrop's own coordinates
         // (window positions, not parent offsets), so padding for system bars, margins and the
-        // window type can't shift the ring away from the icon.
-        if (icon.isVisible && icon.width > 0) {
+        // window type can't shift the ring away from the icon; with the icon gliding, each frame.
+        // Only an icon that shows: not one stepped aside for the passphrase's entry.
+        if (icon.isShown && icon.width > 0) {
             icon.getLocationInWindow(iconLocation)
             backdrop.getLocationInWindow(backdropLocation)
-            backdrop.setFocus(
-                iconLocation[0] - backdropLocation[0] + icon.width / 2f,
-                iconLocation[1] - backdropLocation[1] + icon.height / 2f,
-                icon.width / 2f
-            )
+            val y = iconLocation[1] - backdropLocation[1] + icon.height / 2f
+            // The field is see-through: the glow fades out above it rather than shining through.
+            val reach = if (isPassphraseEntryShowing) {
+                passphraseEntry.getLocationInWindow(entryLocation)
+                entryLocation[1] - backdropLocation[1] - y
+            } else Float.MAX_VALUE
+            backdrop.setFocus(iconLocation[0] - backdropLocation[0] + icon.width / 2f, y, icon.width / 2f, reach)
         } else {
-            backdrop.setFocus(0f, 0f, 0f)
+            backdrop.setFocus(0f, 0f, 0f, 0f)
         }
     }
 
@@ -488,13 +632,14 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         dark: Boolean? = null
     ) {
         followScheme(if (isBioKey) null else dark)
+        boundAsBioKey = isBioKey
         logo.visibility = if (isBioKey) VISIBLE else GONE
         icon.visibility = if (isBioKey) GONE else VISIBLE
         name.visibility = icon.visibility
         name.text = label
         brandMark.isVisible = !isBioKey && !actions.isVisible && !isPassphraseEntryShowing
         setIcon(appIcon, accent)
-        describeLocked(if (isBioKey) "BioKey is locked" else "$label is locked")
+        describeLocked(if (isBioKey) context.getString(R.string.lock_screen_locked) else context.getString(R.string.lock_cover_app_locked, label))
         setStatus(null, permanentLockout = false)
         requestLayout()
     }
@@ -502,7 +647,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     /** The app's name, once it has been loaded (a cover put up on a cache miss has none at first). */
     fun setLabel(label: String) {
         name.text = label
-        describeLocked("$label is locked")
+        describeLocked(context.getString(R.string.lock_cover_app_locked, label))
     }
 
     /**
@@ -514,6 +659,34 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         accessibilityPaneTitle = text
         name.contentDescription = text
         logo.contentDescription = text
+        // The entry's own copy of the name, for when it's one row and the name above has stepped aside.
+        passphraseEntry.setTitle(if (boundAsBioKey) context.getString(R.string.brand_name) else name.text, text)
+    }
+
+    /**
+     * The passphrase's entry in one row when the window is wide but has too little height for
+     * the upright arrangement under the icon and name (a phone in landscape with the keyboard up),
+     * so the app's name, the field, its line, Back and Unlock are in view together. Decided as the
+     * size or the keyboard changes, never in a measure pass (it moves views).
+     */
+    private fun arrangeEntry(w: Int = width, h: Int = height) {
+        if (w <= 0 || h <= 0) return
+        val roomWide = w - paddingLeft - paddingRight
+        val roomHigh = h - paddingTop - paddingBottom - imeExtra
+        val upright = dp(ENTRY_UPRIGHT_DP) + sp(ENTRY_UPRIGHT_TEXT_SP)
+        val compact = roomWide >= dp(COMPACT_ENTRY_MIN_WIDTH_DP) && roomHigh < upright
+        // In one row, all of it above the keyboard: the line under the field included.
+        passphraseEntry.setRoom(roomHigh.coerceAtLeast(0))
+        if (compact != passphraseEntry.compact) {
+            passphraseEntry.setCompact(compact)
+            requestLayout()
+        }
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        // After this layout pass: it moves the entry's views.
+        if (w != oldw || h != oldh) post { arrangeEntry() }
     }
 
     fun setIcon(appIcon: Drawable?, accent: Int? = appIcon?.let { AppInfoCache.accentOf(it, resources) }) {
@@ -552,7 +725,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     fun setActionsVisible(visible: Boolean) {
         actionsWanted = visible
         actions.visibility = if (visible && !isPassphraseEntryShowing) VISIBLE else INVISIBLE
-        brandMark.isVisible = !visible && !logo.isVisible && !isPassphraseEntryShowing
+        brandMark.isVisible = !visible && !boundAsBioKey && !isPassphraseEntryShowing
     }
 
     /** Whether "Use passphrase" is among the cover's actions (shown only when the actions are). */
@@ -573,7 +746,9 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         passphraseEntry.onSubmit = onSubmit
         onPassphraseDismiss = onDismiss
         if (isPassphraseEntryShowing) return
+        arrangeEntry()
         passphraseEntry.visibility = VISIBLE
+        fadeIn(passphraseEntry)
         actions.visibility = INVISIBLE
         brandMark.isVisible = false
         passphraseBack.isEnabled = true
@@ -606,6 +781,7 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         onPassphraseDismiss = null
         passphraseEntry.onSubmit = null
         setActionsVisible(actionsWanted)
+        if (actions.isVisible) fadeIn(actions)
         requestLayout()
         // Screen readers go back to where the owner came from.
         val target = if (usePassphraseButton.isVisible) usePassphraseButton else primaryButton
@@ -645,20 +821,33 @@ class LockCoverView(context: Context) : FrameLayout(context) {
     internal val actionsForTests: View get() = actions
     @androidx.annotation.VisibleForTesting
     internal val passphraseEntryForTests: PassphraseEntryView get() = passphraseEntry
+    @androidx.annotation.VisibleForTesting
+    internal val nameForTests: TextView get() = name
 
     /** Overlay windows don't always get insets dispatched; the shield passes them in. */
     fun applySystemBarInsets(left: Int, top: Int, right: Int, bottom: Int) {
-        setPadding(left, top, right, bottom)
+        setSymmetricPadding(left, top, right, bottom)
+    }
+
+    /**
+     * The system bars' and a camera cutout's room, the same on both sides: the icon and buttons
+     * sit in the middle of the screen, as on [BioKeyLockScreen], not in the middle of what's
+     * beside a cutout.
+     */
+    private fun setSymmetricPadding(left: Int, top: Int, right: Int, bottom: Int) {
+        val side = maxOf(left, right)
+        setPadding(side, top, side, bottom)
     }
 
     override fun onApplyWindowInsets(insets: WindowInsets): WindowInsets {
         val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-        setPadding(bars.left, bars.top, bars.right, bars.bottom)
+        setSymmetricPadding(bars.left, bars.top, bars.right, bars.bottom)
         // The keyboard, for the passphrase: the lock screen's window isn't resized for it (edge
         // to edge), so the entry rises above it here.
         val ime = (insets.getInsets(WindowInsets.Type.ime()).bottom - bars.bottom).coerceAtLeast(0)
         if (ime != imeExtra) {
             imeExtra = ime
+            arrangeEntry()
             requestLayout()
         }
         return insets
@@ -669,16 +858,26 @@ class LockCoverView(context: Context) : FrameLayout(context) {
      * ([BioKeyLockScreen]): one product, one button. Screen readers hear just "Unlock".
      */
     private fun unlockLabel(): CharSequence {
-        val glyph = context.getDrawable(R.drawable.ic_fingerprint)?.mutate() ?: return "Unlock"
-        // As tall as the text's own line, no taller: a bigger glyph would stretch the line and
-        // push the word below the button's centre.
-        val size = primaryButton.paint.fontMetricsInt.let { it.descent - it.ascent }
-        glyph.setBounds(0, 0, size, size)
+        val word = context.getString(R.string.lock_screen_unlock)
+        val glyph = context.getDrawable(R.drawable.ic_fingerprint)?.mutate() ?: return word
+        // In sp, so it grows with the text (large text, Android 14's non-linear scaling too), as
+        // the Compose twin's does; never taller than the text's own line, which would stretch the
+        // line and push the word below the button's centre.
+        val line = primaryButton.paint.fontMetricsInt.let { it.descent - it.ascent }
+        val size = minOf(sp(UNLOCK_GLYPH_SP), line)
+        val gap = sp(UNLOCK_GLYPH_GAP_SP)
         glyph.setTint(primaryButton.currentTextColor)
-        return SpannableString("${Typography.nbsp}  Unlock").apply {
-            setSpan(ImageSpan(glyph, DynamicDrawableSpan.ALIGN_CENTER), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        // The gap is part of the glyph's span, so it's exact whatever the font's space is.
+        val spaced = android.graphics.drawable.InsetDrawable(glyph, 0, 0, gap, 0).apply { setBounds(0, 0, size + gap, size) }
+        return SpannableString("${Typography.nbsp}$word").apply {
+            setSpan(ImageSpan(spaced, DynamicDrawableSpan.ALIGN_CENTER), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
     }
+
+    private fun sp(v: Float) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics).toInt()
+
+    @androidx.annotation.VisibleForTesting
+    internal val unlockButtonForTests: TextView get() = primaryButton
 
     /** Unlock and Cancel are text drawn as buttons: screen readers are told they are buttons. */
     internal object ButtonRole : AccessibilityDelegate() {

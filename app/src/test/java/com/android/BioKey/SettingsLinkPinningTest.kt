@@ -124,6 +124,39 @@ class SettingsLinkPinningTest {
     }
 
     @Test
+    fun turningOnOpensBioKeysOwnPageOnlyWhereSettingsLetsItAndElsePicksItOutInTheList() {
+        val details = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS")
+        val list = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+        val pm = shadowOf(context.packageManager)
+        // As on Pixel: the page for one service is kept for app stores, behind a permission BioKey can't hold.
+        pm.addResolveInfoForIntent(details, handler("com.android.settings", "com.android.settings.A11yDetails", system = true).apply {
+            activityInfo.permission = "android.permission.OPEN_ACCESSIBILITY_DETAILS_SETTINGS"
+        })
+        pm.addResolveInfoForIntent(list, handler("com.android.settings", "com.android.settings.A11yList", system = true))
+
+        assertFalse(IntentNavigationHelper.opensOwnAccessibilityPage(context))
+        assertTrue(IntentNavigationHelper.openAccessibilitySettings(context))
+        val started = nextStarted()
+        assertEquals("com.android.settings.A11yList", started.component?.className)
+        // BioKey's entry is picked out: its key is the service's name.
+        val entry = com.android.BioKey.core.FeatureLinks.accessibilityServiceName(context)
+        assertEquals(entry, started.getStringExtra(":settings:fragment_args_key"))
+        assertEquals(entry, started.getBundleExtra(":settings:show_fragment_args")?.getString(":settings:fragment_args_key"))
+    }
+
+    @Test
+    fun whereSettingsOpensBioKeysOwnAccessibilityPageItGoesThere() {
+        val details = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS")
+        shadowOf(context.packageManager)
+            .addResolveInfoForIntent(details, handler("com.android.settings", "com.android.settings.A11yDetails", system = true))
+        assertTrue(IntentNavigationHelper.opensOwnAccessibilityPage(context))
+        assertTrue(IntentNavigationHelper.openAccessibilitySettings(context))
+        val started = nextStarted()
+        assertEquals("com.android.settings.A11yDetails", started.component?.className)
+        assertEquals(com.android.BioKey.core.FeatureLinks.accessibilityServiceName(context), started.getStringExtra(Intent.EXTRA_COMPONENT_NAME))
+    }
+
+    @Test
     fun aPageSettingsKeepsToItselfIsNeitherOfferedNorOpened() {
         // Pixel's private space page: listed by the package manager, but not exported, so opening
         // it fails with "Permission Denial". It isn't offered, and the cascade goes on past it.

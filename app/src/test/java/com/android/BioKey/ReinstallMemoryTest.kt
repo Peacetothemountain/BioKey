@@ -11,6 +11,7 @@ import com.android.BioKey.core.security.AlsoLockedByAndroid
 import com.android.BioKey.core.security.NewAppSuggestions
 import com.android.BioKey.core.security.ReinstallMemory
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.core.security.UnlockAttempts
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -46,6 +47,8 @@ class ReinstallMemoryTest {
         ReinstallMemory.resetForTests(context)
         ReinstallMemory.signersOf = { _, pkg -> installed[pkg] }
         ReinstallMemory.now = { now }
+        // As on a phone that has the network's time: its records are aged by it.
+        ReinstallMemory.onNetworkTime = { true }
         vault = SecurityVault.getInstance(context)
         vault.setSetupCompletedSync(true)
         installed[bank] = setOf("aa11")
@@ -84,6 +87,48 @@ class ReinstallMemoryTest {
         assertEquals(ReinstallMemory.Outcome.LOCKED_AGAIN, ReinstallMemory.onInstalled(context, bank))
         assertTrue(bank in vault.getLockedPackages())
         assertNull(vault.profileOf(bank))
+    }
+
+    @Test
+    fun thePhonesDateSetAheadDoesNotMakeItForget() {
+        // No network time (airplane mode since a restart, or Android 12): the note is dated on the
+        // phone's own clock. Someone then sets the date ahead by more than 30 days and restarts
+        // BioKey, so its "now" starts from the new date.
+        ReinstallMemory.onNetworkTime = { false }
+        val boot = UnlockAttempts.bootCount
+        val elapsed = UnlockAttempts.elapsed
+        try {
+            UnlockAttempts.bootCount = { 7 }
+            UnlockAttempts.elapsed = { 1_000_000L }
+            lockThenUninstall()
+            now += 40L * 24 * 60 * 60_000
+            UnlockAttempts.elapsed = { 1_600_000L }
+            ReinstallMemory.prune(context)
+            assertEquals("Ten minutes later by the clock since boot: still remembered", listOf(bank), ReinstallMemory.rememberedPackages(context))
+            installed[bank] = setOf("aa11")
+            assertEquals(ReinstallMemory.Outcome.LOCKED_AGAIN, ReinstallMemory.onInstalled(context, bank))
+        } finally {
+            UnlockAttempts.bootCount = boot
+            UnlockAttempts.elapsed = elapsed
+        }
+    }
+
+    @Test
+    fun thirtyDaysOnTheClockSinceBootIsThirtyDays() {
+        // The same boot, and 31 days really gone by: forgotten, with or without the network's time.
+        ReinstallMemory.onNetworkTime = { false }
+        val boot = UnlockAttempts.bootCount
+        val elapsed = UnlockAttempts.elapsed
+        try {
+            UnlockAttempts.bootCount = { 7 }
+            UnlockAttempts.elapsed = { 1_000_000L }
+            lockThenUninstall()
+            UnlockAttempts.elapsed = { 1_000_000L + 31L * 24 * 60 * 60_000 }
+            assertTrue(ReinstallMemory.rememberedPackages(context).isEmpty())
+        } finally {
+            UnlockAttempts.bootCount = boot
+            UnlockAttempts.elapsed = elapsed
+        }
     }
 
     @Test

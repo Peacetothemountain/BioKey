@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- What a locked app asks for as BioKey is set right now (UnlockMethods.asksFor): words that
+         finish one of BioKey's own sentences, such as "Opening it asks for %1$s". -->
+    <string name="unlock_asks_any">your face, fingerprint or screen lock</string>
+    <string name="unlock_asks_biometric">your face or fingerprint</string>
+    <string name="unlock_asks_biometric_or_passphrase">your face or fingerprint, or your passphrase</string>
+    <string name="unlock_asks_passphrase">your passphrase</string>
+
+    <!-- The failed-unlock alert where the owner's passphrase is asked for on locked apps: a miss may
+         have been a wrong passphrase (attempts_notification_text is the same without one). -->
+    <string name="attempts_notification_text_passphrase">A face, fingerprint or passphrase didn’t match on a locked app, and it wasn’t opened. Open BioKey to see which.</string>
+</resources>

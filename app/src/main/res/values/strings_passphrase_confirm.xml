@@ -2,7 +2,7 @@
 <!-- The passphrase asked for before a change that removes protection, in place of a face or fingerprint (PassphraseConfirmDialog). -->
 <resources>
     <!-- Under the title, which names the change ("Remove your passphrase"). -->
-    <string name="passphrase_confirm_text">No face or fingerprint can be used right now, so enter your passphrase to make this change.</string>
+    <string name="passphrase_confirm_text">No face or fingerprint can be used right now, so enter your passphrase to make this change</string>
     <!-- The dialog's button: confirms the change named in its title. -->
     <string name="passphrase_confirm_button">Confirm</string>
 </resources>

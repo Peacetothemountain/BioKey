@@ -1,12 +1,16 @@
 package com.android.BioKey.feature.main
 
-import android.content.res.Resources
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.TextFieldColors
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.annotation.StringRes
 import android.os.SystemClock
 import android.text.InputType
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -23,10 +27,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedSecureTextField
 import androidx.compose.material3.Text
@@ -64,12 +66,16 @@ import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.android.BioKey.R
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.OwnerPassphrase
-import com.android.BioKey.ui.security.ProtectDialogWindow
-import com.android.BioKey.ui.security.rejectObscuredTouches
+import com.android.BioKey.ui.format.passphraseWaitText
+import com.android.BioKey.ui.theme.DialogGap
+import com.android.BioKey.ui.theme.DialogSpacing
+import com.android.BioKey.ui.theme.KeyboardSafeDialog
+import com.android.BioKey.ui.theme.keepInViewWhileFocused
 import kotlinx.coroutines.delay
 import kotlin.math.ceil
 
@@ -145,10 +151,17 @@ private fun PassphraseConfirmContent(state: PassphraseConfirmState, title: Strin
     val waiting = waitUntil > now
     val enabled = !busy && !waiting
     val canSubmit = enabled && field.text.isNotEmpty()
+    /** Nothing typed or pasted goes in while a check runs or tries are paused (as on the lock screens); wiping passes. */
+    val holding by rememberUpdatedState(!enabled)
+    val holdInput = remember {
+        InputTransformation.maxLength(OwnerPassphrase.MAX_LENGTH)
+            .then(PassphraseCountsAsUse)
+            .then(InputTransformation { if (holding) revertAllChanges() })
+    }
 
     fun lineText(at: Long = now): String {
         val remaining = waitUntil - at
-        val countdown = if (remaining > 0) confirmWaitText(res, remaining) else null
+        val countdown = if (remaining > 0) passphraseWaitText(res, remaining) else null
         val over = if (ended && message == null && countdown == null) res.getString(R.string.lock_passphrase_wait_over) else null
         if (message != null && countdown != null) return res.getString(R.string.lock_passphrase_then, message, countdown)
         return listOfNotNull(message, countdown, over).joinToString(" ")
@@ -165,7 +178,7 @@ private fun PassphraseConfirmContent(state: PassphraseConfirmState, title: Strin
         val text = field.text
         // Straight into the array: no String of it is made here.
         val typed = CharArray(text.length) { text[it] }
-        wipeTyped(field)
+        wipePassphraseField(field)
         onSubmit(typed)
     }
 
@@ -174,18 +187,18 @@ private fun PassphraseConfirmContent(state: PassphraseConfirmState, title: Strin
         if (state.errorSerial == staleSerial) return@LaunchedEffect
         ended = false
         if (state.error != null) {
-            wipeTyped(field)
+            wipePassphraseField(field)
             announce(lineText(SystemClock.elapsedRealtime()))
         }
     }
 
-    // A wait: on starting, the field empties, the keyboard goes and it's announced; the countdown
+    // A wait: on starting, the field empties and it's announced (the keyboard stays, and the field
+    // keeps focus, refusing what's typed, as on the lock screens: nothing moves); the countdown
     // then follows its number unannounced; when it ends by itself, that's said.
     LaunchedEffect(waitUntil) {
         now = SystemClock.elapsedRealtime()
         if (waitUntil <= now) return@LaunchedEffect
-        wipeTyped(field)
-        keyboard?.hide()
+        wipePassphraseField(field)
         ended = false
         announce(lineText(now))
         while (true) {
@@ -213,105 +226,158 @@ private fun PassphraseConfirmContent(state: PassphraseConfirmState, title: Strin
         announcing = 0
     }
 
-    // On opening, and whenever the field comes back (a check done, a wait over): focused.
+    // On opening, and whenever the field comes back (a check done, a wait over): focused, keyboard
+    // up. Held (a check, a wait), it keeps focus and refuses what's typed, so the keyboard stays.
     LaunchedEffect(enabled) {
-        if (enabled) runCatching { focus.requestFocus() }
+        runCatching { focus.requestFocus() }
+        if (enabled) keyboard?.show()
     }
 
     // However the dialog goes (cancelled, a match, the screen leaving), what was typed goes with it.
-    DisposableEffect(field) { onDispose { wipeTyped(field) } }
+    DisposableEffect(field) { onDispose { wipePassphraseField(field) } }
 
-    AlertDialog(
+    KeyboardSafeDialog(
         // Not while a check runs: its answer must find the dialog it was asked from.
         onDismissRequest = { if (!state.busy) onDismiss() },
         icon = { Icon(Icons.Default.Key, contentDescription = null) },
-        title = { Text(title) },
-        text = {
-            ProtectDialogWindow()
-            Column(Modifier.rejectObscuredTouches(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(stringResource(R.string.passphrase_confirm_text))
-                Column {
-                    InterceptPlatformTextInput(ConfirmHardenedTextInput) {
-                        OutlinedSecureTextField(
-                            state = field,
-                            enabled = enabled,
-                            label = { Text(stringResource(R.string.passphrase_field)) },
-                            trailingIcon = {
-                                IconButton(onClick = { revealed = !revealed }) {
-                                    Icon(
-                                        if (revealed) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                        contentDescription = stringResource(if (revealed) R.string.passphrase_hide else R.string.passphrase_show)
-                                    )
-                                }
-                            },
-                            isError = message != null,
-                            inputTransformation = InputTransformation.maxLength(OwnerPassphrase.MAX_LENGTH).then(CountsAsUse),
-                            textObfuscationMode = if (revealed) TextObfuscationMode.Visible else TextObfuscationMode.RevealLastTyped,
-                            keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Password,
-                                autoCorrectEnabled = false,
-                                imeAction = ImeAction.Done
-                            ),
-                            // Done with nothing typed (or while a check runs) does nothing, and keeps the keyboard.
-                            onKeyboardAction = KeyboardActionHandler { submit() },
-                            shape = CircleShape,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .focusRequester(focus)
-                                .semantics {
-                                    // Not a place for a password manager: it neither fills nor offers to keep it.
-                                    contentDataType = ContentDataType.None
-                                    message?.let { error(it) }
-                                }
-                        )
-                    }
-                    // Where a field's help goes; announced only when there's something new to say
-                    // (a message, a wait starting or over), not as the countdown ticks.
-                    if (line.isNotEmpty() || announcing != 0) {
-                        Text(
-                            text = line,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (message != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .padding(start = 16.dp, end = 16.dp, top = 4.dp)
-                                .fillMaxWidth()
-                                .clearAndSetSemantics {
-                                    text = AnnotatedString(if (announcing != 0) announced else line)
-                                    if (announcing != 0) liveRegion = LiveRegionMode.Polite
-                                }
-                        )
-                    }
-                }
-                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-            }
-        },
+        title = { PassphraseDialogTitle(title) },
+        busy = busy,
         confirmButton = {
             TextButton(onClick = { submit() }, enabled = canSubmit) { Text(stringResource(R.string.passphrase_confirm_button)) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss, enabled = !busy) { Text(stringResource(R.string.prompt_cancel)) }
         }
+    ) {
+        Text(stringResource(R.string.passphrase_confirm_text))
+        DialogGap(DialogSpacing.Part)
+        Column(Modifier.keepInViewWhileFocused()) {
+            InterceptPlatformTextInput(PassphraseHardenedTextInput) {
+                OutlinedSecureTextField(
+                    state = field,
+                    label = { Text(stringResource(R.string.passphrase_field)) },
+                    trailingIcon = { PassphraseEye(revealed, enabled = enabled, onToggle = { revealed = !revealed }) },
+                    isError = message != null,
+                    // Held, drawn as a field turned off, but kept focused, as the lock screens keep theirs.
+                    colors = if (enabled) OutlinedTextFieldDefaults.colors() else heldFieldColors(),
+                    inputTransformation = holdInput,
+                    textObfuscationMode = if (revealed) TextObfuscationMode.Visible else TextObfuscationMode.RevealLastTyped,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        autoCorrectEnabled = false,
+                        imeAction = ImeAction.Done
+                    ),
+                    // Done with nothing typed (or while a check runs) does nothing, and keeps the keyboard.
+                    onKeyboardAction = KeyboardActionHandler { submit() },
+                    shape = CircleShape,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focus)
+                        .semantics {
+                            // Not a place for a password manager: it neither fills nor offers to keep it.
+                            contentDataType = ContentDataType.None
+                            message?.let { error(it) }
+                            // Held, screen readers hear it as off, as it's drawn.
+                            if (!enabled) disabled()
+                        }
+                )
+            }
+            // Where a field's help goes, its line kept even when empty so nothing moves; announced
+            // only when there's something new to say (a message, a wait starting or over), not as
+            // the countdown ticks.
+            PassphraseFieldLine(
+                text = line,
+                isError = message != null,
+                spoken = if (announcing != 0) announced else line,
+                announce = announcing != 0
+            )
+        }
+    }
+}
+
+/** A field held (a check, a wait) while keeping its focus: drawn as Material draws one turned off. */
+@Composable
+private fun heldFieldColors(): TextFieldColors {
+    val scheme = MaterialTheme.colorScheme
+    val faint = scheme.onSurface.copy(alpha = 0.38f)
+    val outline = scheme.onSurface.copy(alpha = 0.12f)
+    return OutlinedTextFieldDefaults.colors(
+        focusedTextColor = faint,
+        unfocusedTextColor = faint,
+        errorTextColor = faint,
+        focusedLabelColor = faint,
+        unfocusedLabelColor = faint,
+        errorLabelColor = faint,
+        focusedTrailingIconColor = faint,
+        unfocusedTrailingIconColor = faint,
+        errorTrailingIconColor = faint,
+        cursorColor = Color.Transparent,
+        errorCursorColor = Color.Transparent,
+        focusedBorderColor = outline,
+        unfocusedBorderColor = outline,
+        errorBorderColor = scheme.error
     )
 }
 
+/**
+ * A passphrase dialog's title: centred under its icon however many lines it takes (Material centres
+ * the title's box under an icon, but a title that wraps would otherwise be set ragged-left in it).
+ */
+@Composable
+internal fun PassphraseDialogTitle(text: String) {
+    Text(text, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+}
+
+/**
+ * The line under a passphrase field, where Material puts a field's help: always one line high at
+ * least, empty or not, so a message coming or going never moves the field or the buttons. In the
+ * error colour, as the field's outline is then. [spoken] is what screen readers get; with
+ * [announce], said politely as it changes.
+ */
+@Composable
+internal fun PassphraseFieldLine(text: String, isError: Boolean, spoken: String = text, announce: Boolean = false) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .padding(start = 16.dp, end = 16.dp, top = DialogSpacing.FieldLine)
+            .fillMaxWidth()
+            .clearAndSetSemantics {
+                if (spoken.isNotEmpty()) this.text = AnnotatedString(spoken)
+                if (announce && spoken.isNotEmpty()) liveRegion = LiveRegionMode.Polite
+            }
+    )
+}
+
+/**
+ * The eye at the end of a secret's field: shows or hides what's typed. Off while the field is
+ * ([enabled]): a field turned off for a check would otherwise hand its focus to the eye, which then
+ * shows it as focused though the owner never went there.
+ */
+@Composable
+internal fun PassphraseEye(shown: Boolean, enabled: Boolean, onToggle: () -> Unit, @StringRes show: Int = R.string.passphrase_show, @StringRes hide: Int = R.string.passphrase_hide) {
+    IconButton(onClick = onToggle, enabled = enabled) {
+        Icon(
+            if (shown) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+            contentDescription = stringResource(if (shown) hide else show)
+        )
+    }
+}
+
 /** Each keystroke counts as using BioKey: the keyboard's input never passes its touch handling, so a long passphrase could hit the idle lock. */
-private val CountsAsUse = InputTransformation { LockStateTracker.onOwnAppInteraction() }
+internal val PassphraseCountsAsUse = InputTransformation { LockStateTracker.onOwnAppInteraction() }
 
 /*
  * Copied from feature/lock/PassphraseGate.kt, where they're private or test-only (waitText, wipe,
- * hardenEditorInfo, HardenedTextInput): to be merged with those.
+ * hardenEditorInfo, HardenedTextInput): to be merged with those. Shared with Settings' own
+ * passphrase dialog (PassphraseEntryDialog), so both treat what's typed the same way.
  */
 
-/** "Try again in 28 s", "in 4 min", "in 2 h": always rounded up, so it never says 0. */
-private fun confirmWaitText(res: Resources, remainingMs: Long): String = when {
-    remainingMs <= 60_000L -> res.getString(R.string.lock_passphrase_wait_seconds, ceil(remainingMs / 1_000.0).toInt())
-    remainingMs <= 120 * 60_000L -> res.getString(R.string.lock_passphrase_wait_minutes, ceil(remainingMs / 60_000.0).toInt())
-    else -> res.getString(R.string.lock_passphrase_wait_hours, ceil(remainingMs / 3_600_000.0).toInt())
-}
 
 /** Overwrites what was typed, then empties the field and forgets its undo history (which could bring it back). */
 @OptIn(ExperimentalFoundationApi::class) // The undo history's clearing.
-private fun wipeTyped(field: TextFieldState) {
+internal fun wipePassphraseField(field: TextFieldState) {
     val length = field.text.length
     if (length > 0) field.edit { replace(0, length, "\u0000".repeat(length)) }
     field.clearText()
@@ -319,7 +385,7 @@ private fun wipeTyped(field: TextFieldState) {
 }
 
 /** What the keyboard is told, beyond what Compose's own options can say: never suggest, learn or go full-screen. */
-private fun hardenConfirmEditorInfo(info: EditorInfo) {
+private fun hardenPassphraseEditorInfo(info: EditorInfo) {
     if (info.inputType and InputType.TYPE_MASK_CLASS == InputType.TYPE_CLASS_TEXT) {
         info.inputType = info.inputType or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
     }
@@ -328,12 +394,12 @@ private fun hardenConfirmEditorInfo(info: EditorInfo) {
 }
 
 @OptIn(ExperimentalComposeUiApi::class)
-private object ConfirmHardenedTextInput : PlatformTextInputInterceptor {
+internal object PassphraseHardenedTextInput : PlatformTextInputInterceptor {
     override suspend fun interceptStartInputMethod(
         request: PlatformTextInputMethodRequest,
         nextHandler: PlatformTextInputSession
     ): Nothing = nextHandler.startInputMethod(object : PlatformTextInputMethodRequest by request {
         override fun createInputConnection(outAttributes: EditorInfo): InputConnection =
-            request.createInputConnection(outAttributes).also { hardenConfirmEditorInfo(outAttributes) }
+            request.createInputConnection(outAttributes).also { hardenPassphraseEditorInfo(outAttributes) }
     })
 }

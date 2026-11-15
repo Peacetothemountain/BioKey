@@ -98,7 +98,7 @@ class UnlockAttemptsTest {
         val p = Prompt()
         p.miss(); pass(5_000L); p.miss(); pass(5_000L); p.miss()
         assertEquals(3, kept.single().failures)
-        assertEquals("3 tries didn't match", UnlockAttempts.describe(context, kept.single()))
+        assertEquals("3 tries didn’t match", UnlockAttempts.describe(context, kept.single()))
     }
 
     @Test
@@ -373,6 +373,34 @@ class UnlockAttemptsTest {
             }
             assertTrue(ProtectionGaps.gaps.value.any { it.kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED })
             assertTrue(UnlockAttempts.holding(context))
+        } finally {
+            restoreGapClocks()
+        }
+    }
+
+    @Test
+    fun overTheLimitItIsTheMiddleThatGoesNotTheOldestOrTheNewest() {
+        with(UnlockAttempts) {
+            val newestFirst = (10 downTo 1).toList()
+            assertEquals(newestFirst, newestFirst.endsOf(10))
+            assertEquals(listOf(10, 9, 8, 2, 1), newestFirst.endsOf(5))
+            assertEquals(listOf(10, 9, 2, 1), newestFirst.endsOf(4))
+            assertEquals(emptyList<Int>(), newestFirst.endsOf(0))
+        }
+    }
+
+    @Test
+    fun aFloodOfRecordsDoesntPushOutTheOldestUnseenOne() {
+        // What happened first is what a flood would be made to hide: it stays, and so does the latest.
+        try {
+            ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, ProtectionGaps.Change.LOCK_OFF.encode("Signal"))
+            repeat(UnlockAttempts.MAX_UNSEEN + 20) {
+                ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, ProtectionGaps.Change.LOCK_OFF.encode("App $it"))
+            }
+            val details = ProtectionGaps.gaps.value.map { it.detail }
+            assertTrue(details.any { it == ProtectionGaps.Change.LOCK_OFF.encode("Signal") })
+            assertTrue(details.any { it == ProtectionGaps.Change.LOCK_OFF.encode("App ${UnlockAttempts.MAX_UNSEEN + 19}") })
+            assertEquals(UnlockAttempts.MAX_UNSEEN, ProtectionGaps.gaps.value.size)
         } finally {
             restoreGapClocks()
         }

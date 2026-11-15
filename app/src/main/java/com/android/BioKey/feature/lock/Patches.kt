@@ -9,7 +9,12 @@ internal interface Patches {
     /** Adds [targets] to what's up, without taking any down; returns those that couldn't go up. */
     fun add(targets: Collection<WindowMask.Target>): List<WindowMask.Target>
     fun setHidden(hidden: Boolean)
-    fun setHiddenOn(displays: Set<Int>)
+    /**
+     * Hides the patches on [displays] and shows every other one. Where the area a prompt takes up
+     * on one of those displays is known ([promptAreas], by display), only the patches that would
+     * cover it are hidden there: the rest stay up.
+     */
+    fun setHiddenOn(displays: Set<Int>, promptAreas: Map<Int, android.graphics.Rect> = emptyMap())
     fun forget(pkg: String)
     fun clear()
     fun refreshPalette()

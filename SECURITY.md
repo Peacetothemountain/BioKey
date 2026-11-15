@@ -1,13 +1,13 @@
 # Security policy
 
 BioKey is an app lock, so a security problem in it can expose exactly what people use it to
-protect. Please report one privately, and give us a chance to fix it before it's made public.
+protect. Please report one privately, and give us a chance to fix it before it’s made public.
 
 ## Supported versions
 
 | Version | Supported |
 |---|---|
-| The latest 2.0.x release (2.0.0 now) | Yes |
+| The latest 2.0.x release (2.0.1 now) | Yes |
 | 1.0.x | No: please update to 2.0 |
 
 Fixes go into the latest release. Please check that a problem still happens there before
@@ -15,37 +15,50 @@ reporting it.
 
 ## Reporting a vulnerability
 
-Email **support.nbdesigns@gmail.com** with "BioKey security" in the subject. Please don't open a
+Email **support.nbdesigns@gmail.com** with “BioKey security” in the subject. Please don’t open a
 public issue, pull request or discussion about it.
 
 Include what you can of:
 
 - What the problem is, and what someone could do with it.
 - Steps to reproduce it, and how reliable they are.
-- BioKey's version, your phone's model and Android version, and which way BioKey was working
+- BioKey’s version, your phone’s model and Android version, and which way BioKey was working
   (accessibility service or compatibility mode).
 - A screen recording or the diagnostic log, if they help. The log lists your locked apps by
-  package name, so remove anything you'd rather not send.
+  package name, so remove anything you’d rather not send.
 
-You should get a reply within a week. We'll tell you whether we can reproduce it, keep you posted
-on a fix, and credit you in the release notes if you'd like.
+You should get a reply within a week. We’ll tell you whether we can reproduce it, keep you posted
+on a fix, and credit you in the release notes if you’d like.
 
 ## What counts
 
 Reports we especially want:
 
-- A way to use a locked app without authenticating, through ordinary use of the phone, including
-  a match BioKey accepts without the phone's hardware having signed its challenge (the proof of a
-  match described in the README).
-- A way round the passphrase's waits after wrong tries, or to learn the passphrase from what
+- A way to use a locked app without the owner’s face, fingerprint, screen lock or passphrase,
+  through ordinary use of the phone, including a match BioKey accepts without the phone’s hardware
+  having signed its challenge (the proof of a match described in the README), or a way to get the
+  check left off while the passphrase stands in, where it should never be.
+- A way round the passphrase’s waits after wrong tries, or to learn the passphrase from what
   BioKey keeps.
-- A way for another app to learn which apps are locked, read BioKey's settings, or switch BioKey
-  off or pause it without the owner's authentication.
-- A weakness in the backup file's encryption, or a way to restore a backup without its password.
+- A way to set, change or remove the passphrase without Security activity recording it, or
+  within the day after a face or fingerprint is added or removed, or BioKey is reset, when it
+  should wait; or to restore a backup within that day.
+- A way to keep BioKey, or a locked app, unlocked after you’ve left it, beyond what the README
+  describes (a helper app and straight back, a page of Android’s settings BioKey sent you to),
+  including an app installed from a file being counted as a helper.
+- A way to make BioKey forget a locked app that was uninstalled before its 30 days are up, so it
+  isn’t locked again when it’s reinstalled.
+- A way for another app to learn which apps are locked, read BioKey’s settings, or switch BioKey
+  off or pause it without the owner confirming it’s them.
+- A weakness in the backup file’s encryption, or a way to restore a backup without its password.
 - Anything that leaks data off the phone.
 
-BioKey's README lists what an app lock running as a regular app can't defend against
+BioKey’s README lists what an app lock running as a regular app can’t defend against
 ([Limits](https://github.com/Peacetothemountain/BioKey#limits)): root, ADB, a modified OS, safe
-mode, Recents previews, and the moments listed there when a locked app can show before it's
-covered. Those are known. A way around them that goes beyond what's described there is still worth
-reporting.
+mode, Recents previews, compatibility mode’s own limits, and the moments listed there when a locked
+app can show before it’s covered. Those are known. One of them, in short: when an app hides its
+screens from accessibility services, BioKey tells which app is on screen from the window’s title,
+and another app that hides its screens too could give its window the same title. BioKey would then
+cover that window if the app it names is locked, or, if that app is unlocked, keep it unlocked while
+the window is on screen (it still locks when the phone does). A way around them that goes beyond
+what’s described there is still worth reporting.

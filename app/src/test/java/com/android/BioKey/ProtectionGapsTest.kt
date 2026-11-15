@@ -338,6 +338,39 @@ class ProtectionGapsTest {
     }
 
     @Test
+    fun aRecordThatCantBeClearedIsNotPushedOutByNewOnesOnceSeen() {
+        // A fingerprint was added; the owner has seen the record. It stays its full time, whatever
+        // is recorded after it: twenty-five other changes mustn't be a way to make it go.
+        ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.BIOMETRICS_CHANGED)
+        UnlockAttempts.markSeen(context)
+        repeat(25) { ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, ProtectionGaps.Change.LOCK_OFF.encode("App $it")) }
+        assertEquals(1, gaps.count { it.kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED })
+        assertEquals("every unseen one is still there too", 25, gaps.count { it.kind == ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK })
+    }
+
+    @Test
+    fun theSameChangeOverAndOverDoesNotFillTheList() {
+        // One switch flipped again and again: a few records of it are kept apart, then the latest
+        // just moves on to now. Other records aren't pushed out to make room for it.
+        val notes = ProtectionGaps.Change.LOCK_OFF.encode("Notes")
+        ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, ProtectionGaps.Change.PAUSED.encode())
+        var last = 0L
+        repeat(40) {
+            pass(1_000L)
+            last = ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, notes)!!
+        }
+        val same = gaps.filter { it.detail == notes }
+        assertEquals(5, same.size)
+        assertEquals("the latest of them is the one moved on", last, same.maxOf { it.seq })
+        assertEquals("and says when it last happened", gaps.maxOf { it.to }, same.maxOf { it.to })
+        assertEquals(1, gaps.count { it.detail == ProtectionGaps.Change.PAUSED.encode() })
+        // Seen, the next one is new again.
+        UnlockAttempts.markSeen(context)
+        ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, notes)
+        assertEquals(6, gaps.count { it.detail == notes })
+    }
+
+    @Test
     fun clearCanBeUndone() {
         ProtectionGaps.onEngineDown(context)
         pass(5 * 60_000L)
@@ -678,5 +711,19 @@ class ProtectionGapsTest {
         newProcess(afterForceStop = true)
         ProtectionGaps.onEngineUp(context)
         assertEquals(ProtectionGaps.Kind.SWITCHED_OFF, gaps.single().kind)
+    }
+
+    @Test
+    fun aStateRecordedOnceIsRecordedAgainOnceItHasPassedAndComeBack() {
+        // BioKey's process runs for weeks: face and fingerprint switched off for apps a second
+        // time, after they were usable again, is as much news as the first.
+        val off = ProtectionGaps.Change.BIOMETRIC_OFF_FOR_APPS
+        fun recorded() = ProtectionGaps.gaps.value.count { it.detail == off.encode() }
+        ProtectionGaps.recordOncePerProcess(context, off)
+        ProtectionGaps.recordOncePerProcess(context, off)
+        assertEquals("a state, not each prompt it affects", 1, recorded())
+        ProtectionGaps.passed(off, ProtectionGaps.Change.BIOMETRIC_UNAVAILABLE)
+        ProtectionGaps.recordOncePerProcess(context, off)
+        assertEquals(2, recorded())
     }
 }

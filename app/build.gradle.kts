@@ -35,8 +35,8 @@ android {
         applicationId = "com.nbdesigns.biokey"
         minSdk = 31
         targetSdk = 37
-        versionCode = 21
-        versionName = "2.0.0"
+        versionCode = 22
+        versionName = "2.0.1"
     }
 
     signingConfigs {

@@ -78,6 +78,8 @@ internal fun confirmOwner(
         title,
         screenLockIfSensorUnusable = screenLockIfSensorUnusable,
         onRefused = { reason -> BioKeyMessages.show(reason, Icons.Default.ErrorOutline) },
+        // A match that couldn't be proved confirms nothing: the passphrase is asked for instead.
+        onUnproven = { if (!activity.isFinishing && !activity.isDestroyed) PassphraseConfirm.ask(activity, title, whenConfirmed) },
         onConfirmed = whenConfirmed
     )
 }
@@ -154,7 +156,11 @@ internal object PassphraseConfirm {
                         current.whenConfirmed()
                     }
                     is OwnerPassphrase.Outcome.Mismatch -> {
-                        state.error = app.getString(R.string.lock_passphrase_wrong)
+                        // As on the lock screens: with two tries or fewer left before a wait, it says so.
+                        state.error = com.android.BioKey.feature.lock.passphraseMessage(
+                            app.resources, app.getString(R.string.lock_passphrase_wrong),
+                            OwnerPassphrase.triesBeforeWait(app), waiting = outcome.waitMs > 0L
+                        )
                         if (outcome.waitMs > 0L) state.waitUntilElapsed = SystemClock.elapsedRealtime() + outcome.waitMs
                     }
                     is OwnerPassphrase.Outcome.Wait -> state.waitUntilElapsed = SystemClock.elapsedRealtime() + outcome.waitMs

@@ -78,7 +78,7 @@ class ProfilePickingTest {
         rule.onNodeWithText("Chase").performClick()
         rule.onNodeWithText("Venmo").performClick()
         rule.onNodeWithText("2 selected").assertIsDisplayed()
-        rule.onNodeWithText("Remove").performClick()
+        rule.onNodeWithText("Take out").performClick()
         rule.waitForIdle()
 
         assertNull(profileOf("Chase"))
@@ -111,7 +111,7 @@ class ProfilePickingTest {
         rule.onNodeWithText("3 selected").assertIsDisplayed()
         rule.onNodeWithText("Select none").performClick()
         rule.onNodeWithText("0 selected").assertIsDisplayed()
-        rule.onNodeWithText("Remove").performClick()
+        rule.onNodeWithText("Take out").performClick()
         rule.waitForIdle()
         // Nothing picked: the button does nothing.
         listOf("Chase", "Venmo", "Wallet").forEach { assertEquals("profile_finance", profileOf(it)) }

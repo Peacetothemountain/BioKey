@@ -1,5 +1,6 @@
 package com.android.BioKey
 
+import android.content.pm.ApplicationInfo
 import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.data.AppClassifier
 import org.junit.Assert.assertEquals
@@ -58,5 +59,17 @@ class AppClassifierTest {
         assertNotEquals(AppCategory.PRIVACY, category("com.google.android.apps.chromecast.app", "Google Home"))
         // Its own category, not Social through "x.android".
         assertEquals(AppCategory.WORK, category("com.dropbox.android", "Dropbox"))
+    }
+
+    @Test
+    fun aNameBioKeyKnowsCountsBeforeAndroidsBroadCategory() {
+        // Android files a browser under "productivity"; here it is personal, as the app says it sorts them.
+        assertEquals(AppCategory.PRIVACY, AppClassifier.categorize("com.android.chrome", "Chrome", ApplicationInfo.CATEGORY_PRODUCTIVITY))
+        assertEquals(AppCategory.PRIVACY, AppClassifier.categorize("org.mozilla.firefox", "Firefox", ApplicationInfo.CATEGORY_PRODUCTIVITY))
+        // Where no name is known, the category still decides.
+        assertEquals(AppCategory.WORK, AppClassifier.categorize("com.example.planner", "Planner", ApplicationInfo.CATEGORY_PRODUCTIVITY))
+        assertEquals(AppCategory.SOCIAL, AppClassifier.categorize("com.example.circle", "Circle", ApplicationInfo.CATEGORY_SOCIAL))
+        // And a known work app stays one whatever it files itself under.
+        assertEquals(AppCategory.WORK, AppClassifier.categorize("com.google.android.gm", "Gmail", ApplicationInfo.CATEGORY_SOCIAL))
     }
 }

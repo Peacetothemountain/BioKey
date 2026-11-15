@@ -50,6 +50,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withTimeoutOrNull
+import androidx.compose.ui.platform.AccessibilityManager
+import androidx.compose.ui.platform.LocalAccessibilityManager
 
 /**
  * BioKey's short messages ("Chase unlocked · Undo", "Protection paused"), in place of Android
@@ -67,20 +70,44 @@ object BioKeyMessages {
         val icon: ImageVector?,
         override val actionLabel: String?,
         val onAction: (() -> Unit)?,
-        override val duration: SnackbarDuration,
+        /** Runs once, on the main thread, when the message is gone for good: timed out, acted on, replaced, or put away with BioKey. */
+        val onGone: (() -> Unit)? = null,
+        /** How long it has been on screen so far, across hosts: handed on, it shows only what's left of its time. */
+        var shownMs: Long = 0L,
         /** When it was raised, on the uptime clock. */
         val postedAt: Long = SystemClock.uptimeMillis()
     ) : SnackbarVisuals {
         override val withDismissAction = false
+        /** Timed here ([showOnce]), not by Material's Short or Long: an Undo gets [UNDO_MS], not 10 seconds. */
+        override val duration = SnackbarDuration.Indefinite
+
+        /** Its whole time on screen, before any longer time the user's accessibility settings ask for. */
+        val totalMs get() = if (actionLabel != null) UNDO_MS else SHORT_MS
 
         fun isStale(now: Long) = now - postedAt > MAX_WAIT_MS
 
-        /** The same message, raised again now. */
-        fun again() = Message(message, icon, actionLabel, onAction, duration)
+        /** The same message, raised again now, with the time it has already been shown. */
+        fun again() = Message(message, icon, actionLabel, onAction, onGone, shownMs)
+
+        private var goneCalled = false
+        fun gone() {
+            if (goneCalled) return
+            goneCalled = true
+            onGone?.invoke()
+        }
     }
 
     /** How long a message may wait for a host to show it. */
     internal const val MAX_WAIT_MS = 5_000L
+    /**
+     * How long a message with an action (Undo) stays: the owner's choice, a second and a half.
+     * Longer where they've asked Android for more time to act ([MessageHost] reads it).
+     */
+    internal const val UNDO_MS = 1_500L
+    /** How long a message without one stays (Material's short time). */
+    internal const val SHORT_MS = 4_000L
+    /** Handed on to another host near the end of its time, it still stays long enough to be read. */
+    internal const val LEAST_LEFT_MS = 500L
 
     private val channel = Channel<Message>(capacity = 4, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     internal val pending = channel.receiveAsFlow()
@@ -88,10 +115,19 @@ object BioKeyMessages {
     /** Hosts on screen, the one showing messages last: the screen's own, then any dialog's or sheet's over it. */
     internal val hosts = MutableStateFlow<List<Any>>(emptyList())
 
-    /** Shows [message]; with [actionLabel], [onAction] runs if the user taps it. Safe from any thread. */
-    fun show(message: String, icon: ImageVector? = null, actionLabel: String? = null, onAction: (() -> Unit)? = null) {
-        val duration = if (actionLabel != null) SnackbarDuration.Long else SnackbarDuration.Short
-        channel.trySend(Message(message, icon, actionLabel, onAction, duration))
+    /**
+     * Shows [message]; with [actionLabel], [onAction] runs if the user taps it. [onGone] runs (on
+     * the main thread) once the message is gone for good. Safe from any thread. [onAction] stays
+     * last, so `show(…, actionLabel = …) { undo }` keeps meaning the action.
+     */
+    fun show(
+        message: String,
+        icon: ImageVector? = null,
+        actionLabel: String? = null,
+        onGone: (() -> Unit)? = null,
+        onAction: (() -> Unit)? = null
+    ) {
+        channel.trySend(Message(message, icon, actionLabel, onAction, onGone))
     }
 
     private val main by lazy { Handler(Looper.getMainLooper()) }
@@ -102,7 +138,7 @@ object BioKeyMessages {
      * and still listening, and would take the message back.
      */
     internal fun resend(message: Message, carriesOn: () -> Boolean) {
-        main.post { if (carriesOn()) channel.trySend(message.again()) }
+        main.post { if (carriesOn()) channel.trySend(message.again()) else message.gone() }
     }
 }
 
@@ -120,6 +156,7 @@ internal fun MessageHost(modifier: Modifier, isScreen: Boolean) {
     val token = remember { Any() }
     val activity = LocalActivity.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val accessibility = LocalAccessibilityManager.current
     DisposableEffect(token) {
         // The screen's own host stays under any dialog's, whichever was composed first.
         BioKeyMessages.hosts.update { if (isScreen) listOf(token) + it else it + token }
@@ -138,7 +175,7 @@ internal fun MessageHost(modifier: Modifier, isScreen: Boolean) {
         // off, say) is gone when it comes back, behind its lock, rather than offering its action there.
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             BioKeyMessages.hosts.map { it.lastOrNull() === token }.distinctUntilChanged().collectLatest { onTop ->
-                if (onTop) BioKeyMessages.pending.collectLatest { message -> showOnce(state, message, handOver) }
+                if (onTop) BioKeyMessages.pending.collectLatest { message -> showOnce(state, message, handOver, accessibility) }
             }
         }
     }
@@ -149,11 +186,26 @@ internal fun MessageHost(modifier: Modifier, isScreen: Boolean) {
     key(stops) { SnackbarHost(state, modifier) { data -> MessageBar(data) } }
 }
 
-private suspend fun showOnce(state: SnackbarHostState, message: BioKeyMessages.Message, handOver: () -> Boolean) {
-    if (message.isStale(SystemClock.uptimeMillis())) return
+private suspend fun showOnce(
+    state: SnackbarHostState,
+    message: BioKeyMessages.Message,
+    handOver: () -> Boolean,
+    accessibility: AccessibilityManager?
+) {
+    if (message.isStale(SystemClock.uptimeMillis())) return message.gone()
+    // Its own time (or what's left of it, handed on from another host), or longer if the user's
+    // accessibility settings ask for more time to read or act.
+    val total = accessibility?.calculateRecommendedTimeoutMillis(
+        message.totalMs, containsIcons = message.icon != null, containsText = true, containsControls = message.actionLabel != null
+    ) ?: message.totalMs
+    val left = (total - message.shownMs).coerceAtLeast(BioKeyMessages.LEAST_LEFT_MS)
+    val start = SystemClock.uptimeMillis()
     try {
-        if (state.showSnackbar(message) == SnackbarResult.ActionPerformed) message.onAction?.invoke()
+        val result = withTimeoutOrNull(left) { state.showSnackbar(message) }
+        if (result == SnackbarResult.ActionPerformed) message.onAction?.invoke()
+        message.gone()
     } catch (e: CancellationException) {
+        message.shownMs += SystemClock.uptimeMillis() - start
         BioKeyMessages.resend(message, carriesOn = handOver)
         throw e
     }

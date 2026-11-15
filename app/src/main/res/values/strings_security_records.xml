@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Security activity: with “Face or fingerprint only” on, faces and fingerprints were switched off
+         for apps in Android’s settings (Android 15 and later: “Use for apps”), so your screen lock was
+         let in. Said apart from a sensor that couldn’t be used: this one is somebody’s doing. -->
+    <string name="change_biometric_off_for_apps">Face and fingerprint were switched off for apps in Android’s settings, so your screen lock was allowed</string>
+    <string name="biometric_off_for_apps_notification_text">Face and fingerprint were switched off for apps in Android’s settings, so your screen lock opened locked apps. If it wasn’t you, someone knows your screen lock. Open BioKey to see when.</string>
+</resources>

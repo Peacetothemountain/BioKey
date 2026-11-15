@@ -76,7 +76,7 @@ class CompatibilityStatusTest {
         ProtectionAlerts.serviceStopped(context, now = true)
         val alert = shadowOf(context.getSystemService(NotificationManager::class.java)).allNotifications.single()
         val text = alert.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
-        assertTrue(text, text.contains("compatibility mode isn't running"))
+        assertTrue(text, text.contains("compatibility mode isn’t running"))
     }
 
     @Test
@@ -126,7 +126,7 @@ class CompatibilityStatusTest {
         )
         ProtectionAlerts.checkAccessibilityConnects(context)
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(11))
-        assertTrue(alerts().toString(), alerts().any { "app lock service stopped" in it })
+        assertTrue(alerts().toString(), alerts().any { "accessibility service stopped" in it })
     }
 
     @Test
@@ -134,6 +134,6 @@ class CompatibilityStatusTest {
         SecurityVault.getInstance(context).setSetupCompletedSync(true)
         ProtectionAlerts.checkAccessibilityConnects(context)
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(11))
-        assertFalse(alerts().toString(), alerts().any { "app lock service stopped" in it })
+        assertFalse(alerts().toString(), alerts().any { "accessibility service stopped" in it })
     }
 }

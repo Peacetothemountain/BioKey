@@ -18,6 +18,7 @@ import androidx.core.content.edit
 import com.android.BioKey.R
 import com.android.BioKey.core.data.AppText
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.diagnostics.logDuration
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -118,12 +119,23 @@ object ProtectionGaps {
         /** No longer recorded (apps always lock when the phone locks now); kept to word old records. */
         RELOCK_AT_PHONE_LOCK(R.string.change_relock_at_phone_lock),
         BIOMETRIC_ONLY_OFF(R.string.change_biometric_only_off),
-        /** "Protect BioKey's settings" switched off (builds with self-protection only). */
+        /** "Ask before BioKey is stopped or removed" switched off (builds with self-protection only). */
         SELF_PROTECTION_OFF(R.string.change_self_protection_off),
         REMINDERS_STOPPED(R.string.change_reminders_stopped),
         LOG_SHARED(R.string.change_log_shared),
         /** Not a change from a session: the sensor couldn't be used, so the screen lock was allowed. */
-        BIOMETRIC_UNAVAILABLE(R.string.change_biometric_unavailable, fromScreenLock = false);
+        BIOMETRIC_UNAVAILABLE(R.string.change_biometric_unavailable, fromScreenLock = false),
+        /** As [BIOMETRIC_UNAVAILABLE], but because faces and fingerprints were switched off for apps in Android's settings: someone did that. */
+        BIOMETRIC_OFF_FOR_APPS(R.string.change_biometric_off_for_apps, fromScreenLock = false),
+        /** Not a change from a session: matches couldn't be proved by the phone's hardware ([UnlockProof]), so Android's word was taken. */
+        UNLOCK_PROOF_OFF(R.string.change_unlock_proof_off, fromScreenLock = false),
+        /**
+         * The owner's passphrase set, replaced or removed ([OwnerPassphrase]): always recorded,
+         * whatever opened BioKey. It is a way in of its own, so a change to it is never silent.
+         */
+        PASSPHRASE_SET(R.string.change_passphrase_set, fromScreenLock = false),
+        PASSPHRASE_CHANGED(R.string.change_passphrase_changed, fromScreenLock = false),
+        PASSPHRASE_REMOVED(R.string.change_passphrase_removed, fromScreenLock = false);
 
         fun encode(vararg args: String) = (listOf(CODE_MARK + name) + args.map { AppText.cleanLabel(it, 80) }).joinToString(SEPARATOR)
 
@@ -182,6 +194,12 @@ object ProtectionGaps {
     /** A process exit this close to BioKey's own update is the update. */
     private const val UPDATE_WINDOW_MS = 120_000L
     private const val MAX_KEPT = 20
+    /**
+     * How many unseen records of the very same thing are kept apart ("Lock switched off: Notes",
+     * three times); a further one moves the latest of them on to now instead of adding another.
+     * One switch flipped over and over then can't fill the list and push older records out.
+     */
+    private const val MAX_SAME_UNSEEN = 5
 
     private const val PREFS = "biokey_protection_gaps"
     private const val KEY_GAPS = "gaps"
@@ -396,7 +414,8 @@ object ProtectionGaps {
     /**
      * Seen ones past their time go, aged on clocks a changed date doesn't move ([UnlockAttempts.Ageing]);
      * unseen ones stay. Over the limit, seen ones go first: piling up new records can't push out
-     * one the owner hasn't seen.
+     * one the owner hasn't seen. Nor one that can't be cleared (a face or fingerprint change, a
+     * reset: [Kind.holds]): seen, it stays its full time whatever is recorded after it.
      */
     private fun List<Gap>.fresh(context: Context): List<Gap> {
         val seen = UnlockAttempts.seenSeq(context)
@@ -407,8 +426,9 @@ object ProtectionGaps {
         // An unseen face or fingerprint change is never pushed out: a flood of other records mustn't
         // be a way to end its hold.
         val (biometric, others) = unseen.partition { it.kind.holds }
-        val unseenKept = biometric + others.take((UnlockAttempts.MAX_UNSEEN - biometric.size).coerceAtLeast(0))
-        return (unseenKept + kept.filter { it.seq <= seen }.take((MAX_KEPT - unseenKept.size).coerceAtLeast(0)))
+        val unseenKept = biometric + with(UnlockAttempts) { others.endsOf((MAX_UNSEEN - biometric.size).coerceAtLeast(0)) }
+        val (seenHeld, seenOthers) = kept.filter { it.seq <= seen }.partition { it.kind.holds }
+        return (unseenKept + seenHeld + seenOthers.take((MAX_KEPT - unseenKept.size).coerceAtLeast(0)))
             .sortedByDescending { it.seq }
     }
 
@@ -417,15 +437,29 @@ object ProtectionGaps {
         val p = load(context) ?: return null
         if (!SecurityVault.getInstance(context).isSetupCompleted()) return null
         val now = clock()
-        val seq = UnlockAttempts.nextSeq(context)
+        var seq = UnlockAttempts.nextSeq(context)
         synchronized(lock) {
-            save(p, (listOf(Gap(now, now, kind, seq, detail).stamped(context)) + _gaps.value).fresh(context))
+            val list = _gaps.value
+            // The same thing again and again, unseen ([MAX_SAME_UNSEEN]): the latest moves on to now.
+            val seen = UnlockAttempts.seenSeq(context)
+            val same = if (kind.holds) emptyList() else list.filter { it.seq > seen && it.kind == kind && it.detail == detail && it.from == it.to }
+            val latest = same.maxByOrNull { it.seq }
+            if (latest != null && same.size >= MAX_SAME_UNSEEN) {
+                seq = latest.seq
+                save(p, list.map { if (it === latest) it.copy(from = now, to = now).stamped(context) else it }.fresh(context))
+            } else {
+                save(p, (listOf(Gap(now, now, kind, seq, detail).stamped(context)) + list).fresh(context))
+            }
         }
         // A change made during a hold is recorded under the screen-lock kind whatever opened
         // BioKey (nothing proves the owner then): the log says which it was.
         val what = when {
             kind == Kind.CHANGED_WITH_SCREEN_LOCK && Change.duringReset(detail) -> "changed within a day of BioKey being reset"
             kind == Kind.CHANGED_WITH_SCREEN_LOCK && Change.duringHold(detail) -> "changed within a day of a face or fingerprint change"
+            // Recorded under this kind without being a change from a screen-lock visit (the sensor
+            // unusable, a match unproved, the passphrase set): said as what it is.
+            kind == Kind.CHANGED_WITH_SCREEN_LOCK && Change.decode(detail)?.first?.fromScreenLock == false ->
+                Change.decode(detail)!!.first.name.lowercase().replace('_', ' ')
             else -> kind.name.lowercase().replace('_', ' ')
         }
         DiagnosticLog.log("Security activity: $what")
@@ -521,8 +555,8 @@ object ProtectionGaps {
                 recorded = true
                 save(p, (found.map { it.copy(seq = UnlockAttempts.nextSeq(context)).stamped(context) } + _gaps.value).fresh(context))
                 found.forEach {
-                    val length = if (it.unknownStart) "a time that can't be told" else "${(it.to - it.from) / 1000} s"
-                    DiagnosticLog.log("App locking was off for $length (${it.kind.name.lowercase().replace('_', ' ')})")
+                    val length = if (it.unknownStart) "a time that can't be told" else logDuration(it.to - it.from)
+                    DiagnosticLog.log("Protection was off for $length (${it.kind.name.lowercase().replace('_', ' ')})")
                 }
             }
             p.edit {
@@ -665,7 +699,19 @@ object ProtectionGaps {
 
     /** [change], recorded at most once per run of BioKey's process (a state, not each prompt it affects). */
     fun recordOncePerProcess(context: Context, change: Change) {
-        if (recordedOnce.add(change.name)) recordEvent(context, Kind.CHANGED_WITH_SCREEN_LOCK, change.encode())
+        if (!recordedOnce.add(change.name)) return
+        // Not marked as said unless it was: a record refused (setup not finished) is tried again.
+        if (recordEvent(context, Kind.CHANGED_WITH_SCREEN_LOCK, change.encode()) == null) recordedOnce.remove(change.name)
+    }
+
+    /**
+     * The states [changes] record are over (the face or fingerprint can be used again): the next
+     * time one comes about it is recorded again, not passed over because it happened once before
+     * in a process that can run for weeks.
+     */
+    fun passed(vararg changes: Change) {
+        if (recordedOnce.isEmpty()) return
+        for (change in changes) recordedOnce.remove(change.name)
     }
 
     /**

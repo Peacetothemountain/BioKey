@@ -2,10 +2,10 @@ package com.android.BioKey.feature.main
 
 import android.content.Context
 import android.content.res.Resources
-import android.text.format.DateUtils
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,22 +14,27 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GppBad
-import androidx.compose.material.icons.filled.GppMaybe
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.NotificationsOff
-import androidx.compose.material.icons.filled.Password
-import androidx.compose.material.icons.filled.RemoveModerator
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -37,7 +42,6 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -65,8 +69,12 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -76,7 +84,10 @@ import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.UnlockAttempts
+import com.android.BioKey.ui.format.afterSeparator
 import com.android.BioKey.ui.format.attemptTime
+import com.android.BioKey.ui.format.recordRange
+import com.android.BioKey.ui.format.startsWithArgument
 import com.android.BioKey.ui.navigation.IntentNavigationHelper
 import com.android.BioKey.ui.security.ProtectDialogWindow
 import com.android.BioKey.ui.theme.Callout
@@ -93,7 +104,12 @@ import kotlinx.coroutines.delay
 /**
  * A card at the top of home. Its actions sit beside the title when there's room (normal text,
  * [inline]), else on their own row under the text, so a long title or large text never squeezes
- * them. [urgent] cards take the error colours, so they never look like routine ones.
+ * them. [urgent] cards take the error colours, so they never look like routine ones. A [compact]
+ * card (calm news under an urgent one) is a row's height: tighter, a smaller icon, and its one
+ * short action beside the text whatever the text's length, until large text needs the room.
+ * [roomBeside]: the caller knows the card is wide enough for its action beside the text (a wide
+ * screen), whatever the text's length; still not at large text. The title and the line under it
+ * use the full width, their lines made even only where one word would be left alone on the last.
  */
 @Composable
 internal fun ActionCard(
@@ -103,6 +119,8 @@ internal fun ActionCard(
     modifier: Modifier = Modifier,
     urgent: Boolean = false,
     inline: Boolean = false,
+    compact: Boolean = false,
+    roomBeside: Boolean = false,
     actions: @Composable RowScope.() -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
@@ -117,9 +135,12 @@ internal fun ActionCard(
     // Beside the text only while the line under the title is short: a longer one would be squeezed
     // into a narrow column by the button and run to three lines. Decided from the text itself, not
     // from a layout pass, so the card never flips back and forth between the two arrangements.
-    val sideBySide = inline && LocalDensity.current.fontScale < 1.3f && subtitle.length <= INLINE_SUBTITLE_MAX
+    val fontScale = LocalDensity.current.fontScale
+    val sideBySide = (roomBeside && fontScale < LARGE_TEXT) ||
+        inline && (if (compact) fontScale < LARGE_TEXT else actionsFitBeside(title, subtitle, fontScale))
     // The icon grows with the text beside it (up to 1.5×).
-    val iconSize = CARD_ICON_SIZE.scaledWithText()
+    val iconSize = (if (compact) CARD_ICON_SIZE_COMPACT else CARD_ICON_SIZE).scaledWithText()
+    val vertical = if (compact) 12.dp else 16.dp
     Surface(
         shape = RoundedCornerShape(28.dp),
         color = container,
@@ -129,23 +150,26 @@ internal fun ActionCard(
             .padding(bottom = 8.dp)
             .fillMaxWidth()
     ) {
-        Column(Modifier.padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = if (sideBySide) 16.dp else 8.dp)) {
+        // Under the text, a button's own touch margin (4dp) already spaces it: the padding allows for it.
+        Column(Modifier.padding(start = 16.dp, end = 12.dp, top = vertical, bottom = if (sideBySide) vertical else 8.dp)) {
             Row(verticalAlignment = if (sideBySide) Alignment.CenterVertically else Alignment.Top) {
                 Box(Modifier.size(iconSize).background(iconContainer, CircleShape), contentAlignment = Alignment.Center) {
-                    Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(22.dp.scaledWithText()))
+                    Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size((iconSize * 0.55f)))
                 }
                 Spacer(Modifier.width(CARD_ICON_GAP))
                 Column(Modifier.weight(1f).padding(end = 4.dp)) {
                     // Urgent ones are announced as they appear, not only when reached.
-                    Text(
+                    NoLoneWordText(
                         title,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = if (compact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
                         modifier = Modifier.semantics {
                             heading()
                             if (urgent) liveRegion = LiveRegionMode.Polite
                         }
                     )
-                    if (subtitle.isNotEmpty()) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = secondary)
+                    if (subtitle.isNotEmpty()) {
+                        NoLoneWordText(subtitle, style = MaterialTheme.typography.bodyMedium, color = secondary)
+                    }
                 }
                 if (sideBySide) {
                     CompositionLocalProvider(LocalContentColor provides content) {
@@ -161,7 +185,7 @@ internal fun ActionCard(
                     MaterialTheme(colorScheme = if (urgent) colors.copy(primary = colors.onErrorContainer) else colors) {
                     // Wrapping, so two buttons at large text go on two lines instead of squeezing.
                     FlowRow(
-                        Modifier.fillMaxWidth().padding(start = iconSize + CARD_ICON_GAP, top = 8.dp),
+                        Modifier.fillMaxWidth().padding(start = iconSize + CARD_ICON_GAP, top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                         itemVerticalAlignment = Alignment.CenterVertically,
                         content = actions
@@ -177,7 +201,7 @@ internal fun ActionCard(
 @Composable
 internal fun AttemptsIntroCard(onNotNow: () -> Unit, onTurnOn: () -> Unit, modifier: Modifier = Modifier) {
     ActionCard(
-        icon = Icons.Default.GppMaybe,
+        icon = FailedAlertsIcon,
         title = stringResource(R.string.settings_failed_alerts_title),
         subtitle = stringResource(R.string.card_attempts_intro_text),
         modifier = modifier
@@ -211,18 +235,9 @@ internal fun SecurityActivityCard(
     // Newest by the order things happened in, not by clock times.
     val gapIsNewest = newestGap != null && (newestAttempt == null || newestGap.seq > newestAttempt.seq)
     ActionCard(
-        // What the newest thing was, at a glance: protection off, a fingerprint changed, a change
-        // from BioKey opened with the PIN, or failed unlocks.
-        icon = when {
-            gapIsNewest -> when (newestGap!!.kind) {
-                ProtectionGaps.Kind.BIOMETRICS_CHANGED, ProtectionGaps.Kind.BIOMETRICS_REMOVED -> Icons.Default.Fingerprint
-                ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK -> Icons.Default.Password
-                ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED -> Icons.Default.NotificationsOff
-                else -> Icons.Default.RemoveModerator
-            }
-            urgent -> Icons.Default.GppBad
-            else -> Icons.Default.GppMaybe
-        },
+        // Security activity's one icon, whatever the newest record is: the line under the title
+        // says what it was, and the card's colour whether it's urgent.
+        icon = SecurityActivityIcon,
         title = when {
             gaps.isEmpty() -> resources.getQuantityString(R.plurals.attempts_title, attempts.size, attempts.size)
             attempts.isEmpty() && gaps.all { it.isOff } -> pluralStringResource(R.plurals.card_gaps_off_title, gaps.size, gaps.size)
@@ -233,6 +248,9 @@ internal fun SecurityActivityCard(
         }.orEmpty(),
         urgent = urgent,
         inline = true,
+        // Not urgent: news to look at when convenient, so it takes a row's room, not a card's,
+        // and the urgent card above it (if any) leads.
+        compact = !urgent,
         modifier = modifier
     ) {
         val review = stringResource(R.string.card_review)
@@ -246,11 +264,51 @@ internal fun SecurityActivityCard(
     }
 }
 
+/** Lines of even length: used only where the full width would leave one word alone on the last. */
+private val EvenLines = LineBreak(LineBreak.Strategy.Balanced, LineBreak.Strictness.Normal, LineBreak.WordBreak.Default)
+
+/**
+ * Text that uses the card's full width, as its neighbours do, unless that leaves a single word
+ * alone on its last line: then (and only then) its lines are made even.
+ */
+@Composable
+private fun NoLoneWordText(
+    text: String,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+    color: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified
+) {
+    // Per width: a wider card (a turn, a fold) may not leave the word alone.
+    BoxWithConstraints {
+        var even by remember(text, constraints.maxWidth) { mutableStateOf(false) }
+        Text(
+            text,
+            style = if (even) style.copy(lineBreak = EvenLines) else style,
+            color = color,
+            modifier = modifier,
+            onTextLayout = { layout -> if (!even && endsWithLoneWord(text, layout)) even = true }
+        )
+    }
+}
+
+/** Whether [layout] of [text] runs to more than one line, the last of them a single word. */
+internal fun endsWithLoneWord(text: String, layout: TextLayoutResult): Boolean {
+    if (layout.lineCount < 2) return false
+    val last = layout.lineCount - 1
+    return text.substring(layout.getLineStart(last), layout.getLineEnd(last)).trim().none { it == ' ' }
+}
+
+/** Security activity's icon, on its card and its dialog: a record of what happened. */
+internal val SecurityActivityIcon get() = Icons.Default.History
+
+/** Failed unlock alerts' icon, on home's offer and in Settings: a check that failed. */
+internal val FailedAlertsIcon get() = Icons.Default.GppBad
+
 /** Security activity worth the error colours: protection off or weakened, or misses nobody followed. */
 internal fun securityActivityUrgent(attempts: List<UnlockAttempts.Attempt>, gaps: List<ProtectionGaps.Gap>, seen: Long = 0L) =
     gaps.any { it.seq > seen } || attempts.any { it.unanswered && it.seq > seen }
 
-/** The locked apps unlocked right now: one with its countdown and Lock, several with Choose and Lock all. */
+/** The locked apps unlocked right now: one with its countdown and Lock, several with See apps and Re-lock now. */
 @Composable
 internal fun UnlockedNowCard(
     apps: List<AppItem>,
@@ -290,10 +348,15 @@ internal val ProtectionGaps.Gap.isOff get() =
 
 internal val ProtectionGaps.Gap.isBiometricChange get() = kind == ProtectionGaps.Kind.BIOMETRICS_CHANGED || kind == ProtectionGaps.Kind.BIOMETRICS_REMOVED
 
-/** "3:02 – 3:10 PM · switched off", or "3:04 PM · a face or fingerprint was added or removed". */
-internal fun gapLine(context: Context, gap: ProtectionGaps.Gap): String {
+/**
+ * "3:02 – 3:10 PM · switched off", or "3:04 PM · a face or fingerprint was added or removed".
+ * [time] stands in for a moment's time: a run of the same record says when it began and ended.
+ * [grouped]: shown under its group's heading ([ChangeGroup]), which says once what the line
+ * would otherwise add in brackets.
+ */
+internal fun gapLine(context: Context, gap: ProtectionGaps.Gap, time: String? = null, grouped: Boolean = false): String {
     if (!gap.isOff) {
-        val time = attemptTime(context, gap.to)
+        val time = time ?: attemptTime(context, gap.to)
         return when (gap.kind) {
             ProtectionGaps.Kind.BIOMETRICS_CHANGED -> context.getString(R.string.card_gap_biometrics_changed, time)
             ProtectionGaps.Kind.BIOMETRICS_REMOVED -> context.getString(R.string.card_gap_biometrics_removed, time)
@@ -303,14 +366,16 @@ internal fun gapLine(context: Context, gap: ProtectionGaps.Gap): String {
             else -> {
                 val change = ProtectionGaps.Change.decode(gap.detail)
                 // Older records hold their words as written; newer ones a code, worded here.
+                // After " · ": in lower case unless it starts with a name ([afterSeparator]).
                 val what = when {
-                    change != null -> changeText(context, change.first, change.second)
+                    change != null -> afterSeparator(changeText(context, change.first, change.second), changeStartsWithName(context, change.first))
+                    // Older records hold their words as written: an app's name may come first, so they stay so.
                     gap.detail.isNotEmpty() -> gap.detail
-                    else -> context.getString(R.string.card_gap_protection_changed)
+                    else -> afterSeparator(context.getString(R.string.card_gap_protection_changed))
                 }
                 context.getString(
                     when {
-                        change?.first?.fromScreenLock == false -> R.string.card_gap_event
+                        grouped || change?.first?.fromScreenLock == false -> R.string.card_gap_event
                         ProtectionGaps.Change.duringReset(gap.detail) -> R.string.card_gap_changed_during_reset
                         ProtectionGaps.Change.duringHold(gap.detail) -> R.string.card_gap_changed_during_hold
                         else -> R.string.card_gap_changed_with_screen_lock
@@ -336,13 +401,114 @@ internal fun gapLine(context: Context, gap: ProtectionGaps.Gap): String {
     return context.getString(if (gap.kind == ProtectionGaps.Kind.SWITCHED_OFF) R.string.card_gap_switched_off else R.string.card_gap_force_stopped, timeRange(context, gap))
 }
 
-/** "3:02 – 3:10 PM", with the date when it isn't today. */
-private fun timeRange(context: Context, gap: ProtectionGaps.Gap): String {
-    val day = if (DateUtils.isToday(gap.to)) 0 else DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR
-    // The dash binds both ways: a range never breaks around it.
-    return DateUtils.formatDateRange(context, gap.from, gap.to, DateUtils.FORMAT_SHOW_TIME or day)
-        .replace(RANGE_DASH, "\u00A0$1\u00A0")
+/** A time off's span, as every record's span is said ([recordRange]). */
+private fun timeRange(context: Context, gap: ProtectionGaps.Gap): String = recordRange(context, gap.from, gap.to)
+
+private fun timeRange(context: Context, from: Long, to: Long): String = recordRange(context, from, to)
+
+/** A record, or the same one several times running: [newest] stands for them all, the oldest at [oldestAt]. */
+internal data class RecordRun(val newest: ProtectionGaps.Gap, val count: Int = 1, val oldestAt: Long = newest.to)
+
+/**
+ * Records (newest first) with the same one several times running put together: the same change
+ * to the same thing, each at a moment. Times locking was off each have their own span, and
+ * stay apart, as does notification access (worded by how long it was off).
+ */
+internal fun groupRepeats(records: List<ProtectionGaps.Gap>): List<RecordRun> {
+    val runs = ArrayList<RecordRun>()
+    for (record in records) {
+        val last = runs.lastOrNull()
+        val repeat = last != null && !record.isOff && record.kind != ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED &&
+            record.kind == last.newest.kind && record.detail == last.newest.detail
+        if (repeat) runs[runs.lastIndex] = last!!.copy(count = last.count + 1, oldestAt = record.to)
+        else runs += RecordRun(record)
+    }
+    return runs
 }
+
+/** A run's line: one record as [gapLine] has it, several with when the first and the last were. */
+internal fun runLine(context: Context, run: RecordRun, grouped: Boolean = false): String =
+    if (run.count == 1) gapLine(context, run.newest, grouped = grouped)
+    else gapLine(context, run.newest, time = timeRange(context, run.oldestAt, run.newest.to), grouped = grouped)
+
+/**
+ * The changes made in a visit of one kind, each group under one heading that says so, in place of
+ * the same words in brackets on every line: made within a day of a face or fingerprint change, of
+ * BioKey being reset, or after BioKey was opened with the screen lock.
+ */
+internal enum class ChangeGroup(@androidx.annotation.StringRes val heading: Int) {
+    DURING_HOLD(R.string.activity_changes_during_hold),
+    DURING_RESET(R.string.activity_changes_during_reset),
+    WITH_SCREEN_LOCK(R.string.activity_changes_with_screen_lock)
+}
+
+/** Which [ChangeGroup] a record goes under, or null: a face or fingerprint change, notification access, or nobody's change. */
+internal fun changeGroup(gap: ProtectionGaps.Gap): ChangeGroup? {
+    if (gap.isOff || gap.kind != ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK) return null
+    val change = ProtectionGaps.Change.decode(gap.detail)
+    return when {
+        change?.first?.fromScreenLock == false -> null
+        ProtectionGaps.Change.duringReset(gap.detail) -> ChangeGroup.DURING_RESET
+        ProtectionGaps.Change.duringHold(gap.detail) -> ChangeGroup.DURING_HOLD
+        else -> ChangeGroup.WITH_SCREEN_LOCK
+    }
+}
+
+/**
+ * The changes section's notes, each fact once: a face or fingerprint change's "check them" and, for
+ * the changes made within a day of it, "whoever did may have made them", said together as one.
+ */
+internal fun changeSectionNotes(changes: List<ProtectionGaps.Gap>): List<Int> {
+    val notes = changes.flatMap(::changeNotes).distinctBy { it.text }
+    val hold = notes.any { it.text == R.string.card_change_during_hold_hint }
+    val check = notes.any { it.text == R.string.card_change_biometrics_changed_hint }
+    val merged = if (!hold || !check) notes else notes.mapNotNull {
+        when (it.text) {
+            R.string.card_change_biometrics_changed_hint -> NoteLine(R.string.card_change_biometrics_hold_hint, true)
+            R.string.card_change_during_hold_hint -> null
+            else -> it
+        }
+    }
+    return merged.map { it.text }
+}
+
+/** [changeSectionNotes] as lines, each with its style. */
+private fun changeSectionNoteLines(changes: List<ProtectionGaps.Gap>): List<NoteLine> {
+    val all = changes.flatMap(::changeNotes) + NoteLine(R.string.card_change_biometrics_hold_hint, true)
+    // What to do first, then the background to it.
+    return changeSectionNotes(changes).map { id -> all.first { it.text == id } }.sortedByDescending { it.lead }
+}
+
+/** What a change means, and what to do: one or two lines ([NoteLine]), said once per section however many need them. */
+private fun changeNotes(change: ProtectionGaps.Gap): List<NoteLine> = when (change.kind) {
+    ProtectionGaps.Kind.BIOMETRICS_CHANGED ->
+        listOf(NoteLine(R.string.card_change_biometrics_changed_hint, true), NoteLine(R.string.card_change_biometrics_note, false))
+    ProtectionGaps.Kind.BIOMETRICS_REMOVED ->
+        listOf(NoteLine(R.string.card_change_biometrics_removed_hint, true), NoteLine(R.string.card_change_biometrics_note, false))
+    ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED -> listOf(NoteLine(R.string.card_change_shield_access_hint, true))
+    else -> when {
+        // Not made in a visit opened with the screen lock (a log shared, the sensor failing): nobody's change.
+        ProtectionGaps.Change.decode(change.detail)?.first?.fromScreenLock == false -> emptyList()
+        ProtectionGaps.Change.duringReset(change.detail) -> listOf(NoteLine(R.string.card_change_during_reset_hint, true))
+        ProtectionGaps.Change.duringHold(change.detail) -> listOf(NoteLine(R.string.card_change_during_hold_hint, true))
+        else -> listOf(NoteLine(R.string.card_change_screen_lock_hint, true))
+    }
+}
+
+/** What a time locking was off meant. */
+private fun offNotes(gap: ProtectionGaps.Gap): List<NoteLine> = when (gap.kind) {
+    // A reset: what it may hide, and why it holds for a day.
+    ProtectionGaps.Kind.DATA_CLEARED -> listOf(NoteLine(R.string.card_gap_reset_hint, true), NoteLine(R.string.card_gap_reset_note, false))
+    ProtectionGaps.Kind.NO_SCREEN_LOCK -> listOf(NoteLine(R.string.card_gap_no_screen_lock_hint, true))
+    else -> listOf(NoteLine(R.string.card_gap_hint, true))
+}
+
+/** A note under a section's records: advice ([lead], the stronger style) or background. */
+private data class NoteLine(@androidx.annotation.StringRes val text: Int, val lead: Boolean)
+
+/** Whether a change's words start with a name filled in (an app's or a profile's), or a count. */
+private fun changeStartsWithName(context: Context, change: ProtectionGaps.Change): Boolean =
+    change.plural != 0 || startsWithArgument(context.resources.getText(change.text).toString())
 
 /** A stored change ([ProtectionGaps.Change]) in words: its arguments are names, a count or a delay. */
 private fun changeText(context: Context, change: ProtectionGaps.Change, args: List<String>): String {
@@ -397,7 +563,7 @@ internal fun rememberSessionPhrase(pkg: String, mode: LockTimeoutMode): String {
     return phrase
 }
 
-/** The unlocked apps, each with its countdown and its own Lock, and Lock all. */
+/** The unlocked apps, each with its countdown and its own Lock, and Re-lock now. */
 @Composable
 internal fun UnlockedAppsDialog(
     apps: List<AppItem>,
@@ -409,7 +575,7 @@ internal fun UnlockedAppsDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Default.LockOpen, contentDescription = null) },
-        title = { Text(stringResource(R.string.home_unlocked_now)) },
+        title = { PassphraseDialogTitle(stringResource(R.string.home_unlocked_now)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 ProtectDialogWindow()
@@ -459,128 +625,97 @@ internal fun SecurityActivityDialog(
     val context = LocalContext.current
     val note = MaterialTheme.colorScheme.onSurfaceVariant
     val anyNew = securityActivityUrgent(attempts, gaps, UnlockAttempts.seen.collectAsStateWithLifecycle().value)
+    // Read in home's window, not the dialog's (which is only as big as the dialog).
+    val short = shortWindow()
+    val changes = gaps.filterNot { it.isOff }
+    val offs = gaps.filter { it.isOff }
+    // What to do about them: look over the faces, fingerprints and screen lock. Under the records it's about.
+    val checkAfterChanges = changes.any { it.kind.holds || (it.kind == ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK && changeNotes(it).isNotEmpty()) }
+    val checkAfterOffs = !checkAfterChanges && offs.any { it.kind.holds }
+    // Offered unless only what can't be cleared is left, or while a hold is on: whoever made the
+    // change could otherwise clear what happened around it.
+    val clearOffered = heldUntil == null && (attempts.isNotEmpty() || gaps.any { !it.kind.holds })
     AlertDialog(
         onDismissRequest = onDismiss,
+        // In a short window (landscape, half a split screen), the records get all the height there is.
+        modifier = if (short) Modifier.padding(horizontal = 24.dp, vertical = 8.dp).widthIn(max = 560.dp) else Modifier,
+        properties = DialogProperties(usePlatformDefaultWidth = !short),
         icon = {
+            // The card's icon; new records show in the colour, as on the card.
             Icon(
-                if (anyNew) Icons.Default.GppBad else Icons.Default.GppMaybe, contentDescription = null,
+                SecurityActivityIcon, contentDescription = null,
                 tint = if (anyNew) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary
             )
         },
-        title = { Text(stringResource(R.string.activity_title)) },
+        title = { PassphraseDialogTitle(stringResource(R.string.activity_title)) },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                ProtectDialogWindow()
-                // At most one note before the records: why they stay new.
-                if (heldUntil != null) {
-                    // The hold explains everything at once: why they stay new, why nothing clears.
-                    Callout(
-                        stringResource(R.string.activity_held_intro),
-                        headline = stringResource(
-                            if (heldByReset) R.string.activity_held_headline_reset else R.string.activity_held_headline_cause,
-                            attemptTime(context, heldUntil)
-                        ),
-                        items = stringArrayResource(R.array.activity_held_refused).toList(),
-                        footer = stringResource(R.string.activity_held_footer),
-                        warning = true,
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    )
-                } else if (openedWithScreenLock) {
-                    Callout(stringResource(R.string.card_activity_screen_lock_note), warning = false, modifier = Modifier.padding(bottom = 16.dp))
-                }
-                val changes = gaps.filterNot { it.isOff }
-                if (changes.isNotEmpty()) {
-                    SectionLabel(stringResource(R.string.card_activity_changes))
-                    RecordList {
-                        changes.forEach { change ->
-                            Column(Modifier.semantics(mergeDescendants = true) { }) {
-                                Text(gapLine(context, change), style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    stringResource(
-                                        when (change.kind) {
-                                            ProtectionGaps.Kind.BIOMETRICS_CHANGED -> R.string.card_change_biometrics_changed_hint
-                                            ProtectionGaps.Kind.BIOMETRICS_REMOVED -> R.string.card_change_biometrics_removed_hint
-                                            ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED -> R.string.card_change_shield_access_hint
-                                            else -> when {
-                                                ProtectionGaps.Change.duringReset(change.detail) -> R.string.card_change_during_reset_hint
-                                                ProtectionGaps.Change.duringHold(change.detail) -> R.string.card_change_during_hold_hint
-                                                else -> R.string.card_change_screen_lock_hint
-                                            }
-                                        }
-                                    ),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = note
-                                )
-                                if (change.isBiometricChange) {
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(stringResource(R.string.card_change_biometrics_note), style = MaterialTheme.typography.bodySmall, color = note)
-                                }
+            Column {
+                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                    ProtectDialogWindow()
+                    // At most one note before the records: why they stay new.
+                    if (heldUntil != null) {
+                        // The hold in one plain sentence: what, until when and why. What waits is
+                        // under the records, folded away until asked for.
+                        Callout(
+                            stringResource(
+                                if (heldByReset) R.string.activity_held_reset else R.string.activity_held_cause,
+                                attemptTime(context, heldUntil)
+                            ),
+                            warning = true,
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
+                    } else if (openedWithScreenLock) {
+                        Callout(stringResource(R.string.card_activity_screen_lock_note), warning = false, modifier = Modifier.padding(bottom = 16.dp))
+                    }
+                    if (changes.isNotEmpty()) {
+                        SectionLabel(stringResource(R.string.card_activity_changes))
+                        // Each group's words said once, over its records, not on every line.
+                        val byGroup = changes.groupBy(::changeGroup)
+                        byGroup[null]?.let { RecordRuns(groupRepeats(it)) }
+                        ChangeGroup.entries.forEach { group ->
+                            byGroup[group]?.let {
+                                SubLabel(stringResource(group.heading))
+                                RecordRuns(groupRepeats(it), grouped = true)
                             }
                         }
+                        SectionNotes(changeSectionNoteLines(changes))
+                        if (checkAfterChanges) CheckSecurityButton()
+                        Spacer(Modifier.height(20.dp))
                     }
-                    Spacer(Modifier.height(16.dp))
-                }
-                val offs = gaps.filter { it.isOff }
-                if (offs.isNotEmpty()) {
-                    SectionLabel(stringResource(R.string.gaps_title))
-                    RecordList {
-                        offs.forEach { gap ->
-                            Column(Modifier.semantics(mergeDescendants = true) { }) {
-                                Text(gapLine(context, gap), style = MaterialTheme.typography.titleSmall)
-                                if (gap.kind == ProtectionGaps.Kind.DATA_CLEARED) {
-                                    // A reset: what it may hide, and that it stays (it starts a hold).
-                                    Text(stringResource(R.string.card_gap_reset_hint), style = MaterialTheme.typography.bodyMedium, color = note)
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(stringResource(R.string.card_gap_reset_note), style = MaterialTheme.typography.bodySmall, color = note)
-                                } else {
+                    if (offs.isNotEmpty()) {
+                        SectionLabel(stringResource(R.string.gaps_title))
+                        RecordRuns(groupRepeats(offs))
+                        // What switches it off: for those, not for a reset or a missing screen lock (which say so themselves).
+                        val switchedOff = offs.any { it.kind == ProtectionGaps.Kind.SWITCHED_OFF || it.kind == ProtectionGaps.Kind.FORCE_STOPPED }
+                        SectionNotes(offs.flatMap(::offNotes) + listOfNotNull(NoteLine(R.string.card_gaps_note, false).takeIf { switchedOff }))
+                        if (checkAfterOffs) CheckSecurityButton()
+                        Spacer(Modifier.height(20.dp))
+                    }
+                    if (attempts.isNotEmpty()) {
+                        SectionLabel(stringResource(R.string.card_failed_unlocks))
+                        RecordList {
+                            attempts.forEach { attempt ->
+                                Column(Modifier.semantics(mergeDescendants = true) { }) {
+                                    Text(labelOf(attempt), style = MaterialTheme.typography.titleSmall)
                                     Text(
-                                        stringResource(if (gap.kind == ProtectionGaps.Kind.NO_SCREEN_LOCK) R.string.card_gap_no_screen_lock_hint else R.string.card_gap_hint),
+                                        stringResource(R.string.card_attempt_detail, attemptTime(context, attempt.at), UnlockAttempts.describe(context, attempt)),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = note
                                     )
                                 }
                             }
                         }
+                        SectionNotes(listOf(NoteLine(R.string.card_attempts_note, false)))
                     }
-                    // What switches it off: for those, not for a reset or a missing screen lock (which say so themselves).
-                    if (offs.any { it.kind == ProtectionGaps.Kind.SWITCHED_OFF || it.kind == ProtectionGaps.Kind.FORCE_STOPPED }) {
+                    if (heldUntil != null) HeldList(Modifier.padding(top = 12.dp))
+                    // What stays, at the end of the records: it scrolls with them, leaving them the room.
+                    if (gaps.any { it.kind.holds }) {
                         Text(
-                            stringResource(R.string.card_gaps_note),
+                            stringResource(R.string.activity_kept_note),
                             style = MaterialTheme.typography.bodySmall,
-                            color = note
+                            color = note,
+                            modifier = Modifier.padding(top = 16.dp)
                         )
-                    }
-                    Spacer(Modifier.height(16.dp))
-                }
-                if (attempts.isNotEmpty()) {
-                    SectionLabel(stringResource(R.string.card_failed_unlocks))
-                    RecordList {
-                        attempts.forEach { attempt ->
-                            Column(Modifier.semantics(mergeDescendants = true) { }) {
-                                Text(labelOf(attempt), style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    stringResource(R.string.card_attempt_detail, attemptTime(context, attempt.at), UnlockAttempts.describe(context, attempt)),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = note
-                                )
-                            }
-                        }
-                    }
-                    Text(
-                        stringResource(R.string.card_attempts_note),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = note
-                    )
-                }
-                if (gaps.any { it.kind.holds || it.kind == ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK }) {
-                    // What to do about them: look over the faces, fingerprints and screen lock.
-                    OutlinedButton(
-                        onClick = { IntentNavigationHelper.openSecuritySettings(context) },
-                        modifier = Modifier.padding(top = 4.dp)
-                    ) {
-                        Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(18.dp.scaledWithText()))
-                        Spacer(Modifier.width(8.dp))
-                        Text(stringResource(R.string.activity_open_security_settings))
                     }
                 }
             }
@@ -592,10 +727,9 @@ internal fun SecurityActivityDialog(
                 if (onMarkReviewed != null && heldUntil == null) Button(onClick = onMarkReviewed) { Text(stringResource(R.string.card_mark_reviewed)) }
             }
         },
-        // Destructive: in the error colour, and behind a face or fingerprint (and Undo). Not offered
-        // when only a face or fingerprint change is left (that can't be cleared), nor while one is
-        // held: whoever made it could otherwise clear what happened around it.
-        dismissButton = if (heldUntil == null && (attempts.isNotEmpty() || gaps.any { !it.kind.holds })) {
+        // Destructive: in the error colour (dimmed like any other when disabled), and behind a face
+        // or fingerprint (and Undo).
+        dismissButton = if (clearOffered) {
             {
                 TextButton(onClick = onClear, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
                     Text(stringResource(R.string.card_clear))
@@ -603,6 +737,117 @@ internal fun SecurityActivityDialog(
             }
         } else null
     )
+}
+
+/**
+ * What waits while a hold is on, folded under one line ("What waits until then") that opens it:
+ * all of it there for the owner who wants it, out of the way of the records for the one who doesn't.
+ */
+@Composable
+private fun HeldList(modifier: Modifier = Modifier) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    val title = stringResource(R.string.activity_held_more)
+    val state = stringResource(if (open) R.string.common_expanded else R.string.common_collapsed)
+    Column(modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(role = Role.Button) { open = !open }
+                .semantics(mergeDescendants = true) { stateDescription = state }
+                .padding(vertical = 4.dp)
+        ) {
+            Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+            Icon(
+                if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp.scaledWithText())
+            )
+        }
+        if (open) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    stringArrayResource(R.array.activity_held_refused).forEach { item ->
+                        Row {
+                            Text("•", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(end = 8.dp))
+                            Text(item, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                    Text(
+                        stringResource(R.string.activity_held_footer),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Records under a section label, the same one several times running shown once with how many times. */
+@Composable
+private fun RecordRuns(runs: List<RecordRun>, grouped: Boolean = false) {
+    val context = LocalContext.current
+    RecordList {
+        runs.forEach { run ->
+            Column(Modifier.semantics(mergeDescendants = true) { }) {
+                Text(runLine(context, run, grouped), style = MaterialTheme.typography.titleSmall)
+                if (run.count > 1) {
+                    Text(
+                        pluralStringResource(R.plurals.card_record_count, run.count, run.count),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A section's notes, each said once however many records need it, set apart from the records in a
+ * panel of their own, a gap between each so no two run together.
+ */
+@Composable
+private fun SectionNotes(notes: List<NoteLine>) {
+    val shown = notes.distinctBy { it.text }
+    if (shown.isEmpty()) return
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            shown.forEach { line ->
+                Text(
+                    stringResource(line.text),
+                    style = if (line.lead) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                    color = if (line.lead) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/** Android's security page, where faces, fingerprints and the screen lock are: the full width, under the records it's for. */
+@Composable
+private fun CheckSecurityButton() {
+    val context = LocalContext.current
+    FilledTonalButton(
+        onClick = { IntentNavigationHelper.openSecuritySettings(context) },
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 48.dp)
+    ) {
+        Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(18.dp.scaledWithText()))
+        Spacer(Modifier.width(8.dp))
+        Text(stringResource(R.string.activity_open_security_settings), textAlign = TextAlign.Center)
+    }
 }
 
 /** The one thing to do on an urgent card: a filled button in the error colours. */
@@ -621,6 +866,17 @@ private fun RecordList(content: @Composable () -> Unit) {
     Column(Modifier.padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { content() }
 }
 
+/** A group's heading inside a section ([ChangeGroup]): smaller than the section's, over the records it's about. */
+@Composable
+private fun SubLabel(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 8.dp).semantics { heading() }
+    )
+}
+
 @Composable
 private fun SectionLabel(text: String) {
     Text(
@@ -633,6 +889,7 @@ private fun SectionLabel(text: String) {
 
 /** An action card's icon, and the gap after it: wrapped actions line up with the text after both. */
 private val CARD_ICON_SIZE = 40.dp
+private val CARD_ICON_SIZE_COMPACT = 32.dp
 private val CARD_ICON_GAP = 16.dp
 
 /**
@@ -640,7 +897,21 @@ private val CARD_ICON_GAP = 16.dp
  * text column the button leaves wraps it into a tall, narrow block ("Re-locks in 5 min" stays
  * beside; "Venmo · Oct 29, 2:14 PM · 3 tries didn't match" puts the button under the text).
  */
-private const val INLINE_SUBTITLE_MAX = 40
+internal const val INLINE_SUBTITLE_MAX = 40
 
-/** A range's dash with the spaces round it, thin ones included (ICU uses U+2009). */
-private val RANGE_DASH = Regex("[\\s\u2009\u202F]([\u2013-])[\\s\u2009\u202F]")
+/**
+ * The longest title that keeps an action beside it: a longer one ("Lock Android Settings too")
+ * wraps to two lines in the column the button leaves.
+ */
+internal const val INLINE_TITLE_MAX = 24
+
+/** From this font scale, text needs the whole width: actions go under it. */
+private const val LARGE_TEXT = 1.3f
+
+/**
+ * Whether a short action fits beside a title and the line under it, or goes under them both:
+ * decided from the text itself, not from a layout pass, so a card or row never flips back and
+ * forth between the two arrangements. Home's cards and Settings' action rows share it.
+ */
+internal fun actionsFitBeside(title: String, subtitle: String, fontScale: Float): Boolean =
+    fontScale < LARGE_TEXT && title.length <= INLINE_TITLE_MAX && subtitle.length <= INLINE_SUBTITLE_MAX

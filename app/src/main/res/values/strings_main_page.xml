@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- A span of time across two days: each end as a moment ("Yesterday, 8:10 PM – 1:27 AM"). -->
+    <string name="record_time_range">%1$s – %2$s</string>
+    <!-- The diagnostic log's page, while deleting it waits for the day's hold to end. -->
+    <string name="diagnostics_delete_held">Deleting it waits until %1$s</string>
+    <!-- A profile icon's name in the icon picker, read by TalkBack. -->
+    <string name="profile_icon_folder">Folder</string>
+    <!-- Picking several locked apps on All apps (a long press on one), to switch their locks off together. -->
+    <string name="home_pick_switch_off">Turn off</string>
+    <!-- What "Turn off" does, for screen readers. -->
+    <string name="home_pick_switch_off_description">Turn off the selected apps’ locks</string>
+    <plurals name="home_locks_removed">
+        <item quantity="one">Lock removed from %d app</item>
+        <item quantity="other">Locks removed from %d apps</item>
+    </plurals>
+</resources>

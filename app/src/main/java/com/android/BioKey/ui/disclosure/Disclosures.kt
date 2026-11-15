@@ -19,9 +19,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -29,9 +31,9 @@ import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.AppSettingsAlt
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
@@ -51,7 +53,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.core.content.edit
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -65,6 +69,7 @@ import com.android.BioKey.ui.navigation.IntentNavigationHelper
 import com.android.BioKey.ui.security.ProtectDialogWindow
 import com.android.BioKey.ui.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.IconBadge
+import com.android.BioKey.ui.theme.BioKeySheet
 
 /**
  * Google Play's prominent-disclosure rule: before BioKey sends the user to grant a sensitive
@@ -114,10 +119,31 @@ enum class Disclosure(
     );
 }
 
+/** A bulleted line of the sheet, with [items] as a list of its own under it (none for most). */
+internal class DisclosureLine(@StringRes val text: Int, val items: List<Int> = emptyList()) {
+    /** Every string it shows, in order. */
+    val ids: List<Int> get() = listOf(text) + items
+}
+
 private val KEEPS = listOf(
-    R.string.disclosure_keeps_log,
-    R.string.disclosure_keeps_security_activity,
-    R.string.disclosure_keeps_app_notes
+    DisclosureLine(R.string.disclosure_keeps_log),
+    DisclosureLine(
+        R.string.disclosure_keeps_security_activity,
+        items = listOf(
+            R.string.disclosure_keeps_security_activity_protection_off,
+            R.string.disclosure_keeps_security_activity_biometrics,
+            R.string.disclosure_keeps_security_activity_no_screen_lock,
+            R.string.disclosure_keeps_security_activity_unproved,
+            R.string.disclosure_keeps_security_activity_passphrase,
+            R.string.disclosure_keeps_security_activity_sensor_unusable,
+            R.string.disclosure_keeps_security_activity_failed_unlocks
+        )
+    ),
+    DisclosureLine(R.string.disclosure_keeps_security_activity_changes),
+    DisclosureLine(R.string.disclosure_keeps_security_activity_kept),
+    DisclosureLine(R.string.disclosure_keeps_app_lock_seen),
+    DisclosureLine(R.string.disclosure_keeps_signing_code),
+    DisclosureLine(R.string.disclosure_keeps_reinstall)
 )
 
 private val NEVER = listOf(
@@ -125,25 +151,54 @@ private val NEVER = listOf(
     R.string.disclosure_never_reads
 )
 
+/** The sheet's section headings, in order. */
+private val SECTIONS = listOf(
+    R.string.disclosure_section_reads,
+    R.string.disclosure_section_used_for,
+    R.string.disclosure_section_keeps,
+    R.string.disclosure_section_never
+)
+
 @Stable
-class DisclosureGate {
+class DisclosureGate internal constructor(
+    /** Setup's gate: an Agree is remembered for the rest of setup ([DisclosureAgreements]). */
+    private val context: Context? = null
+) {
     internal var pending by mutableStateOf<Pair<Disclosure, () -> Unit>?>(null)
 
-    /** Shows [disclosure]; runs [onAgree] only if the user taps Agree. */
+    /**
+     * Shows [disclosure]; runs [onAgree] only if the user taps Agree. During setup, a disclosure
+     * already agreed to in this setup, worded as it is now, isn't asked again: [onAgree] runs at once.
+     */
     fun request(disclosure: Disclosure, onAgree: () -> Unit) {
+        val setup = context
+        if (setup != null && DisclosureAgreements.agreed(setup, disclosure)) {
+            onAgree()
+            return
+        }
         pending = disclosure to onAgree
+    }
+
+    internal fun agreed(disclosure: Disclosure) {
+        context?.let { DisclosureAgreements.record(it, disclosure) }
     }
 }
 
-/** A gate whose sheet is shown wherever this is called. */
+/**
+ * A gate whose sheet is shown wherever this is called. [rememberAgreement]: setup's, where an
+ * Agree holds until setup is finished (or BioKey's storage is cleared, which takes it with
+ * everything else); elsewhere every request shows the sheet.
+ */
 @Composable
-fun rememberDisclosureGate(): DisclosureGate {
-    val gate = remember { DisclosureGate() }
+fun rememberDisclosureGate(rememberAgreement: Boolean = false): DisclosureGate {
+    val context = LocalContext.current
+    val gate = remember(rememberAgreement) { DisclosureGate(context.applicationContext.takeIf { rememberAgreement }) }
     gate.pending?.let { (disclosure, onAgree) ->
         DisclosureSheet(
             disclosure,
             onAgree = {
                 gate.pending = null
+                gate.agreed(disclosure)
                 onAgree()
             },
             onDecline = { gate.pending = null }
@@ -151,6 +206,45 @@ fun rememberDisclosureGate(): DisclosureGate {
     }
     return gate
 }
+
+/**
+ * Agreements given during setup. Kept on disk, so leaving for Android's settings (and BioKey's
+ * process going meanwhile) doesn't ask again; tied to the disclosure's words as shown, so a
+ * change to what it says (an update, another language) asks again; and only while setup isn't
+ * finished: once it is, they count for nothing, and a storage clear deletes them.
+ */
+object DisclosureAgreements {
+    private const val PREFS = "biokey_disclosures"
+
+    /** [disclosure] was agreed to in this setup, in the words it has now. */
+    fun agreed(context: Context, disclosure: Disclosure): Boolean {
+        if (SecurityVault.getInstance(context).isSetupCompleted()) return false
+        return prefs(context).getString(disclosure.name, null) == fingerprint(context, disclosure)
+    }
+
+    fun record(context: Context, disclosure: Disclosure) {
+        prefs(context).edit { putString(disclosure.name, fingerprint(context, disclosure)) }
+    }
+
+    /** Everything the sheet says, as one value: any change to it is a different disclosure. */
+    internal fun fingerprint(context: Context, disclosure: Disclosure): String {
+        val text = shown(disclosure).joinToString("\u0000") { context.getString(it) }
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    /** Every string [disclosure]'s sheet shows as what it says (its buttons aside), in order. */
+    internal fun shown(disclosure: Disclosure): List<Int> =
+        listOf(disclosure.title) + SECTIONS + disclosure.reads + disclosure.usedFor + KEEPS.flatMap { it.ids } + NEVER + disclosure.turningOff
+
+    private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+}
+
+/**
+ * The widest the disclosure's text and setup's column run on a wide window (an unfolded foldable,
+ * a tablet): lines stay a comfortable length to read.
+ */
+val ReadingColumnWidth = 520.dp
 
 /**
  * Android 13+'s permission to post notifications, which protection alerts, security activity
@@ -224,9 +318,7 @@ class NotificationPermission internal constructor(private val context: Context, 
         // Android's question names BioKey, so self-protection would take it for a page that could
         // switch BioKey off and ask for authentication over it. Asked from inside BioKey's session,
         // it's pre-authorised like the settings pages BioKey opens; the answer ends that.
-        if (LockStateTracker.hasActiveOwnerSession()) {
-            LockStateTracker.setSelfProtectionGranted(granted = true, visitedGuardedScreen = false)
-        }
+        LockStateTracker.preAuthorizeSelfProtection()
         launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
@@ -264,7 +356,7 @@ fun rememberNotificationPermission(): NotificationPermission {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DisclosureSheet(disclosure: Disclosure, onAgree: () -> Unit, onDecline: () -> Unit) {
-    ModalBottomSheet(
+    BioKeySheet(
         onDismissRequest = onDecline,
         // Hidden or fully open: never half-open, so the whole disclosure is in view.
         sheetState = rememberBottomSheetState(SheetValue.Hidden, setOf(SheetValue.Hidden, SheetValue.Expanded))
@@ -272,6 +364,9 @@ private fun DisclosureSheet(disclosure: Disclosure, onAgree: () -> Unit, onDecli
         ProtectDialogWindow()
         Column(
             modifier = Modifier
+                // As wide as setup's column behind it, at most, and centred in a wider sheet.
+                .align(Alignment.CenterHorizontally)
+                .widthIn(max = ReadingColumnWidth)
                 .fillMaxWidth()
                 .rejectObscuredTouches()
                 .verticalScroll(rememberScrollState())
@@ -283,19 +378,23 @@ private fun DisclosureSheet(disclosure: Disclosure, onAgree: () -> Unit, onDecli
             Spacer(Modifier.height(16.dp))
             Text(stringResource(disclosure.title), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
             Spacer(Modifier.height(20.dp))
-            DisclosureSection(stringResource(R.string.disclosure_section_reads), disclosure.reads)
-            DisclosureSection(stringResource(R.string.disclosure_section_used_for), disclosure.usedFor)
+            DisclosureSection(stringResource(R.string.disclosure_section_reads), disclosure.reads.map(::DisclosureLine))
+            DisclosureSection(stringResource(R.string.disclosure_section_used_for), disclosure.usedFor.map(::DisclosureLine))
             DisclosureSection(stringResource(R.string.disclosure_section_keeps), KEEPS)
-            DisclosureSection(stringResource(R.string.disclosure_section_never), NEVER)
+            DisclosureSection(stringResource(R.string.disclosure_section_never), NEVER.map(::DisclosureLine))
             Spacer(Modifier.height(8.dp))
             Text(
                 stringResource(disclosure.turningOff),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            // The whole policy, before agreeing, not only after setup in Settings.
+            // The whole policy, before agreeing, not only after setup in Settings. Its words line up
+            // with the text above; the button's own padding (and its 48dp target) reach out past them.
             val sheetContext = LocalContext.current
-            TextButton(onClick = { IntentNavigationHelper.openWebPage(sheetContext, IntentNavigationHelper.PRIVACY_POLICY_URL) }) {
+            TextButton(
+                onClick = { IntentNavigationHelper.openWebPage(sheetContext, IntentNavigationHelper.PRIVACY_POLICY_URL) },
+                modifier = Modifier.offset(x = -ButtonDefaults.TextButtonContentPadding.calculateLeftPadding(LayoutDirection.Ltr))
+            ) {
                 Text(stringResource(R.string.disclosure_read_privacy_policy))
             }
             Spacer(Modifier.height(24.dp))
@@ -308,7 +407,7 @@ private fun DisclosureSheet(disclosure: Disclosure, onAgree: () -> Unit, onDecli
 }
 
 @Composable
-private fun DisclosureSection(title: String, lines: List<Int>) {
+private fun DisclosureSection(title: String, lines: List<DisclosureLine>) {
     Text(
         title,
         style = MaterialTheme.typography.titleSmall,
@@ -320,7 +419,16 @@ private fun DisclosureSection(title: String, lines: List<Int>) {
         Row(Modifier.padding(bottom = 6.dp)) {
             // Only drawn: screen readers go from line to line, not stopping at each bullet.
             Text("•", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(16.dp).clearAndSetSemantics { })
-            Text(stringResource(line), style = MaterialTheme.typography.bodyMedium)
+            Column {
+                Text(stringResource(line.text), style = MaterialTheme.typography.bodyMedium)
+                // Its own list, indented under it, with a hollow bullet.
+                line.items.forEach { item ->
+                    Row(Modifier.padding(top = 4.dp)) {
+                        Text("◦", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(16.dp).clearAndSetSemantics { })
+                        Text(stringResource(item), style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
         }
     }
     Spacer(Modifier.height(12.dp))

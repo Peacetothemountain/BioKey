@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Setup and the first look at BioKey’s main page after it: what each step says once done, how far setup has got,
+     and the apps auto-sort locks. %1$s in the auto-sort lines is the setting's own name
+     (settings_auto_sort_title), so a rename there follows here. -->
+<resources>
+    <!-- First-run setup (SetupScreenExpressive.kt). -->
+    <string name="setup_title">Set up BioKey</string>
+    <!-- %1$s: what a locked app asks for (UnlockMethods.asksFor), such as "your face, fingerprint or screen lock". -->
+    <string name="setup_subtitle">Lock any app behind %1$s</string>
+    <string name="setup_storage_cleared">Its storage was cleared some time after %1$s, when BioKey last ran, and every lock and record went with it. Once setup is done, this is recorded in Security activity.</string>
+    <string name="setup_storage_cleared_unknown">Its storage was cleared at an unknown time (the phone’s clock was changed), and every lock and record went with it. Once setup is done, this is recorded in Security activity.</string>
+    <!-- The "BioKey was reset" card's expander, collapsed at first: what waits a day, then setup_restore_wait(_running).
+         The same title and order as Security activity's list (activity_held_more, activity_held_refused). -->
+    <string name="setup_reset_wait_title">What waits a day</string>
+    <string name="setup_reset_wait_text">For a day after setup is done, you can’t mark Security activity as reviewed or clear it, switch off “Failed unlock alerts”, “Also record screen lock unlocks” or “Diagnostic log”, or delete the diagnostic log. Anything else you change meanwhile is recorded in Security activity.</string>
+    <string name="setup_restricted_title">Allow restricted settings</string>
+    <!-- ⋮ is the App info page's overflow menu. -->
+    <string name="setup_restricted_text">Android blocks the switch for apps installed from a file. Try it once, then tap here: in BioKey’s App info, open the ⋮ menu at the top and choose “Allow restricted settings”.</string>
+    <!-- Offered only after the owner came back from Accessibility settings without BioKey on, where Android may (or may not) have blocked the switch. -->
+    <string name="setup_restricted_help_title">If Android wouldn’t let you turn it on</string>
+    <string name="setup_restricted_help_text">Tap here: in BioKey’s App info, open the ⋮ menu at the top and choose “Allow restricted settings”. Then turn BioKey on.</string>
+    <string name="setup_usage_access_title">Allow usage access</string>
+    <string name="setup_usage_access_text">Advanced Protection is on, so BioKey uses compatibility mode: this tells it which app was opened and whether a locked app is still on screen</string>
+    <string name="setup_overlay_title">Allow display over other apps</string>
+    <string name="setup_overlay_text">Lets BioKey cover a locked app as it opens</string>
+    <string name="setup_accessibility_title">Turn on BioKey in Accessibility settings</string>
+    <string name="setup_accessibility_text">Lets BioKey see which app is on screen, so it can cover locked ones</string>
+    <!-- Where Android opens its whole Accessibility list rather than BioKey's own page. %1$s: the service's name as the list shows it. -->
+    <string name="setup_accessibility_text_list">Lets BioKey see which app is on screen, so it can cover locked ones. In the list that opens, tap %1$s under “Downloaded apps” and turn it on.</string>
+    <!-- Back from Android's settings with the service still off. -->
+    <string name="setup_accessibility_text_not_on">Not on yet. Tap here and turn on the switch at the top of the page.</string>
+    <string name="setup_accessibility_text_not_on_list">Not on yet. Tap here, then tap %1$s under “Downloaded apps” and turn it on.</string>
+    <string name="setup_screen_lock_title">Set a screen lock</string>
+    <string name="setup_screen_lock_text">BioKey needs a PIN, pattern or password to check it’s you</string>
+    <string name="setup_notifications_text">So BioKey can tell you if protection ever stops</string>
+    <string name="setup_notifications_text_reset">Notifications are off for BioKey. Allow them so it can tell you if protection ever stops.</string>
+    <string name="setup_confirm_title">Confirm it’s you</string>
+    <!-- %1$s: what a locked app asks for (UnlockMethods.asksFor). -->
+    <string name="setup_confirm_text">One check with %1$s to finish</string>
+    <!-- Each step's state, said aloud by screen readers. -->
+    <string name="setup_step_done">Done</string>
+    <!-- The first step not done yet: the one to do now. -->
+    <string name="setup_step_current">Next step</string>
+    <!-- A step that can be done, after the next one. -->
+    <string name="setup_step_later">Later</string>
+    <string name="setup_step_confirming">Confirming</string>
+    <string name="setup_step_waiting">Available after the steps above</string>
+    <!-- Said for a step that's help, only needed if something went wrong (restricted settings). -->
+    <string name="setup_step_if_needed">Only if needed</string>
+    <string name="setup_button_confirming">Confirming…</string>
+    <string name="setup_button_finish">Confirm and finish</string>
+    <string name="setup_button_next_permission">Allow next permission</string>
+    <string name="setup_button_accessibility">Open Accessibility settings</string>
+
+    <!-- How far setup has got, over the steps: read out as each one is done. -->
+    <plurals name="setup_progress">
+        <item quantity="one">%1$d of %2$d step done</item>
+        <item quantity="other">%1$d of %2$d steps done</item>
+    </plurals>
+    <!-- A step once done, in its instructions' place. -->
+    <string name="setup_accessibility_done">On, so BioKey can see which app is on screen</string>
+    <string name="setup_usage_access_done">Allowed, so BioKey can tell which app is on screen</string>
+    <string name="setup_overlay_done">Allowed, so BioKey can cover a locked app</string>
+    <!-- Setup's optional step, under its own heading: the heading says it's optional, so the title doesn't. -->
+    <string name="setup_optional_heading">Optional</string>
+    <string name="setup_notifications_step_title">Allow notifications</string>
+    <!-- Said of the optional step by a screen reader, in place of "Next step" or "Later". -->
+    <string name="setup_step_optional">Optional</string>
+    <!-- Last line of setup's "BioKey was reset" card: when a restore is possible again, and why it waits.
+         %1$s is a time, today's or with its date ("Nov 15, 9:53 PM"). The day starts once setup is
+         done, so before that it's the time it would end if setup were finished now. -->
+    <string name="setup_restore_wait">You can restore a backup or set a passphrase a day after you finish setup: from %1$s if you finish now. The wait is in case someone else reset BioKey to get past its locks.</string>
+    <!-- The same, with the day already running (setup shown again within it). -->
+    <string name="setup_restore_wait_running">You can restore a backup or set a passphrase from %1$s. The wait is in case someone else reset BioKey to get past its locks.</string>
+    <string name="setup_notifications_done">Allowed, so BioKey can tell you if protection stops</string>
+    <!-- Under the steps, before the owner finishes: the kinds are AppClassifier's, by the profile each goes in. -->
+    <string name="setup_auto_sort_note">When you finish, BioKey also locks the apps it recognises, such as banking, chat, email, camera, photos and web browsers, and sorts them into its Personal, Finance, Social and Work profiles. Change them on BioKey’s main page. Turning off “%1$s” in BioKey’s settings stops it locking apps you install later. Apps it has already locked stay locked.</string>
+    <!-- Home's card after setup, once: how many apps auto-sort locked. -->
+    <plurals name="home_auto_sort_title">
+        <item quantity="one">BioKey locked %1$d app for you</item>
+        <item quantity="other">BioKey locked %1$d apps for you</item>
+    </plurals>
+    <plurals name="home_auto_sort_text">
+        <item quantity="one">Change it below. Turning off “%2$s” only stops BioKey locking apps you install later.</item>
+        <item quantity="other">Change them below. Turning off “%2$s” only stops BioKey locking apps you install later.</item>
+    </plurals>
+    <string name="home_auto_sort_got_it">Got it</string>
+</resources>

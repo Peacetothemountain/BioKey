@@ -6,6 +6,7 @@ import com.android.BioKey.BuildConfig
 import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.diagnostics.logDuration
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicReference
@@ -136,6 +137,8 @@ object LockStateTracker {
     private val leftAt = ConcurrentHashMap<String, Long>()
 
     @Volatile private var selfProtectionGrantedAt = 0L
+    /** The grant in force was given by BioKey's own session ([preAuthorizeSelfProtection]), not by a challenge passed. */
+    @Volatile private var selfProtectionFromOwnSession = false
     @Volatile private var selfProtectionVisitedGuardedScreen = false
 
     /**
@@ -237,6 +240,12 @@ object LockStateTracker {
      * prompt started: if every session ended since (the phone was locked mid-prompt), the unlock
      * is stale and no session starts. Returns whether one did.
      */
+    /** How the unlock about to be reported was made ("the passphrase"), for the log's one line about it. */
+    private val unlockingWith = java.util.concurrent.atomic.AtomicReference<String?>(null)
+
+    /** The next [onAppUnlocked] was made with [what] ("the passphrase"): its log line says so. */
+    fun noteUnlockingWith(what: String) = unlockingWith.set(what)
+
     fun onAppUnlocked(packageName: String, generation: Int = this.generation): Boolean {
         if (generation != this.generation) return staleUnlock(packageName)
         cancelExpiry(packageName)
@@ -255,7 +264,8 @@ object LockStateTracker {
             return staleUnlock(packageName)
         }
         Log.i(TAG, "Session started for $packageName")
-        DiagnosticLog.log("Unlocked $packageName")
+        // One line for one event: how it was opened is said with it, where that is worth saying.
+        DiagnosticLog.log("Unlocked $packageName" + (unlockingWith.getAndSet(null)?.let { " with $it" } ?: ""))
         // A lock-all after this one ends something new: it is logged, whatever came just before.
         lastLockAllLogged = null
         appUnlockListeners.forEach { runCatching { it(packageName) } }
@@ -321,7 +331,7 @@ object LockStateTracker {
     private fun relockLabel(mode: LockTimeoutMode) = when (mode) {
         LockTimeoutMode.IMMEDIATE -> "immediately"
         LockTimeoutMode.ON_SCREEN_OFF -> "when the phone locks"
-        else -> if (mode.durationMillis < 60_000L) "after ${mode.durationMillis / 1000} s" else "after ${mode.durationMillis / 60_000} min"
+        else -> "after ${logDuration(mode.durationMillis)}"
     }
 
     /**
@@ -338,6 +348,8 @@ object LockStateTracker {
         for (pkg in PasswordManager.aliasesOf(packageName)) leftAt[pkg] = away.since
         Log.d(TAG, "$packageName left the screen (hop=$hopTarget)")
         // The diagnostic log names locked apps only: a hop's destination is just "a helper app".
+        // (This line and "Session ended" below are two steps of the engine, each logged: the
+        // traces kept from real phones are replayed against these lines as they are.)
         DiagnosticLog.log("$packageName left the screen" + if (hopTarget != null) " · hop to a helper app" else " · re-lock: ${relockLabel(timeoutMode)}")
         when {
             timeoutMode == LockTimeoutMode.IMMEDIATE && hopTarget == null -> lockPackage(packageName, "left, re-locks immediately")
@@ -738,6 +750,20 @@ object LockStateTracker {
     fun setSelfProtectionGranted(granted: Boolean, visitedGuardedScreen: Boolean = granted) {
         selfProtectionGrantedAt = if (granted) now() else 0L
         selfProtectionVisitedGuardedScreen = granted && visitedGuardedScreen
+        selfProtectionFromOwnSession = false
+    }
+
+    /**
+     * Self-protection stood down ahead of a page BioKey itself is opening from inside its own
+     * unlocked session (a settings page, Android's notifications question), so the owner isn't
+     * asked again over it. It lasts only as long as that session: when BioKey locks itself
+     * ([lockOwnApp]) it goes too, or whoever came next could stop or remove BioKey unasked for
+     * what is left of the lease.
+     */
+    fun preAuthorizeSelfProtection() {
+        if (!hasActiveOwnerSession()) return
+        setSelfProtectionGranted(granted = true, visitedGuardedScreen = false)
+        selfProtectionFromOwnSession = true
     }
 
     fun markSelfProtectionVisitedGuardedScreen() {
@@ -761,6 +787,7 @@ object LockStateTracker {
     fun clearSelfProtection() {
         selfProtectionGrantedAt = 0L
         selfProtectionVisitedGuardedScreen = false
+        selfProtectionFromOwnSession = false
     }
 
     // ---------------------------------------------------------------------------------------
@@ -822,7 +849,7 @@ object LockStateTracker {
         val t = now()
         ownLastActiveAt = t
         externalNavigationAt = t
-        if (preAuthorizeSelfProtection) setSelfProtectionGranted(granted = true, visitedGuardedScreen = false)
+        if (preAuthorizeSelfProtection) preAuthorizeSelfProtection()
     }
 
     fun isExternalNavigationActive(): Boolean {
@@ -950,6 +977,9 @@ object LockStateTracker {
         ownSessionTimedOut = timedOut
         ownTripRanOut = tripRanOut
         SecurityEngine.INSTANCE.forgetOwnProof()
+        // What BioKey's session stood down for its own trips goes with the session. A challenge
+        // the owner passed over a guarded page ([setSelfProtectionGranted]) is not from here, and stays.
+        if (selfProtectionFromOwnSession) clearSelfProtection()
         ownUnlockedAt = 0L
         ownLastActiveAt = 0L
         ownInForeground = false
@@ -970,6 +1000,7 @@ object LockStateTracker {
      */
     @androidx.annotation.VisibleForTesting
     internal fun resetForTests() {
+        unlockingWith.set(null)
         expiryJobs.values.forEach { it.cancel() }
         expiryJobs.clear()
         sessions.clear()
@@ -983,6 +1014,7 @@ object LockStateTracker {
         lastLockAllLogged = null
         selfProtectionGrantedAt = 0L
         selfProtectionVisitedGuardedScreen = false
+        selfProtectionFromOwnSession = false
         ownScreenShowing = false
         ownUnlockedAt = 0L
         ownLastActiveAt = 0L

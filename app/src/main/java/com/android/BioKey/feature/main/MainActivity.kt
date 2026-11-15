@@ -19,7 +19,6 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -61,6 +60,7 @@ import com.android.BioKey.ui.theme.BioKeyTheme
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.Haptics
+import com.android.BioKey.ui.theme.BioKeySheet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -307,8 +307,10 @@ class MainActivity : ComponentActivity() {
         lockMessage = null
         lockReason = null
         // A trip BioKey started itself (a settings page, the backup file picker, another app's lock
-        // screen brought up over it) keeps its session; anything else ends it.
-        if (LockStateTracker.isOwnTripActive()) {
+        // screen brought up over it) keeps its session; anything else ends it. So does a trip
+        // nothing would watch (no engine running, or compatibility mode resting): going Home
+        // from it would go unseen, and BioKey would open unlocked to whoever came next.
+        if (LockStateTracker.isOwnTripActive() && ProtectionEngine.watchesTrips(this)) {
             LockStateTracker.onOwnAppStopped()
         } else {
             LockStateTracker.lockOwnApp()
@@ -527,12 +529,16 @@ class MainActivity : ComponentActivity() {
         afterUnlock = onAuthenticated
         closePassphrase()
         offerPassphrase()
+        // Everything locked while the prompt was up (the screen off, "Re-lock now"): an answer
+        // that comes after that opens nothing, as on a locked app's lock screen.
+        val generation = LockStateTracker.lockGeneration()
         engine.showBiometricPrompt(
             activity = this,
             appName = getString(R.string.brand_name),
             packageName = packageName,
             passphraseEntry = true,
             onSuccess = {
+                if (LockStateTracker.lockGeneration() != generation) return@showBiometricPrompt
                 LockStateTracker.onOwnAppUnlocked()
                 isAuthenticated = true
                 lockReason = null
@@ -581,7 +587,7 @@ internal fun PauseProtectionDialog(onPause: (Long?) -> Unit, onDismiss: () -> Un
         Triple(Icons.Default.Schedule, stringResource(R.string.activity_pause_1_hour), 60 * 60_000L),
         Triple(Icons.Default.PauseCircle, stringResource(R.string.activity_pause_until_resumed), null)
     )
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    BioKeySheet(onDismissRequest = onDismiss) {
         ProtectDialogWindow()
         Column(Modifier.fillMaxWidth().padding(bottom = 28.dp)) {
             Text(

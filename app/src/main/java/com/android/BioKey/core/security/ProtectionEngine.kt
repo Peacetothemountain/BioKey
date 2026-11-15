@@ -114,6 +114,21 @@ object ProtectionEngine {
     private fun compatibilityUp(context: Context): Boolean =
         !SecurityVault.getInstance(context).isSetupCompleted() || FeatureLinks.engines.compatibilityRunning || FeatureLinks.engines.compatibilityStartPending
 
+    /**
+     * Whether something is running that will notice the owner going somewhere else while BioKey
+     * is away on a trip it started itself (a settings page, the file picker), and end the session
+     * the trip kept ([LockStateTracker.isOwnTripActive]). The accessibility engine always looks.
+     * Compatibility mode looks only while it has something to lock (it rests while protection is
+     * paused or nothing is locked), and with no engine nothing looks at all: there, a trip keeps
+     * no session, and coming back asks who it is.
+     */
+    fun watchesTrips(context: Context): Boolean = when (mode(context)) {
+        Mode.ACCESSIBILITY -> true
+        Mode.COMPATIBILITY -> SecurityVault.getInstance(context).let { it.isProtectionActive() && it.getLockedPackages().isNotEmpty() } &&
+            FeatureLinks.engines.compatibilityRunning
+        else -> false
+    }
+
     /** Whether locked apps are being watched by an engine, in [mode]. */
     fun isProtecting(mode: Mode): Boolean = mode == Mode.ACCESSIBILITY || mode == Mode.COMPATIBILITY
 
@@ -138,6 +153,8 @@ object ProtectionEngine {
                 ProtectionAlerts.serviceStopped(context)
             }
         }
+        // Which engine runs decides who says "Protection paused" ([PauseNotice]).
+        runCatching { PauseNotice.update(context) }
         return shouldRun && (FeatureLinks.engines.compatibilityRunning || FeatureLinks.engines.compatibilityStartPending)
     }
 }

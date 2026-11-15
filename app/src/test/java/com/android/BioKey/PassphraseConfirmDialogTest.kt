@@ -10,8 +10,10 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -154,9 +156,13 @@ class PassphraseConfirmDialogTest {
         field().performTextInput("abc")
         state.waitUntilElapsed = SystemClock.elapsedRealtime() + 5_000L
         rule.waitForIdle()
-        rule.onNodeWithText("Try again in 5 s").assertIsDisplayed()
+        rule.onNodeWithText("Try again in 5 seconds").assertIsDisplayed()
         field().assertIsNotEnabled()
         confirm().assertIsNotEnabled()
+        assertEquals("", typed())
+        // As on the lock screens: the field keeps focus (the keyboard stays up) and refuses what's typed.
+        field().assertIsFocused()
+        runCatching { field().performTextInput("abc") }
         assertEquals("", typed())
 
         ShadowSystemClock.advanceBy(Duration.ofMillis(5_001L))
@@ -176,7 +182,31 @@ class PassphraseConfirmDialogTest {
         state.error = "Wrong passphrase"
         state.waitUntilElapsed = SystemClock.elapsedRealtime() + 30_000L
         rule.waitForIdle()
-        rule.onNodeWithText("Wrong passphrase. Try again in 30 s").assertIsDisplayed()
+        rule.onNodeWithText("Wrong passphrase. Try again in 30 seconds.").assertIsDisplayed()
+    }
+
+    @Test
+    fun opensWithTheCursorInTheFieldAndTheTitleCentred() {
+        show(showing())
+        field().assertIsFocused()
+        rule.onNodeWithText("Remove your passphrase").assertIsDisplayed()
+        // One eye, its words the app's own for the passphrase.
+        rule.onAllNodes(hasContentDescription("Show passphrase")).assertCountEquals(1)
+    }
+
+    @Test
+    fun aCheckInProgressDoesNotMoveTheButtons() {
+        val state = showing()
+        show(state)
+        // Something typed, so the field's label sits the same whether it has focus or not.
+        field().performTextInput("abc")
+        val before = confirm().fetchSemanticsNode().boundsInRoot
+        state.busy = true
+        rule.waitForIdle()
+        assertEquals(before, confirm().fetchSemanticsNode().boundsInRoot)
+        state.busy = false
+        rule.waitForIdle()
+        assertEquals(before, confirm().fetchSemanticsNode().boundsInRoot)
     }
 
     @Test

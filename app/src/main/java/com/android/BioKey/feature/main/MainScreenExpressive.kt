@@ -12,8 +12,19 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyListLayoutInfo
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.zIndex
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -32,6 +43,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -74,6 +86,7 @@ import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.toMutableStateList
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -97,13 +110,13 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.android.BioKey.BioKeyApplication
 import com.android.BioKey.R
-import com.android.BioKey.core.data.AppCategory
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.data.SecurityProfile
 import com.android.BioKey.core.data.openFor
@@ -129,6 +142,8 @@ import com.android.BioKey.ui.theme.Haptics
 import com.android.BioKey.ui.theme.MaxContentWidth
 import com.android.BioKey.ui.theme.SEPARATOR
 import com.android.BioKey.ui.theme.SectionHeader
+import com.android.BioKey.ui.theme.SectionHeaderTop
+import com.android.BioKey.ui.theme.SectionHeaderTopAfterChips
 import com.android.BioKey.ui.theme.scaledWithText
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -138,8 +153,23 @@ import kotlinx.coroutines.withContext
 
 internal const val FILTER_ALL = "filter:all"
 
+/** [pickingIn] for picking on All apps, which has no profile id; can’t be one. */
+private const val PICK_ALL = "pick:all"
+
 /** From here (Material's expanded width), Settings opens beside home rather than over it. */
 private val TwoPaneMinWidth = 840.dp
+
+/**
+ * Widest home's cards and rows get: a readable column, so a switch stays near its app's name. A
+ * phone (up to about 480dp) uses its whole width; an unfolded foldable or a tablet gets this, centred.
+ */
+internal val HomeColumnWidth = MaxContentWidth
+
+/** Room each side of home's column in a pane [homeWidth] wide: none on a phone. */
+internal fun homeSidePad(homeWidth: Dp): Dp = ((homeWidth - HomeColumnWidth) / 2).coerceAtLeast(0.dp)
+
+/** The profile chips' row (or rows, wrapped in a narrowed column). */
+internal const val CHIPS_TAG = "home_chips"
 
 /** Home's share of the window with Settings open beside it. */
 private const val HomePaneFraction = 0.48f
@@ -229,21 +259,6 @@ fun MainScreenExpressive(
         onStopOrDispose { AppIconCache.releaseLater() }
     }
 
-    // Once per package change (and once per process), not on every unlock.
-    LaunchedEffect(autoSortProfiles, installedApps) {
-        if (!autoSortProfiles) {
-            InstalledAppsCache.autoSortedVersion = -1
-            return@LaunchedEffect
-        }
-        val version = InstalledAppsCache.version
-        if (installedApps.isEmpty() || InstalledAppsCache.autoSortedVersion == version) return@LaunchedEffect
-        // Each app's category was worked out (Play category included) when the list was read.
-        withContext(Dispatchers.IO) {
-            vault.autoSortAppsIntoProfiles(installedApps.map { it.packageName to it.category })
-        }
-        InstalledAppsCache.autoSortedVersion = version
-    }
-
     /**
      * Home-screen apps BioKey never covers, so the user can always get Home: the one in use and
      * the system's own ([ForegroundRules.isLauncher]). Locking one would do nothing, so their
@@ -276,6 +291,21 @@ fun MainScreenExpressive(
     val twoPane = windowWidth >= TwoPaneMinWidth
     val homeFraction by animateFloatAsState(if (twoPane && showSettings) HomePaneFraction else 1f, label = "home_pane")
     var filter by rememberSaveable { mutableStateOf(FILTER_ALL) }
+    /** Where the search bar and chips are in the list: the page a chip opens rests on them ([choosePage]). */
+    var pinControlsAt by remember { mutableStateOf<Int?>(null) }
+    val controlsIndex = remember { intArrayOf(-1) }
+    /** The page shown chosen again: back to resting on the controls. */
+    var repinRequests by remember { mutableIntStateOf(0) }
+    /** A page chosen by the owner (a chip, a profile just made): it opens resting on the controls. */
+    fun choosePage(id: String) {
+        val at = controlsIndex[0].takeIf { it >= 0 }
+        if (id == filter) {
+            if (at != null) repinRequests++
+            return
+        }
+        pinControlsAt = at
+        filter = id
+    }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(searchRequest) {
         if (searchRequest != null) {
@@ -291,15 +321,18 @@ fun MainScreenExpressive(
         if (filter != FILTER_ALL && currentProfile == null) filter = FILTER_ALL
     }
     /**
-     * Apps picked on a profile's page, to take out of it together: picking starts with a long
-     * press on an app or "Select", and belongs to that page ([pickingIn] is its profile), so
+     * Apps picked to change together: on a profile's page to take out of it (a long press on an
+     * app, or "Select"), on All apps to switch their locks off (a long press on a locked app).
+     * Picking belongs to the page it began on ([pickingIn] is its profile, or [PICK_ALL]), so
      * leaving it, by a chip or Back, ends it. Kept through a rotation.
      */
     var pickingIn by rememberSaveable { mutableStateOf<String?>(null) }
     val picked = rememberSaveable(saver = listSaver(save = { it.toList() }, restore = { it.toMutableStateList() })) {
         mutableStateListOf<String>()
     }
-    val picking = currentProfile != null && pickingIn == currentProfile.id
+    val pageId = currentProfile?.id ?: PICK_ALL
+    val picking = pickingIn == pageId
+    LaunchedEffect(pageId) { if (pickingIn != null && pickingIn != pageId) pickingIn = null }
     // An app's options close if it's uninstalled; not while the list is still loading (after
     // the process was restarted, say), or the sheet the user had open would be lost.
     LaunchedEffect(isLoadingApps, installedApps) {
@@ -351,6 +384,30 @@ fun MainScreenExpressive(
         onPauseOrDispose { job.cancel() }
     }
     fun wasLocked(pkg: String) = lockedAtLoad?.let { pkg in it } ?: isLocked(pkg)
+
+    // Once per package change (and once per process), not on every unlock. It runs after the
+    // list's groups were taken ([lockedAtLoad]), so the apps it locks join "Locked" as it finishes:
+    // they were never the owner's to see move. The owner's own switches stay where they were.
+    LaunchedEffect(autoSortProfiles, installedApps) {
+        if (!autoSortProfiles) {
+            InstalledAppsCache.autoSortedVersion = -1
+            // Nothing to sort: the pass setup spoke of locked nothing.
+            if (installedApps.isNotEmpty()) homeViewModel.autoSortPassed(0)
+            return@LaunchedEffect
+        }
+        val version = InstalledAppsCache.version
+        if (installedApps.isEmpty() || InstalledAppsCache.autoSortedVersion == version) return@LaunchedEffect
+        val apps = installedApps
+        // Each app's category was worked out (Play category included) when the list was read.
+        val newlyLocked = withContext(Dispatchers.IO) {
+            val before = vault.getLockedPackages()
+            vault.autoSortAppsIntoProfiles(apps.map { it.packageName to it.category })
+            AutoSortPass.newlyLocked(apps.map { it.packageName }, before, vault.getLockedPackages())
+        }
+        InstalledAppsCache.autoSortedVersion = version
+        lockedAtLoad = AutoSortPass.regroup(lockedAtLoad, newlyLocked)
+        homeViewModel.autoSortPassed(newlyLocked.size)
+    }
     val ordered = remember(installedApps, lockedAtLoad, lastUsed) { AppOrder.order(installedApps, ::wasLocked, lastUsed) }
 
     val matching = remember(ordered, searchQuery, filter, profiles) {
@@ -377,6 +434,22 @@ fun MainScreenExpressive(
     val screenLockMissing by ScreenLockWatch.missing.collectAsStateWithLifecycle()
     val home = homeState
     val look = protectionLook(mode, globalLockEnabled, pausedUntil, lockedCount, unwatchedCount, defaultTimeout)
+    val attemptsChosenNow by UnlockAttempts.chosen.collectAsStateWithLifecycle()
+    val biometricOnlyNow by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
+    // At most one calm offer at a time: the one showing keeps its place until it's answered.
+    val offer = chooseOffer(
+        eligibleOffers(
+            home = home,
+            setupCompleted = vault.isSetupCompleted(),
+            attemptsChosen = attemptsChosenNow,
+            screenLockMissing = screenLockMissing,
+            lockSettingsWanted = biometricOnlyNow && look.action == null && SETTINGS_PACKAGE !in lockedApps
+        ),
+        homeViewModel.offerShowing
+    )
+    SideEffect { homeViewModel.offerShowing = offer }
+    // The auto-sort card stays until "Got it": leaving home (to try a locked app, say) doesn't put
+    // it away, as it's the only word on the apps locked for the owner.
 
     /**
      * Locked apps open right now. Every unlock and lock (an app's re-lock delay running out
@@ -419,7 +492,6 @@ fun MainScreenExpressive(
     // What happened while the owner was away: failed unlocks, and protection switched off.
     // Seeing them here is what the notification was for, so it goes.
     val attempts by UnlockAttempts.attempts.collectAsStateWithLifecycle()
-    val attemptsChosen by UnlockAttempts.chosen.collectAsStateWithLifecycle()
     val gaps by ProtectionGaps.gaps.collectAsStateWithLifecycle()
     fun openReview() = homeViewModel.openReview { overlays.showActivity = true }
     // Back after a rotation with Review open: work it out again.
@@ -427,7 +499,6 @@ fun MainScreenExpressive(
     // Review's state goes with the screen, so it's worked out again when it comes back.
     DisposableEffect(homeViewModel) { onDispose { homeViewModel.forgetReview() } }
     val attemptsEnabled by UnlockAttempts.enabled.collectAsStateWithLifecycle()
-    val biometricOnlyOn by vault.biometricOnlyFlow.collectAsStateWithLifecycle()
     val seenUpTo by UnlockAttempts.seen.collectAsStateWithLifecycle()
     // Read again on every visit (an engine coming back clears stopped reminders, say), off the main thread.
     LifecycleResumeEffect(homeViewModel) {
@@ -439,13 +510,21 @@ fun MainScreenExpressive(
 
     /**
      * Ends every locked app's session at once. [includeOwnApp]: BioKey too, for the status sheet's
-     * "Lock all apps now" (the phone is about to be handed over); the unlocked card's Lock all
+     * "Re-lock now" (the phone is about to be handed over); the unlocked card's Re-lock now
      * leaves BioKey open, where the owner is.
      */
     fun lockAllNow(includeOwnApp: Boolean) {
         Haptics.confirm(view)
         val outcome = LockAllNow.run(context, includeOwnApp = includeOwnApp, reason = "locked from BioKey")
-        BioKeyMessages.show(LockAllNow.message(context, outcome), Icons.Default.Lock)
+        val message = LockAllNow.message(context, outcome)
+        // BioKey locked too (the status sheet's): its own lock comes straight up, and a message on
+        // BioKey's main page would wait unseen behind it. Said over the lock instead, as the
+        // launcher shortcut says it, so being re-locked never looks like being thrown out.
+        if (includeOwnApp) {
+            android.widget.Toast.makeText(context.applicationContext, message, android.widget.Toast.LENGTH_SHORT).show()
+        } else {
+            BioKeyMessages.show(message, Icons.Default.Lock)
+        }
     }
 
     /** The one thing to do when nothing is protecting: turn an engine on, or resume. */
@@ -487,18 +566,59 @@ fun MainScreenExpressive(
         if (!locked) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.LOCK_OFF, app.label)
         if (!locked) {
             // "Unlocked" is kept for an app open right now: this is its lock taken off.
-            BioKeyMessages.show(res.getString(R.string.home_lock_removed, app.label), Icons.Default.LockOpen, actionLabel = res.getString(R.string.common_undo)) {
-                vault.setAppLock(app.packageName, true)
-            }
+            // Its row stays under "Locked" while Undo is offered (it doesn't move under the finger),
+            // then moves to "Not locked" as the message goes, unless Undo put the lock back.
+            BioKeyMessages.show(
+                res.getString(R.string.home_lock_removed, app.label), Icons.Default.LockOpen,
+                actionLabel = res.getString(R.string.common_undo),
+                onAction = { vault.setAppLock(app.packageName, true) },
+                onGone = {
+                    val pkg = app.packageName
+                    if (!lockedInVault(pkg)) lockedAtLoad = lockedAtLoad?.minus(pkg)
+                }
+            )
         }
     }
 
-    /** Picking starts on this profile's page, with [first] picked if it began on an app. */
-    fun startPicking(profile: SecurityProfile, first: String? = null) {
+    /** Picking starts on this page ([pageId]), with [first] picked if it began on an app. */
+    fun startPicking(first: String? = null) {
         Haptics.confirm(view)
         picked.clear()
         if (first != null) picked += first
-        pickingIn = profile.id
+        pickingIn = pageId
+    }
+
+    /** On All apps, what can be picked: an app whose own lock is on and can be switched off here. */
+    fun canSwitchOff(pkg: String) = isOn(pkg) && profileOf(pkg)?.enabled != false
+
+    /**
+     * The picked apps' locks switched off at once on All apps, each as its own switch does it:
+     * recorded where BioKey was opened with the screen lock. They leave "Locked" for "Not locked"
+     * at once (nothing is under the finger: it was on the bar), and Undo puts their locks back and
+     * brings them back to "Locked".
+     */
+    fun switchOffPicked() {
+        val apps = installedApps.filter { it.packageName in picked && canSwitchOff(it.packageName) }
+        pickingIn = null
+        picked.clear()
+        if (apps.isEmpty()) return
+        Haptics.toggle(view, false)
+        val packages = apps.map { it.packageName }.toSet()
+        for (app in apps) {
+            vault.setAppLock(app.packageName, false)
+            ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.LOCK_OFF, app.label)
+        }
+        lockedAtLoad = lockedAtLoad?.minus(packages)
+        val message = apps.singleOrNull()?.let { res.getString(R.string.home_lock_removed, it.label) }
+            ?: res.getQuantityString(R.plurals.home_locks_removed, apps.size, apps.size)
+        BioKeyMessages.show(
+            message, Icons.Default.LockOpen,
+            actionLabel = res.getString(R.string.common_undo),
+            onAction = {
+                for (app in apps) vault.setAppLock(app.packageName, true)
+                lockedAtLoad = lockedAtLoad?.plus(packages)
+            }
+        )
     }
 
     fun togglePicked(pkg: String) {
@@ -540,50 +660,58 @@ fun MainScreenExpressive(
      * being rebuilt. On a profile's page ([pickableIn]) a long press starts picking apps there,
      * and while they're being picked a row is a checkbox: a tap picks it, its switch stands aside.
      */
-    fun LazyListScope.appGroup(apps: List<AppItem>, showProfile: Boolean, pickableIn: SecurityProfile? = null) {
+    // A two-line row's height: its padding and its title's and second line's line heights.
+    val appRowHeight = with(density) {
+        24.dp + (MaterialTheme.typography.bodyLarge.lineHeight.toDp() + MaterialTheme.typography.bodyMedium.lineHeight.toDp())
+    }
+    fun LazyListScope.appGroup(apps: List<AppItem>, showProfile: Boolean, pickableIn: SecurityProfile? = null, pickToSwitchOff: Boolean = false) {
         itemsIndexed(apps, key = { _, app -> app.packageName }, contentType = { _, _ -> CONTENT_APP }) { i, app ->
-            // An app whose profile is off always says so: it's why its switch is off.
-            val profile = profileOf(app.packageName)?.takeIf { showProfile || !it.enabled }
+            // On a profile's page the page (its card) says the profile, and whether it's off.
+            val profile = profileOf(app.packageName)?.takeIf { showProfile }
             // The lock stays on: it protects the app again as soon as the accessibility engine is back.
             val unwatched = isUnwatched(app)
             val homeScreen = isHomeScreen(app.packageName)
             // A state, not a category: "unlocked now" takes its own colour, the rest of the line
             // keeps the row's. Not where the whole line is a warning.
             val unlockedColor = MaterialTheme.colorScheme.tertiary.takeIf { !homeScreen && !unwatched }
+            val pickable = pickableIn != null || (pickToSwitchOff && canSwitchOff(app.packageName))
             GroupRow(
                 index = i,
                 count = apps.size,
                 title = app.label,
+                // The second line says only what the section or page doesn't already: the app's
+                // profile, then states. With nothing to say, the row has one line, centred, at the
+                // same height as the rest, so "No profile" isn't printed twenty times over.
                 subtitle = buildAnnotatedString {
                     val locked = isLocked(app.packageName)
-                    // Its profile, or else its kind; "App" (no category known) says nothing, so it isn't shown.
-                    val name = profile?.name ?: if (app.category != AppCategory.GENERAL) stringResource(app.category.label) else null
-                    if (name != null) append(name)
-                    if (profile != null && !profile.enabled) append(SEPARATOR + stringResource(R.string.home_off))
+                    /** A part of the line: the first starts with a capital, the rest follow a separator. */
+                    fun part(text: String, lowerAfterFirst: Boolean = true, color: androidx.compose.ui.graphics.Color? = null) {
+                        val shown = if (length == 0) text.replaceFirstChar { it.uppercase() }
+                            else text.let { if (lowerAfterFirst) it.replaceFirstChar { c -> c.lowercase() } else it }
+                        if (length > 0) append(SEPARATOR)
+                        if (color != null) withStyle(SpanStyle(color = color)) { append(shown) } else append(shown)
+                    }
+                    if (profile != null) {
+                        part(profile.name, lowerAfterFirst = false)
+                        // An app whose profile is off says so: it's why its switch is off.
+                        if (!profile.enabled) part(stringResource(R.string.home_off))
+                    }
+                    // On a profile's page, an app switched off one by one is the exception: it says so.
+                    if (!showProfile && !locked && profileOf(app.packageName)?.enabled != false) part(stringResource(R.string.common_not_locked))
                     // The default is said once, in the section header; a row says only a delay of its own.
                     val delay = vault.getTimeoutMode(app.packageName)
-                    if (locked && !homeScreen && delay != defaultTimeout) {
-                        val relock = stringResource(delay.relockPhraseRes)
-                        append(if (name != null) SEPARATOR + relock.replaceFirstChar { it.lowercase() } else relock)
-                    }
-                    if (isUnlockedNow(app.packageName) && locked) {
-                        val first = length == 0
-                        if (!first) append(SEPARATOR)
-                        val unlocked = stringResource(if (first) R.string.home_unlocked_now else R.string.home_unlocked_now_lower)
-                        if (unlockedColor != null) withStyle(SpanStyle(color = unlockedColor)) { append(unlocked) } else append(unlocked)
-                    }
-                    if (app.isWorkProfile) append(SEPARATOR + stringResource(R.string.home_row_work))
-                    if (app.packageName in lockedByAndroid) {
-                        val also = stringResource(R.string.home_row_also_locked_by_android)
-                        append(if (length == 0) also else SEPARATOR + also.replaceFirstChar { it.lowercase() })
-                    }
+                    if (locked && !homeScreen && delay != defaultTimeout) part(stringResource(delay.relockPhraseRes))
+                    if (isUnlockedNow(app.packageName) && locked) part(stringResource(R.string.home_unlocked_now), color = unlockedColor)
+                    if (app.isWorkProfile) part(stringResource(R.string.home_row_work))
+                    if (app.packageName in lockedByAndroid) part(stringResource(R.string.home_row_also_locked_by_android))
                     if (homeScreen) {
-                        append(SEPARATOR + stringResource(R.string.home_screen_note))
+                        part(stringResource(R.string.home_screen_note), lowerAfterFirst = false)
                     } else if (unwatched) {
-                        append(
-                            SEPARATOR + stringResource(
+                        part(
+                            stringResource(
                                 if (app.isWorkProfile) R.string.home_row_not_protected_compat else R.string.home_row_work_copy_not_protected_compat
-                            )
+                            ),
+                            lowerAfterFirst = false
                         )
                     }
                 },
@@ -595,26 +723,34 @@ fun MainScreenExpressive(
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
                 leading = { AppIcon(app) },
-                // Outside a profile's page the row opens the app's options, as it always has.
-                onClick = if (pickableIn == null) ({ overlays.optionsForPackage = app.packageName }) else null,
+                // Outside a profile's page the row opens the app's options, as it always has. On
+                // All apps a locked app's row can start picking too; while picking, a row that
+                // can't be picked (its lock already off) does nothing.
+                onClick = if (pickableIn == null && !pickToSwitchOff) ({ overlays.optionsForPackage = app.packageName }) else null,
                 interaction = when {
-                    pickableIn == null -> Modifier
-                    picking -> Modifier.toggleable(value = app.packageName in picked, role = Role.Checkbox) { togglePicked(app.packageName) }
-                    else -> Modifier.combinedClickable(
+                    pickableIn == null && !pickToSwitchOff -> Modifier
+                    picking && pickable -> Modifier.toggleable(value = app.packageName in picked, role = Role.Checkbox) { togglePicked(app.packageName) }
+                    picking -> Modifier
+                    pickable -> Modifier.combinedClickable(
                         onLongClickLabel = stringResource(R.string.home_pick_start_label),
-                        onLongClick = { startPicking(pickableIn, app.packageName) }
+                        onLongClick = { startPicking(app.packageName) }
                     ) { overlays.optionsForPackage = app.packageName }
+                    else -> Modifier.clickable { overlays.optionsForPackage = app.packageName }
                 },
                 modifier = Modifier
                     .animateItem()
                     .padding(horizontal = GroupInset)
                     .padding(top = if (i == 0) 0.dp else GroupGap)
+                    // A row with one line is as tall as one with two, its line centred.
+                    .heightIn(min = appRowHeight)
             ) {
-                if (pickableIn != null && picking) {
+                if (picking && pickable) {
                     // The row says picked or not, and a tap anywhere on it picks: the box only shows it.
                     Checkbox(checked = app.packageName in picked, onCheckedChange = null)
                     return@GroupRow
                 }
+                // Not to be picked: no switch to reach past the picking, nothing in its place.
+                if (picking) return@GroupRow
                 // Its own TalkBack stop, so it says which app it locks. A home screen's can only
                 // be turned off. While its profile is off it shows off and can't be changed (the
                 // subtitle says why); its own choice comes back with the profile.
@@ -639,30 +775,119 @@ fun MainScreenExpressive(
                 // Out of screen readers' reach while Settings is over it, as it is out of the eye's.
                 .then(if (showSettings && !twoPane) Modifier.clearAndSetSemantics { } else Modifier)
         ) {
-            // Phones use the full width; on tablets and in landscape the list keeps a readable width
-            // in the middle (of its pane, with Settings open beside it), while the header's
-            // constellation still runs edge to edge.
+            // Phones use the full width; on an unfolded foldable, a tablet or in landscape the list
+            // keeps a readable width in the middle (of its pane, with Settings open beside it), so a
+            // switch stays near its app's name, while the header's constellation still runs edge to
+            // edge. Not the 720dp it once was: an unfolded foldable (about
+            // 790dp) is only a little wider than that, which left its rows nearly full width.
             val homeWidth = windowWidth * homeFraction
-            val sidePad = ((homeWidth - MaxContentWidth) / 2).coerceAtLeast(0.dp)
+            val sidePad = homeSidePad(homeWidth)
+            // In a narrowed column the chips wrap within its edges (nothing cut off or sticking out
+            // past them), and so they do in home's pane beside Settings, whose edge is the divider:
+            // a row scrolling under it would be cut flat there. On a phone they scroll in one
+            // line, edge to edge.
+            val wrapChips = sidePad > 0.dp || (twoPane && showSettings)
             val sidePadPx = with(density) { sidePad.roundToPx() }
-            val listState = key(filter) { rememberLazyListState() }
-            // The list runs under the status bar, and so would the search bar pinned at its top: by as
-            // much as it would be under the status bar, it moves down, over a band of the page's colour.
+            // A page chosen by its chip opens resting on the controls: search and chips at the top
+            // (pinned there), the profile's card or the apps straight under them, where the tap
+            // was looking. Any other way to a page (Back, a profile deleted) opens at the top.
+            val listState = key(filter) { rememberLazyListState(initialFirstVisibleItemIndex = pinControlsAt ?: 0) }
+            LaunchedEffect(filter) { pinControlsAt = null }
+            // The chips' own scroll, kept here (not in the pinned header, which the list may let go
+            // of): the chip chosen is always scrolled into sight, a profile just made among them.
+            val chipState = rememberLazyListState()
+            val chosenChip = if (filter == FILTER_ALL) 0 else profiles.indexOfFirst { it.id == filter }.let { if (it < 0) -1 else it + 1 }
+            LaunchedEffect(chosenChip, wrapChips) {
+                if (chosenChip < 0 || wrapChips) return@LaunchedEffect
+                // Once the row has laid out the chip (a profile just made is new to it).
+                withFrameNanos { }
+                val shown = chipState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == chosenChip }
+                val viewport = chipState.layoutInfo.let { it.viewportStartOffset..it.viewportEndOffset }
+                val whole = shown != null && shown.offset >= viewport.first && shown.offset + shown.size <= viewport.last
+                if (!whole) chipState.animateScrollToItem(chosenChip)
+            }
+            // In a short window (landscape) the controls scroll away with the list, which gets the whole window.
+            val pinned = !shortWindow()
+            // The list runs under the status bar, and so would the controls pinned at its top: by as
+            // much as they'd be under it, they grow a band of the page's colour above themselves.
+            // Real height, not a shift: what scrolls under them is covered by all of them, band included.
             val statusBarTop = WindowInsets.statusBars.getTop(LocalDensity.current)
-            val controlsInset by remember(listState, statusBarTop) {
+            val controlsInset by remember(listState, statusBarTop, pinned) {
                 derivedStateOf {
+                    if (!pinned) return@derivedStateOf 0
                     val items = listState.layoutInfo.visibleItemsInfo
-                    val controls = items.firstOrNull { it.key == "controls" } ?: return@derivedStateOf 0
+                    val controls = items.firstOrNull { it.key == CONTROLS_KEY } ?: return@derivedStateOf statusBarTop
                     // Where it would be if it didn't stick: just after the item before it.
                     val before = items.lastOrNull { it.index == controls.index - 1 }
                     val natural = before?.let { it.offset + it.size } ?: Int.MIN_VALUE
                     (statusBarTop.toLong() - natural).coerceIn(0L, statusBarTop.toLong()).toInt()
                 }
             }
+            LaunchedEffect(listState) {
+                snapshotFlow { listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == CONTROLS_KEY }?.index }
+                    .collect { if (it != null) controlsIndex[0] = it }
+            }
+            LaunchedEffect(repinRequests) {
+                if (repinRequests > 0 && controlsIndex[0] >= 0) listState.animateScrollToItem(controlsIndex[0])
+            }
+            // Back from "Add apps": the profile's page as it opened, resting on the controls with its
+            // card whole under them, not wherever the list was left as the apps came in.
+            var addAppsWasOpen by remember { mutableStateOf(false) }
+            LaunchedEffect(overlays.showAddApps) {
+                if (addAppsWasOpen && !overlays.showAddApps && currentProfile != null && pinned && controlsIndex[0] >= 0) {
+                    withFrameNanos { }
+                    listState.animateScrollToItem(controlsIndex[0])
+                }
+                addAppsWasOpen = overlays.showAddApps
+            }
+            // A profile's card never comes to rest cut by the pinned controls (its title sliced
+            // through): a drag let go part of the way under them settles with the card wholly in
+            // sight or wholly under them, whichever is nearer. The page's end keeps a little room
+            // past its resting place (the controls' band behind the status bar needs it to get
+            // there), so a short page would otherwise always have the card's top to slide under.
+            if (pinned && currentProfile != null) {
+                val cardKey = "profile_${currentProfile.id}"
+                LaunchedEffect(listState, cardKey) {
+                    snapshotFlow { listState.isScrollInProgress }.collect { moving ->
+                        if (moving) return@collect
+                        val items = listState.layoutInfo.visibleItemsInfo
+                        val controls = items.firstOrNull { it.key == CONTROLS_KEY } ?: return@collect
+                        val card = items.firstOrNull { it.key == cardKey } ?: return@collect
+                        val by = cardSettle(card.offset, card.size, controls.offset + controls.size, listState.canScrollForward)
+                        if (by != 0) listState.animateScrollBy(by.toFloat())
+                    }
+                }
+            }
+            // Room at the end of a short page, so it can still rest with the controls at the top
+            // (a profile with a few apps, say): as much as the rows after the controls leave unfilled.
+            var endRoom by remember(filter) { mutableIntStateOf(0) }
+            LaunchedEffect(listState, pinned, statusBarTop) {
+                snapshotFlow { if (pinned) roomToPin(listState.layoutInfo, controlsInset) else 0 }
+                    .collect { if (it != null) endRoom = it }
+            }
+            // A page chosen to rest on the controls gets there once there's room to (its end room
+            // is only known once laid out), unless the owner has started scrolling it meanwhile.
+            val pinTarget = remember(listState) { pinControlsAt }
+            var pinPending by remember(listState) { mutableStateOf(pinTarget != null) }
+            LaunchedEffect(listState) {
+                listState.interactionSource.interactions.collect { if (it is DragInteraction.Start) pinPending = false }
+            }
+            LaunchedEffect(listState, endRoom, pinPending) {
+                val target = pinTarget ?: return@LaunchedEffect
+                if (pinPending && (listState.firstVisibleItemIndex != target || listState.firstVisibleItemScrollOffset != 0)) {
+                    listState.scrollToItem(target)
+                }
+            }
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = sidePad, end = sidePad, bottom = 96.dp)
+                contentPadding = PaddingValues(
+                    start = sidePad,
+                    end = sidePad,
+                    // Room for the bar shown while apps are picked (its height, its margins and the
+                    // navigation bar under it), so the last row can always be scrolled clear of it.
+                    bottom = if (picking) 112.dp + with(density) { WindowInsets.navigationBars.getBottom(this).toDp() } else 96.dp
+                )
             ) {
                 item(key = "header") {
                     HomeHeader(
@@ -687,9 +912,6 @@ fun MainScreenExpressive(
                     attempts = attempts,
                     gaps = gaps,
                     seenUpTo = seenUpTo,
-                    attemptsChosen = attemptsChosen,
-                    biometricOnlyOn = biometricOnlyOn,
-                    lockedApps = lockedApps,
                     unlockedNowApps = unlockedNowApps,
                     attemptLabel = ::attemptLabel,
                     onProtectionAction = ::onProtectionAction,
@@ -697,60 +919,83 @@ fun MainScreenExpressive(
                     onLockOne = ::lockOne,
                     onChooseUnlocked = { overlays.showUnlocked = true },
                     onLockAll = { lockAllNow(includeOwnApp = false) },
-                    screenLockMissing = screenLockMissing
+                    screenLockMissing = screenLockMissing,
+                    offer = offer
                 )
 
-                stickyHeader(key = "controls") {
-                    val surface = MaterialTheme.colorScheme.surface
+                val controls: @Composable () -> Unit = {
                     Column(
                         Modifier
+                            // Drawn over the rows scrolling under it (later items draw over earlier ones otherwise).
+                            .zIndex(1f)
                             .fillMaxWidth()
-                            .graphicsLayer { translationY = controlsInset.toFloat() }
-                            .drawBehind {
-                                drawRect(surface, topLeft = Offset(0f, -controlsInset.toFloat()), size = Size(size.width, size.height + controlsInset))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .testTag(CONTROLS_KEY)
+                            .layout { measurable, constraints ->
+                                val inset = controlsInset
+                                val placeable = measurable.measure(constraints)
+                                layout(placeable.width, placeable.height + inset) { placeable.place(0, inset) }
                             }
-                            .padding(top = 12.dp, bottom = 4.dp)
+                            // Nothing under the chips: their own touch margin is the air there.
+                            .padding(top = 12.dp)
                     ) {
                         SearchPill(searchQuery, onChange = { searchQuery = it }, modifier = Modifier.padding(horizontal = GroupInset))
-                        // On wide screens the chips scroll edge to edge, like the header, not cut off at the column.
-                        LazyRow(
-                            modifier = Modifier.fillMaxWidth().horizontalBleed(sidePadPx),
-                            contentPadding = PaddingValues(horizontal = GroupInset + sidePad, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            item(key = FILTER_ALL) {
-                                FilterChoice(stringResource(R.string.home_filter_all), Icons.Default.Apps, filter == FILTER_ALL) { filter = FILTER_ALL }
+                        val allChip: @Composable () -> Unit = {
+                            FilterChoice(stringResource(R.string.home_filter_all), Icons.Default.Apps, filter == FILTER_ALL) { choosePage(FILTER_ALL) }
+                        }
+                        val profileChip: @Composable (SecurityProfile) -> Unit = { profile ->
+                            val apps = appCountByProfile[profile.id] ?: 0
+                            FilterChoice(
+                                // An empty profile says just its name: "· 0" is noise.
+                                label = profile.name + when {
+                                    !profile.enabled -> SEPARATOR + stringResource(R.string.home_off)
+                                    apps == 0 -> ""
+                                    else -> "$SEPARATOR$apps"
+                                },
+                                description = if (!profile.enabled) {
+                                    stringResource(R.string.home_profile_chip_off_description, profile.name)
+                                } else {
+                                    pluralStringResource(R.plurals.home_profile_chip_description, apps, profile.name, apps)
+                                },
+                                icon = profileIcon(profile.iconKey),
+                                selected = filter == profile.id
+                            ) { choosePage(profile.id) }
+                        }
+                        val newProfileChip: @Composable () -> Unit = {
+                            FilterChip(
+                                selected = false,
+                                onClick = { overlays.newProfileForPackage = null; overlays.showNewProfile = true },
+                                label = { Text(stringResource(R.string.profile_new)) },
+                                leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp.scaledWithText())) },
+                                shape = CircleShape
+                            )
+                        }
+                        if (wrapChips) {
+                            // Wrapped within the column, its first chip lined up with the search bar.
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = GroupInset).padding(top = 8.dp).testTag(CHIPS_TAG),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(0.dp)
+                            ) {
+                                allChip()
+                                profiles.forEach { key(it.id) { profileChip(it) } }
+                                newProfileChip()
                             }
-                            items(profiles, key = { it.id }) { profile ->
-                                val apps = appCountByProfile[profile.id] ?: 0
-                                FilterChoice(
-                                    // An empty profile says just its name: "· 0" is noise.
-                                    label = profile.name + when {
-                                        !profile.enabled -> SEPARATOR + stringResource(R.string.home_off)
-                                        apps == 0 -> ""
-                                        else -> "$SEPARATOR$apps"
-                                    },
-                                    description = if (!profile.enabled) {
-                                        stringResource(R.string.home_profile_chip_off_description, profile.name)
-                                    } else {
-                                        pluralStringResource(R.plurals.home_profile_chip_description, apps, profile.name, apps)
-                                    },
-                                    icon = profileIcon(profile.iconKey),
-                                    selected = filter == profile.id
-                                ) { filter = profile.id }
-                            }
-                            item(key = "new_profile") {
-                                FilterChip(
-                                    selected = false,
-                                    onClick = { overlays.newProfileForPackage = null; overlays.showNewProfile = true },
-                                    label = { Text(stringResource(R.string.profile_new)) },
-                                    leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp.scaledWithText())) },
-                                    shape = CircleShape
-                                )
+                        } else {
+                            LazyRow(
+                                state = chipState,
+                                modifier = Modifier.fillMaxWidth().testTag(CHIPS_TAG),
+                                contentPadding = PaddingValues(start = GroupInset, end = GroupInset, top = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                item(key = FILTER_ALL) { allChip() }
+                                items(profiles, key = { it.id }) { profileChip(it) }
+                                item(key = "new_profile") { newProfileChip() }
                             }
                         }
                     }
                 }
+                if (pinned) stickyHeader(key = CONTROLS_KEY) { controls() } else item(key = CONTROLS_KEY) { controls() }
 
                 if (currentProfile != null) {
                     item(key = "profile_${currentProfile.id}") {
@@ -792,8 +1037,9 @@ fun MainScreenExpressive(
                                 currentProfile != null -> stringResource(R.string.home_profile_empty, currentProfile.name)
                                 else -> stringResource(R.string.home_no_apps)
                             },
-                            actionLabel = if (currentProfile != null && searchQuery.isBlank()) stringResource(R.string.home_add_apps) else null,
-                            onAction = { overlays.showAddApps = true }
+                            // A profile's card, just above, already has "Add apps".
+                            actionLabel = null,
+                            onAction = {}
                         )
                     }
                     currentProfile != null -> {
@@ -803,7 +1049,7 @@ fun MainScreenExpressive(
                                 // A long press on an app does the same: this says it can be done.
                                 if (!picking) {
                                     TextButton(
-                                        onClick = { startPicking(currentProfile) },
+                                        onClick = { startPicking() },
                                         modifier = Modifier.alignByBaseline().padding(end = GroupInset + 4.dp)
                                     ) { Text(stringResource(R.string.home_pick_start)) }
                                 }
@@ -821,7 +1067,11 @@ fun MainScreenExpressive(
                                     else -> SEPARATOR + stringResource(defaultTimeout.relockPhraseRes).replaceFirstChar { it.lowercase() }
                                 }
                                 SectionHeader(
-                                    stringResource(R.string.home_section_locked) + "$SEPARATOR${lockedShown.size}$relock",
+                                    // Counted as they are now: a lock just taken off is off the count at once,
+                                    // though its row waits for its message to go before it moves.
+                                    stringResource(R.string.home_section_locked) + "$SEPARATOR${lockedShown.count { isLocked(it.packageName) }}$relock",
+                                    // Right under the chips, as the other sections are under what's above them.
+                                    top = SectionHeaderTopAfterChips,
                                     color = when {
                                         !ProtectionEngine.isProtecting(mode) -> MaterialTheme.colorScheme.error
                                         // A pause the owner chose: calm, like its card.
@@ -830,19 +1080,41 @@ fun MainScreenExpressive(
                                     }
                                 )
                             }
-                            appGroup(lockedShown, showProfile = true)
+                            appGroup(lockedShown, showProfile = true, pickToSwitchOff = true)
                         }
                         if (unlockedShown.isNotEmpty()) {
-                            item(key = "h_unlocked", contentType = CONTENT_HEADER) { SectionHeader(stringResource(if (lockedShown.isEmpty()) R.string.home_choose_apps else R.string.common_not_locked)) }
+                            item(key = "h_unlocked", contentType = CONTENT_HEADER) {
+                                SectionHeader(
+                                    stringResource(if (lockedShown.isEmpty()) R.string.home_choose_apps else R.string.common_not_locked),
+                                    top = if (lockedShown.isEmpty()) SectionHeaderTopAfterChips else SectionHeaderTop
+                                )
+                            }
                             // With their profile: one that's off is why they aren't locked.
-                            appGroup(unlockedShown, showProfile = true)
+                            appGroup(unlockedShown, showProfile = true, pickToSwitchOff = true)
                         }
                     }
                 }
+                if (pinned) item(key = END_ROOM_KEY) { Spacer(Modifier.height(with(density) { endRoom.toDp() })) }
             }
 
-            // While apps are picked on a profile's page: how many, all or none, and taking them out.
-            val pageApps = if (currentProfile != null) matching.map { it.packageName } else emptyList()
+            // Once the header has scrolled away, cards and rows would pass under the status bar's
+            // clock and icons: a band of the page's colour there, as behind the pinned search bar.
+            val headerGone by remember(listState) { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
+            val statusBand by androidx.compose.animation.core.animateFloatAsState(if (headerGone) 1f else 0f, label = "statusBand")
+            if (statusBand > 0f) {
+                val surface = MaterialTheme.colorScheme.surface
+                Spacer(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(with(density) { statusBarTop.toDp() })
+                        .drawBehind { drawRect(surface, alpha = statusBand) }
+                )
+            }
+
+            // While apps are picked: how many, all or none, and taking them out of the profile or,
+            // on All apps, switching their locks off.
+            val pageApps = if (currentProfile != null) matching.map { it.packageName }
+                else (lockedShown + unlockedShown).map { it.packageName }.filter(::canSwitchOff)
             val pickedHere = picked.count { it in pageApps }
             AnimatedVisibility(
                 visible = picking,
@@ -850,7 +1122,7 @@ fun MainScreenExpressive(
                 enter = slideInVertically { it } + fadeIn(),
                 exit = slideOutVertically { it } + fadeOut()
             ) {
-                val profile = currentProfile ?: return@AnimatedVisibility
+                val profile = currentProfile
                 Surface(
                     shape = RoundedCornerShape(28.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -858,7 +1130,7 @@ fun MainScreenExpressive(
                     modifier = Modifier
                         .windowInsetsPadding(WindowInsets.navigationBars)
                         .padding(horizontal = GroupInset, vertical = 12.dp)
-                        .widthIn(max = MaxContentWidth)
+                        .widthIn(max = HomeColumnWidth)
                         .fillMaxWidth()
                 ) {
                     Row(Modifier.padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -876,8 +1148,25 @@ fun MainScreenExpressive(
                             if (!all) picked += pageApps
                         }) { Text(stringResource(if (all) R.string.home_pick_none else R.string.home_pick_all)) }
                         Spacer(Modifier.width(4.dp))
-                        Button(onClick = { removePicked(profile) }, enabled = pickedHere > 0) {
-                            Text(stringResource(R.string.home_pick_remove))
+                        if (profile != null) {
+                            // Out of this profile, not unlocked: "Take out", as the record of it says.
+                            val takeOut = stringResource(R.string.home_pick_remove_description, profile.name)
+                            Button(
+                                onClick = { removePicked(profile) },
+                                enabled = pickedHere > 0,
+                                modifier = Modifier.semantics { contentDescription = takeOut }
+                            ) {
+                                Text(stringResource(R.string.home_pick_remove))
+                            }
+                        } else {
+                            val switchOff = stringResource(R.string.home_pick_switch_off_description)
+                            Button(
+                                onClick = { switchOffPicked() },
+                                enabled = pickedHere > 0,
+                                modifier = Modifier.semantics { contentDescription = switchOff }
+                            ) {
+                                Text(stringResource(R.string.home_pick_switch_off))
+                            }
                         }
                     }
                 }
@@ -933,7 +1222,68 @@ fun MainScreenExpressive(
         onLockAll = ::lockAllNow,
         onProtectionAction = ::onProtectionAction,
         onPauseRequested = onPauseRequested,
-        onFilterChange = { filter = it },
+        // A profile just made opens resting on the controls, as its chip would; one deleted goes back to the top.
+        onFilterChange = { if (it == FILTER_ALL) filter = it else choosePage(it) },
         onLockedByHand = ::explainIfFirst
     )
+}
+
+/** The list's item holding the search bar and profile chips, pinned at the top as it scrolls. */
+internal const val CONTROLS_KEY = "controls"
+
+/** The list's last item: room for a short page to rest with the controls at the top ([roomToPin]). */
+internal const val END_ROOM_KEY = "end_room"
+
+/**
+ * How far to scroll (px; up is negative) so a card at [offset] of [size] isn't left cut by the
+ * pinned controls ending at [under]: nothing if it's clear of them or wholly under them; else back
+ * until it's wholly in sight, or on until it's wholly under them where that's nearer and the list
+ * can go on ([canGoOn]).
+ */
+internal fun cardSettle(offset: Int, size: Int, under: Int, canGoOn: Boolean): Int {
+    val hidden = under - offset
+    if (hidden <= 0 || hidden >= size) return 0
+    return if (canGoOn && hidden * 2 > size) size - hidden else -hidden
+}
+
+/**
+ * How much room the list's end needs (px) so its page can rest with the controls pinned at the
+ * top: what the controls and the rows after them leave unfilled of the window. Null where that
+ * can't be told from what's laid out (rows after the controls scrolled out above): keep the last.
+ */
+internal fun roomToPin(info: LazyListLayoutInfo, inset: Int): Int? {
+    val items = info.visibleItemsInfo
+    val controls = items.firstOrNull { it.key == CONTROLS_KEY } ?: return null
+    // The end out of sight below the controls at the top: the page is longer than the window
+    // already. Below them lower down: it can't be told yet.
+    val end = items.firstOrNull { it.key == END_ROOM_KEY } ?: return if (controls.offset <= 0) 0 else null
+    val between = items.filter { it.index > controls.index && it.index < end.index }
+    if (between.size != end.index - controls.index - 1) return null
+    // Their band behind the status bar left out: it only grows as the list scrolls into it, so
+    // room counted with it couldn't be scrolled into (the band's height is spare at the end instead).
+    val controlsPinned = controls.size - inset
+    val window = info.viewportSize.height - info.beforeContentPadding - info.afterContentPadding
+    return (window - controlsPinned - between.sumOf { it.size }).coerceAtLeast(0)
+}
+
+/**
+ * Auto-sort's pass over home's list, as the list's groups see it ([lockedAtLoad] in
+ * [MainScreenExpressive]): the groups are taken as BioKey comes on screen and then held still
+ * while the owner flips switches, but the apps auto-sort locks after that are its, not the
+ * owner's, and go under "Locked" at once.
+ */
+internal object AutoSortPass {
+    /** The [installed] apps (by package) that weren't locked [before] the pass and are [after] it. */
+    fun newlyLocked(installed: List<String>, before: Set<String>, after: Set<String>): Set<String> =
+        installed.filterTo(HashSet()) { pkg ->
+            val aliases = PasswordManager.aliasesOf(pkg)
+            aliases.none { it in before } && aliases.any { it in after }
+        }
+
+    /**
+     * The groups after the pass: what was locked when they were taken, plus what auto-sort just
+     * locked. Not taken yet (null): the list follows the live state, which already has them.
+     */
+    fun regroup(lockedAtLoad: Set<String>?, newlyLocked: Set<String>): Set<String>? =
+        if (newlyLocked.isEmpty()) lockedAtLoad else lockedAtLoad?.plus(newlyLocked)
 }

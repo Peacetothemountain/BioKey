@@ -66,7 +66,12 @@ class MaskControllerTest {
         }
         override fun setHidden(hidden: Boolean) { hiddenEverywhere = hidden; hiddenDisplays = emptySet() }
         // As WindowMask does: hiding on some displays shows the rest.
-        override fun setHiddenOn(displays: Set<Int>) { hiddenEverywhere = false; hiddenDisplays = displays }
+        var promptAreas = emptyMap<Int, android.graphics.Rect>()
+        override fun setHiddenOn(displays: Set<Int>, promptAreas: Map<Int, android.graphics.Rect>) {
+            hiddenEverywhere = false
+            hiddenDisplays = displays
+            this.promptAreas = promptAreas
+        }
         override fun forget(pkg: String) { up.values.removeAll { it.pkg == pkg } }
         override fun clear() = up.clear()
         override fun refreshPalette() = Unit
@@ -81,6 +86,8 @@ class MaskControllerTest {
     /** What was locked the usual way: app, why, display. */
     private val locked = mutableListOf<Triple<String, String, Int?>>()
     private val broughtForward = mutableListOf<String>()
+    /** Where the prompt in front draws its sheet, as the service would read it; null: can't be told. */
+    private var promptContent: Rect? = null
 
     private val host = object : MaskController.Host {
         override fun windowList() = windows
@@ -88,6 +95,7 @@ class MaskControllerTest {
         override fun packageOf(window: AccessibilityWindowInfo) = packages[window.id]
         override fun isCoverable(pkg: String) = pkg != service.packageName
         override fun isOwnWindow(window: AccessibilityWindowInfo) = false
+        override fun promptContentBounds(window: AccessibilityWindowInfo) = promptContent
         override fun isInteractive() = true
         override fun isKeyguardLocked() = keyguardLocked
         override fun needsCover(pkg: String) = needsCover.invoke(pkg)
@@ -195,6 +203,49 @@ class MaskControllerTest {
         assertEquals(setOf(Display.DEFAULT_DISPLAY), patches.hiddenDisplays)
         assertTrue(patches.isMasking(2))
         assertFalse(patches.hiddenEverywhere)
+    }
+
+    /** The prompt's own window: a system window in front, as large as the display (its scrim). */
+    private fun promptWindow(id: Int = 90): AccessibilityWindowInfo = AccessibilityWindowInfo.obtain().also { w ->
+        shadowOf(w).apply {
+            setId(id)
+            setType(AccessibilityWindowInfo.TYPE_SYSTEM)
+            setDisplayId(Display.DEFAULT_DISPLAY)
+            setFocused(true)
+            setActive(true)
+            setLayer(5)
+            setBoundsInScreen(Rect(0, 0, 1080, 2400))
+        }
+    }
+
+    @Test
+    fun whereThePromptIsKnownThePatchesAreToldSoOnlyThoseOverItHide() {
+        // A locked app in picture-in-picture, patched; then a prompt comes up for another app.
+        windows = listOf(window(1, "com.example.bank", small, pip = true))
+        controller.update(windows!!, full = true)
+        assertTrue(patches.isMasking(1))
+
+        setPrompt(true)
+        promptContent = Rect(0, 1200, 1080, 2400)
+        windows = listOf(promptWindow())
+        controller.update(windows!!, full = true)
+        // The patches hear where the prompt is: the one over the picture-in-picture window, clear
+        // of it, is theirs to keep up (WindowMaskTest), so the window isn't shown through the scrim.
+        assertEquals(setOf(Display.DEFAULT_DISPLAY), patches.hiddenDisplays)
+        assertEquals(Rect(0, 1200, 1080, 2400), patches.promptAreas[Display.DEFAULT_DISPLAY])
+        assertTrue("kept, not followed, while its window is out of the list", patches.isMasking(1))
+    }
+
+    @Test
+    fun whereThePromptCantBeFoundEveryPatchOnItsDisplayHidesAsBefore() {
+        windows = listOf(window(1, "com.example.bank", small, pip = true))
+        controller.update(windows!!, full = true)
+        setPrompt(true)
+        promptContent = null
+        windows = listOf(promptWindow())
+        controller.update(windows!!, full = true)
+        assertEquals(setOf(Display.DEFAULT_DISPLAY), patches.hiddenDisplays)
+        assertTrue(patches.promptAreas.isEmpty())
     }
 
     @Test

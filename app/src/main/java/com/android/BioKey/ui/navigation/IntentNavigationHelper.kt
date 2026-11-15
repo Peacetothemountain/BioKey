@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.hardware.biometrics.BiometricManager
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.provider.Settings
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ErrorOutline
@@ -61,20 +62,25 @@ object IntentNavigationHelper {
      * its manifest's queries, so the system's handler is always seen. Where several system apps
      * answer, Settings itself is preferred. Only pages the system app lets other apps open count:
      * the package manager also lists ones it keeps to itself (Pixel's private space page), which
-     * would only fail with "Permission Denial". Returns whether it was pinned (false: no system app
-     * answers, and it isn't opened).
+     * would only fail with "Permission Denial", and ones it guards with a permission BioKey doesn't
+     * hold (Settings' page for one accessibility service is kept for app stores). Returns whether it
+     * was pinned (false: no system app answers, and it isn't opened).
      */
     internal fun pinToSystemHandler(context: Context, intent: Intent): Boolean {
         if (intent.component != null) return true
         val handlers = context.packageManager.queryIntentActivities(intent, PackageManager.MATCH_SYSTEM_ONLY)
             .mapNotNull { it.activityInfo }
-            .filter { it.packageName != "android" && it.exported }
+            .filter { it.packageName != "android" && it.exported && mayOpen(context, it.permission) }
         val handler = handlers.firstOrNull { it.packageName == SETTINGS_PACKAGE } ?: handlers.firstOrNull() ?: return false
         intent.setClassName(handler.packageName, handler.name)
         return true
     }
 
     private const val SETTINGS_PACKAGE = "com.android.settings"
+
+    /** Whether BioKey holds the permission a page is guarded with (none: anyone may open it). */
+    private fun mayOpen(context: Context, permission: String?): Boolean =
+        permission.isNullOrEmpty() || context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
 
     private fun appDetails(context: Context) =
         Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
@@ -136,21 +142,45 @@ object IntentNavigationHelper {
         preAuthorizeSelfProtection = false
     )
 
-    /** BioKey's own accessibility toggle where the device has that page, else the accessibility list. */
-    private fun accessibilitySettingsIntent(context: Context): Intent {
-        val details = Intent(ACCESSIBILITY_DETAILS_SETTINGS).putExtra(
-            Intent.EXTRA_COMPONENT_NAME,
-            FeatureLinks.accessibilityServiceName(context)
-        )
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            context.packageManager.resolveActivity(details, PackageManager.MATCH_SYSTEM_ONLY) != null
-        ) details else Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+    /** BioKey's own accessibility page (its switch), as Android names it to the app that opens it. */
+    private fun accessibilityDetailsIntent(context: Context) = Intent(ACCESSIBILITY_DETAILS_SETTINGS)
+        .putExtra(Intent.EXTRA_COMPONENT_NAME, FeatureLinks.accessibilityServiceName(context))
+
+    /**
+     * Android's Accessibility list, with BioKey's entry picked out where Settings does that for a
+     * page opened from elsewhere (as its search does): the entry's key is the service's name.
+     */
+    private fun accessibilityListIntent(context: Context): Intent {
+        val entry = FeatureLinks.accessibilityServiceName(context)
+        return Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            .putExtra(EXTRA_FRAGMENT_ARG_KEY, entry)
+            .putExtra(EXTRA_SHOW_FRAGMENT_ARGUMENTS, Bundle().apply { putString(EXTRA_FRAGMENT_ARG_KEY, entry) })
     }
+
+    /**
+     * Whether "Turn on" lands on BioKey's own page, with its switch at the top, rather than the
+     * Accessibility list. Android has that page from 13, but Settings usually keeps it for app
+     * stores (a permission BioKey can't hold), so the list is what most phones open.
+     */
+    fun opensOwnAccessibilityPage(context: Context): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && hasSystemPage(context, accessibilityDetailsIntent(context))
 
     fun openAccessibilitySettings(context: Context) = launchFallbackCascade(
         context,
-        listOf(accessibilitySettingsIntent(context), Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), appDetails(context))
-    )
+        listOfNotNull(
+            accessibilityDetailsIntent(context).takeIf { Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU },
+            accessibilityListIntent(context),
+            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
+            appDetails(context)
+        )
+    ).also { opened ->
+        // Once the owner has switched the service on there, BioKey comes back by itself.
+        if (opened) com.android.BioKey.core.security.AccessibilityReturn.expect()
+    }
+
+    /** Settings' way to pick out one entry on the page it opens (the key of the entry). */
+    private const val EXTRA_FRAGMENT_ARG_KEY = ":settings:fragment_args_key"
+    private const val EXTRA_SHOW_FRAGMENT_ARGUMENTS = ":settings:show_fragment_args"
 
     /** [pkg]'s notification settings in Android (its switch, its channels), else its App info page. */
     fun openAppNotificationSettings(context: Context, pkg: String) = launchFallbackCascade(

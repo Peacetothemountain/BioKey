@@ -1,20 +1,25 @@
 package com.android.BioKey.core.security
 
+import android.app.KeyguardManager
 import android.content.Context
 import android.hardware.biometrics.BiometricPrompt
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import androidx.annotation.VisibleForTesting
+import androidx.core.content.edit
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.PrivateKey
 import java.security.PublicKey
 import java.security.SecureRandom
+import java.security.Security
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
 
 /**
  * Proof that Android really matched a face, fingerprint or screen lock, beyond its word for it.
@@ -33,9 +38,16 @@ import java.util.concurrent.Executors
  * as Android does with every such key; it is made again once there is a screen lock.
  *
  * Never a way to be locked out: where the key can't be made or used (no screen lock, a Keystore
- * that fails), prompts run as they did before, and that is logged. If a signature fails twice
- * running after matches Android reported, proof is left off until BioKey next starts, so a phone
- * whose hardware can't sign costs its owner two extra tries, not their apps.
+ * that fails), prompts run as they did before. If a signature fails twice running after matches
+ * Android reported, proof is left off for an hour (or until BioKey next starts) and then tried
+ * again, so a phone whose hardware can't sign costs its owner two extra tries, not their apps. Either is written into security activity,
+ * once until a match is proved again, so the owner is told rather than left to find it in a log.
+ *
+ * Except where the owner's passphrase stands in for the screen lock
+ * ([SecurityEngine.passphraseStandsIn]): there the owner has another way in, so nothing opens on
+ * Android's word alone. Proof is never left off, a match that can't be proved goes on opening
+ * nothing, and where there is no proof to ask for at all (the key can't be made or used) the
+ * prompt isn't shown: the passphrase is asked for instead.
  */
 object UnlockProof {
 
@@ -44,6 +56,13 @@ object UnlockProof {
     private const val CHALLENGE_BYTES = 32
     /** Signatures failing this many times running, after matches Android reported, leave proof off. */
     private const val FAILURES_BEFORE_OFF = 2
+    /** How long a prompt waits for the key to be loaded, the first time in a run of BioKey. */
+    private const val LOAD_WAIT_MS = 300L
+    /** Left off, proof is tried again after this long: a fault that has passed mustn't cost it for as long as BioKey runs, which can be weeks. */
+    private const val OFF_RETRY_MS = 60 * 60_000L
+    private const val PREFS = "biokey_unlock_proof"
+    /** Security activity already says matches are going unproved: not said again until one is proved. */
+    private const val KEY_SAID_UNPROVED = "said_unproved"
 
     /** A prompt's challenge, and what must sign it. */
     class Armed internal constructor(
@@ -61,13 +80,22 @@ object UnlockProof {
     @Volatile private var keys: Keys? = null
     @Volatile private var failures = 0
     @Volatile private var off = false
+    /** When proof was left off, on the clock since boot ([sinceBoot]). */
+    @Volatile private var offAt = 0L
+    @Volatile private var saidNotReady = false
+
+    /** The clock since boot; tests set their own. */
+    @VisibleForTesting
+    internal var sinceBoot: () -> Long = android.os.SystemClock::elapsedRealtime
     @Volatile private var saidUnavailable = false
+    @Volatile private var loading: Future<*>? = null
 
     /** Makes the key if there is none, off the main thread: generating one takes a while. */
     fun prepareSoon(context: Context) {
         if (off || keys != null) return
         val app = context.applicationContext
-        worker.execute { runCatching { load(app, makeIfMissing = true) } }
+        loading?.takeIf { !it.isDone }?.let { return }
+        loading = worker.submit { runCatching { load(app, makeIfMissing = true) } }
     }
 
     /**
@@ -82,21 +110,86 @@ object UnlockProof {
      * asked for. Otherwise the challenge must sign, which the phone's hardware allows only after
      * it has checked its owner, and the signature must be right.
      */
-    fun confirmed(armed: Armed?): Boolean {
+    fun confirmed(context: Context, armed: Armed?): Boolean {
         if (armed == null) return true
+        val app = context.applicationContext
         val proven = runCatching { prover(armed) }.getOrDefault(false)
         if (proven) {
             failures = 0
+            provedAgain(app)
             return true
         }
         val count = ++failures
-        if (count >= FAILURES_BEFORE_OFF) {
-            off = true
-            DiagnosticLog.log("A match couldn't be proved by the phone's hardware $count times running: unlocking without that proof until BioKey restarts")
-        } else {
-            DiagnosticLog.log("A match Android reported couldn't be proved by the phone's hardware: not unlocked")
+        when {
+            count < FAILURES_BEFORE_OFF ->
+                DiagnosticLog.log("A match Android reported couldn't be proved by the phone's hardware: not unlocked")
+            // The owner has their passphrase to get in with: nothing is opened on Android's word alone.
+            runCatching { neverLeftOff(app) }.getOrDefault(false) ->
+                DiagnosticLog.log("A match couldn't be proved by the phone's hardware $count times running: not unlocked (the passphrase opens it)")
+            else -> {
+                off = true
+                offAt = sinceBoot()
+                DiagnosticLog.log("A match couldn't be proved by the phone's hardware $count times running: unlocking without that proof for an hour, then it is tried again")
+                unproved(app)
+            }
         }
         return false
+    }
+
+    /** Logged once per run of BioKey: the passphrase was asked for because no proof could be. */
+    @Volatile private var saidPassphraseInstead = false
+
+    /** No proof could be asked of the phone's hardware where the passphrase stands in, so it was asked for instead. */
+    fun saidInstead(context: Context) {
+        if (saidPassphraseInstead) return
+        saidPassphraseInstead = true
+        DiagnosticLog.log("No proof can be asked of the phone's hardware: the passphrase is asked for, not a face, fingerprint or screen lock")
+    }
+
+    /**
+     * Whether proof stays on however often it fails: where the owner's passphrase opens what a
+     * face, fingerprint or screen lock can't be proved for.
+     */
+    @VisibleForTesting
+    internal var neverLeftOff: (Context) -> Boolean = { SecurityEngine.passphraseStandsIn(it) }
+
+    /** Writes into security activity that matches are going unproved; false if it couldn't be (setup not finished). Replaced in tests. */
+    @VisibleForTesting
+    internal var record: (Context) -> Boolean = { ProtectionGaps.recordEvent(it, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, ProtectionGaps.Change.UNLOCK_PROOF_OFF.encode()) != null }
+
+    /**
+     * Matches are being taken on Android's word, on a phone that has a screen lock (without one
+     * there is nothing to prove, and that has its own record): said in security activity, once.
+     */
+    private fun unproved(app: Context) {
+        runCatching {
+            if (app.getSystemService(KeyguardManager::class.java)?.isDeviceSecure != true) return
+            val p = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            if (p.getBoolean(KEY_SAID_UNPROVED, false)) return
+            // Marked as said only once it has been: a record refused (setup not finished yet)
+            // is made at the next prompt that runs unproved, not lost for good.
+            if (record(app)) p.edit { putBoolean(KEY_SAID_UNPROVED, true) }
+        }
+    }
+
+    /**
+     * A prompt is about to run with no proof to ask for. Where the passphrase stands in, no prompt
+     * runs (the passphrase is asked for instead), so there is nothing to record.
+     */
+    private fun unprovedWithoutPassphrase(app: Context) {
+        if (!passphraseInstead(app)) unproved(app)
+    }
+
+    /** No prompt runs unproved here: with no proof to ask for, the passphrase is asked for. */
+    private fun passphraseInstead(app: Context) = runCatching { neverLeftOff(app) }.getOrDefault(false)
+
+    private fun provedAgain(app: Context) {
+        runCatching {
+            val p = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            if (p.getBoolean(KEY_SAID_UNPROVED, false)) p.edit { remove(KEY_SAID_UNPROVED) }
+        }
+        // The key is there and working: the next time it isn't is news, in the log too.
+        saidNotReady = false
     }
 
     @VisibleForTesting
@@ -109,9 +202,17 @@ object UnlockProof {
     private val realHooks: () -> Unit = run {
         val armer = armer
         val prover = prover
+        val neverLeftOff = neverLeftOff
+        val record = record
+        val sinceBoot = sinceBoot
+        val signer = signer
         return@run {
+            this.signer = signer
+            this.sinceBoot = sinceBoot
             this.armer = armer
             this.prover = prover
+            this.neverLeftOff = neverLeftOff
+            this.record = record
         }
     }
 
@@ -122,10 +223,24 @@ object UnlockProof {
         failures = 0
         off = false
         saidUnavailable = false
+        saidPassphraseInstead = false
+        saidNotReady = false
+        offAt = 0L
+        loading = null
     }
 
     @VisibleForTesting
     internal val isOffForTests: Boolean get() = off
+
+    /** Readies a signature with the key: the call to the Keystore that fails when the key is gone. Replaced in tests. */
+    @VisibleForTesting
+    internal var signer: (PrivateKey) -> Signature = { key -> Signature.getInstance(SIGNATURE).apply { initSign(key) } }
+
+    /** As if this key had been loaded from the Keystore, which tests don't have. */
+    @VisibleForTesting
+    internal fun loadedForTests(private: PrivateKey, public: PublicKey) {
+        keys = Keys(private, public)
+    }
 
     /** A [Armed] around [signature], for tests: what [arm] returns, without a Keystore. */
     @VisibleForTesting
@@ -133,24 +248,64 @@ object UnlockProof {
         Armed(BiometricPrompt.CryptoObject(signature), challenge, publicKey)
 
     private fun armWithKeystore(app: Context): Armed? {
-        if (off) return null
+        // Left off before a passphrase was set: with one standing in, proof is never left off.
+        if (off && passphraseInstead(app)) {
+            off = false
+            failures = 0
+        }
+        if (off) {
+            if (sinceBoot() - offAt < OFF_RETRY_MS) {
+                // Recorded when it was left off; again here in case that record couldn't be made then.
+                unprovedWithoutPassphrase(app)
+                return null
+            }
+            // An hour on: whatever stopped the hardware signing may have passed. Tried again, with
+            // the same two failures allowed before it is left off for another hour.
+            off = false
+            failures = 0
+            DiagnosticLog.log("Proof from the phone's hardware is asked for again")
+        }
         val k = keys ?: run {
-            // Not loaded yet in this process: loaded (and made, if need be) off the main thread,
-            // for the next prompt. This one runs as prompts always have.
+            // Not loaded yet in this process: loaded (and made, if need be) off the main thread.
+            // Loading takes a few hundredths of a second, so this prompt waits that long for it
+            // rather than run unproved; making a new key can take longer, and then it does.
             prepareSoon(app)
-            return null
+            runCatching { loading?.get(LOAD_WAIT_MS, TimeUnit.MILLISECONDS) }
+            keys ?: run {
+                // Still not there (a new key being made takes longer): said, so a prompt that ran
+                // without proof can be told from one that had it.
+                // Not where the passphrase is asked for instead: no prompt runs unproved there.
+                if (!passphraseInstead(app)) {
+                    if (!saidNotReady && !saidUnavailable) {
+                        saidNotReady = true
+                        DiagnosticLog.log("The key that proves a match isn't ready yet: this prompt runs without that proof")
+                    }
+                    // Said in security activity as the prompt runs (once per outage: [unproved]),
+                    // whatever the reason there is no key. Not where there is no Keystore at all
+                    // (BioKey's tests): there is nothing a phone's owner could be told.
+                    if (Security.getProvider("AndroidKeyStore") != null) unproved(app)
+                }
+                return null
+            }
         }
         val signature = try {
-            Signature.getInstance(SIGNATURE).apply { initSign(k.private) }
+            signer(k.private)
         } catch (_: KeyPermanentlyInvalidatedException) {
             // The screen lock was removed since: Android destroyed the key. A new one next time.
+            // Said, so a prompt that ran without proof can be told from one that had it.
+            DiagnosticLog.log(
+                if (passphraseInstead(app)) "The key that proves a match was destroyed (the screen lock was removed since): a new key is made"
+                else "The key that proves a match was destroyed (the screen lock was removed since): this prompt runs without that proof, and a new key is made"
+            )
             keys = null
             worker.execute { runCatching { load(app, makeIfMissing = true, replace = true) } }
+            unprovedWithoutPassphrase(app)
             return null
         } catch (e: Exception) {
             // Loaded afresh for the next prompt, in case it is the copy held here that has gone stale.
             keys = null
             unavailable("it couldn't be used (${e.javaClass.simpleName})")
+            unprovedWithoutPassphrase(app)
             return null
         }
         return Armed(BiometricPrompt.CryptoObject(signature), ByteArray(CHALLENGE_BYTES).also(random::nextBytes), k.public)
@@ -188,14 +343,20 @@ object UnlockProof {
             }
         } catch (e: Exception) {
             // No screen lock (Android refuses to make such a key without one), or the Keystore failing.
+            // Every phone has a Keystore; where there is none at all (BioKey's tests), there is
+            // nothing a phone's owner could be told.
             unavailable("it couldn't be made (${e.javaClass.simpleName})")
         }
     }
 
+    /**
+     * Logged, once until a key loads. Security activity is written as a prompt runs without proof
+     * ([armWithKeystore]), not here: this can be a background attempt with no prompt behind it.
+     */
     private fun unavailable(why: String) {
         if (saidUnavailable) return
         saidUnavailable = true
-        DiagnosticLog.log("Unlocking without proof from the phone's hardware: $why")
+        DiagnosticLog.log("No proof from the phone's hardware can be asked for: $why")
     }
 
     /**

@@ -58,15 +58,19 @@ class OldBuildLeftoversTest {
 
     @Test
     fun keysThatCouldntBeRemovedAreTriedAgainNextStart() {
+        // BioKey's own start-up clears too, on a thread of its own, and may run at any point here:
+        // the Keystore fails before there is anything to clear, and what's checked afterwards is
+        // how things end up, whichever of the two calls did the clearing.
+        OldBuildLeftovers.deleteKeys = { error("Keystore failing") }
         folder().mkdirs()
         File(folder(), "policy.bin").writeBytes(byteArrayOf(1))
-        OldBuildLeftovers.deleteKeys = { error("Keystore failing") }
         assertTrue(OldBuildLeftovers.clear(context))
         // The folder is what says there is still something to clear.
         assertTrue(folder().exists())
-        OldBuildLeftovers.deleteKeys = { deleted += it }
-        assertTrue(OldBuildLeftovers.clear(context))
+        OldBuildLeftovers.deleteKeys = { synchronized(deleted) { deleted += it } }
+        OldBuildLeftovers.clear(context)
         assertFalse(folder().exists())
+        assertTrue("the keys were asked for again", synchronized(deleted) { deleted.isNotEmpty() })
     }
 
     @Test

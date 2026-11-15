@@ -37,6 +37,29 @@ object UnlockMethods {
     /** [promptMessage], or [fallback] (BioKey's own, which names every method) without one. */
     fun howLockedAppsOpen(context: Context, fallback: String): String = promptMessage(context) ?: fallback
 
+    /**
+     * What a locked app asks for as BioKey is set right now, as the words that finish a sentence:
+     * "your face, fingerprint or screen lock"; under "Face or fingerprint only", "your face or
+     * fingerprint", with "or your passphrase" where one is set; and "your passphrase" alone where
+     * that is all that can be used. For BioKey's own sentences ("Opening it asks for …"), so that
+     * none of them names a way in that would be refused.
+     */
+    fun asksFor(context: Context): String = context.getString(asksForRes(context))
+
+    @StringRes
+    fun asksForRes(context: Context): Int {
+        val only = runCatching { SecurityVault.getInstance(context).isBiometricOnly() }.getOrDefault(false)
+        val passphrase = only && runCatching { OwnerPassphrase.isSet(context) }.getOrDefault(false)
+        val usable = SecurityEngine.hasStrongBiometric(context)
+        return when {
+            passphrase && usable -> R.string.unlock_asks_biometric_or_passphrase
+            passphrase -> R.string.unlock_asks_passphrase
+            // With none that can be used and no passphrase, the screen lock is let in (and that is recorded).
+            only && usable -> R.string.unlock_asks_biometric
+            else -> R.string.unlock_asks_any
+        }
+    }
+
     /** Whether the phone has a strong sensor, no strong face or fingerprint set up on it, and a screen lock to add one under. */
     @VisibleForTesting
     internal var strongBiometricMissing: (Context) -> Boolean = { context ->

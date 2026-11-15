@@ -1,14 +1,15 @@
 name: Bug report
-description: Something in BioKey doesn't work as it should.
+description: Something in BioKey doesn’t work as it should.
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
         Thanks for reporting this. A security problem (a way to open a locked app without
-        authenticating, say) shouldn't be reported here: see SECURITY.md and email it instead.
+        your face, fingerprint, screen lock or passphrase, say) shouldn’t be reported here:
+        see SECURITY.md and email it instead.
 
-        This issue is public. Leave out anything you'd rather keep private.
+        This issue is public. Leave out anything you’d rather keep private.
 
   - type: textarea
     id: what-happened
@@ -49,8 +50,8 @@ body:
     id: biokey-version
     attributes:
       label: BioKey version
-      description: In Android's Settings > Apps > BioKey, at the bottom of the page.
-      placeholder: "2.0.0"
+      description: At the foot of BioKey’s settings, or in Android Settings > Apps > BioKey, at the bottom of the page.
+      placeholder: "2.0.1"
     validations:
       required: true
 
@@ -58,9 +59,9 @@ body:
     id: engine
     attributes:
       label: How BioKey was working
-      description: BioKey's main screen says "Compatibility mode" when it's using that.
+      description: In compatibility mode, BioKey’s settings show “On · compatibility mode” under Protection.
       options:
-        - Accessibility service
+        - Accessibility service (listed as “BioKey” in Android’s Accessibility settings)
         - Compatibility mode (usage access and display over other apps)
         - Not sure
     validations:
@@ -82,12 +83,13 @@ body:
     attributes:
       label: Diagnostic log (optional)
       description: |
-        In BioKey's settings, View diagnostic log > Share. It lists your locked apps by package
-        name; remove any lines you'd rather not post.
+        In BioKey’s settings, open View diagnostic log and tap the share icon (Share the
+        diagnostic log). It lists your locked apps by package name (the ID Android knows each
+        app by, such as com.example.bank); remove any lines you’d rather not post.
       render: text
 
   - type: textarea
     id: more
     attributes:
       label: Anything else
-      description: Screenshots or recordings (BioKey's own screens can't be captured), other app locks or accessibility services on the phone, split screen or a foldable, Advanced Protection on.
+      description: Screenshots or recordings (BioKey’s own screens can’t be captured), other app locks or accessibility services on the phone, split screen or a foldable, Advanced Protection on.

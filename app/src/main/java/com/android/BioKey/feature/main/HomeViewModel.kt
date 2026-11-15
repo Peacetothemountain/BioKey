@@ -46,7 +46,9 @@ internal data class HomeState(
      */
     val canAddBiometric: Boolean = false,
     /** That card put away ("No thanks"); back once the screen lock is removed ([ScreenLockWatch]). Null until read. */
-    val addBiometricDismissed: Boolean? = null
+    val addBiometricDismissed: Boolean? = null,
+    /** How many apps auto-sort locked as home first opened after setup: its card, until seen ([HomeViewModel.autoSortPassed]). */
+    val autoSortLocked: Int = 0
 )
 
 /** What Review opens with: whether the owner is proven, and until when a face or fingerprint change is held. */
@@ -71,7 +73,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             hasStrongBiometric = SecurityEngine.lastKnownEnrolledStrongBiometric() ?: false,
             alertsMuted = lastAlertsMuted ?: false,
             remindersStopped = lastRemindersStopped ?: false,
-            lockSettingsDismissed = lastLockSettingsDismissed
+            lockSettingsDismissed = lastLockSettingsDismissed,
+            autoSortLocked = lastAutoSortLocked ?: 0
         )
     )
     internal val state: StateFlow<HomeState> = _state.asStateFlow()
@@ -82,8 +85,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun refresh(): Job = viewModelScope.launch {
         launch(Dispatchers.IO) {
-            val dismissed = homePrefs(app).getBoolean(KEY_LOCK_SETTINGS_DISMISSED, false).also { lastLockSettingsDismissed = it }
-            _state.update { it.copy(lockSettingsDismissed = dismissed) }
+            val prefs = homePrefs(app)
+            val dismissed = prefs.getBoolean(KEY_LOCK_SETTINGS_DISMISSED, false).also { lastLockSettingsDismissed = it }
+            val autoSorted = prefs.getInt(KEY_AUTO_SORT_NOTE, 0).also { lastAutoSortLocked = it }
+            _state.update { it.copy(lockSettingsDismissed = dismissed, autoSortLocked = autoSorted) }
             val stopped = ProtectionAlerts.remindersStopped(app).also { lastRemindersStopped = it }
             _state.update { it.copy(remindersStopped = stopped) }
         }
@@ -140,6 +145,36 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         // Written in the background by SharedPreferences itself: nothing to cancel if home goes.
         homePrefs(app).edit { putBoolean(KEY_LOCK_SETTINGS_DISMISSED, true) }
     }
+
+    /**
+     * Auto-sort's pass over the whole list, as home opens, locked [locked] apps. The first pass
+     * after setup ([markAutoSortNotePending]) is told on home, once; any other changes nothing.
+     */
+    fun autoSortPassed(locked: Int) {
+        if (!autoSortNotePending(app)) return
+        val count = locked.coerceAtLeast(0)
+        lastAutoSortLocked = count
+        _state.update { it.copy(autoSortLocked = count) }
+        homePrefs(app).edit {
+            remove(KEY_AUTO_SORT_NOTE_PENDING)
+            if (count > 0) putInt(KEY_AUTO_SORT_NOTE, count) else remove(KEY_AUTO_SORT_NOTE)
+        }
+    }
+
+    /** The auto-sort card put away: only by "Got it" (leaving home keeps it). Never back. */
+    fun dismissAutoSortNote() {
+        lastAutoSortLocked = 0
+        _state.update { it.copy(autoSortLocked = 0) }
+        homePrefs(app).edit { remove(KEY_AUTO_SORT_NOTE) }
+    }
+
+    /**
+     * The calm offer on home now ([chooseOffer]): it keeps its place until answered or put away.
+     * Kept for the process, so coming back to home (or a rotation) doesn't swap it for another.
+     */
+    internal var offerShowing: HomeOffer?
+        get() = lastOfferShowing
+        set(value) { lastOfferShowing = value }
 
     // ---- Review ------------------------------------------------------------------------------
 
@@ -242,6 +277,25 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 /** The home screen's own small memory: cards the owner put away. */
 internal fun homePrefs(context: Context) = context.getSharedPreferences("biokey_home", Context.MODE_PRIVATE)
 internal const val KEY_LOCK_SETTINGS_DISMISSED = "lock_settings_dismissed"
+/** Setup was shown: home's first auto-sort pass after it is told ([HomeViewModel.autoSortPassed]). */
+internal const val KEY_AUTO_SORT_NOTE_PENDING = "auto_sort_note_pending"
+/** How many apps that pass locked, while its card is still to be seen. */
+internal const val KEY_AUTO_SORT_NOTE = "auto_sort_note"
+@Volatile internal var lastAutoSortLocked: Int? = null
+/** [HomeViewModel.offerShowing], for the process. */
+@Volatile internal var lastOfferShowing: HomeOffer? = null
+
+/**
+ * Setup is showing (first run, or after BioKey's storage was cleared, which empties these
+ * preferences too): the next auto-sort pass on home is the one setup said would come.
+ */
+internal fun markAutoSortNotePending(context: Context) {
+    val prefs = homePrefs(context)
+    if (!prefs.getBoolean(KEY_AUTO_SORT_NOTE_PENDING, false)) prefs.edit { putBoolean(KEY_AUTO_SORT_NOTE_PENDING, true) }
+}
+
+internal fun autoSortNotePending(context: Context) = homePrefs(context).getBoolean(KEY_AUTO_SORT_NOTE_PENDING, false)
+
 /** [KEY_LOCK_SETTINGS_DISMISSED] as last read in this process: home's first frame, before it reads again. */
 @Volatile internal var lastLockSettingsDismissed: Boolean? = null
 /** Whether BioKey's alert channels were muted, and its reminders stopped, as last read: home's first frame. */

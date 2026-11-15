@@ -5,7 +5,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,6 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -24,8 +25,15 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FolderOff
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.ScreenLockPortrait
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
@@ -35,19 +43,18 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Photo
-import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Work
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
@@ -65,22 +72,28 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -103,24 +116,44 @@ import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.SectionHeader
 import com.android.BioKey.ui.theme.scaledWithText
+import com.android.BioKey.ui.theme.BioKeySheet
+import com.android.BioKey.ui.theme.DialogGap
+import com.android.BioKey.ui.theme.DialogSpacing
+import com.android.BioKey.ui.theme.KeyboardSafeDialog
+import com.android.BioKey.ui.theme.keepInViewWhileFocused
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** A profile's icon: [key] is what's saved, [label] what TalkBack reads in the icon picker. */
 internal class ProfileIcon(val key: String, val vector: ImageVector, @param:StringRes val label: Int)
 
 internal val PROFILE_ICONS: List<ProfileIcon> = listOf(
-    ProfileIcon("shield", Icons.Default.Shield, R.string.profile_icon_shield),
+    // Saved as "shield" (it once was one): a person now, so no profile wears the shield that says
+    // protection is on. Personal's icon.
+    ProfileIcon("shield", Icons.Default.Person, R.string.profile_icon_shield),
     ProfileIcon("finance", Icons.Default.AccountBalance, R.string.profile_icon_bank),
     ProfileIcon("social", Icons.AutoMirrored.Filled.Chat, R.string.profile_icon_chat),
     ProfileIcon("work", Icons.Default.Work, R.string.profile_icon_briefcase),
     ProfileIcon("privacy", Icons.Default.VisibilityOff, R.string.profile_icon_hidden),
     ProfileIcon("photos", Icons.Default.Photo, R.string.profile_icon_photo),
     ProfileIcon("health", Icons.Default.Favorite, R.string.profile_icon_heart),
-    ProfileIcon("lock", Icons.Default.Lock, R.string.profile_icon_lock)
+    ProfileIcon("lock", Icons.Default.Lock, R.string.profile_icon_lock),
+    // A new profile's: a plain folder of apps, saying nothing about them.
+    ProfileIcon("folder", Icons.Default.Folder, R.string.profile_icon_folder)
 )
 
+/**
+ * What a new profile starts with: one no built-in profile wears (Personal, Finance, Social and
+ * Work have theirs), and neutral: a folder, not the crossed-out eye, which reads as hidden.
+ */
+internal const val NEW_PROFILE_ICON = "folder"
+
+/** "No profile"'s icon among the profiles: no folder, never the lock (that's "Lock app"'s). Not in the picker. */
+internal const val NO_PROFILE_ICON = "none"
+
 internal fun profileIcon(key: String): ImageVector =
-    PROFILE_ICONS.firstOrNull { it.key == key }?.vector ?: Icons.Default.Shield
+    if (key == NO_PROFILE_ICON) Icons.Default.FolderOff
+    else PROFILE_ICONS.firstOrNull { it.key == key }?.vector ?: Icons.Default.Person
 
 /** A delay's short name ("After 5 minutes"), from the app's strings. */
 @get:StringRes
@@ -150,7 +183,8 @@ internal val LockTimeoutMode.relockPhraseRes: Int
 private val LockTimeoutMode.explanation: Int?
     get() = when (this) {
         LockTimeoutMode.IMMEDIATE -> R.string.profile_relock_immediately_explanation
-        LockTimeoutMode.ON_SCREEN_OFF -> R.string.profile_relock_screen_off_explanation
+        // What the title ("When the phone locks") doesn't already say.
+        LockTimeoutMode.ON_SCREEN_OFF -> R.string.profile_relock_screen_off_detail
         else -> null
     }
 
@@ -217,6 +251,54 @@ private fun SheetTitle(title: String, subtitle: String? = null, action: @Composa
     }
 }
 
+/** The most characters a profile's name may have: it has to fit a chip and the profile's card. */
+internal const val PROFILE_NAME_MAX = 24
+
+/** The counter under the name field shows from this many characters on: quiet until it matters. */
+internal const val PROFILE_NAME_COUNT_FROM = PROFILE_NAME_MAX - 6
+
+/**
+ * What the name field holds after an edit from [old] to [new]. Within [PROFILE_NAME_MAX] it is
+ * taken as it is. Longer, typed into a name already full, the keystroke is refused (so typing in
+ * the middle never pushes letters off the end); anything else (a paste, mostly) is cut to fit,
+ * never through the middle of a character made of two.
+ */
+internal fun fitProfileName(old: String, new: String): String {
+    if (new.length <= PROFILE_NAME_MAX) return new
+    if (old.length >= PROFILE_NAME_MAX) return old
+    var end = PROFILE_NAME_MAX
+    if (new[end - 1].isHighSurrogate()) end--
+    return new.substring(0, end)
+}
+
+/** The red-letter button of a dialog that deletes or removes: dims like any other when it can't be used. */
+@Composable
+internal fun DestructiveTextButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    contentPadding: PaddingValues = ButtonDefaults.TextButtonContentPadding
+) {
+    TextButton(
+        onClick = onClick,
+        enabled = enabled,
+        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+        contentPadding = contentPadding,
+        modifier = modifier
+    ) { Text(text) }
+}
+
+/**
+ * Whether the profile dialog's Save (Create) can be pressed: a name that isn't blank and, for an
+ * [existing] profile, something changed (its name, once trimmed, or its icon).
+ */
+internal fun profileDetailsCanSave(existing: SecurityProfile?, name: String, iconKey: String): Boolean {
+    val trimmed = name.trim()
+    if (trimmed.isEmpty()) return false
+    return existing == null || trimmed != existing.name || iconKey != existing.iconKey
+}
+
 /** Create a profile, or rename / re-icon / delete an existing one. */
 @Composable
 internal fun ProfileDetailsDialog(
@@ -226,57 +308,97 @@ internal fun ProfileDetailsDialog(
     onDelete: (() -> Unit)?
 ) {
     var name by rememberSaveable { mutableStateOf(existing?.name.orEmpty()) }
-    var iconKey by rememberSaveable { mutableStateOf(existing?.iconKey ?: "shield") }
+    var iconKey by rememberSaveable { mutableStateOf(existing?.iconKey ?: NEW_PROFILE_ICON) }
     var confirmDelete by remember { mutableStateOf(false) }
+    val nameFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val canSave = profileDetailsCanSave(existing, name, iconKey)
+
+    // A new profile starts with the cursor in its name, the keyboard up; an existing one opens as
+    // it is, its icon as likely to be what's changed as its name.
+    LaunchedEffect(Unit) {
+        if (existing == null) {
+            runCatching { nameFocus.requestFocus() }
+            keyboard?.show()
+        }
+    }
 
     if (confirmDelete && existing != null && onDelete != null) {
-        AlertDialog(
+        KeyboardSafeDialog(
             onDismissRequest = { confirmDelete = false },
             icon = { Icon(profileIcon(existing.iconKey), contentDescription = null) },
-            title = { Text(stringResource(R.string.profile_delete_title, existing.name)) },
-            text = {
-                ProtectDialogWindow()
-                Text(stringResource(R.string.profile_delete_text))
-            },
-            confirmButton = {
-                TextButton(onClick = { confirmDelete = false; onDelete() }) {
-                    Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error)
-                }
-            },
+            title = { PassphraseDialogTitle(stringResource(R.string.profile_delete_title, existing.name)) },
+            confirmButton = { DestructiveTextButton(stringResource(R.string.common_delete), onClick = { confirmDelete = false; onDelete() }) },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.prompt_cancel)) } }
-        )
+        ) {
+            // An empty profile unlocks nothing: said so, not "its apps".
+            Text(stringResource(if (existing.packages.isEmpty()) R.string.profile_delete_text_empty else R.string.profile_delete_text))
+        }
         return
     }
 
-    AlertDialog(
+    KeyboardSafeDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(profileIcon(iconKey), contentDescription = null) },
-        title = { Text(stringResource(if (existing == null) R.string.profile_new else R.string.profile_edit)) },
-        text = {
-            ProtectDialogWindow()
-            Column(modifier = Modifier.rejectObscuredTouches()) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = {
-                        // Typing on the soft keyboard never passes through BioKey's own touch
-                        // handling, so it's counted here: a long edit doesn't hit the idle lock.
-                        LockStateTracker.onOwnAppInteraction()
-                        if (it.length <= 24) name = it
-                    },
-                    label = { Text(stringResource(R.string.profile_name)) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(20.dp))
-                Text(stringResource(R.string.profile_icon), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(12.dp))
-                FlowRow(
-                    modifier = Modifier.selectableGroup(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    PROFILE_ICONS.forEach { choice ->
+        title = { PassphraseDialogTitle(stringResource(if (existing == null) R.string.profile_new else R.string.profile_edit)) },
+        confirmButton = {
+            TextButton(onClick = { if (canSave) onSave(name.trim(), iconKey) }, enabled = canSave) {
+                Text(stringResource(if (existing == null) R.string.profile_create else R.string.profile_save))
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.prompt_cancel)) } },
+        // With the dialog's buttons, at their start: as "Remove passphrase" is in its dialog.
+        startButton = if (existing != null && onDelete != null) {
+            { DestructiveTextButton(stringResource(R.string.profile_delete_profile), onClick = { confirmDelete = true }) }
+        } else null
+    ) {
+        OutlinedTextField(
+            value = name,
+            onValueChange = {
+                // Typing on the soft keyboard never passes through BioKey's own touch
+                // handling, so it's counted here: a long edit doesn't hit the idle lock.
+                LockStateTracker.onOwnAppInteraction()
+                name = fitProfileName(name, it)
+            },
+            label = { Text(stringResource(R.string.profile_name)) },
+            // Always one line high, empty or not, so the counter coming never moves what's below.
+            supportingText = {
+                val count = name.length
+                if (count >= PROFILE_NAME_COUNT_FROM) {
+                    val spoken = pluralStringResource(R.plurals.profile_name_count_description, PROFILE_NAME_MAX, count, PROFILE_NAME_MAX)
+                    Text(
+                        stringResource(R.string.profile_name_count, count, PROFILE_NAME_MAX),
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.fillMaxWidth().semantics { contentDescription = spoken }
+                    )
+                } else {
+                    Text("")
+                }
+            },
+            singleLine = true,
+            // A pill, as every other field in the app (the passphrase's, the backup's, search).
+            shape = CircleShape,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Done),
+            // Done saves where Save would; otherwise it only puts the keyboard away.
+            keyboardActions = KeyboardActions(onDone = { if (canSave) onSave(name.trim(), iconKey) else keyboard?.hide() }),
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(nameFocus)
+                .keepInViewWhileFocused()
+        )
+        DialogGap(DialogSpacing.Part)
+        Text(stringResource(R.string.profile_icon), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        DialogGap(DialogSpacing.Label)
+        // Three even rows of three, centred: the same space on either side however wide the dialog.
+        // (Rows of their own, not a flowing row: three 48-dp circles always fit a dialog's width.)
+        Column(
+            modifier = Modifier.fillMaxWidth().selectableGroup(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            PROFILE_ICONS.chunked(3).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    row.forEach { choice ->
                         val selected = choice.key == iconKey
                         // A radio button to TalkBack: it hears the icon's name and which one is chosen.
                         Surface(
@@ -298,21 +420,9 @@ internal fun ProfileDetailsDialog(
                         }
                     }
                 }
-                if (existing != null && onDelete != null) {
-                    Spacer(Modifier.height(16.dp))
-                    TextButton(onClick = { confirmDelete = true }, contentPadding = PaddingValues(horizontal = 0.dp)) {
-                        Text(stringResource(R.string.profile_delete_profile), color = MaterialTheme.colorScheme.error)
-                    }
-                }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = { onSave(name.trim(), iconKey) }, enabled = name.isNotBlank()) {
-                Text(stringResource(if (existing == null) R.string.profile_create else R.string.profile_save))
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.prompt_cancel)) } }
-    )
+        }
+    }
 }
 
 /**
@@ -328,11 +438,13 @@ internal fun RelockSheet(
     onDismiss: () -> Unit,
     settingsDefault: LockTimeoutMode? = null
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // Open all the way at once: every choice in sight, none under the navigation bar.
+    BioKeySheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         ProtectDialogWindow()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .rejectObscuredTouches()
                 .padding(bottom = 24.dp)
         ) {
@@ -345,11 +457,14 @@ internal fun RelockSheet(
                 GroupRow(
                     index = i,
                     count = modes.size,
+                    // The default is called what BioKey's settings call it: "Default re-lock delay".
                     title = stringResource(mode?.shortLabelRes ?: R.string.profile_same_as_settings),
+                    // Each choice with an icon, as the pause sheet's are.
+                    icon = relockIcon(mode),
                     subtitle = if (mode != null) mode.explanation?.let { stringResource(it) } else stringResource(
                         R.string.profile_follows_default,
                         // settingsDefault is set whenever this row (mode null) is offered.
-                        settingsDefault?.let { stringResource(it.shortLabelRes).replaceFirstChar { c -> c.lowercase() } }.toString()
+                        settingsDefault?.let { stringResource(it.shortLabelRes) }.toString()
                     ),
                     interaction = Modifier.selectable(selected = mode == current, role = Role.RadioButton) { onSelect(mode) }
                 ) {
@@ -358,6 +473,15 @@ internal fun RelockSheet(
             }
         }
     }
+}
+
+/** A re-lock choice's icon: at once, after a while, with the screen, or as Settings has it (null). */
+internal fun relockIcon(mode: LockTimeoutMode?): ImageVector = when (mode) {
+    null -> Icons.Default.Settings
+    LockTimeoutMode.IMMEDIATE -> Icons.Default.Lock
+    LockTimeoutMode.ON_SCREEN_OFF -> Icons.Default.ScreenLockPortrait
+    LockTimeoutMode.GRACE_30_SECONDS, LockTimeoutMode.GRACE_1_MINUTE -> Icons.Default.Timer
+    LockTimeoutMode.GRACE_5_MINUTES, LockTimeoutMode.GRACE_15_MINUTES -> Icons.Default.Schedule
 }
 
 /**
@@ -385,7 +509,12 @@ internal fun AppOptionsSheet(
 ) {
     // Open all the way at once: dragged open from half-way, a sheet about as tall as the screen
     // (an app in no profile) can stay mid-settle, its rows' taps taken to stop it.
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    // How a locked app opens, as BioKey is set now: read once as the sheet opens.
+    val opensWith = remember { LockExplainer.opensWith(context) }
+    BioKeySheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         ProtectDialogWindow()
         // The lock switch's "unlocked · Undo" comes up while the sheet stays open: shown here,
         // not behind the sheet's scrim.
@@ -397,17 +526,14 @@ internal fun AppOptionsSheet(
                 contentPadding = PaddingValues(bottom = 28.dp)
             ) {
                 item {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
+                    // At the start, as every sheet's title is.
+                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 28.dp)) {
                         AppIcon(app, 64.dp)
                         Spacer(Modifier.height(12.dp))
                         // The app the sheet is about: its whole name, wrapped where it's long or the text large.
                         Text(
                             app.label,
                             style = MaterialTheme.typography.headlineSmall,
-                            textAlign = TextAlign.Center,
                             maxLines = 3,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -439,7 +565,22 @@ internal fun AppOptionsSheet(
                                 title = stringResource(R.string.explain_row_title),
                                 subtitle = stringResource(R.string.explain_row_text),
                                 icon = Icons.Default.Info,
-                                onClick = explain
+                                // In place of this sheet, not over it: one sheet, one scrim. This
+                                // one slides away first, then the explanation comes up.
+                                onClick = {
+                                    scope.launch { sheetState.hide() }.invokeOnCompletion {
+                                        explain()
+                                        onDismiss()
+                                    }
+                                },
+                                // It opens a sheet, as the rows with a chevron in BioKey's settings open theirs.
+                                trailing = {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             )
                             return@Group
                         }
@@ -451,7 +592,8 @@ internal fun AppOptionsSheet(
                             subtitle = when {
                                 isHomeScreen -> stringResource(R.string.profile_lock_app_home_screen)
                                 offProfile != null -> stringResource(R.string.profile_lock_app_profile_off, offProfile.name)
-                                locked -> stringResource(R.string.profile_lock_app_locked)
+                                // What it asks for as BioKey is set: never a way in that's refused.
+                                locked -> opensWith
                                 else -> stringResource(R.string.profile_lock_app_unlocked)
                             },
                             icon = if (locked) Icons.Default.Lock else Icons.Default.LockOpen,
@@ -462,46 +604,91 @@ internal fun AppOptionsSheet(
                     }
                     if (!isHomeScreen || currentProfile != null) SectionHeader(stringResource(R.string.profile_section))
                 }
-                if (currentProfile != null) {
-                    item(key = "remove") {
-                        Group(count = 1) {
-                            GroupRow(
+                // One control for the app's profile: "No profile" is how it leaves one.
+                if (!isHomeScreen) {
+                    profileChoices(profiles, currentProfile, isLocked, defaultTimeout, onMoveToProfile, onRemoveFromProfile, onNewProfile)
+                } else if (currentProfile != null) {
+                    // A home screen can't join a profile, only leave the one it's in.
+                    item(key = "leave") {
+                        Column {
+                            ProfileChoiceRow(
                                 index = 0,
-                                count = 1,
-                                title = stringResource(R.string.profile_remove_from, currentProfile.name),
-                                subtitle = stringResource(if (isLocked) R.string.profile_remove_stays_locked else R.string.profile_remove_stays_unlocked),
-                                icon = Icons.Default.RemoveCircleOutline,
+                                count = 2,
+                                title = stringResource(R.string.profile_no_profile),
+                                subtitle = noProfileSubtitle(currentProfile, isLocked, defaultTimeout),
+                                iconKey = NO_PROFILE_ICON,
+                                selected = false,
                                 onClick = onRemoveFromProfile
                             )
+                            ProfileChoiceRow(
+                                index = 1,
+                                count = 2,
+                                title = currentProfile.name,
+                                subtitle = profileSubtitle(currentProfile, defaultTimeout),
+                                iconKey = currentProfile.iconKey,
+                                selected = true,
+                                onClick = {}
+                            )
                         }
-                        Spacer(Modifier.height(16.dp))
                     }
                 }
-                if (!isHomeScreen) profileChoices(profiles, currentProfile, defaultTimeout, onMoveToProfile, onNewProfile)
             }
             BioKeyMessageHost(Modifier.align(Alignment.BottomCenter))
         }
     }
 }
 
-/** The app's profile: none, one of [profiles], or a new one. */
+/**
+ * "No profile"'s second line. In none: the delay it then follows ("Default re-lock delay ·
+ * after 5 minutes"). In [currentProfile]: what leaving it does to the app's lock.
+ */
+@Composable
+private fun noProfileSubtitle(currentProfile: SecurityProfile?, isLocked: Boolean, defaultTimeout: LockTimeoutMode): String = when {
+    currentProfile == null -> stringResource(
+        R.string.profile_no_profile_default,
+        stringResource(defaultTimeout.shortLabelRes).replaceFirstChar { it.lowercase() }
+    )
+    isLocked -> stringResource(R.string.profile_remove_stays_locked)
+    else -> stringResource(R.string.profile_remove_stays_unlocked)
+}
+
+/**
+ * A profile's second line: that it's off, or a re-lock delay of its own. Nothing where it follows
+ * the default: the same words under every profile would say nothing.
+ */
+@Composable
+private fun profileSubtitle(profile: SecurityProfile, defaultTimeout: LockTimeoutMode): String? {
+    val own = profile.timeoutMode?.takeIf { it != defaultTimeout }
+    return when {
+        !profile.enabled -> stringResource(R.string.profile_off)
+        own != null -> stringResource(own.relockPhraseRes)
+        else -> null
+    }
+}
+
+/**
+ * The app's profile: none, one of [profiles], or a new one. Choosing "No profile" takes it out of
+ * the one it's in ([onRemoveFromProfile], with its Undo); chosen already, it does nothing.
+ */
 private fun LazyListScope.profileChoices(
     profiles: List<SecurityProfile>,
     currentProfile: SecurityProfile?,
+    isLocked: Boolean,
     defaultTimeout: LockTimeoutMode,
     onMoveToProfile: (String?) -> Unit,
+    onRemoveFromProfile: () -> Unit,
     onNewProfile: () -> Unit
 ) {
     val count = profiles.size + 2
-    item {
+    item(key = "none") {
         ProfileChoiceRow(
             index = 0,
             count = count,
             title = stringResource(R.string.profile_no_profile),
-            subtitle = stringResource(R.string.profile_default_suffix, stringResource(defaultTimeout.relockPhraseRes)),
-            iconKey = "lock",
+            subtitle = noProfileSubtitle(currentProfile, isLocked, defaultTimeout),
+            iconKey = NO_PROFILE_ICON,
             selected = currentProfile == null,
-            onClick = { onMoveToProfile(null) }
+            onClick = { if (currentProfile != null) onRemoveFromProfile() }
         )
     }
     itemsIndexed(profiles, key = { _, p -> p.id }) { i, profile ->
@@ -509,7 +696,7 @@ private fun LazyListScope.profileChoices(
             index = i + 1,
             count = count,
             title = profile.name,
-            subtitle = stringResource(if (profile.enabled) (profile.timeoutMode ?: defaultTimeout).relockPhraseRes else R.string.profile_off),
+            subtitle = profileSubtitle(profile, defaultTimeout),
             iconKey = profile.iconKey,
             selected = currentProfile?.id == profile.id,
             onClick = { onMoveToProfile(profile.id) }
@@ -537,7 +724,7 @@ private fun LazyListScope.profileChoices(
 }
 
 @Composable
-private fun ProfileChoiceRow(index: Int, count: Int, title: String, subtitle: String, iconKey: String, selected: Boolean, onClick: () -> Unit) {
+private fun ProfileChoiceRow(index: Int, count: Int, title: String, subtitle: String?, iconKey: String, selected: Boolean, onClick: () -> Unit) {
     Box(Modifier.padding(horizontal = GroupInset).padding(top = if (index == 0) 0.dp else GroupGap)) {
         GroupRow(
             index = index,
@@ -606,7 +793,9 @@ internal fun AddAppsScreen(
                         Button(
                             onClick = { onAdd(chosen) },
                             enabled = chosen.isNotEmpty(),
-                            modifier = Modifier.padding(end = 8.dp)
+                            // Its end on the page's margin, as the list's and the search's: the
+                            // bar's actions already stand 4 dp in from the edge.
+                            modifier = Modifier.padding(end = GroupInset - 4.dp)
                         ) {
                             Text(if (chosen.isEmpty()) stringResource(R.string.profile_add) else stringResource(R.string.profile_add_count, chosen.size))
                         }
@@ -642,7 +831,8 @@ internal fun AddAppsScreen(
                             index = i,
                             count = candidates.size,
                             title = app.label,
-                            subtitle = if (app.packageName in lockedApps) stringResource(R.string.profile_locked) else stringResource(app.category.label),
+                            // Only what differs is said: most aren't locked yet, and none is in a profile.
+                            subtitle = if (app.packageName in lockedApps) stringResource(R.string.profile_locked) else null,
                             leading = { AppIcon(app) },
                             interaction = Modifier.toggleable(value = checked, role = Role.Checkbox) {
                                 selected = if (it) selected + app.packageName else selected - app.packageName

@@ -232,28 +232,35 @@ object ForegroundRules {
     }
 
     /**
-     * Home-screen apps. Any app can declare a home screen (other launchers, kids modes): one the
-     * user locked counts as an app like any other, unless it is the home screen in use or the
-     * system's own (which also hosts Recents), so locking one can never lock the user out of Home.
+     * Home-screen apps. Any app can declare a home screen (other launchers, kids modes): one
+     * installed on the phone counts as an app like any other, unless it is the home screen in
+     * use; the system's own (which also hosts Recents) always counts. So locking the home screen
+     * in use can never lock the user out of Home.
      */
     fun isLauncher(
         context: Context,
         pkg: String,
-        isLocked: (String) -> Boolean = { SecurityVault.getInstance(context).isAppLocked(it) }
+        @Suppress("UNUSED_PARAMETER") isLocked: (String) -> Boolean = { SecurityVault.getInstance(context).isAppLocked(it) }
     ): Boolean {
-        if (pkg in KNOWN_LAUNCHERS) return true
-        val isSystem = homes.get(context).apps[pkg] ?: return false
-        if (isSystem || !isLocked(pkg)) return true
-        // A locked one stays uncovered only while it is the home screen in use, and switching home
-        // screens sends no broadcast: for these, the list is read again within seconds (else a
-        // home screen just chosen would be covered every time Home is pressed, for up to 30 s).
+        val known = homes.get(context)
+        // Not among the apps that answer Home on this phone. A launcher known by name still counts
+        // while that list couldn't be read at all (nothing on it), so Home is never taken for an app.
+        val isSystem = known.apps[pkg] ?: return pkg in KNOWN_LAUNCHERS && known.apps.isEmpty()
+        // Part of the phone: a home screen (it also hosts Recents), whether or not the one in use.
+        if (isSystem) return true
+        // One installed on the phone is a home screen only while it is the one in use, whatever
+        // its name (a file installed by hand can take any launcher's) and whether or not it is
+        // locked: otherwise it is an app like any other, and can't have its taps and windows read
+        // as Home's. Switching home screens sends no broadcast: for these, the list is read again
+        // within seconds (else a home screen just chosen would be covered, or not counted, for up
+        // to 30 s).
         return pkg == homes.get(context, LOCKED_HOME_MAX_AGE_MS).default
     }
 
     /**
-     * Intents for picking or capturing photos, videos and files. Whatever handles them on this
-     * device (the system photo picker, Google Photos, a brand's gallery, file managers, cameras)
-     * is a helper: an app opens it mid-task and gets the result back. Each needs a `<queries>`
+     * Intents for picking or capturing photos, videos and files. Whichever of the phone's own apps
+     * handles them (the system photo picker, Google Photos, a brand's gallery, file manager and
+     * camera) is a helper: an app opens it mid-task and gets the result back. Each needs a `<queries>`
      * entry in the manifest, or Android hides its handlers.
      */
     internal val PICKER_INTENTS = listOf(
@@ -266,13 +273,24 @@ object ForegroundRules {
         Intent(MediaStore.ACTION_VIDEO_CAPTURE)
     )
 
-    /** Apps that pick or capture media and files on this device (read again at most every 5 min). */
+    /**
+     * The phone's own apps that pick or capture media and files (read again at most every 5 min).
+     * Only those that came with the phone: any app can declare that it picks files, and one that
+     * did so just to count as a helper would keep a locked app's session alive behind it.
+     */
     private val pickers = SystemList(5 * 60_000L, emptySet<String>()) { context ->
         val pm = context.packageManager
         PICKER_INTENTS.flatMapTo(HashSet()) { intent ->
-            pm.queryIntentActivities(intent, PackageManager.MATCH_ALL).mapNotNull { it.activityInfo?.packageName }
+            pm.queryIntentActivities(intent, PackageManager.MATCH_ALL or PackageManager.MATCH_SYSTEM_ONLY)
+                // Asked for system apps only, and checked: the answer is what decides.
+                .filter { cameWithThePhone(it.activityInfo?.applicationInfo) }
+                .mapNotNull { it.activityInfo?.packageName }
         } - context.packageName
     }
+
+    /** Part of the phone's own software (updated since or not), not something installed on it. */
+    private fun cameWithThePhone(app: android.content.pm.ApplicationInfo?): Boolean =
+        app != null && app.flags and (android.content.pm.ApplicationInfo.FLAG_SYSTEM or android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
 
     /**
      * What may open over the phone's lock screen without its app lock, as Android's own App lock
@@ -348,6 +366,7 @@ object ForegroundRules {
         pickers.reset()
         keyboards.reset()
         keyguardApps.reset()
+        sources.clear()
     }
 
     /**
@@ -390,8 +409,97 @@ object ForegroundRules {
 
     /** A helper app worth keeping the previous app's session for; [activityClass] spots custom tabs. */
     fun isHopHelper(context: Context, pkg: String, activityClass: String?): Boolean {
-        if (pkg in HOP_HELPER_PACKAGES || pkg in pickers.get(context)) return true
+        if (pkg in pickers.get(context)) return true
+        if (pkg in HOP_HELPER_PACKAGES) return isWhoItSays(context, pkg)
         val cls = activityClass.orEmpty()
-        return pkg in KNOWN_BROWSERS && (cls.contains("CustomTab", ignoreCase = true) || cls.contains("AuthTab", ignoreCase = true))
+        return pkg in KNOWN_BROWSERS && (cls.contains("CustomTab", ignoreCase = true) || cls.contains("AuthTab", ignoreCase = true)) &&
+            isWhoItSays(context, pkg)
     }
+
+    /**
+     * App stores: an app installed by one of them under a well-known name is the app of that name
+     * (a store gives each name to one developer). A file installed by hand, or over adb, can take
+     * any name that isn't in use on the phone. A store counts only as itself ([isTheStore]): its
+     * name too could be taken by a file installed by hand.
+     */
+    private val STORES = setOf(
+        "com.android.vending",
+        "com.sec.android.app.samsungapps",
+        "com.amazon.venezia",
+        "com.huawei.appmarket",
+        "com.xiaomi.mipicks",
+        "com.xiaomi.market",
+        "com.heytap.market",
+        "com.vivo.appstore"
+    ) + FDROID
+
+    /**
+     * F-Droid doesn't come with a phone: it is told by the certificate its app is signed with
+     * (SHA-256, from f-droid.org's "Release Channels and Signing Keys").
+     */
+    private val FDROID get() = setOf("org.fdroid.fdroid", "org.fdroid.basic")
+    private const val FDROID_SIGNER = "43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab"
+
+    /** The helpers and browsers known by name, and the stores: each needs a `<queries>` entry in the manifest, or Android hides it. */
+    @VisibleForTesting
+    internal val namedApps: Set<String> get() = HOP_HELPER_PACKAGES - PasswordManager.VIRTUAL_PACKAGE + KNOWN_BROWSERS + STORES
+
+    /** What [isWhoItSays] found for each package, when ([SOURCE_MAX_AGE_MS]) and for which apps installed ([BioKeyApplication.packageChangeVersion]). */
+    private val sources = java.util.concurrent.ConcurrentHashMap<String, Triple<Boolean, Long, Int>>()
+    private const val SOURCE_MAX_AGE_MS = 5 * 60_000L
+
+    /**
+     * Whether the app installed as [pkg], a helper BioKey knows by name, can be taken for the app
+     * of that name: it came with the phone or from an app store. One installed from a file could
+     * have taken the name of an authenticator or a browser that isn't on the phone, to be counted
+     * a helper and keep a locked app unlocked behind it. So could one installed only in another
+     * profile (a work profile, Private Space), where who installed it can't be asked from here:
+     * there it counts only if it is part of the phone. A name that isn't installed anywhere has
+     * nothing to distrust (and nothing that could come to the front); Google Password Manager's
+     * own screens have a name that is no app at all.
+     */
+    private fun isWhoItSays(context: Context, pkg: String): Boolean {
+        if (pkg == PasswordManager.VIRTUAL_PACKAGE) return true
+        val now = android.os.SystemClock.elapsedRealtime()
+        val apps = BioKeyApplication.packageChangeVersion.value
+        sources[pkg]?.let { (answer, at, forApps) -> if (now - at < SOURCE_MAX_AGE_MS && forApps == apps) return answer }
+        val pm = context.packageManager
+        val answer = runCatching {
+            val app = try {
+                pm.getApplicationInfo(pkg, 0)
+            } catch (_: PackageManager.NameNotFoundException) {
+                return@runCatching inAnotherProfile(context, pkg)?.let(::cameWithThePhone) ?: true
+            }
+            if (cameWithThePhone(app)) return@runCatching true
+            val source = pm.getInstallSourceInfo(pkg)
+            // Installed over adb in a store's name (`adb install -i`): the shell asked for it.
+            if (source.initiatingPackageName == SHELL) return@runCatching false
+            val installer = source.installingPackageName ?: return@runCatching false
+            installer in STORES && isTheStore(pm, installer)
+        }.getOrDefault(false)
+        sources[pkg] = Triple(answer, now, apps)
+        return answer
+    }
+
+    private const val SHELL = "com.android.shell"
+
+    /** [pkg] as installed in another of this user's profiles (a work profile, Private Space), if it is. */
+    private fun inAnotherProfile(context: Context, pkg: String): ApplicationInfo? {
+        val launcher = context.getSystemService(android.content.pm.LauncherApps::class.java) ?: return null
+        val here = android.os.Process.myUserHandle()
+        for (profile in runCatching { launcher.profiles }.getOrNull().orEmpty()) {
+            if (profile == here) continue
+            runCatching { launcher.getApplicationInfo(pkg, 0, profile) }.getOrNull()?.let { return it }
+        }
+        return null
+    }
+
+    /** Whether the app installed as [store] is that store: part of the phone's software, or F-Droid by its certificate. */
+    private fun isTheStore(pm: PackageManager, store: String): Boolean = runCatching {
+        if (cameWithThePhone(pm.getApplicationInfo(store, 0))) return@runCatching true
+        if (store !in FDROID) return@runCatching false
+        val signers = pm.getPackageInfo(store, PackageManager.GET_SIGNING_CERTIFICATES).signingInfo?.apkContentsSigners.orEmpty()
+        val sha = java.security.MessageDigest.getInstance("SHA-256")
+        signers.isNotEmpty() && signers.all { cert -> sha.digest(cert.toByteArray()).joinToString("") { "%02x".format(it) } == FDROID_SIGNER }
+    }.getOrDefault(false)
 }

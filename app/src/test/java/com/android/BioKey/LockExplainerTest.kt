@@ -10,8 +10,13 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
+import android.hardware.biometrics.BiometricManager
 import com.android.BioKey.core.data.AppCategory
+import com.android.BioKey.core.security.OwnerPassphrase
+import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 import com.android.BioKey.feature.main.AppItem
 import com.android.BioKey.feature.main.LockExplainContent
 import com.android.BioKey.feature.main.LockExplainer
@@ -66,9 +71,59 @@ class LockExplainerTest {
         LockExplainer.holdersOf = { _, _ -> emptySet() }
     }
 
+    private lateinit var asked: (Context) -> Int?
+
+    @Before
+    fun hooks() {
+        asked = SecurityEngine.canAuthenticateStrong
+        context.getSharedPreferences("biokey_owner_passphrase", Context.MODE_PRIVATE).edit().clear().commit()
+        OwnerPassphrase.resetForTests()
+        OwnerPassphrase.pepper = { bytes, _ ->
+            Mac.getInstance("HmacSHA256").run {
+                init(SecretKeySpec(ByteArray(32) { 9 }, "HmacSHA256"))
+                doFinal(bytes)
+            }
+        }
+        OwnerPassphrase.rounds = 100_000
+    }
+
     @After
     fun restore() {
         LockExplainer.defaultSmsApp = { null }
+        SecurityEngine.canAuthenticateStrong = asked
+        SecurityVault.getInstance(context).awaitPendingWrites()
+        context.getSharedPreferences("biokey_vault", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("biokey_owner_passphrase", Context.MODE_PRIVATE).edit().clear().commit()
+        SecurityVault.resetForTests()
+        OwnerPassphrase.resetForTests()
+    }
+
+    /**
+     * "What locking does" and an app's "Lock app" row say what opening it asks for as BioKey is
+     * set: never the screen lock under "Face or fingerprint only", and the passphrase where one is set.
+     */
+    @Test
+    fun howItOpensFollowsTheSettingsNotAndroidsPromptLine() {
+        val vault = SecurityVault.getInstance(context)
+        SecurityEngine.canAuthenticateStrong = { BiometricManager.BIOMETRIC_SUCCESS }
+        assertEquals("Opening it asks for your face, fingerprint or screen lock", LockExplainer.opensWith(context))
+
+        vault.setBiometricOnly(true)
+        assertEquals("Opening it asks for your face or fingerprint", LockExplainer.opensWith(context))
+
+        assertTrue(OwnerPassphrase.set(context, "lantern tide 9".toCharArray()))
+        assertEquals("Opening it asks for your face or fingerprint, or your passphrase", LockExplainer.opensWith(context))
+        // The sheet's own line is the same sentence.
+        assertEquals(LockExplainer.opensWith(context), LockExplainer.explain(context, gallery, installed).howItOpens)
+
+        // No face or fingerprint to use: the passphrase is all that opens it.
+        SecurityEngine.canAuthenticateStrong = { BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED }
+        assertEquals("Opening it asks for your passphrase", LockExplainer.opensWith(context))
+
+        // A passphrase only counts under "Face or fingerprint only": otherwise the screen lock opens it.
+        vault.setBiometricOnly(false)
+        SecurityEngine.canAuthenticateStrong = { BiometricManager.BIOMETRIC_SUCCESS }
+        assertEquals("Opening it asks for your face, fingerprint or screen lock", LockExplainer.opensWith(context))
     }
 
     @Test
@@ -133,7 +188,7 @@ class LockExplainerTest {
     @Test
     fun threeOtherAppsShowThenViewAllShowsTheRest() {
         val explanation = LockExplainer.Explanation(
-            gallery.packageName, "Opening it asks for your face, fingerprint or screen lock.",
+            gallery.packageName, "Opening it asks for your face, fingerprint or screen lock",
             hasWidgets = true, dataKind = LockExplainer.DataKind.PHOTOS, otherApps = others
         )
         var dontShow = 0
@@ -146,8 +201,10 @@ class LockExplainerTest {
         rule.onNodeWithText("Editor").performScrollTo().assertIsDisplayed()
         assertTrue(rule.onAllNodesWithTextCount("Feed") == 0)
         rule.onNodeWithText("View all 5 apps").performScrollTo().performClick()
+        // The rest are drawn once the list has grown: waited for, not assumed (the run is slow under load).
+        rule.waitUntil(5_000) { rule.onAllNodesWithTextCount("Scanner") == 1 }
         rule.onNodeWithText("Scanner").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithText("Don't show again").performScrollTo().performClick()
+        rule.onNodeWithText("Don’t show again").performScrollTo().performClick()
         assertEquals(1, dontShow)
     }
 

@@ -7,7 +7,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
-import android.text.format.DateUtils
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.edit
@@ -59,7 +58,7 @@ object ProtectionAlerts {
     fun resumeReminders(context: Context) {
         val app = context.applicationContext
         app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { remove(KEY_REMINDERS_STOPPED) }
-        DiagnosticLog.log("Reminders that app locking is off resumed by the owner")
+        DiagnosticLog.log("Reminders that protection is off resumed by the owner")
         if (!ProtectionEngine.isProtecting(app)) ProtectionCheckJob.schedule(app)
     }
 
@@ -72,7 +71,7 @@ object ProtectionAlerts {
         app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putBoolean(KEY_REMINDERS_STOPPED, true) }
         ProtectionCheckJob.cancel(app)
         NotificationManagerCompat.from(app).cancel(ID_SERVICE_STOPPED)
-        DiagnosticLog.log("Reminders that app locking is off stopped by the owner")
+        DiagnosticLog.log("Reminders that protection is off stopped by the owner")
     }
 
     fun ensureChannels(context: Context) {
@@ -273,7 +272,7 @@ object ProtectionAlerts {
         val text = if (cleared.known) {
             app.getString(
                 R.string.storage_cleared_notification_text,
-                DateUtils.formatDateTime(app, cleared.after, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_ABBREV_MONTH)
+                com.android.BioKey.ui.format.attemptTime(app, cleared.after)
             )
         } else app.getString(R.string.storage_cleared_notification_text_unknown)
         val open = PendingIntent.getActivity(

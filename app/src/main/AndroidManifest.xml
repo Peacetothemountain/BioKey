@@ -29,6 +29,83 @@
              (IntentNavigationHelper), and self-protection reads its labels ("Force stop",
              "Uninstall"...) in the phone's language. -->
         <package android:name="com.android.settings" />
+        <!-- Apps BioKey knows by name (ForegroundRules): the helpers a locked app hands over to and
+             comes back from (authenticators, messages and mail for codes, pickers, cameras, calls),
+             the browsers that show sign-in tabs, and the app stores that vouch for them. Seen, so
+             each can be checked to be what its name says (part of the phone, or from a store)
+             before it counts; one BioKey couldn't see would have to be taken on trust. -->
+        <package android:name="com.google.android.gsf" />
+        <package android:name="com.google.android.apps.authenticator2" />
+        <package android:name="com.azure.authenticator" />
+        <package android:name="com.authy.authy" />
+        <package android:name="com.yubico.yubioath" />
+        <package android:name="com.duosecurity.duomobile" />
+        <package android:name="org.fedorahosted.freeotp" />
+        <package android:name="org.liberty.android.freeotpplus" />
+        <package android:name="com.beemdevelopment.aegis" />
+        <package android:name="com.twofasapp" />
+        <package android:name="io.ente.auth" />
+        <package android:name="com.bitwarden.authenticator" />
+        <package android:name="com.x8bit.bitwarden" />
+        <package android:name="com.onepassword.android" />
+        <package android:name="com.lastpass.authenticator" />
+        <package android:name="com.callpod.android_apps.keeper" />
+        <package android:name="com.dashlane" />
+        <package android:name="com.zoho.accounts.oneauth" />
+        <package android:name="com.google.android.apps.messaging" />
+        <package android:name="com.samsung.android.messaging" />
+        <package android:name="com.google.android.gm" />
+        <package android:name="com.microsoft.office.outlook" />
+        <package android:name="ch.protonmail.android" />
+        <package android:name="com.google.android.documentsui" />
+        <package android:name="com.android.documentsui" />
+        <package android:name="com.google.android.providers.media.module" />
+        <package android:name="com.android.providers.media.module" />
+        <package android:name="com.android.photopicker" />
+        <package android:name="com.google.android.photopicker" />
+        <package android:name="com.google.android.apps.photos" />
+        <package android:name="com.google.android.GoogleCamera" />
+        <package android:name="com.android.camera" />
+        <package android:name="com.android.camera2" />
+        <package android:name="com.sec.android.app.camera" />
+        <package android:name="com.google.android.dialer" />
+        <package android:name="com.android.dialer" />
+        <package android:name="com.android.incallui" />
+        <package android:name="com.samsung.android.incallui" />
+        <package android:name="com.android.server.telecom" />
+        <package android:name="com.google.android.deskclock" />
+        <package android:name="com.android.deskclock" />
+        <package android:name="com.sec.android.app.clockpackage" />
+        <package android:name="com.google.android.googlequicksearchbox" />
+        <package android:name="com.google.android.apps.walletnfcrel" />
+        <package android:name="Update" />
+        <package android:name="com.android.vending" />
+        <package android:name="com.android.chrome" />
+        <package android:name="com.chrome.beta" />
+        <package android:name="com.chrome.canary" />
+        <package android:name="com.chrome.dev" />
+        <package android:name="org.mozilla.firefox" />
+        <package android:name="org.mozilla.firefox_beta" />
+        <package android:name="org.mozilla.fenix" />
+        <package android:name="org.mozilla.focus" />
+        <package android:name="com.microsoft.emmx" />
+        <package android:name="com.duckduckgo.mobile.android" />
+        <package android:name="com.opera.browser" />
+        <package android:name="com.opera.gx" />
+        <package android:name="com.opera.mini.native" />
+        <package android:name="com.brave.browser" />
+        <package android:name="com.sec.android.app.sbrowser" />
+        <package android:name="com.sec.android.app.sbrowser.beta" />
+        <package android:name="com.vivaldi.browser" />
+        <package android:name="com.sec.android.app.samsungapps" />
+        <package android:name="com.amazon.venezia" />
+        <package android:name="com.huawei.appmarket" />
+        <package android:name="com.xiaomi.mipicks" />
+        <package android:name="com.xiaomi.market" />
+        <package android:name="com.heytap.market" />
+        <package android:name="com.vivo.appstore" />
+        <package android:name="org.fdroid.fdroid" />
+        <package android:name="org.fdroid.basic" />
         <!-- Apps the user can pick to lock. -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -174,7 +251,7 @@
                 android:resource="@xml/shortcuts" />
         </activity>
 
-        <!-- The launcher shortcut "Lock all now": ends every session and goes, showing nothing.
+        <!-- The launcher shortcut "Re-lock now": ends every session and goes, showing nothing.
              Not exported: the launcher starts a shortcut as BioKey itself, and no other app can. -->
         <activity
             android:name=".feature.main.LockAllActivity"
@@ -247,7 +324,13 @@
             android:name=".core.security.NewAppSuggestions$LockReceiver"
             android:exported="false" />
 
-        <!-- Quick Settings "Lock all": only ever locks, so a tap needs no authentication. -->
+        <!-- The Resume button on "Protection paused". Not exported: only BioKey's own notification
+             sends it, and it only ever puts protection back. -->
+        <receiver
+            android:name=".core.security.PauseNotice$ResumeReceiver"
+            android:exported="false" />
+
+        <!-- Quick Settings "Re-lock now": only ever locks, so a tap needs no authentication. -->
         <service
             android:name=".feature.tile.LockAllTileService"
             android:exported="true"

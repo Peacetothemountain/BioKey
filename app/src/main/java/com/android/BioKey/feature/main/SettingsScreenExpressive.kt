@@ -6,16 +6,22 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
@@ -28,6 +34,10 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AddModerator
 import androidx.compose.material.icons.filled.AdminPanelSettings
+import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Unarchive
+import com.android.BioKey.core.security.UnlockMethods
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Close
@@ -48,6 +58,7 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -55,8 +66,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
@@ -67,6 +80,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.graphicsLayer
@@ -74,11 +88,13 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
@@ -105,14 +121,20 @@ import com.android.BioKey.ui.disclosure.Disclosure
 import com.android.BioKey.ui.disclosure.rememberDisclosureGate
 import com.android.BioKey.ui.disclosure.rememberNotificationPermission
 import com.android.BioKey.ui.navigation.IntentNavigationHelper
+import com.android.BioKey.ui.security.ProtectDialogWindow
 import com.android.BioKey.ui.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.Haptics
+import com.android.BioKey.ui.theme.IconBadge
 import com.android.BioKey.ui.theme.MaxContentWidth
 import com.android.BioKey.ui.theme.SectionHeader
+import com.android.BioKey.ui.theme.groupColor
+import com.android.BioKey.ui.format.attemptTime
+import com.android.BioKey.ui.theme.groupShape
+import com.android.BioKey.ui.theme.scaledWithText
 import com.android.BioKey.ui.theme.springPress
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -133,12 +155,15 @@ private class SettingItem(
     val warning: Boolean = false,
     /** What a tappable row shows at its end: where it goes. */
     val goes: Goes = Goes.ON,
-    /** An action row's button label ([Goes.NOWHERE]): the row does what it says. */
-    val action: String? = null
+    /**
+     * What it does waits until then ([UnlockAttempts.heldUntil]): the row says so in place of its
+     * line and looks inactive, before it's tapped; a tap still says why ([confirmOwner]).
+     */
+    val heldUntil: Long? = null
 )
 
-/** Where tapping a row takes you: on (a chevron), out of BioKey (open-in-new), or nowhere (an action). */
-private enum class Goes { ON, OUT, NOWHERE }
+/** Where tapping a row takes you: on (a chevron), or out of BioKey (open-in-new). */
+private enum class Goes { ON, OUT }
 
 /**
  * BioKey's settings, over the home screen. [mode] is the engine protecting apps, as the home
@@ -184,6 +209,8 @@ fun SettingsScreenExpressive(
     /** An accessibility shortcut switches BioKey's service off without passing any screen self-protection guards. */
     var shortcutAssigned by remember { mutableStateOf(false) }
     var showRelockSheet by remember { mutableStateOf(false) }
+    /** "Let the camera open over the lock screen" is being switched on: what it lets through, first. */
+    var confirmCamera by remember { mutableStateOf(false) }
     /** Private space's page can be opened from here (Android 15+, where Settings allows it). */
     var privateSpace by remember { mutableStateOf(false) }
     /**
@@ -222,6 +249,20 @@ fun SettingsScreenExpressive(
         }
     }
 
+    // The day's hold after a face or fingerprint change or a reset: read again as the records
+    // change, and as it ends while the page is open.
+    val gapsForHold by ProtectionGaps.gaps.collectAsStateWithLifecycle()
+    var holdCheck by remember { mutableStateOf(0) }
+    val heldUntil = remember(gapsForHold, holdCheck) { UnlockAttempts.heldUntil(context) }
+    LaunchedEffect(heldUntil) {
+        val until = heldUntil ?: return@LaunchedEffect
+        kotlinx.coroutines.delay((until - System.currentTimeMillis()).coerceAtLeast(0L) + 500L)
+        holdCheck++
+    }
+
+    val serviceLabel = stringResource(R.string.accessibility_service_label)
+    /** What opens a locked app now ("your face or fingerprint"), worked out again when what decides it changes. */
+    val asksFor = remember(biometricOnly, strongBiometric, passphrase.isSet) { UnlockMethods.asksFor(context) }
     val appLock = buildList {
         add(
             SettingItem(
@@ -236,8 +277,8 @@ fun SettingsScreenExpressive(
                         stringResource(R.string.home_paused_until, android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(pausedUntil)))
                     !globalLockEnabled -> stringResource(R.string.common_paused)
                     mode == ProtectionEngine.Mode.COMPATIBILITY -> stringResource(R.string.settings_lock_apps_compat)
-                    biometricOnly && strongBiometric -> stringResource(R.string.settings_lock_apps_biometric_only)
-                    else -> stringResource(R.string.settings_lock_apps_any)
+                    // Its state alone: what opens a locked app is the rows under it to say.
+                    else -> stringResource(R.string.home_protected)
                 },
                 checked = globalLockEnabled && protecting,
                 onChange = { on ->
@@ -277,19 +318,84 @@ fun SettingsScreenExpressive(
                 }
             ) else null,
             // BioKey's own fallback for "Face or fingerprint only" (PassphraseSetting.kt).
-            passphrase.row(biometricOnly, strongBiometric)?.let { SettingItem(icon = it.icon, title = it.title, subtitle = it.subtitle, onClick = it.onClick) },
-            // A suggestion, the same as home's card: where face or fingerprint only is on.
-            if (biometricOnly && strongBiometric && SETTINGS_PACKAGE !in lockedApps) SettingItem(
-                icon = Icons.Default.Lock,
-                title = stringResource(R.string.settings_lock_settings_title),
-                subtitle = stringResource(R.string.settings_lock_settings_summary),
-                onClick = {
-                    val undo = vault.lockSettingsApp()
-                    BioKeyMessages.show(res.getString(R.string.settings_lock_settings_done), Icons.Default.Lock, actionLabel = res.getString(R.string.common_undo), onAction = undo)
+            passphrase.row(biometricOnly, strongBiometric)?.let { SettingItem(icon = it.icon, title = it.title, subtitle = it.subtitle, onClick = it.onClick, heldUntil = heldUntil) },
+            // Where face or fingerprint only is on: a switch like any other, locked or not (home's
+            // card says why it matters; this says what it does). On, it's said with an Undo, as on home.
+            if (biometricOnly && strongBiometric) {
+                val settingsLocked = SETTINGS_PACKAGE in lockedApps
+                SettingItem(
+                    icon = Icons.Default.Lock,
+                    title = stringResource(R.string.settings_lock_settings_title),
+                    subtitle = if (settingsLocked) stringResource(R.string.settings_lock_settings_on, asksFor)
+                        else stringResource(R.string.common_not_locked),
+                    checked = settingsLocked,
+                    onChange = { on ->
+                        if (on) {
+                            val undo = vault.lockSettingsApp()
+                            BioKeyMessages.show(res.getString(R.string.settings_lock_settings_done), Icons.Default.Lock, actionLabel = res.getString(R.string.common_undo), onAction = undo)
+                        } else {
+                            // As an app's own switch on home: its lock taken off, recorded, with Undo.
+                            val label = settingsAppLabel(context)
+                            vault.setAppLock(SETTINGS_PACKAGE, false)
+                            ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.LOCK_OFF, label)
+                            BioKeyMessages.show(res.getString(R.string.home_lock_removed, label), Icons.Default.LockOpen, actionLabel = res.getString(R.string.common_undo)) {
+                                vault.setAppLock(SETTINGS_PACKAGE, true)
+                            }
+                        }
+                    }
+                )
+            } else null,
+            // Guarding BioKey itself: beside the other ways in, not among the records.
+            // Not in the Play build (see SecurityVault.selfProtectionAvailable).
+            if (SecurityVault.selfProtectionAvailable) SettingItem(
+                icon = Icons.Default.AdminPanelSettings,
+                title = stringResource(R.string.settings_self_protection_title),
+                subtitle = when {
+                    mode == ProtectionEngine.Mode.ACCESSIBILITY ->
+                        stringResource(R.string.settings_self_protection_optional)
+                    mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING && selfProtectionEnabled ->
+                        stringResource(R.string.settings_self_protection_on_not_running)
+                    mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> stringResource(R.string.settings_self_protection_needs_running)
+                    mode == ProtectionEngine.Mode.OFF && selfProtectionEnabled -> stringResource(R.string.settings_self_protection_on_service_off)
+                    mode == ProtectionEngine.Mode.OFF -> stringResource(R.string.settings_self_protection_needs_service)
+                    selfProtectionEnabled -> stringResource(R.string.settings_self_protection_inactive_compat)
+                    else -> stringResource(R.string.settings_self_protection_unavailable_compat)
                 },
-                goes = Goes.NOWHERE,
-                action = stringResource(R.string.settings_lock_action)
-            ) else null
+                // Shows what's saved, so it's never on without the user seeing it. In compatibility
+                // mode it can only be turned off; turning it on needs the Accessibility service.
+                checked = selfProtectionEnabled,
+                enabled = mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING ||
+                    mode == ProtectionEngine.Mode.OFF || selfProtectionEnabled,
+                onChange = { on ->
+                    when {
+                        !on -> {
+                            // Less protected: recorded when it's maybe someone who only knows the PIN.
+                            ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.SELF_PROTECTION_OFF)
+                            vault.setAccessibilitySelfProtectionEnabled(false)
+                        }
+                        // Switched on already (running or not): saved now, guarding once it runs.
+                        mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> {
+                            vault.setAccessibilitySelfProtectionEnabled(true)
+                            shortcutAssigned = SelfProtectionDetector.isShortcutAssigned(context)
+                        }
+                        // Saved only on Agree: "Not now" leaves it off.
+                        mode == ProtectionEngine.Mode.OFF -> disclosures.request(Disclosure.ACCESSIBILITY) {
+                            vault.setAccessibilitySelfProtectionEnabled(true)
+                            IntentNavigationHelper.openAccessibilitySettings(context)
+                        }
+                    }
+                }
+            ) else null,
+            // The shortcut only matters while the service is on: it switches it off at once.
+            if (mode == ProtectionEngine.Mode.ACCESSIBILITY && shortcutAssigned) {
+                SettingItem(
+                    icon = Icons.Default.Warning,
+                    title = stringResource(R.string.settings_shortcut_warning_title),
+                    subtitle = stringResource(R.string.settings_shortcut_warning_summary, serviceLabel),
+                    warning = true,
+                    onClick = { IntentNavigationHelper.openAccessibilitySettings(context) }
+                )
+            } else null
         ))
         add(
             SettingItem(
@@ -306,9 +412,8 @@ fun SettingsScreenExpressive(
                 subtitle = stringResource(if (keyguardCamera) R.string.settings_keyguard_camera_on else R.string.settings_keyguard_camera_off),
                 checked = keyguardCamera,
                 onChange = { on ->
-                    // Less locked: recorded when it's maybe someone who only knows the PIN.
-                    if (on) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.KEYGUARD_CAMERA_ON)
-                    vault.setKeyguardCameraAllowed(on)
+                    // Less locked: what that lets through is said first, where the choice is made.
+                    if (on) confirmCamera = true else vault.setKeyguardCameraAllowed(false)
                 }
             )
         )
@@ -353,13 +458,14 @@ fun SettingsScreenExpressive(
             )
         )
     }
-    val serviceLabel = stringResource(R.string.accessibility_service_label)
-    val activity_ = listOfNotNull(
+    val activity_ = listOf(
         SettingItem(
-            icon = Icons.Default.GppBad,
+            icon = FailedAlertsIcon,
             title = stringResource(R.string.settings_failed_alerts_title),
             subtitle = stringResource(R.string.settings_failed_alerts_summary),
             checked = attemptAlerts,
+            // Switching them off waits; switching them on doesn't.
+            heldUntil = heldUntil.takeIf { attemptAlerts },
             onChange = { on ->
                 fun apply() {
                     val removed = UnlockAttempts.setEnabled(context, on)
@@ -383,6 +489,7 @@ fun SettingsScreenExpressive(
             else stringResource(R.string.settings_screen_lock_unlocks_needs_alerts),
             checked = screenLockUnlocks && attemptAlerts,
             enabled = attemptAlerts,
+            heldUntil = heldUntil.takeIf { screenLockUnlocks && attemptAlerts },
             onChange = { on ->
                 if (on) UnlockAttempts.setScreenLockUnlocks(context, true)
                 else confirmOwner(activity, res.getString(R.string.settings_confirm_screen_lock_unlocks_off), silencesRecords = true) {
@@ -390,56 +497,6 @@ fun SettingsScreenExpressive(
                 }
             }
         ),
-        // Not in the Play build (see SecurityVault.selfProtectionAvailable).
-        if (SecurityVault.selfProtectionAvailable) SettingItem(
-            icon = Icons.Default.AdminPanelSettings,
-            title = stringResource(R.string.settings_self_protection_title),
-            subtitle = when {
-                mode == ProtectionEngine.Mode.ACCESSIBILITY ->
-                    stringResource(R.string.settings_self_protection_optional)
-                mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING && selfProtectionEnabled ->
-                    stringResource(R.string.settings_self_protection_on_not_running)
-                mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> stringResource(R.string.settings_self_protection_needs_running)
-                mode == ProtectionEngine.Mode.OFF && selfProtectionEnabled -> stringResource(R.string.settings_self_protection_on_service_off)
-                mode == ProtectionEngine.Mode.OFF -> stringResource(R.string.settings_self_protection_needs_service)
-                selfProtectionEnabled -> stringResource(R.string.settings_self_protection_inactive_compat)
-                else -> stringResource(R.string.settings_self_protection_unavailable_compat)
-            },
-            // Shows what's saved, so it's never on without the user seeing it. In compatibility
-            // mode it can only be turned off; turning it on needs the Accessibility service.
-            checked = selfProtectionEnabled,
-            enabled = mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING ||
-                mode == ProtectionEngine.Mode.OFF || selfProtectionEnabled,
-            onChange = { on ->
-                when {
-                    !on -> {
-                        // Less protected: recorded when it's maybe someone who only knows the PIN.
-                        ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.SELF_PROTECTION_OFF)
-                        vault.setAccessibilitySelfProtectionEnabled(false)
-                    }
-                    // Switched on already (running or not): saved now, guarding once it runs.
-                    mode == ProtectionEngine.Mode.ACCESSIBILITY || mode == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING -> {
-                        vault.setAccessibilitySelfProtectionEnabled(true)
-                        shortcutAssigned = SelfProtectionDetector.isShortcutAssigned(context)
-                    }
-                    // Saved only on Agree: "Not now" leaves it off.
-                    mode == ProtectionEngine.Mode.OFF -> disclosures.request(Disclosure.ACCESSIBILITY) {
-                        vault.setAccessibilitySelfProtectionEnabled(true)
-                        IntentNavigationHelper.openAccessibilitySettings(context)
-                    }
-                }
-            }
-        ) else null,
-        // The shortcut only matters while the service is on: it switches it off at once.
-        if (mode == ProtectionEngine.Mode.ACCESSIBILITY && shortcutAssigned) {
-            SettingItem(
-                icon = Icons.Default.Warning,
-                title = stringResource(R.string.settings_shortcut_warning_title),
-                subtitle = stringResource(R.string.settings_shortcut_warning_summary, serviceLabel),
-                warning = true,
-                onClick = { IntentNavigationHelper.openAccessibilitySettings(context) }
-            )
-        } else null
     )
     val profiles = listOf(
         SettingItem(
@@ -453,17 +510,20 @@ fun SettingsScreenExpressive(
 
     val backupActions = rememberBackupActions()
     val backup = listOf(
+        // Back up and restore as a pair: a file put away, a file taken out.
         SettingItem(
-            icon = Icons.Default.Save,
+            icon = Icons.Default.Archive,
             title = stringResource(R.string.backup_title),
             subtitle = stringResource(R.string.settings_back_up_summary),
             onClick = backupActions.backUp
         ),
         SettingItem(
-            icon = Icons.Default.Restore,
+            icon = Icons.Default.Unarchive,
             title = stringResource(R.string.backup_restore_title),
             subtitle = stringResource(R.string.settings_restore_summary),
-            onClick = backupActions.restore
+            onClick = backupActions.restore,
+            // During the day's hold after a face or fingerprint change or a reset, a restore waits: said here, not only on a tap.
+            heldUntil = heldUntil
         )
     )
 
@@ -478,6 +538,7 @@ fun SettingsScreenExpressive(
             title = stringResource(R.string.diagnostics_title),
             subtitle = stringResource(R.string.settings_log_summary),
             checked = logEnabled,
+            heldUntil = heldUntil.takeIf { logEnabled },
             onChange = { on ->
                 fun apply() = DiagnosticLog.setEnabled(context, on)
                 // Off deletes it, and with it a trace of who unlocked what.
@@ -506,7 +567,7 @@ fun SettingsScreenExpressive(
         SettingItem(
             icon = Icons.AutoMirrored.Filled.HelpOutline,
             title = stringResource(R.string.settings_help_title),
-            subtitle = stringResource(R.string.settings_help_summary, BuildConfig.VERSION_NAME),
+            subtitle = stringResource(R.string.settings_help_summary),
             onClick = { openPage(IntentNavigationHelper.SUPPORT_URL) },
             goes = Goes.OUT
         )
@@ -563,7 +624,16 @@ fun SettingsScreenExpressive(
                         text = stringResource(R.string.settings_footer_no_internet),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 32.dp, vertical = 24.dp)
+                        modifier = Modifier.padding(start = GroupInset + 16.dp, end = GroupInset + 16.dp, top = 24.dp)
+                    )
+                }
+                // Which BioKey this is: a quiet line of its own at the foot, for when help asks.
+                item {
+                    Text(
+                        text = stringResource(R.string.settings_version, BuildConfig.VERSION_NAME),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = GroupInset + 16.dp, end = GroupInset + 16.dp, top = 12.dp, bottom = 8.dp)
                     )
                 }
             }
@@ -572,6 +642,29 @@ fun SettingsScreenExpressive(
 
     if (showLog) DiagnosticLogScreen(onDismiss = { showLog = false })
     passphrase.Dialogs()
+
+    if (confirmCamera) {
+        AlertDialog(
+            onDismissRequest = { confirmCamera = false },
+            icon = { Icon(Icons.Default.PhotoCamera, contentDescription = null) },
+            title = { Text(stringResource(R.string.settings_keyguard_camera_confirm_title)) },
+            text = {
+                Column {
+                    ProtectDialogWindow()
+                    Text(stringResource(R.string.settings_keyguard_camera_confirm_text))
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmCamera = false
+                    // Less locked: recorded when it's maybe someone who only knows the PIN.
+                    ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.KEYGUARD_CAMERA_ON)
+                    vault.setKeyguardCameraAllowed(true)
+                }) { Text(stringResource(R.string.common_turn_on)) }
+            },
+            dismissButton = { TextButton(onClick = { confirmCamera = false }) { Text(stringResource(R.string.prompt_cancel)) } }
+        )
+    }
 
     if (showRelockSheet) {
         RelockSheet(
@@ -595,50 +688,49 @@ fun SettingsScreenExpressive(
 @Composable
 private fun SettingsSection(title: String, items: List<SettingItem>, footer: String? = null, onToggled: (Boolean) -> Unit) {
     SectionHeader(title)
+    val context = LocalContext.current
     Group(count = items.size) { i ->
         val item = items[i]
         val checked = item.checked
+        // Held: "Not until …" in place of its line, and the inactive look of a row that can't be
+        // used now; still tappable, the tap saying why.
+        val held = item.heldUntil != null
+        val subtitle = item.heldUntil?.let { stringResource(R.string.settings_restore_held, attemptTime(context, it)) } ?: item.subtitle
         if (checked != null) {
             GroupRow(
                 index = i,
                 count = items.size,
                 title = item.title,
-                subtitle = item.subtitle,
+                subtitle = subtitle,
                 icon = item.icon,
                 // A row that can't be used now looks it, not only its switch (Material's 38%).
-                modifier = if (item.enabled) Modifier else Modifier.alpha(0.38f),
+                modifier = if (item.enabled && !held) Modifier else Modifier.alpha(0.38f),
                 interaction = Modifier.toggleable(value = checked, enabled = item.enabled, role = Role.Switch) { next ->
                     onToggled(next)
                     item.onChange(next)
                 }
             ) {
-                Switch(checked = checked, onCheckedChange = null, enabled = item.enabled)
+                Switch(checked = checked, onCheckedChange = null, enabled = item.enabled && !held)
             }
         } else {
             GroupRow(
                 index = i,
                 count = items.size,
                 title = item.title,
-                subtitle = item.subtitle,
+                subtitle = subtitle,
                 icon = item.icon,
+                modifier = if (held) Modifier.alpha(0.38f) else Modifier,
                 iconTint = if (item.warning) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
                 iconContainer = if (item.warning) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
-                // An action row's button is its one target: the row itself isn't a second.
-                onClick = if (item.action != null) null else item.onClick,
-                trailing = if (item.action != null && item.onClick != null) {
-                    {
-                        // The row isn't a target of its own: the button says what it does in full.
-                        FilledTonalButton(onClick = item.onClick, modifier = Modifier.semantics { contentDescription = item.title }) {
-                            Text(item.action)
-                        }
-                    }
-                } else if (item.onClick == null || item.goes == Goes.NOWHERE) null else {
+                onClick = item.onClick,
+                trailing = if (item.onClick == null) null else {
                     {
                         Icon(
                             if (item.goes == Goes.OUT) Icons.AutoMirrored.Filled.OpenInNew else Icons.AutoMirrored.Filled.KeyboardArrowRight,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(if (item.goes == Goes.OUT) 20.dp else 24.dp)
+                            // Keeps up with the text beside it, as the leading icon does.
+                            modifier = Modifier.size((if (item.goes == Goes.OUT) 20.dp else 24.dp).scaledWithText())
                         )
                     }
                 }
@@ -693,6 +785,12 @@ private fun PredictiveBackPage(onNavigateBack: () -> Unit, content: @Composable 
         content()
     }
 }
+
+/** Android Settings' own name on this phone, for the record and the message when its lock is taken off. */
+private fun settingsAppLabel(context: android.content.Context): String = runCatching {
+    val pm = context.packageManager
+    pm.getApplicationLabel(pm.getApplicationInfo(SETTINGS_PACKAGE, 0)).toString()
+}.getOrNull()?.takeIf { it.isNotBlank() } ?: "Settings"
 
 /**
  * Before Android is asked: whether a strong face or fingerprint is likely there. "Face or

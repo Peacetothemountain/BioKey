@@ -52,10 +52,31 @@ object ReinstallMemory {
         OFFER
     }
 
-    private class Remembered(val pkg: String, val signers: Set<String>, val profileId: String?, val at: Long)
+    /**
+     * [at]: when it was uninstalled, on [now]. To age it on a clock nobody can set, also the clock
+     * since boot then ([elapsed]) and which boot ([boot], -1 if unknown), and whether [at] was
+     * taken on the network's time ([net]).
+     */
+    private class Remembered(
+        val pkg: String,
+        val signers: Set<String>,
+        val profileId: String?,
+        val at: Long,
+        val elapsed: Long = 0L,
+        val boot: Int = -1,
+        val net: Boolean = true
+    )
 
     @VisibleForTesting
     internal var now: () -> Long = TrustedClock::now
+
+    /** Whether [now] rests on the network's time, which changing the phone's date doesn't move. */
+    @VisibleForTesting
+    internal var onNetworkTime: () -> Boolean = TrustedClock::onNetworkTime
+
+    /** The clock since boot, and which boot this is: [UnlockAttempts]' own, so tests move them together. */
+    private fun elapsed(): Long = UnlockAttempts.elapsed()
+    private fun boot(context: Context): Int = runCatching { UnlockAttempts.bootCount(context) }.getOrDefault(-1)
 
     /** An installed app's certificates' SHA-256s (current and past, as Android vouches for them); null if it can't be read. */
     @VisibleForTesting
@@ -126,8 +147,8 @@ object ReinstallMemory {
         signers.keys.retainAll(selected)
         writeSignerMap(app, signers)
         if (pkg !in selected) return
-        val kept = fresh(readRemembered(app)).filterNot { it.pkg == pkg }
-        val entry = Remembered(pkg, noted.orEmpty(), vault.profileOf(pkg)?.id, now())
+        val kept = fresh(app, readRemembered(app)).filterNot { it.pkg == pkg }
+        val entry = Remembered(pkg, noted.orEmpty(), vault.profileOf(pkg)?.id, now(), elapsed(), boot(app), onNetworkTime())
         writeRemembered(app, (kept + entry).takeLast(MAX_REMEMBERED))
         DiagnosticLog.log("Remembering $pkg for 30 days: a locked app uninstalled with its data")
     }
@@ -142,7 +163,7 @@ object ReinstallMemory {
     fun onInstalled(context: Context, pkg: String): Outcome {
         val app = context.applicationContext
         val all = readRemembered(app)
-        val kept = fresh(all)
+        val kept = fresh(app, all)
         val entry = kept.lastOrNull { it.pkg == pkg }
         if (entry == null) {
             if (kept.size != all.size) writeRemembered(app, kept)
@@ -183,7 +204,7 @@ object ReinstallMemory {
     fun prune(context: Context) {
         val app = context.applicationContext
         val all = readRemembered(app)
-        val kept = fresh(all)
+        val kept = fresh(app, all)
         if (kept.size != all.size) writeRemembered(app, kept)
     }
 
@@ -195,7 +216,7 @@ object ReinstallMemory {
 
     /** The remembered packages, for tests. */
     @VisibleForTesting
-    internal fun rememberedPackages(context: Context): List<String> = fresh(readRemembered(context)).map { it.pkg }
+    internal fun rememberedPackages(context: Context): List<String> = fresh(context, readRemembered(context)).map { it.pkg }
 
     @VisibleForTesting
     internal fun resetForTests(context: Context) {
@@ -203,13 +224,26 @@ object ReinstallMemory {
         worker.submit {}.get()
         prefs(context).edit(commit = true) { clear() }
         now = TrustedClock::now
+        onNetworkTime = TrustedClock::onNetworkTime
         signersOf = ::readSigners
     }
 
-    /** Within [KEEP_MS]; one dated ahead (the clock set back since) is kept until it's old by the new clock too. */
-    private fun fresh(list: List<Remembered>): List<Remembered> {
+    /**
+     * Those not yet [KEEP_MS] old, on a clock nobody can set: the clock since boot for one noted
+     * in this boot, else the network's time when both it and now were taken on that. One noted on
+     * the phone's own clock before a restart isn't aged at all (it is still pushed out by
+     * [MAX_REMEMBERED]): the phone's date set ahead mustn't be enough to make BioKey forget an
+     * app it should lock again. The same rule as security
+     * activity's ([UnlockAttempts.Ageing]).
+     */
+    private fun fresh(context: Context, list: List<Remembered>): List<Remembered> {
+        val boot = boot(context)
+        val since = elapsed()
         val t = now()
-        return list.filter { t - it.at < KEEP_MS }
+        val trusted = onNetworkTime()
+        return list.filterNot { r ->
+            (r.boot != -1 && r.boot == boot && since - r.elapsed >= KEEP_MS) || (r.net && trusted && t - r.at >= KEEP_MS)
+        }
     }
 
     private fun readSigners(context: Context, pkg: String): Set<String>? = runCatching {
@@ -234,13 +268,17 @@ object ReinstallMemory {
         val array = JSONArray(prefs(context).getString(KEY_REMEMBERED, null) ?: return@runCatching emptyList())
         List(array.length()) { i ->
             val o = array.getJSONObject(i)
-            Remembered(o.getString("p"), o.optJSONArray("c")?.strings().orEmpty(), o.optString("f").ifEmpty { null }, o.getLong("t"))
+            // Entries from before these were kept ("e", "b", "n") are aged on the network's time alone.
+            Remembered(
+                o.getString("p"), o.optJSONArray("c")?.strings().orEmpty(), o.optString("f").ifEmpty { null }, o.getLong("t"),
+                elapsed = o.optLong("e", 0L), boot = o.optInt("b", -1), net = o.optBoolean("n", true)
+            )
         }
     }.getOrDefault(emptyList())
 
     private fun writeRemembered(context: Context, list: List<Remembered>) {
         val array = JSONArray().apply {
-            for (r in list) put(JSONObject().put("p", r.pkg).put("c", JSONArray(r.signers.sorted())).put("f", r.profileId ?: "").put("t", r.at))
+            for (r in list) put(JSONObject().put("p", r.pkg).put("c", JSONArray(r.signers.sorted())).put("f", r.profileId ?: "").put("t", r.at).put("e", r.elapsed).put("b", r.boot).put("n", r.net))
         }
         prefs(context).edit { putString(KEY_REMEMBERED, array.toString()) }
     }

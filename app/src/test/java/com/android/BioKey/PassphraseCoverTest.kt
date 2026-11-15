@@ -169,10 +169,13 @@ class PassphraseCoverTest {
         cover.showPassphraseEntry({}, {})
         cover.type("something")
         cover.setPassphraseBusy(true)
-        assertFalse(cover.field.isEnabled)
+        assertFalse(cover.field.acceptsInput)
         assertFalse(cover.submit.isEnabled)
+        // Held, not turned off: it refuses what's typed, and keeps what's there for the check.
+        cover.type("more")
+        assertEquals("something", cover.field.text.toString())
         cover.setPassphraseBusy(false)
-        assertTrue(cover.field.isEnabled)
+        assertTrue(cover.field.acceptsInput)
         assertTrue(cover.submit.isEnabled)
     }
 
@@ -182,14 +185,16 @@ class PassphraseCoverTest {
         cover.showPassphraseEntry({}, {})
         cover.setPassphraseWait(SystemClock.elapsedRealtime() + 28_000)
         val note = cover.passphraseEntryForTests.note
-        assertFalse(cover.field.isEnabled)
+        assertFalse(cover.field.acceptsInput)
         assertFalse(cover.submit.isEnabled)
-        assertEquals("Try again in 28 s", note.text.toString())
+        assertEquals("Try again in 28 seconds", note.text.toString())
+        cover.type("x")
+        assertEquals("Typing during a wait goes nowhere", "", cover.field.text.toString())
         idle(Duration.ofSeconds(10))
-        assertEquals("Try again in 18 s", note.text.toString())
-        assertFalse(cover.field.isEnabled)
+        assertEquals("Try again in 18 seconds", note.text.toString())
+        assertFalse(cover.field.acceptsInput)
         idle(Duration.ofSeconds(19))
-        assertTrue(cover.field.isEnabled)
+        assertTrue(cover.field.acceptsInput)
         assertEquals("You can try again now", note.text.toString())
         cover.type("a")
         assertTrue(cover.submit.isEnabled)
@@ -201,9 +206,9 @@ class PassphraseCoverTest {
         val cover = cover()
         cover.showPassphraseEntry({}, {})
         cover.setPassphraseWait(SystemClock.elapsedRealtime() + 4 * 60_000 - 500)
-        assertEquals("Try again in 4 min", cover.passphraseEntryForTests.note.text.toString())
+        assertEquals("Try again in 4 minutes", cover.passphraseEntryForTests.note.text.toString())
         cover.setPassphraseWait(0)
-        assertTrue(cover.field.isEnabled)
+        assertTrue(cover.field.acceptsInput)
         assertFalse(cover.shows(cover.passphraseEntryForTests.note))
     }
 
@@ -343,6 +348,314 @@ class PassphraseCoverTest {
             }
             cover.hidePassphraseEntry()
         }
+    }
+
+    /** Where [view] sits on the cover. */
+    private fun LockCoverView.rectOf(view: View): Rect = Rect(0, 0, view.width, view.height).also { offsetDescendantRectToMyCoords(view, it) }
+
+    @Test
+    fun theLineUnderTheFieldKeepsItsRoomSoNothingMoves() {
+        val cover = cover()
+        cover.setPassphraseOffered(true)
+        cover.setActionsVisible(true)
+        cover.showPassphraseEntry({}, {})
+        cover.layoutOnScreen()
+        val field = cover.rectOf(cover.field)
+        val unlock = cover.rectOf(cover.submit)
+        val entryHeight = cover.passphraseEntryForTests.height
+        fun same(state: String) {
+            cover.layoutOnScreen()
+            assertEquals("$state: the field moved", field, cover.rectOf(cover.field))
+            assertEquals("$state: Unlock moved", unlock, cover.rectOf(cover.submit))
+            assertEquals("$state: the entry changed height", entryHeight, cover.passphraseEntryForTests.height)
+        }
+        cover.setPassphraseBusy(true)
+        same("Checking")
+        cover.setPassphraseBusy(false)
+        cover.setPassphraseError("Wrong passphrase")
+        same("An error")
+        cover.setPassphraseWait(SystemClock.elapsedRealtime() + 28_000)
+        same("A wait")
+        idle(Duration.ofSeconds(29))
+        assertEquals("You can try again now", cover.passphraseEntryForTests.note.text.toString())
+        same("The wait over")
+        cover.type("a")
+        same("Typing again")
+    }
+
+    @Test
+    fun duringAWaitTheEyeIsOffAndTheOutlineSaysWhatTheLineDoes() {
+        val cover = cover()
+        val palette = LockCoverView.Palette(context)
+        cover.showPassphraseEntry({}, {})
+        val entry = cover.passphraseEntryForTests
+        val eye = entry.eyeForTests
+        assertTrue(eye.isEnabled)
+        assertTrue(eye.isFocusable)
+
+        cover.setPassphraseError("Wrong passphrase")
+        assertEquals("An error: the outline is the line's colour", palette.error, entry.outlineForTests)
+        assertEquals(palette.error, entry.note.currentTextColor)
+        assertTrue("Only a wait or a check turns the eye off", eye.isEnabled)
+
+        cover.setPassphraseWait(SystemClock.elapsedRealtime() + 28_000)
+        assertFalse("The eye is off while the field is", eye.isEnabled)
+        assertFalse("Nothing can be left focused on the eye", eye.isFocusable)
+        assertFalse(eye.isFocused)
+        assertEquals(palette.error, entry.outlineForTests)
+
+        // A wait alone (the entry opened while one runs): the same.
+        cover.setPassphraseError(null)
+        assertEquals(palette.error, entry.outlineForTests)
+        assertEquals(palette.error, entry.note.currentTextColor)
+
+        idle(Duration.ofSeconds(29))
+        assertTrue(eye.isEnabled)
+        assertTrue(eye.isFocusable)
+        assertTrue("You can try again now isn't an error", entry.outlineForTests != palette.error)
+        assertTrue(entry.note.currentTextColor != palette.error)
+
+        // A check running: the eye waits with the field, and nothing is said to be wrong.
+        cover.type("abc")
+        cover.setPassphraseBusy(true)
+        assertFalse(eye.isEnabled)
+        assertTrue(entry.outlineForTests != palette.error)
+        cover.setPassphraseBusy(false)
+        assertTrue(eye.isEnabled)
+    }
+
+    @Test
+    fun itsWordsComeFromTheSharedStrings() {
+        val cover = cover()
+        assertEquals(context.getString(R.string.lock_cover_app_locked, "Notes"), cover.accessibilityPaneTitle)
+        assertEquals("Notes is locked", cover.accessibilityPaneTitle)
+        cover.setLabel("Maps")
+        assertEquals("Maps is locked", cover.accessibilityPaneTitle)
+        cover.bind("BioKey", null, isBioKey = true, accent = null)
+        assertEquals(context.getString(R.string.lock_screen_locked), cover.accessibilityPaneTitle)
+        cover.setActionsVisible(true)
+        cover.layoutOnScreen()
+        assertEquals(listOf(context.getString(R.string.lock_screen_unlock), context.getString(R.string.prompt_cancel)), cover.actionWords())
+        cover.showPassphraseEntry({}, {})
+        assertEquals(context.getString(R.string.lock_screen_unlock), cover.submit.text.toString())
+    }
+
+    /** The fingerprint glyph beside "Unlock", as drawn. */
+    private fun LockCoverView.unlockGlyphHeight(): Int {
+        val text = unlockButtonForTests.text as android.text.Spanned
+        val span = text.getSpans(0, text.length, android.text.style.ImageSpan::class.java).single()
+        return span.drawable.bounds.height()
+    }
+
+    @Test
+    fun theUnlockGlyphGrowsWithTheText() {
+        val normal = cover().unlockGlyphHeight()
+        RuntimeEnvironment.setFontScale(2f)
+        val large = cover().unlockGlyphHeight()
+        assertTrue("At twice the text size the glyph is $large px against $normal", large >= normal * 3 / 2)
+    }
+
+    @Test
+    fun aVeryLongNameWrapsAndNeverPushesTheButtonsOff() {
+        val name = "The Extraordinarily Long Name Of A Banking App For Personal And Business Accounts Worldwide"
+        for (screen in GantletScreens.ALL) {
+            RuntimeEnvironment.setQualifiers(screen.qualifiers)
+            RuntimeEnvironment.setFontScale(2f)
+            val cover = LockCoverView(context).apply { bind(name, null, isBioKey = false, accent = null) }
+            cover.setPassphraseOffered(true)
+            cover.setActionsVisible(true)
+            val metrics = cover.resources.displayMetrics
+            cover.layoutAt(metrics.widthPixels, metrics.heightPixels)
+            for (view in listOf(cover.unlockButtonForTests, cover.usePassphraseActionForTests)) {
+                assertTrue("${screen.name}: a button is off the cover", within(cover, view, metrics.heightPixels))
+            }
+            val label = cover.nameForTests
+            assertTrue("${screen.name}: the name runs to ${label.lineCount} lines", label.lineCount in 1..2)
+            assertTrue("${screen.name}: the name is wider than the cover", cover.rectOf(label).let { it.left >= 0 && it.right <= cover.width })
+        }
+    }
+
+    /** The cover in an activity's window, so focus is real. */
+    private fun coverInWindow(): Pair<ComponentActivity, LockCoverView> {
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        val cover = cover()
+        activity.setContentView(cover)
+        cover.setPassphraseOffered(true)
+        cover.setActionsVisible(true)
+        idle()
+        return activity to cover
+    }
+
+    @Test
+    fun aCheckAndAWaitKeepTheFieldFocusedAndNothingElseLooksFocused() {
+        val (_, cover) = coverInWindow()
+        val entry = cover.passphraseEntryForTests
+        cover.showPassphraseEntry({}, {})
+        idle()
+        assertTrue(cover.field.hasFocus())
+
+        // The fifth wrong try, as the lock screen reports it: a check, its end, a message, a wait.
+        cover.type("wrong")
+        cover.setPassphraseBusy(true)
+        assertTrue("A check took the field's focus", cover.field.hasFocus())
+        cover.setPassphraseBusy(false)
+        cover.setPassphraseError("Wrong passphrase")
+        cover.setPassphraseWait(SystemClock.elapsedRealtime() + 28_000)
+        idle()
+        assertTrue("A wait took the field's focus", cover.field.hasFocus())
+        assertFalse("Focus landed on Back", entry.backButton.isFocused)
+        assertFalse("Focus landed on the eye", entry.eyeForTests.isFocused)
+        assertFalse(entry.submitButton.isFocused)
+
+        idle(Duration.ofSeconds(29))
+        assertTrue("The wait is over and the field isn't focused", cover.field.hasFocus())
+        assertTrue(cover.field.acceptsInput)
+        cover.type("a")
+        assertEquals("a", cover.field.text.toString())
+    }
+
+    @Test
+    fun aWaitLeavesTheKeyboardUpAndItsEndBringsItBack() {
+        val (_, cover) = coverInWindow()
+        val entry = cover.passphraseEntryForTests
+        cover.showPassphraseEntry({}, {})
+        idle()
+        assertTrue("The entry opened without the keyboard", entry.keyboardForTests)
+        cover.setPassphraseBusy(true)
+        cover.setPassphraseBusy(false)
+        cover.setPassphraseError("Wrong passphrase")
+        cover.setPassphraseWait(SystemClock.elapsedRealtime() + 28_000)
+        idle()
+        assertTrue("A wait put the keyboard away", entry.keyboardForTests)
+        // However the owner left it during the wait, its end asks for the keyboard again.
+        entry.keyboardForTests = false
+        idle(Duration.ofSeconds(29))
+        assertTrue("The wait's end left the keyboard down", entry.keyboardForTests)
+        assertTrue(cover.field.hasFocus())
+    }
+
+    private val LockCoverView.icon get() = (nameForTests.parent as ViewGroup).getChildAt(1)
+
+    /** Short windows: a phone on its side, half of a split screen, the Flip's cover screen. */
+    private val shortWindows = listOf(
+        "w915dp-h412dp-land-420dpi", "w411dp-h400dp-port-420dpi", "w800dp-h360dp-land-420dpi", "w361dp-h399dp-port-420dpi"
+    )
+
+    @Test
+    fun inAShortWindowTheNameStaysInSightAndNothingRunsIntoTheField() {
+        for (qualifiers in shortWindows) for (fontScale in listOf(1f, 2f)) {
+            RuntimeEnvironment.setQualifiers(qualifiers)
+            RuntimeEnvironment.setFontScale(fontScale)
+            val case = "$qualifiers at $fontScale"
+            val cover = cover()
+            cover.setPassphraseOffered(true)
+            cover.setActionsVisible(true)
+            val metrics = cover.resources.displayMetrics
+            val width = metrics.widthPixels
+            val height = metrics.heightPixels
+            val status = (24 * metrics.density).toInt()
+            val nav = (48 * metrics.density).toInt()
+
+            // The buttons: the name above Unlock, whole.
+            cover.layoutAt(width, height)
+            val name = cover.nameForTests
+            assertTrue("$case: the name isn't shown", cover.shows(name))
+            assertTrue("$case: the name runs into Unlock", cover.rectOf(name).bottom <= cover.rectOf(cover.unlockButtonForTests).top)
+            assertTrue("$case: the name is off the top", cover.rectOf(name).top >= 0)
+
+            // The entry, with and without the keyboard.
+            cover.showPassphraseEntry({}, {})
+            for (keyboard in listOf(0, height * 11 / 20)) {
+                cover.dispatchApplyWindowInsets(
+                    WindowInsets.Builder()
+                        .setInsets(WindowInsets.Type.statusBars(), Insets.of(0, status, 0, 0))
+                        .setInsets(WindowInsets.Type.navigationBars(), Insets.of(0, 0, 0, nav))
+                        .setInsets(WindowInsets.Type.ime(), Insets.of(0, 0, 0, maxOf(keyboard, nav)))
+                        .build()
+                )
+                cover.layoutAt(width, height)
+                val state = "$case, keyboard ${if (keyboard > 0) "up" else "down"}"
+                val field = cover.rectOf(cover.field)
+                assertTrue("$state: the field is off the cover", field.top >= 0 && field.bottom <= height - maxOf(keyboard, nav))
+                for (view in listOf(name, cover.icon)) {
+                    if (!cover.shows(view) || view.width == 0 || view.height == 0) continue
+                    val rect = cover.rectOf(view)
+                    assertTrue("$state: ${if (view === name) "the name" else "the icon"} runs into the field", rect.bottom <= field.top)
+                    assertTrue("$state: ${if (view === name) "the name" else "the icon"} is under the status bar", rect.top >= status)
+                }
+                if (keyboard == 0) {
+                    assertTrue("$state: the name isn't shown", cover.shows(name) && name.height > 0)
+                    // Not scrolled out of sight, either.
+                    assertEquals("$state: the name is scrolled", 0, (name.parent.parent as View).scrollY)
+                }
+            }
+            cover.hidePassphraseEntry()
+        }
+        RuntimeEnvironment.setFontScale(1f)
+    }
+
+    @Test
+    fun besideACameraCutoutEverythingStaysInTheMiddleAndTheGlowFillsTheScreen() {
+        RuntimeEnvironment.setQualifiers("w915dp-h412dp-land-420dpi")
+        val cover = cover()
+        cover.setPassphraseOffered(true)
+        cover.setActionsVisible(true)
+        val metrics = cover.resources.displayMetrics
+        val cutout = (53 * metrics.density).toInt()
+        val status = (24 * metrics.density).toInt()
+        cover.dispatchApplyWindowInsets(
+            WindowInsets.Builder()
+                .setInsets(WindowInsets.Type.displayCutout(), Insets.of(cutout, 0, 0, 0))
+                .setInsets(WindowInsets.Type.statusBars(), Insets.of(0, status, 0, 0))
+                .build()
+        )
+        cover.layoutAt(metrics.widthPixels, metrics.heightPixels)
+        for (view in listOf(cover.unlockButtonForTests, cover.nameForTests)) {
+            assertEquals("Off the middle of the screen", metrics.widthPixels / 2f, cover.rectOf(view).exactCenterX(), 2f)
+        }
+        val backdrop = cover.getChildAt(0)
+        assertEquals("The glow is cut off", Rect(0, 0, metrics.widthPixels, metrics.heightPixels), cover.rectOf(backdrop))
+    }
+
+    @Test
+    fun inLandscapeWithTheKeyboardUpTheNameFieldLineBackAndUnlockShowTogether() {
+        RuntimeEnvironment.setQualifiers("w915dp-h412dp-land-420dpi")
+        val cover = cover()
+        cover.setPassphraseOffered(true)
+        cover.setActionsVisible(true)
+        cover.showPassphraseEntry({}, {})
+        val metrics = cover.resources.displayMetrics
+        val width = metrics.widthPixels
+        val height = metrics.heightPixels
+        cover.layoutAt(width, height)
+        // Room to spare without the keyboard: upright, under the app's icon and name.
+        assertFalse(cover.passphraseEntryForTests.compact)
+        // The keyboard as Gboard's in landscape: all but about 135dp under the status bar.
+        val status = (24 * metrics.density).toInt()
+        val keyboard = height - status - (135 * metrics.density).toInt()
+        cover.dispatchApplyWindowInsets(
+            WindowInsets.Builder()
+                .setInsets(WindowInsets.Type.statusBars(), Insets.of(0, status, 0, 0))
+                .setInsets(WindowInsets.Type.ime(), Insets.of(0, 0, 0, keyboard))
+                .build()
+        )
+        cover.layoutAt(width, height)
+        cover.setPassphraseError("Wrong passphrase")
+        cover.layoutAt(width, height)
+        val entry = cover.passphraseEntryForTests
+        assertTrue(entry.compact)
+        val title = (entry.getChildAt(0) as ViewGroup).getChildAt(0) as TextView
+        assertEquals("Notes", title.text.toString())
+        for (view in listOf(title, cover.field, entry.note, entry.backButton, cover.submit)) {
+            assertTrue("$view: not in view above the keyboard", within(cover, view, height - keyboard))
+            assertTrue("$view: hidden", cover.shows(view))
+        }
+        // Back and Unlock side by side, Unlock at the end.
+        assertTrue(cover.rectOf(entry.backButton).right <= cover.rectOf(cover.submit).left)
+        // Put away, upright again for the next time.
+        cover.dispatchApplyWindowInsets(WindowInsets.Builder().build())
+        cover.layoutAt(width, height)
+        assertFalse(entry.compact)
     }
 
     /** Whether [view] lies wholly within the cover, above [bottom]. */

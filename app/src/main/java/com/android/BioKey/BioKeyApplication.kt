@@ -20,6 +20,7 @@ import com.android.BioKey.core.security.BiometricEnrollment
 import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.NewAppSuggestions
 import com.android.BioKey.core.security.OwnerPassphrase
+import com.android.BioKey.core.security.PauseNotice
 import com.android.BioKey.core.security.ProtectionAlerts
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
@@ -55,6 +56,10 @@ class BioKeyApplication : Application() {
 
         private val _packageChangeVersion = MutableStateFlow(0)
         val packageChangeVersion: StateFlow<Int> = _packageChangeVersion.asStateFlow()
+
+        /** As when the phone says an app was installed, replaced or removed. */
+        @androidx.annotation.VisibleForTesting
+        internal fun notePackagesChangedForTests() = _packageChangeVersion.update { it + 1 }
 
         /**
          * Whether an app uninstalled (not replaced) keeps its lock. A copy in another profile (a
@@ -137,6 +142,8 @@ class BioKeyApplication : Application() {
                 if (ProtectionEngine.isProtecting(app)) ProtectionGaps.onEngineUp(app)
                 ProtectionEngine.refresh(app)
                 ProtectionAlerts.checkAccessibilityConnects(app)
+                // "Protection paused", for as long as it is.
+                PauseNotice.watch(app)
             } catch (e: Exception) {
                 Log.e(TAG, "Error initializing credential-protected components: ${e.javaClass.simpleName}")
             }

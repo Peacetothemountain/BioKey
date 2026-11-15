@@ -1,5 +1,6 @@
 package com.android.BioKey.feature.lock
 
+import android.graphics.Rect
 import android.os.Build
 import android.view.accessibility.AccessibilityNodeInfo
 
@@ -37,5 +38,35 @@ internal object AccessibilityNodes {
             }
         }
         return found
+    }
+
+    /**
+     * Where the window under [root] draws what it has to say: the box around every node that
+     * shows words or can be tapped, leaving out any as large as the window itself ([window]: a
+     * scrim, the root). For a prompt, that is its sheet or dialog, not the dimmed screen around
+     * it. Null if nothing of the kind is found among the first [maxNodes] nodes. [root] itself
+     * stays the caller's to release.
+     */
+    fun contentBounds(root: AccessibilityNodeInfo, window: Rect, maxNodes: Int): Rect? {
+        var area: Rect? = null
+        val box = Rect()
+        val queue = ArrayDeque<AccessibilityNodeInfo>().apply { add(root) }
+        var seen = 0
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+            try {
+                if (++seen > maxNodes) continue
+                val says = !node.text.isNullOrBlank() || !node.contentDescription.isNullOrBlank() || node.isClickable
+                if (says && node.isVisibleToUser) {
+                    node.getBoundsInScreen(box)
+                    val whole = box.width() >= window.width() && box.height() >= window.height()
+                    if (!box.isEmpty && !whole) area?.union(box) ?: run { area = Rect(box) }
+                }
+                for (i in 0 until node.childCount) runCatching { node.getChild(i) }.getOrNull()?.let(queue::add)
+            } finally {
+                if (node !== root) node.release()
+            }
+        }
+        return area
     }
 }

@@ -20,6 +20,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.android.BioKey.ui.theme.BioKeyMessageHost
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.MessageHost
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Rule
 import org.junit.Test
@@ -114,5 +115,59 @@ class MessagesTest {
             BioKeyMessages.show("Removed Chase from Banking", actionLabel = "Undo") {}
         }
         rule.onNode(shownOn("screen", "Removed Chase from Banking")).assertExists()
+    }
+
+    @Test
+    fun anUndoLastsASecondAndAHalfThenSaysItIsGone() {
+        screen.registry.currentState = Lifecycle.State.RESUMED
+        rule.mainClock.autoAdvance = false
+        var gone = 0
+        hosts()
+        BioKeyMessages.show("Lock removed from Chase", actionLabel = "Undo", onAction = {}, onGone = { gone++ })
+        rule.mainClock.advanceTimeBy(1_200)
+        rule.onNodeWithText("Lock removed from Chase").assertExists()
+        assertEquals(0, gone)
+        rule.mainClock.advanceTimeBy(500)
+        rule.mainClock.advanceTimeBy(1_000)
+        rule.onNodeWithText("Lock removed from Chase").assertDoesNotExist()
+        assertEquals(1, gone)
+    }
+
+    @Test
+    fun handedToAnotherHostItKeepsOnlyWhatIsLeftOfItsTime() {
+        screen.registry.currentState = Lifecycle.State.RESUMED
+        rule.mainClock.autoAdvance = false
+        var sheetOpen by mutableStateOf(true)
+        var gone = 0
+        hosts { sheetOpen }
+        BioKeyMessages.show("Removed Chase from Banking", actionLabel = "Undo", onAction = {}, onGone = { gone++ })
+        rule.mainClock.advanceTimeBy(500)
+        // The time shown is measured on Android's clock, which the test clock doesn't move.
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(500))
+        rule.onNode(shownOn("sheet", "Removed Chase from Banking")).assertExists()
+        rule.runOnIdle { sheetOpen = false }
+        rule.mainClock.advanceTimeByFrame()
+        // The hand-over is posted to the main thread.
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        rule.mainClock.advanceTimeBy(300)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        rule.mainClock.advanceTimeBy(100)
+        rule.onNode(shownOn("screen", "Removed Chase from Banking")).assertExists()
+        // About a second was left, not a fresh one and a half.
+        rule.mainClock.advanceTimeBy(1_500)
+        rule.onNodeWithText("Removed Chase from Banking").assertDoesNotExist()
+        assertEquals(1, gone)
+    }
+
+    @Test
+    fun replacedByANewerMessageItIsGone() {
+        screen.registry.currentState = Lifecycle.State.RESUMED
+        var gone = 0
+        hosts()
+        BioKeyMessages.show("Lock removed from Chase", actionLabel = "Undo", onAction = {}, onGone = { gone++ })
+        rule.onNodeWithText("Lock removed from Chase").assertExists()
+        BioKeyMessages.show("Lock removed from Notes", actionLabel = "Undo", onAction = {})
+        rule.onNodeWithText("Lock removed from Notes").assertExists()
+        rule.runOnIdle { assertEquals(1, gone) }
     }
 }

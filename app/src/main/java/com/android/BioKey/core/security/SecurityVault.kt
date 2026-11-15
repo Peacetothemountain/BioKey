@@ -15,6 +15,7 @@ import com.android.BioKey.core.data.LockTimeoutMode
 import com.android.BioKey.core.data.PasswordManager
 import com.android.BioKey.core.data.SecurityProfile
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.diagnostics.logDuration
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
@@ -576,7 +577,7 @@ class SecurityVault private constructor(private val context: Context) {
     /** Pauses protection, for [durationMillis] or until resumed when null. */
     fun pauseProtection(durationMillis: Long?): Boolean {
         val bounded = durationMillis?.coerceIn(MIN_PAUSE_MS, MAX_PAUSE_MS)
-        DiagnosticLog.log(if (bounded == null) "Protection paused until turned back on" else "Protection paused for ${bounded / 60_000} min")
+        DiagnosticLog.log(if (bounded == null) "Protection paused until turned back on" else "Protection paused for ${logDuration(bounded)}")
         synchronized(lock) {
             _globalLockEnabledFlow.value = false
             _pausedUntilFlow.value = bounded?.let { System.currentTimeMillis() + it } ?: 0L

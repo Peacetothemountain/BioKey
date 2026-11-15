@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The notification shown while protection is paused (PauseNotice). Its title is
+         compat_notification_title_paused, "Protection is paused"; its text is what the main page says
+         (home_paused_body, home_paused_body_timed). -->
+    <string name="pause_channel_name">Protection paused</string>
+    <string name="pause_channel_description">Shown while you’ve paused protection, with a button to resume it</string>
+    <string name="pause_notice_resume">Resume</string>
+</resources>

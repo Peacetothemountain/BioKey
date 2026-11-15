@@ -1,23 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The owner passphrase on the lock cover (LockCoverView, PassphraseEntryView). -->
+<!-- The owner passphrase on both lock screens: the lock cover (LockCoverView, PassphraseEntryView)
+     and BioKey's own (BioKeyLockScreen, PassphraseGate). "Unlock", "Cancel", "BioKey is locked",
+     "Show passphrase" and "Hide passphrase" are shared with the rest of BioKey: lock_screen_unlock,
+     prompt_cancel, lock_screen_locked, passphrase_show and passphrase_hide. -->
 <resources>
+    <!-- What screen readers hear as a locked app's cover appears, and on its name: "Notes is locked". -->
+    <string name="lock_cover_app_locked">%1$s is locked</string>
     <!-- Among the cover's buttons, after the face or fingerprint prompt is dismissed. -->
     <string name="lock_passphrase_use">Use passphrase</string>
     <!-- Inside the empty field; also what screen readers call the field. -->
     <string name="lock_passphrase_hint">Passphrase</string>
-    <string name="lock_passphrase_show">Show passphrase</string>
-    <string name="lock_passphrase_hide">Hide passphrase</string>
-    <string name="lock_passphrase_unlock">Unlock</string>
     <!-- On the Unlock button while the passphrase is checked. -->
     <string name="lock_passphrase_checking">Checking…</string>
     <!-- Leaves the passphrase for the cover's buttons. -->
     <string name="lock_passphrase_back">Back</string>
     <!-- Countdowns under the field while tries are paused, always rounded up. -->
-    <string name="lock_passphrase_wait_seconds">Try again in %1$d s</string>
-    <string name="lock_passphrase_wait_minutes">Try again in %1$d min</string>
-    <string name="lock_passphrase_wait_hours">Try again in %1$d h</string>
+    <plurals name="lock_passphrase_wait_seconds">
+        <item quantity="one">Try again in %d second</item>
+        <item quantity="other">Try again in %d seconds</item>
+    </plurals>
+    <plurals name="lock_passphrase_wait_minutes">
+        <item quantity="one">Try again in %d minute</item>
+        <item quantity="other">Try again in %d minutes</item>
+    </plurals>
+    <plurals name="lock_passphrase_wait_hours">
+        <item quantity="one">Try again in %d hour</item>
+        <item quantity="other">Try again in %d hours</item>
+    </plurals>
     <!-- Said (and shown) when a pause in tries ends by itself. -->
     <string name="lock_passphrase_wait_over">You can try again now</string>
-    <!-- What went wrong, then how long to wait: "Wrong passphrase. Try again in 28 s". -->
-    <string name="lock_passphrase_then">%1$s. %2$s</string>
+    <!-- After a wrong passphrase that leaves two tries or fewer before a wait, joined to it by
+         lock_passphrase_then: "Wrong passphrase. 2 more tries before a wait." -->
+    <plurals name="lock_passphrase_tries_left">
+        <item quantity="one">%d more try before a wait</item>
+        <item quantity="other">%d more tries before a wait</item>
+    </plurals>
+    <!-- What went wrong, then how long to wait or how many tries are left: "Wrong passphrase. Try again in 28 seconds."
+         Two sentences, so each ends in a full stop; either alone, a single phrase, has none. -->
+    <string name="lock_passphrase_then">%1$s. %2$s.</string>
+    <!-- On a cover held over a lock screen (compatibility mode, the app still in a small window):
+         the passphrase can't be typed under it. -->
+    <string name="cover_held_passphrase">To use your passphrase, close this app’s picture-in-picture window, then open the app again</string>
 </resources>

@@ -160,6 +160,44 @@ class OnePromptTest {
     }
 
     @Test
+    fun bioKeyLeftFromThePhonesPinScreenLocksItself() {
+        // BioKey's screen, stopped behind the PIN screen of one of its own checks, keeps its
+        // session: that isn't leaving BioKey. Going Home from the PIN screen is, and nothing else
+        // would end the session then.
+        fun window(pkg: String, cls: String) = engine.get().onAccessibilityEvent(
+            AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply {
+                packageName = pkg
+                className = cls
+            }
+        )
+        val pinScreen = "com.android.settings.password.ConfirmDeviceCredentialActivity"
+        val launcher = "com.google.android.apps.nexuslauncher"
+        LockStateTracker.onOwnAppUnlocked()
+        LockStateTracker.ownScreenShowing = false
+        SecurityEngine.INSTANCE.setPromptForTests(x)
+        try {
+            window("com.android.settings", pinScreen)
+            assertTrue(LockStateTracker.isOwnAppUnlocked())
+            onScreen(window(1, launcher, whole, active = true))
+            window(launcher, "$launcher.NexusLauncherActivity")
+            idle(2_000)
+            assertFalse(LockStateTracker.isOwnAppUnlocked())
+
+            // Answered, and BioKey's screen back in front: the session goes on.
+            LockStateTracker.onOwnAppUnlocked()
+            window("com.android.settings", pinScreen)
+            SecurityEngine.INSTANCE.setPromptForTests(null)
+            LockStateTracker.ownScreenShowing = true
+            window(context.packageName, "com.android.BioKey.feature.main.MainActivity")
+            idle(2_000)
+            assertTrue(LockStateTracker.isOwnAppUnlocked())
+        } finally {
+            SecurityEngine.INSTANCE.setPromptForTests(null)
+            LockStateTracker.ownScreenShowing = false
+        }
+    }
+
+    @Test
     fun aPromptNamesUpToThreeAppsAndCountsTheRest() {
         val res = context.resources
         assertEquals("Notes", LockScreenActivity.appsNamed(res, listOf("Notes")))

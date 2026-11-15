@@ -1,24 +1,14 @@
 package com.android.BioKey.core.data
 
 import android.content.pm.ApplicationInfo
-import androidx.annotation.StringRes
-import com.android.BioKey.R
 import java.util.Locale
 
-/** What kind of app something is; [label] is its name on screen. */
-enum class AppCategory(@StringRes val label: Int) {
-    FINANCE(R.string.category_finance),
-    AUTH(R.string.category_auth),
-    SOCIAL(R.string.category_social),
-    WORK(R.string.category_work),
-    PRIVACY(R.string.category_privacy),
-    SYSTEM(R.string.category_system),
-    GENERAL(R.string.category_general)
-}
+/** What kind of app something is: chooses the profile auto-sort puts it in. Never shown. */
+enum class AppCategory { FINANCE, AUTH, SOCIAL, WORK, PRIVACY, SYSTEM, GENERAL }
 
 /**
- * Guesses what kind of app something is from its package name, label and Play category. Used to
- * label apps in the list and by profile auto-sort, so both always agree.
+ * Guesses what kind of app something is from its package name, label and Play category, for
+ * profile auto-sort.
  */
 object AppClassifier {
 
@@ -85,9 +75,14 @@ object AppClassifier {
         return when {
             matches(FINANCE) -> AppCategory.FINANCE
             matches(AUTH) -> AppCategory.AUTH
-            playCategory == ApplicationInfo.CATEGORY_SOCIAL || matches(SOCIAL) -> AppCategory.SOCIAL
-            playCategory == ApplicationInfo.CATEGORY_PRODUCTIVITY || matches(WORK) -> AppCategory.WORK
-            playCategory == ApplicationInfo.CATEGORY_IMAGE || matches(PRIVACY) -> AppCategory.PRIVACY
+            // A name BioKey knows says more than the category an app files itself under, which is
+            // broad: a browser is "productivity" to Android, and personal here.
+            matches(SOCIAL) -> AppCategory.SOCIAL
+            matches(WORK) -> AppCategory.WORK
+            matches(PRIVACY) -> AppCategory.PRIVACY
+            playCategory == ApplicationInfo.CATEGORY_SOCIAL -> AppCategory.SOCIAL
+            playCategory == ApplicationInfo.CATEGORY_PRODUCTIVITY -> AppCategory.WORK
+            playCategory == ApplicationInfo.CATEGORY_IMAGE -> AppCategory.PRIVACY
             packageName.startsWith("com.android.") || packageName.startsWith("com.google.android.") -> AppCategory.SYSTEM
             else -> AppCategory.GENERAL
         }

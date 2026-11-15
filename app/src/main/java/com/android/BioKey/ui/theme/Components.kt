@@ -42,8 +42,11 @@ import androidx.compose.ui.unit.dp
 /** Horizontal inset of groups from the screen edge. */
 val GroupInset = 16.dp
 
-/** Widest a list or page gets: phones use their full width, tablets and landscape stay readable. */
-val MaxContentWidth = 720.dp
+/**
+ * Widest a list or page gets: a phone uses its whole width; an unfolded foldable (about 790dp), a
+ * tablet or landscape gets this, centred, so a switch stays near what it switches.
+ */
+val MaxContentWidth = 600.dp
 private val OuterCorner = 24.dp
 private val InnerCorner = 6.dp
 /** Gap between rows inside a group. */
@@ -67,22 +70,35 @@ fun groupShape(index: Int, count: Int): Shape = RoundedCornerShape(
     bottomEnd = if (index == count - 1) OuterCorner else InnerCorner
 )
 
-/** Colour of group rows: one step up from the page. */
+/** Colour of group rows: one step up from the page (or from a sheet, which sets [LocalGroupColor]). */
 val groupColor: Color
-    @Composable get() = MaterialTheme.colorScheme.surfaceContainer
+    @Composable get() = LocalGroupColor.current.takeIf { it != Color.Unspecified } ?: MaterialTheme.colorScheme.surfaceContainer
+
+/** Group rows' colour where they sit on something other than the page: a dark sheet's ([BioKeySheet]). */
+val LocalGroupColor = androidx.compose.runtime.staticCompositionLocalOf { Color.Unspecified }
 
 /** Section title above a group; a heading for screen readers, so they can jump between sections. */
 @Composable
-fun SectionHeader(text: String, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.primary) {
+fun SectionHeader(text: String, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.primary, top: Dp = SectionHeaderTop) {
     Text(
         text = text,
         style = MaterialTheme.typography.titleSmall,
         color = color,
         modifier = modifier
             .semantics { heading() }
-            .padding(start = GroupInset + 16.dp, end = GroupInset + 16.dp, top = 24.dp, bottom = 10.dp)
+            .padding(start = GroupInset + 16.dp, end = GroupInset + 16.dp, top = top, bottom = 10.dp)
     )
 }
+
+/** The air above a [SectionHeader], after a group of rows. */
+val SectionHeaderTop = 24.dp
+
+/**
+ * The air above a [SectionHeader] right under something with a touch margin of its own (home's
+ * profile chips, drawn 32 dp high in a 48-dp target): the margin already gives 8 dp of it, so the
+ * gap looks like the page's other section gaps.
+ */
+val SectionHeaderTopAfterChips = 12.dp
 
 /** A static group of rows; each row receives its position for [GroupRow]. */
 @Composable

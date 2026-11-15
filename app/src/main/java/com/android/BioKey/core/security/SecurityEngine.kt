@@ -70,6 +70,14 @@ class SecurityEngine private constructor() {
         private fun strongStatus(context: Context): Int? = runCatching { canAuthenticateStrong(context) }.getOrNull()
             .let { if (it == STATUS_LOCKED_OUT) BiometricManager.BIOMETRIC_SUCCESS else it }.also { lastStrongStatus = it }
 
+        /**
+         * Tests only: handed each prompt as it would be started (what it was armed with, and its
+         * callback) in place of Android's, which a test can't answer. Null outside tests.
+         */
+        @androidx.annotation.VisibleForTesting
+        @Volatile
+        internal var promptsForTests: ((UnlockProof.Armed?, BiometricPrompt.AuthenticationCallback) -> Unit)? = null
+
         /** The last answer Android gave ([strongStatus]): for a screen's first frame, before it asks again. */
         @Volatile private var lastStrongStatus: Int? = null
 
@@ -102,6 +110,15 @@ class SecurityEngine private constructor() {
         private fun isEnrolled(status: Int?): Boolean =
             status == BiometricManager.BIOMETRIC_SUCCESS || status == BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE ||
                 status == BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED || status == BiometricManager.BIOMETRIC_ERROR_NOT_ENABLED_FOR_APPS
+
+        /**
+         * Faces and fingerprints are set up but switched off for apps in Android's settings
+         * (Android 15 and later, "Use for apps"). Unlike a sensor that can't be used, that is
+         * somebody's doing, with the screen lock: it is recorded as what it is.
+         */
+        @SuppressLint("InlinedApi")
+        fun strongSwitchedOffForApps(context: Context): Boolean =
+            strongStatus(context) == BiometricManager.BIOMETRIC_ERROR_NOT_ENABLED_FOR_APPS
 
         /** [hasEnrolledStrongBiometric], as [ownerProven] asks it; tests set their own. */
         @androidx.annotation.VisibleForTesting
@@ -211,6 +228,11 @@ class SecurityEngine private constructor() {
         onRefused: (String) -> Unit = {},
         /** For what erases or hides nothing (sharing the log): the screen lock when the sensor can't be used. */
         screenLockIfSensorUnusable: Boolean = false,
+        /**
+         * A match the phone's hardware didn't prove ([UnlockProof]), where the owner's passphrase
+         * stands in: the caller asks for that instead. Without it, [onRefused] says to try again.
+         */
+        onUnproven: (() -> Unit)? = null,
         onConfirmed: () -> Unit
     ) {
         val app = activity.applicationContext
@@ -236,12 +258,25 @@ class SecurityEngine private constructor() {
         val entry = WeakReference(activity) to cancel
         activeConfirmation = entry
         val proof = UnlockProof.arm(app)
+        // As on a lock screen: where the passphrase stands in and there is no proof to ask for,
+        // the passphrase is asked for, not a match taken on Android's word.
+        if (proof == null && onUnproven != null && passphraseStandsIn(app)) {
+            if (activeConfirmation === entry) activeConfirmation = null
+            UnlockProof.saidInstead(app)
+            onUnproven()
+            return
+        }
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                if (activeConfirmation === entry) activeConfirmation = null
+                // An answer for a check since cancelled (its screen left, another asked in its
+                // place) confirms nothing and goes on to nothing.
+                val current = activeConfirmation === entry
+                if (current) activeConfirmation = null
                 // A match with nothing from the phone's hardware behind it confirms nothing.
-                if (!UnlockProof.confirmed(proof)) {
-                    onRefused(activity.getString(R.string.prompt_unproven))
+                if (!UnlockProof.confirmed(app, proof)) {
+                    if (!current) return
+                    if (onUnproven != null && passphraseStandsIn(app)) onUnproven()
+                    else onRefused(activity.getString(R.string.prompt_unproven))
                     return
                 }
                 // Misses this prompt saw, then a match: the owner's, gone like on any prompt.
@@ -250,6 +285,8 @@ class SecurityEngine private constructor() {
                     biometric = result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC,
                     ownMisses = ownMisses
                 )
+                // Told even for a check already cancelled, as on a lock screen: a match is a match.
+                if (!current) return
                 if (result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC &&
                     LockStateTracker.isOwnAppUnlocked()
                 ) {
@@ -354,23 +391,38 @@ class SecurityEngine private constructor() {
             return
         }
         // "Face or fingerprint only" is on, but the face or fingerprint can't be used right now (a
-        // sensor fault, an update pending): the screen lock is allowed so the owner isn't locked out,
-        // and that's recorded.
+        // sensor fault, an update pending, or switched off for apps in Android's settings): the
+        // screen lock is allowed so the owner isn't locked out, and that's recorded, as which it was.
         if (!faceOrFingerOnly && SecurityVault.getInstance(activity).isBiometricOnly() && hasEnrolledStrongBiometric(activity)) {
-            ProtectionGaps.recordOncePerProcess(activity, ProtectionGaps.Change.BIOMETRIC_UNAVAILABLE)
+            ProtectionGaps.recordOncePerProcess(
+                activity,
+                if (strongSwitchedOffForApps(activity)) ProtectionGaps.Change.BIOMETRIC_OFF_FOR_APPS else ProtectionGaps.Change.BIOMETRIC_UNAVAILABLE
+            )
+        } else if (faceOrFingerOnly) {
+            // Usable again: switched off (or failing) another time is recorded another time.
+            ProtectionGaps.passed(ProtectionGaps.Change.BIOMETRIC_OFF_FOR_APPS, ProtectionGaps.Change.BIOMETRIC_UNAVAILABLE)
         }
 
         val proof = UnlockProof.arm(app)
+        // Where the passphrase stands in, nothing opens on Android's word alone: with no proof to
+        // ask the phone's hardware for (its key can't be made or used), the passphrase is asked for.
+        if (proof == null && passphrase) {
+            active = null
+            UnlockProof.saidInstead(app)
+            onError(ERROR_USE_PASSPHRASE, "")
+            return
+        }
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 // A match with nothing from the phone's hardware behind it opens nothing.
-                if (!UnlockProof.confirmed(proof)) {
+                if (!UnlockProof.confirmed(app, proof)) {
                     if (active !== attempt) return
                     active = null
                     onError(ERROR_UNPROVEN, activity.getString(R.string.prompt_unproven))
                     return
                 }
-                if (packageName == app.packageName) {
+                // Only the prompt still asked for says what opened BioKey: not one since superseded.
+                if (packageName == app.packageName && active === attempt) {
                     ownAppOpenedWithBiometric = result.authenticationType == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_BIOMETRIC
                 }
                 // Told even for a prompt already superseded (a fold restarted it): a match is a match.
@@ -447,6 +499,7 @@ class SecurityEngine private constructor() {
         activity: Activity,
         callback: BiometricPrompt.AuthenticationCallback
     ) {
+        promptsForTests?.let { return it(proof, callback) }
         if (proof != null) authenticate(proof.crypto, cancel, activity.mainExecutor, callback)
         else authenticate(cancel, activity.mainExecutor, callback)
     }

@@ -20,7 +20,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -45,6 +44,7 @@ import com.android.BioKey.ui.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.Group
 import com.android.BioKey.ui.theme.GroupRow
 import com.android.BioKey.ui.theme.SectionHeader
+import com.android.BioKey.ui.theme.BioKeySheet
 
 /**
  * What locking [app] does ([LockExplainer]). [justLocked]: shown as the owner switched its lock on
@@ -60,7 +60,7 @@ internal fun LockExplainSheet(
     onDontShowAgain: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    BioKeySheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         ProtectDialogWindow()
         LockExplainContent(app, explanation, justLocked, onDontShowAgain, onDismiss)
     }
@@ -82,21 +82,20 @@ internal fun LockExplainContent(
             .rejectObscuredTouches()
             .padding(bottom = 24.dp)
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        // At the start, as every sheet's title is.
+        Column(Modifier.fillMaxWidth().padding(horizontal = 28.dp)) {
             AppIcon(app, 56.dp)
             Spacer(Modifier.height(12.dp))
             Text(
                 stringResource(if (justLocked) R.string.explain_title_locked else R.string.explain_title, app.label),
                 style = MaterialTheme.typography.headlineSmall,
-                textAlign = TextAlign.Center,
                 modifier = Modifier.semantics { heading() }
             )
             Spacer(Modifier.height(4.dp))
             Text(
                 explanation.howItOpens,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         SectionHeader(stringResource(R.string.explain_still_section))

@@ -4,7 +4,7 @@ import android.content.Context
 import com.android.BioKey.R
 
 /**
- * "Lock all now", wherever it's asked for (BioKey's home screen and status sheet, the launcher
+ * "Re-lock now", wherever it's asked for (BioKey's home screen and status sheet, the launcher
  * shortcut, the Quick Settings tile): every locked app asks again the next time it opens.
  *
  * It only ever makes things safer, so it needs no authentication. Asked while protection is

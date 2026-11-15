@@ -73,6 +73,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         private const val MAX_ACTIVITY_WINDOWS = 256
         /** SystemUI's windows over an app (its dream overlay, its hub) never make it the app left on screen. */
         private const val SYSTEM_UI = "com.android.systemui"
+        /** A prompt's content, to keep patches off it: the room left around it, and how many of its nodes are looked at. */
+        private const val PROMPT_MARGIN_DP = 16
+        private const val PROMPT_NODES = 200
 
         /** Coalesces window churn (animations, transitions) into one visibility pass. */
         private const val RECONCILE_DELAY_MS = 150L
@@ -132,6 +135,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         var isConfirmingDeviceCredential: Boolean = false
             get() = field && SecurityEngine.INSTANCE.isAuthenticating()
             private set
+
+        /** How long BioKey's own screen has to come back after the phone's PIN screen has gone ([credentialScreenGone]). */
+        private const val OWN_RETURN_MS = 1_500L
 
         fun lockDevice(): Boolean {
             return activeService?.performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN) ?: false
@@ -397,6 +403,8 @@ class BioKeyAccessibilityService : AccessibilityService() {
             return
         }
         initOnce()
+        // Switched on from Android's settings, where BioKey sent the owner: back to BioKey.
+        com.android.BioKey.core.security.AccessibilityReturn.comeBack(this)
     }
 
     /** Runs [initServiceComponents] once, whichever of the unlock broadcast and the second look comes first. */
@@ -699,9 +707,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                 return
             }
 
-            if (!SecurityEngine.INSTANCE.isAuthenticating()) {
-                isConfirmingDeviceCredential = false
-            }
+            if (!SecurityEngine.INSTANCE.isAuthenticating()) credentialScreenGone()
 
             // Worked out once per event: it looks at the window list.
             var exitTransition: Boolean? = null
@@ -738,6 +744,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
 
                 if (isDeviceCredentialScreen(eventPkg, eventCls)) {
                     isConfirmingDeviceCredential = true
+                    credentialScreenSeen = true
                 } else if (
                     isConfirmingDeviceCredential && (
                         (eventPkg == "com.android.settings" && eventCls.isNotEmpty() && !isViewClass(eventCls)) || (
@@ -749,7 +756,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
                             )
                         )
                 ) {
-                    isConfirmingDeviceCredential = false
+                    credentialScreenGone()
                 }
                 val inSelfProtHost = SelfProtectionDetector.isHostPackage(eventPkg) && !isConfirmingDeviceCredential
                 if (inSelfProtHost) {
@@ -1193,6 +1200,9 @@ class BioKeyAccessibilityService : AccessibilityService() {
         // keyguard's own window change went by unseen.
         LockStateTracker.onDeviceLockState(isDeviceLocked())
         if (!isInteractive()) return
+        // The phone's PIN screen, up for one of BioKey's prompts, isn't always heard going (a
+        // gesture can change the windows and say nothing else): the prompt having ended says so.
+        if (credentialScreenSeen && !SecurityEngine.INSTANCE.isAuthenticating()) credentialScreenGone()
         val windowList = windowList() ?: return
 
         val visible = LinkedHashSet<String>()
@@ -1255,7 +1265,19 @@ class BioKeyAccessibilityService : AccessibilityService() {
         val coverAllowed = vault.isProtectionActive() && !shield.isShowing && !LockScreenActivity.isLockScreenResumed &&
             !SecurityEngine.INSTANCE.isAuthenticating()
         // A launcher coming back doesn't always say so: the window list does.
-        if (isLauncher(frontApp)) foregroundPackage = frontApp
+        if (isLauncher(frontApp)) {
+            foregroundPackage = frontApp
+            // Nor, then, is the event heard that ends a trip BioKey started itself (a settings
+            // page, the file picker, a lock screen it brought up): Home, however it was reached
+            // (a gesture can change the windows and say nothing else), ends the trip and the
+            // session it kept, as any app that isn't the trip's does ([handleForeground]).
+            if (LockStateTracker.isOwnTripActive()) {
+                LockStateTracker.clearSelfProtection()
+                LockStateTracker.lockOwnApp()
+            }
+            // And Home reached from the phone's PIN screen, with its prompt still thought up.
+            if (credentialScreenSeen) credentialScreenGone()
+        }
         // Nor does BioKey's main screen (its window can't always be read, nor names an activity):
         // BioKey knows it's showing, and the window in front is its own (titled as BioKey's), or
         // its own prompt over it.
@@ -1422,6 +1444,17 @@ class BioKeyAccessibilityService : AccessibilityService() {
         override fun packageOf(window: AccessibilityWindowInfo) = this@BioKeyAccessibilityService.packageOf(window)
         override fun isCoverable(pkg: String) = isCoverableByVisibility(pkg)
         override fun isOwnWindow(window: AccessibilityWindowInfo) = this@BioKeyAccessibilityService.isOwnWindow(window)
+        override fun promptContentBounds(window: AccessibilityWindowInfo): Rect? {
+            val root = runCatching { window.root }.getOrNull() ?: return null
+            return try {
+                val whole = Rect().also(window::getBoundsInScreen)
+                // With room to spare around it: a patch right up against the prompt's edge would crowd it.
+                val margin = (PROMPT_MARGIN_DP * resources.displayMetrics.density).toInt()
+                AccessibilityNodes.contentBounds(root, whole, PROMPT_NODES)?.apply { inset(-margin, -margin) }
+            } finally {
+                root.release()
+            }
+        }
         override fun isInteractive() = this@BioKeyAccessibilityService.isInteractive()
         override fun isKeyguardLocked() = this@BioKeyAccessibilityService.isKeyguardLocked()
         override fun needsCover(pkg: String) = this@BioKeyAccessibilityService.needsCover(pkg, ignoreAbandoned = true)
@@ -2244,11 +2277,37 @@ class BioKeyAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
+    /** The phone's PIN screen was up for one of BioKey's prompts, and hasn't been seen gone yet. */
+    private var credentialScreenSeen = false
+
+    /**
+     * The phone's PIN screen, up for one of BioKey's prompts, has gone (answered, backed out of,
+     * or left for another app). BioKey's own screen, stopped behind it, kept its session meanwhile
+     * ([MainActivity.onStop]: that isn't leaving BioKey): if it doesn't come back now, BioKey was
+     * left from the PIN screen, and its session ends as it would have had it been left directly.
+     */
+    private fun credentialScreenGone() {
+        isConfirmingDeviceCredential = false
+        if (!credentialScreenSeen) return
+        credentialScreenSeen = false
+        mainHandler.removeCallbacks(ownScreenDidntComeBack)
+        mainHandler.postDelayed(ownScreenDidntComeBack, OWN_RETURN_MS)
+    }
+
+    private val ownScreenDidntComeBack = Runnable {
+        if (!LockStateTracker.ownScreenShowing && LockStateTracker.isOwnAppUnlocked() && !LockStateTracker.isOwnTripActive()) {
+            DiagnosticLog.log("BioKey locked: left from the phone's PIN screen")
+            LockStateTracker.lockOwnApp()
+        }
+    }
+
     private fun onStopped() {
         if (!isRunning) return
         isRunning = false
         activeService = null
         isConfirmingDeviceCredential = false
+        credentialScreenSeen = false
+        mainHandler.removeCallbacks(ownScreenDidntComeBack)
         mainHandler.removeCallbacks(reconcileRunnable)
         reconcileScheduled = false
         reconcileDueAt = 0L

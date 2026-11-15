@@ -1638,9 +1638,7 @@ class UsageWatchService : Service() {
     private fun notificationText(): String {
         if (protecting()) return getString(R.string.compat_notification_text)
         val until = runCatching { SecurityVault.getInstance(this).pausedUntilFlow.value }.getOrDefault(0L)
-        return if (until > 0L) {
-            getString(R.string.home_paused_until, android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(until)))
-        } else getString(R.string.home_paused_body)
+        return com.android.BioKey.feature.main.pausedBody(this, until)
     }
 
     /** The notification says whether apps are locked or paused: as that changes, it does. */

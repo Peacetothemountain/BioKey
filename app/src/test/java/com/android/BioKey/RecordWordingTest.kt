@@ -29,7 +29,7 @@ class RecordWordingTest {
     @Test
     fun aChangeIsWordedWithItsNamesAsTheyAre() {
         val text = line(Kind.CHANGED_WITH_SCREEN_LOCK, Change.LOCK_OFF.encode("WhatsApp"))
-        assertTrue(text, "WhatsApp's lock switched off" in text)
+        assertTrue(text, "lock switched off: WhatsApp" in text)
         assertTrue(text, "screen lock" in text)
     }
 
@@ -41,8 +41,34 @@ class RecordWordingTest {
         assertEquals(R.string.biometric_unavailable_notification_text, text(gap(Change.BIOMETRIC_UNAVAILABLE)))
         // Both together: neither alert's wording fits the other, and neither is a weakening.
         assertEquals(R.string.activity_recorded_notification_text, text(gap(Change.LOG_SHARED), gap(Change.BIOMETRIC_UNAVAILABLE)))
+        // A match that couldn't be proved by the phone's hardware has words of its own, and isn't
+        // said to be the sensor failing when the two come together.
+        assertEquals(R.string.unlock_proof_off_notification_text, text(gap(Change.UNLOCK_PROOF_OFF)))
+        // Faces and fingerprints switched off for apps in Android's settings is somebody's doing:
+        // said as that, alone or with the sensor having been unusable too.
+        assertEquals(R.string.biometric_off_for_apps_notification_text, text(gap(Change.BIOMETRIC_OFF_FOR_APPS)))
+        assertEquals(R.string.biometric_off_for_apps_notification_text, text(gap(Change.BIOMETRIC_OFF_FOR_APPS), gap(Change.BIOMETRIC_UNAVAILABLE)))
+        assertEquals(R.string.activity_recorded_notification_text, text(gap(Change.UNLOCK_PROOF_OFF), gap(Change.BIOMETRIC_UNAVAILABLE)))
+        // A passphrase set, changed or removed is something recorded, said as that.
+        assertEquals(R.string.activity_recorded_notification_text, text(gap(Change.PASSPHRASE_SET)))
+        assertEquals(R.string.activity_recorded_notification_text, text(gap(Change.PASSPHRASE_REMOVED), gap(Change.LOG_SHARED)))
         // Anything that weakened protection among them: said as a change.
         assertEquals(R.string.changes_notification_text, text(gap(Change.LOG_SHARED), gap(Change.PAUSED)))
+    }
+
+    @Test
+    fun theAlertForAChangeMadeDuringAHoldDoesNotSayItWasTheScreenLock() {
+        // Within a day of a face or fingerprint change or a reset, a change is recorded whatever
+        // opened BioKey: the alert mustn't say it was the screen lock.
+        fun text(vararg details: String) = UnlockAttempts.notificationText(
+            emptyList(), details.map { Gap(at, at, Kind.CHANGED_WITH_SCREEN_LOCK, 1L, it) }, emptyList()
+        )
+        assertEquals(R.string.changes_notification_text, text(Change.PAUSED.encode()))
+        assertEquals(R.string.changes_notification_text_held, text(Change.PAUSED.encodeDuringHold()))
+        assertEquals(R.string.changes_notification_text_held, text(Change.PAUSED.encodeDuringHold(byReset = true)))
+        assertEquals(R.string.changes_notification_text_held, text(Change.PAUSED.encode(), Change.LOCK_OFF.encodeDuringHold("Notes")))
+        assertEquals(R.string.log_shared_notification_text, text(Change.LOG_SHARED.encode()))
+        assertEquals(R.string.log_shared_notification_text_held, text(Change.LOG_SHARED.encodeDuringHold()))
     }
 
     @Test
@@ -72,12 +98,12 @@ class RecordWordingTest {
     @Test
     fun theLogSharedSaysWhatHappened() {
         val text = line(Kind.CHANGED_WITH_SCREEN_LOCK, Change.LOG_SHARED.encode())
-        assertTrue(text, "Diagnostic log opened for sharing" in text)
+        assertTrue(text, "diagnostic log opened for sharing" in text)
     }
 
     @Test
     fun aForceStopWhoseStartCantBeToldSaysSo() {
-        assertTrue(line(Kind.FORCE_STOPPED, unknownStart = true).contains("can't be told"))
+        assertTrue(line(Kind.FORCE_STOPPED, unknownStart = true).contains("at an unknown time"))
     }
 
     @Test

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Security activity: matches couldn't be proved by the phone's hardware (UnlockProof), so they
+         were taken on Android's word. Worded like the other records ("Face or fingerprint couldn't
+         be used, so your screen lock was allowed"). -->
+    <string name="change_unlock_proof_off">A match couldn’t be proved by the phone’s hardware, so Android’s word for it was taken</string>
+    <string name="unlock_proof_off_notification_text">BioKey couldn’t prove a match with the phone’s hardware, so it took Android’s word for it. Open BioKey to see when.</string>
+
+    <!-- Security activity: the owner's passphrase set, replaced or removed. Always recorded. -->
+    <string name="change_passphrase_set">Passphrase set</string>
+    <string name="change_passphrase_changed">Passphrase changed</string>
+    <string name="change_passphrase_removed">Passphrase removed</string>
+
+    <!-- Alerts for records made within a day of a face or fingerprint change or a reset: those are
+         recorded whatever opened BioKey, so these don't say it was your screen lock
+         (changes_notification_text and log_shared_notification_text do). -->
+    <string name="changes_notification_text_held">BioKey’s protection was changed. Open BioKey to see what.</string>
+    <string name="log_shared_notification_text_held">BioKey’s diagnostic log was shared. Open BioKey to see when.</string>
+</resources>

@@ -11,6 +11,7 @@ import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.SecurityVault
 import com.android.BioKey.feature.lock.BioKeyAccessibilityService
 import com.android.BioKey.feature.main.MainActivity
+import com.android.BioKey.feature.main.pauseEndTime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -18,10 +19,18 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
- * Quick Settings tile. Turning protection back on is instant. Pausing opens BioKey, which asks
- * for authentication before offering pause options (from the lock screen the phone must be
- * unlocked first). The tile mirrors the vault's state while it's visible, and only says
- * "Protecting" while an engine is actually running.
+ * Nothing protecting, in the words of home's header: "Not running" where BioKey is switched on
+ * but has stopped, "Off" otherwise (switched off, or Advanced Protection with compatibility mode
+ * not set up). Both tiles say it.
+ */
+internal fun notProtectingLabel(context: Context, notRunning: Boolean): String =
+    context.getString(if (notRunning) R.string.home_not_running_short else R.string.home_off_short)
+
+/**
+ * Quick Settings "Protection": on while locked apps are being locked. Turning protection back on
+ * is instant. Pausing opens BioKey, which asks the owner to confirm it's them before offering
+ * pause options (from the lock screen the phone must be unlocked first). The tile mirrors the
+ * vault's state while it's visible, and only says "Protecting" while an engine is actually running.
  */
 class BioKeyTileService : TileService() {
 
@@ -33,9 +42,31 @@ class BioKeyTileService : TileService() {
             !enabled -> Status.PAUSED
             else -> Status.PROTECTING
         }
+
+        /**
+         * The line under the tile's name: what it is, and when paused, until when and that a tap
+         * resumes. Nothing beyond "Protecting" over the lock screen, where anyone can see it.
+         */
+        internal fun subtitle(
+            context: Context,
+            status: Status,
+            pausedUntil: Long,
+            locked: Boolean,
+            now: Long = System.currentTimeMillis(),
+            /** Switched on but not running, as against off: the same words as home's header. */
+            notRunning: Boolean = false
+        ): String? = when {
+            // Over the lock screen, nothing under its name once set up: on, paused and off look the same there.
+            locked && status != Status.SETUP_REQUIRED -> null
+            status == Status.SETUP_REQUIRED -> context.getString(R.string.tile_setup_required)
+            status == Status.NOT_PROTECTING -> notProtectingLabel(context, notRunning)
+            status == Status.PROTECTING -> context.getString(R.string.tile_protecting)
+            pausedUntil > now -> context.getString(R.string.tile_paused_until, pauseEndTime(context, pausedUntil))
+            else -> context.getString(R.string.tile_paused)
+        }
     }
 
-    /** What the tile shows, and what a tap on it does. */
+    /** What the tile shows, and what a tap on it does. NOT_PROTECTING is "Off" or "Not running" ([notProtectingLabel]). */
     internal enum class Status { SETUP_REQUIRED, NOT_PROTECTING, PROTECTING, PAUSED }
 
     private val vault by lazy { SecurityVault.getInstance(this) }
@@ -45,8 +76,9 @@ class BioKeyTileService : TileService() {
         super.onStartListening()
         listening?.cancel()
         listening = CoroutineScope(Dispatchers.Main.immediate).launch {
-            // The accessibility service connecting or stopping changes the answer too.
-            combine(vault.setupCompletedFlow, vault.globalLockEnabledFlow, BioKeyAccessibilityService.running) { setupCompleted, enabled, _ ->
+            // The accessibility service connecting or stopping changes the answer too, as does a
+            // pause's end time (a pause made longer, or ending).
+            combine(vault.setupCompletedFlow, vault.globalLockEnabledFlow, vault.pausedUntilFlow, BioKeyAccessibilityService.running) { setupCompleted, enabled, _, _ ->
                 setupCompleted to enabled
             }.collect { (setupCompleted, enabled) ->
                 render(status(setupCompleted, enabled, isEngineRunning()))
@@ -102,17 +134,14 @@ class BioKeyTileService : TileService() {
         tile.label = getString(R.string.tile_label)
         // Inactive rather than unavailable when setup is missing: SystemUI ignores taps on
         // unavailable tiles, and a tap should open BioKey to finish it.
-        tile.state = if (status == Status.PROTECTING) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-        tile.subtitle = if (isLocked && status != Status.PROTECTING) {
-            null
-        } else {
-            when (status) {
-                Status.SETUP_REQUIRED -> getString(R.string.tile_setup_required)
-                Status.NOT_PROTECTING -> getString(R.string.lock_all_tile_not_protecting)
-                Status.PROTECTING -> getString(R.string.tile_protecting)
-                Status.PAUSED -> getString(R.string.common_paused)
-            }
-        }
+        // Over the lock screen the tile looks the same whether protection is on or paused: that isn't
+        // for whoever picks the phone up to see. (Setup missing still shows, so a tap can finish it.)
+        val shownOn = status == Status.PROTECTING || (isLocked && vault.isSetupCompleted())
+        tile.state = if (shownOn) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
+        tile.subtitle = subtitle(
+            this, status, vault.pausedUntilFlow.value, isLocked,
+            notRunning = ProtectionEngine.mode(this) == ProtectionEngine.Mode.ACCESSIBILITY_NOT_RUNNING
+        )
         tile.updateTile()
     }
 }

@@ -18,7 +18,7 @@ import java.util.concurrent.Executors
 /**
  * Quick Settings "Lock this app": locks the app the shade was pulled down over, without opening
  * BioKey: the nearest an app lock gets to the launcher's own long-press "App lock". It only ever
- * adds a lock (or ends the app's session, if it's locked already), so like Lock all it needs no
+ * adds a lock (or ends the app's session, if it's locked already), so like Re-lock now it needs no
  * authentication. Never for a home screen, BioKey itself, or the system's own screens.
  *
  * Over the phone's lock screen it never names the app: whoever holds the locked phone mustn't

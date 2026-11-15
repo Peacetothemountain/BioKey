@@ -60,7 +60,7 @@ internal object LockExplainer {
     /** Everything the sheet says about one app. */
     data class Explanation(
         val packageName: String,
-        /** Android's words for how it opens now, or BioKey's own. */
+        /** How it opens as BioKey is set now ([opensWith]). */
         val howItOpens: String,
         val hasWidgets: Boolean,
         val dataKind: DataKind?,
@@ -127,12 +127,20 @@ internal object LockExplainer {
         }
         return Explanation(
             packageName = app.packageName,
-            howItOpens = UnlockMethods.howLockedAppsOpen(context, context.getString(R.string.explain_opens_fallback)),
+            howItOpens = opensWith(context),
             hasWidgets = hasWidgets(context, app),
             dataKind = kind,
             otherApps = others
         )
     }
+
+    /**
+     * "Opening it asks for your face or fingerprint, or your passphrase": BioKey's own sentence,
+     * from how it is set right now ([UnlockMethods.asksFor]), never Android's prompt line, which
+     * names the screen lock even under "Face or fingerprint only" and never the passphrase. Reads
+     * BioKey's settings and asks Android about the sensors: once per sheet, not every frame.
+     */
+    fun opensWith(context: Context): String = context.getString(R.string.explain_opens, UnlockMethods.asksFor(context))
 
     /**
      * Whose data [pkg] is the home of, as Android's own App lock decides it: the phone's SMS app

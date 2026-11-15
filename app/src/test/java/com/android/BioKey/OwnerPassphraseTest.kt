@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.diagnostics.DiagnosticLog
 import com.android.BioKey.core.security.OwnerPassphrase
 import com.android.BioKey.core.security.OwnerPassphrase.Outcome
+import com.android.BioKey.core.security.ProtectionGaps
 import java.security.KeyStoreException
 import java.util.Base64
 import javax.crypto.Mac
@@ -229,6 +230,46 @@ class OwnerPassphraseTest {
     }
 
     @Test
+    fun triesBeforeWaitCountsDownToTheWaitAndChangesNothing() {
+        assertEquals(null, OwnerPassphrase.triesBeforeWait(context))
+        val right = "meadow-granite-42".toCharArray()
+        val wrong = "wrong-attempt-00".toCharArray()
+        assertTrue(OwnerPassphrase.set(context, right))
+        assertEquals(5, OwnerPassphrase.triesBeforeWait(context))
+        // After each of the first four misses: 4, 3, 2, 1 (the fifth starts a wait).
+        for (left in 4 downTo 1) {
+            assertEquals(Outcome.Mismatch(0L), OwnerPassphrase.verify(context, wrong))
+            assertEquals(left, OwnerPassphrase.triesBeforeWait(context))
+        }
+        // From then on each miss starts one.
+        assertEquals(Outcome.Mismatch(30_000L), OwnerPassphrase.verify(context, wrong))
+        assertEquals(1, OwnerPassphrase.triesBeforeWait(context))
+
+        // Asking, however often, changes nothing: not the count, not the wait, not the clock it runs on.
+        val before = prefs().all.toString()
+        sinceBoot += 5_000L
+        pepperCalls = 0
+        repeat(10) { OwnerPassphrase.triesBeforeWait(context) }
+        assertEquals(before, prefs().all.toString())
+        assertEquals(0, pepperCalls)
+        assertEquals(25_000L, OwnerPassphrase.waitRemainingMs(context))
+
+        // A match clears the count, and so the tries.
+        sinceBoot += 25_000L
+        assertEquals(Outcome.Match, OwnerPassphrase.verify(context, right))
+        assertEquals(5, OwnerPassphrase.triesBeforeWait(context))
+
+        // A count out of bounds in the file is read within them.
+        prefs().edit().putInt("misses", -7).commit()
+        assertEquals(5, OwnerPassphrase.triesBeforeWait(context))
+        prefs().edit().putInt("misses", Int.MAX_VALUE).commit()
+        assertEquals(1, OwnerPassphrase.triesBeforeWait(context))
+
+        OwnerPassphrase.clear(context)
+        assertEquals(null, OwnerPassphrase.triesBeforeWait(context))
+    }
+
+    @Test
     fun eighthTenthAndEleventhMissesEscalateToFiveAndThirtyMinutes() {
         val right = "harbor-spruce-77".toCharArray()
         val wrong = "wrong-passphrase".toCharArray()
@@ -436,7 +477,7 @@ class OwnerPassphraseTest {
         }
         assertTrue(DiagnosticLog.entries().isEmpty())
         OwnerPassphrase.verify(context, "wrong-secret-phrase-123".toCharArray())
-        assertEquals(listOf("Passphrase tries paused for 30 s"), DiagnosticLog.entries().map { it.text })
+        assertEquals(listOf("Passphrase tries paused for 30 seconds"), DiagnosticLog.entries().map { it.text })
 
         OwnerPassphrase.clear(context)
         val allLines = DiagnosticLog.entries().map { it.text }
@@ -449,5 +490,24 @@ class OwnerPassphraseTest {
 
     companion object {
         private const val PREFS_NAME = "biokey_owner_passphrase"
+    }
+
+    @Test
+    fun settingReplacingAndRemovingItAreEachWrittenIntoSecurityActivity() {
+        // A passphrase is a way into every locked app: one set, replaced or removed is never silent.
+        val recorded = mutableListOf<ProtectionGaps.Change>()
+        OwnerPassphrase.record = { _, change -> recorded += change }
+        assertTrue(OwnerPassphrase.set(context, "ridge-lantern-12".toCharArray()))
+        assertTrue(OwnerPassphrase.set(context, "ridge-lantern-13".toCharArray()))
+        OwnerPassphrase.clear(context)
+        // Removing one that isn't there is nothing to record.
+        OwnerPassphrase.clear(context)
+        assertEquals(
+            listOf(ProtectionGaps.Change.PASSPHRASE_SET, ProtectionGaps.Change.PASSPHRASE_CHANGED, ProtectionGaps.Change.PASSPHRASE_REMOVED),
+            recorded
+        )
+        // One that couldn't be saved isn't recorded as set.
+        assertFalse(OwnerPassphrase.set(context, "short".toCharArray()))
+        assertEquals(3, recorded.size)
     }
 }

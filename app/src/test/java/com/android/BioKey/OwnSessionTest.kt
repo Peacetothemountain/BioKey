@@ -89,6 +89,35 @@ class OwnSessionTest {
     }
 
     @Test
+    fun whatBioKeysSessionStoodDownForItsOwnTripsGoesWithTheSession() {
+        // Self-protection stood down for a page BioKey opened itself: BioKey locking itself ends
+        // that, so whoever comes next is asked before BioKey is stopped or removed.
+        LockStateTracker.onOwnAppUnlocked()
+        LockStateTracker.onOwnAppResumed()
+        LockStateTracker.preAuthorizeSelfProtection()
+        assertTrue(LockStateTracker.isSelfProtectionGranted())
+        LockStateTracker.lockOwnApp()
+        assertFalse(LockStateTracker.isSelfProtectionGranted())
+    }
+
+    @Test
+    fun aChallengeTheOwnerPassedOutlastsBioKeysOwnSession() {
+        // Passed over a guarded page (a lock screen, not BioKey's session): BioKey's own screen
+        // locking meanwhile doesn't take it back.
+        LockStateTracker.onOwnAppUnlocked()
+        LockStateTracker.onOwnAppResumed()
+        LockStateTracker.setSelfProtectionGranted(granted = true, visitedGuardedScreen = true)
+        LockStateTracker.lockOwnApp()
+        assertTrue(LockStateTracker.isSelfProtectionGranted())
+    }
+
+    @Test
+    fun selfProtectionIsNotStoodDownWithoutASession() {
+        LockStateTracker.preAuthorizeSelfProtection()
+        assertFalse(LockStateTracker.isSelfProtectionGranted())
+    }
+
+    @Test
     fun aTripThatRanOutAwayIsSaidAsSuch() {
         LockStateTracker.onOwnAppUnlocked()
         LockStateTracker.beginOwnPicker()

@@ -9,8 +9,12 @@ import com.android.BioKey.core.security.LockStateTracker
 import com.android.BioKey.core.security.OwnerPassphrase
 import com.android.BioKey.core.security.SecurityEngine
 import com.android.BioKey.core.security.SecurityVault
+import com.android.BioKey.core.security.UnlockProof
 import com.android.BioKey.feature.main.PassphraseConfirm
 import com.android.BioKey.feature.main.confirmOwner
+import java.security.KeyPairGenerator
+import java.security.Signature
+import java.security.spec.ECGenParameterSpec
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import org.junit.After
@@ -71,6 +75,8 @@ class ConfirmWithPassphraseTest {
     @After
     fun tearDown() {
         SecurityEngine.canAuthenticateStrong = asked
+        SecurityEngine.promptsForTests = null
+        UnlockProof.resetForTests()
         engine.resetAuthenticatingState()
         PassphraseConfirm.dismiss()
         SecurityVault.getInstance(context).awaitPendingWrites()
@@ -205,7 +211,27 @@ class ConfirmWithPassphraseTest {
         assertTrue(OwnerPassphrase.set(context, right.toCharArray()))
         SecurityVault.getInstance(context).setBiometricOnly(true)
         SecurityEngine.canAuthenticateStrong = { BiometricManager.BIOMETRIC_SUCCESS }
+        // A phone whose hardware can prove the match, as phones do.
+        val pair = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+        UnlockProof.armer = {
+            UnlockProof.armedForTests(Signature.getInstance("SHA256withECDSA").apply { initSign(pair.private) }, ByteArray(32), pair.public)
+        }
+        SecurityEngine.promptsForTests = { _, _ -> }
         askToRemove()
         assertNull(PassphraseConfirm.state.title)
+        assertTrue("the fingerprint prompt is up", engine.isAuthenticating())
+    }
+
+    @Test
+    fun withNoProofToAskTheHardwareForThePassphraseIsAskedForInstead() {
+        // The key can't be made or used (here: no Keystore at all). Where the passphrase stands
+        // in, a match is never taken on Android's word alone, so the fingerprint isn't asked for.
+        assertTrue(OwnerPassphrase.set(context, right.toCharArray()))
+        SecurityVault.getInstance(context).setBiometricOnly(true)
+        SecurityEngine.canAuthenticateStrong = { BiometricManager.BIOMETRIC_SUCCESS }
+        askToRemove()
+        assertEquals("Remove your passphrase", PassphraseConfirm.state.title)
+        assertFalse(engine.isAuthenticating())
+        assertFalse(ran)
     }
 }

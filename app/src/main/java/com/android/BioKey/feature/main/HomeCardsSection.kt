@@ -2,9 +2,11 @@ package com.android.BioKey.feature.main
 
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NoEncryption
@@ -14,15 +16,15 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.BioKey.R
-import com.android.BioKey.core.security.OwnerPassphrase
 import com.android.BioKey.core.security.ProtectionEngine
 import com.android.BioKey.core.security.ProtectionGaps
 import com.android.BioKey.core.security.SecurityVault
@@ -37,10 +39,10 @@ import com.android.BioKey.ui.theme.GroupInset
 import com.android.BioKey.ui.theme.GroupRow
 
 /**
- * The cards between home's header and its search bar, most urgent first: alerts off, nothing
- * protecting, no screen lock, an alert channel muted, the one-time attempts
- * question, what happened while the owner was away, apps unlocked now, and the calm suggestions
- * (add a face or fingerprint, lock Settings). Only one is urgent at a time.
+ * The cards between home's header and its search bar, most urgent first: those that need the
+ * owner (alerts off, nothing protecting, no screen lock, an alert channel muted, what happened
+ * while the owner was away, apps unlocked now), all of them, the one urgent card leading
+ * ([homeCardOrder]), then at most one calm [offer] ([HomeOffer]). Only one is urgent at a time.
  */
 internal fun LazyListScope.homeCards(
     mode: ProtectionEngine.Mode,
@@ -54,9 +56,6 @@ internal fun LazyListScope.homeCards(
     attempts: List<UnlockAttempts.Attempt>,
     gaps: List<ProtectionGaps.Gap>,
     seenUpTo: Long,
-    attemptsChosen: Boolean,
-    biometricOnlyOn: Boolean,
-    lockedApps: Set<String>,
     unlockedNowApps: List<AppItem>,
     attemptLabel: (UnlockAttempts.Attempt) -> String,
     onProtectionAction: () -> Unit,
@@ -65,9 +64,31 @@ internal fun LazyListScope.homeCards(
     onChooseUnlocked: () -> Unit,
     onLockAll: () -> Unit,
     /** The phone's screen lock is gone, so locked apps open without a check ([ScreenLockWatch]). */
-    screenLockMissing: Boolean = false
+    screenLockMissing: Boolean = false,
+    /** The one calm offer to show, if any ([chooseOffer]). */
+    offer: HomeOffer? = null
 ) {
-    if (!notifications.allowed) {
+    // Which card, if any, is the page's one urgent card ([urgentCard]).
+    val notProtecting = look.action != null && vault.isSetupCompleted()
+    val urgent = urgentCard(
+        notProtecting = notProtecting,
+        paused = ProtectionEngine.isProtecting(mode) && !globalLockEnabled,
+        activityUrgent = securityActivityUrgent(attempts, gaps, seenUpTo),
+        alertsMuted = home.alertsMuted && notifications.allowed,
+        noScreenLock = screenLockMissing && vault.isSetupCompleted()
+    )
+
+    val showing = buildSet {
+        if (!notifications.allowed) add(HomeCard.ALERTS_OFF)
+        if (notProtecting) add(HomeCard.NOT_PROTECTING)
+        if (screenLockMissing && vault.isSetupCompleted()) add(HomeCard.NO_SCREEN_LOCK)
+        if (home.alertsMuted && notifications.allowed) add(HomeCard.ALERTS_MUTED)
+        if (attempts.isNotEmpty() || gaps.isNotEmpty()) add(HomeCard.ACTIVITY)
+        if (unlockedNowApps.isNotEmpty()) add(HomeCard.UNLOCKED_NOW)
+    }
+    // The page's one urgent card first, then the others that need the owner, then the calm offer.
+    for (card in homeCardOrder(showing, urgent)) when (card) {
+    HomeCard.ALERTS_OFF -> {
         item(key = "alerts_off") {
             Box(Modifier.padding(horizontal = GroupInset).padding(bottom = 8.dp)) {
                 GroupRow(
@@ -84,18 +105,10 @@ internal fun LazyListScope.homeCards(
         }
     }
 
-    // Which card, if any, is the page's one urgent card ([urgentCard]).
-    val notProtecting = look.action != null && vault.isSetupCompleted()
-    val urgent = urgentCard(
-        notProtecting = notProtecting,
-        paused = ProtectionEngine.isProtecting(mode) && !globalLockEnabled,
-        activityUrgent = securityActivityUrgent(attempts, gaps, seenUpTo),
-        alertsMuted = home.alertsMuted && notifications.allowed,
-        noScreenLock = screenLockMissing && vault.isSetupCompleted()
-    )
-
     // Nothing locking right now: the most serious state gets the clearest card, with its one action.
-    if (notProtecting) {
+    HomeCard.NOT_PROTECTING -> {
+        // Shown only with an action ([notProtecting]).
+        val action = look.action.orEmpty()
         item(key = "not_protecting") {
             val activity = LocalActivity.current
             val res = LocalResources.current
@@ -105,12 +118,12 @@ internal fun LazyListScope.homeCards(
             ActionCard(
                 icon = look.icon,
                 title = look.title,
-                subtitle = if (quiet) stringResource(R.string.home_reminders_off_body, look.body) else look.body,
+                subtitle = if (quiet) stringResource(R.string.home_reminders_off_body) else look.body,
                 urgent = urgent == UrgentCard.NOT_PROTECTING,
                 modifier = Modifier.animateItem()
             ) {
                 if (paused) {
-                    FilledTonalButton(onClick = onProtectionAction) { Text(look.action) }
+                    FilledTonalButton(onClick = onProtectionAction) { Text(action) }
                 } else {
                     // Switched off in Accessibility (maybe on purpose): the owner can stop the
                     // reminders until it's back on. Not offered for a crash or a missing permission.
@@ -132,7 +145,7 @@ internal fun LazyListScope.homeCards(
                             colors = cardText
                         ) { Text(stringResource(R.string.home_stop_reminding)) }
                     }
-                    UrgentButton(look.action, onProtectionAction)
+                    UrgentButton(action, onProtectionAction)
                 }
             }
         }
@@ -140,7 +153,7 @@ internal fun LazyListScope.homeCards(
 
     // No screen lock: nothing can check who opens a locked app, so they open without one (and
     // that's being recorded). Setting one again is the fix, and BioKey can only point to it.
-    if (screenLockMissing && vault.isSetupCompleted()) {
+    HomeCard.NO_SCREEN_LOCK -> {
         item(key = "no_screen_lock") {
             val context = LocalContext.current
             val urgentHere = urgent == UrgentCard.NO_SCREEN_LOCK
@@ -160,8 +173,8 @@ internal fun LazyListScope.homeCards(
 
     // One of BioKey's alert channels silenced in Android's settings (all of its notifications
     // off is the row above): say so. Only one card on the page is urgent at a time.
-    val alertsUrgent = urgent == UrgentCard.ALERTS_MUTED
-    if (home.alertsMuted && notifications.allowed) {
+    HomeCard.ALERTS_MUTED -> {
+        val alertsUrgent = urgent == UrgentCard.ALERTS_MUTED
         item(key = "alerts_muted") {
             val context = LocalContext.current
             ActionCard(
@@ -178,8 +191,59 @@ internal fun LazyListScope.homeCards(
         }
     }
 
-    // Asked once, and only where it can help: a strong face or fingerprint is set up.
-    if (!attemptsChosen && vault.isSetupCompleted() && home.hasStrongBiometric) {
+    HomeCard.ACTIVITY -> {
+        item(key = "activity") {
+            // One urgent card on the page: not protecting outranks this.
+            SecurityActivityCard(
+                attempts, gaps, attemptLabel, onReview = onReview, modifier = Modifier.animateItem(),
+                urgent = urgent == UrgentCard.ACTIVITY
+            )
+        }
+    }
+
+    HomeCard.UNLOCKED_NOW -> {
+        item(key = "unlocked_now") {
+            UnlockedNowCard(
+                apps = unlockedNowApps,
+                timeoutOf = vault::getTimeoutMode,
+                onLock = onLockOne,
+                onChoose = onChooseUnlocked,
+                onLockAll = onLockAll,
+                modifier = Modifier.animateItem()
+            )
+        }
+    }
+
+    }
+
+    // After the cards that need the owner, at most one calm offer ([chooseOffer]), so the apps
+    // are never pushed far down the page. The next comes once this one is answered or put away.
+    // The apps auto-sort locked, right after setup, as setup said it would. It stays (home left to
+    // try a locked app, say) until "Got it", and then doesn't come back.
+    if (offer == HomeOffer.AUTO_SORT) {
+        item(key = "auto_sort_note") {
+            val count = home.autoSortLocked
+            val setting = stringResource(R.string.settings_auto_sort_title)
+            // News, put away with "Got it": a text button, as the other calm cards' way of putting
+            // them away. Beside the text where the card is wide enough for both on a line each (a
+            // wide screen, the 600-dp column), so it isn't left alone on a row of its own.
+            BoxWithConstraints(Modifier.animateItem()) {
+                ActionCard(
+                    // Auto-sort's own icon, as on its row in Settings.
+                    icon = Icons.Default.AutoAwesome,
+                    title = pluralStringResource(R.plurals.home_auto_sort_title, count, count),
+                    subtitle = pluralStringResource(R.plurals.home_auto_sort_text, count, count, setting),
+                    roomBeside = maxWidth >= AutoSortBesideWidth
+                ) {
+                    TextButton(onClick = { homeViewModel.dismissAutoSortNote() }) { Text(stringResource(R.string.home_auto_sort_got_it)) }
+                }
+            }
+        }
+    }
+
+    // The offer of failed unlock alerts: asked once, and only where it can help (a strong face or
+    // fingerprint is set up).
+    if (offer == HomeOffer.FAILED_ALERTS) {
         item(key = "attempts_intro") {
             val context = LocalContext.current
             AttemptsIntroCard(
@@ -193,33 +257,10 @@ internal fun LazyListScope.homeCards(
         }
     }
 
-    if (attempts.isNotEmpty() || gaps.isNotEmpty()) {
-        item(key = "activity") {
-            // One urgent card on the page: not protecting outranks this.
-            SecurityActivityCard(
-                attempts, gaps, attemptLabel, onReview = onReview, modifier = Modifier.animateItem(),
-                urgent = urgent == UrgentCard.ACTIVITY
-            )
-        }
-    }
-
-    if (unlockedNowApps.isNotEmpty()) {
-        item(key = "unlocked_now") {
-            UnlockedNowCard(
-                apps = unlockedNowApps,
-                timeoutOf = vault::getTimeoutMode,
-                onLock = onLockOne,
-                onChoose = onChooseUnlocked,
-                onLockAll = onLockAll,
-                modifier = Modifier.animateItem()
-            )
-        }
-    }
-
-    // Calm cards after the urgent ones. No face or fingerprint set up where the phone has the
+    // No face or fingerprint set up where the phone has the
     // sensor: locked apps take the PIN every time, and Face or fingerprint only can't be used.
     // Put away, it comes back if the screen lock is removed (every face and fingerprint goes with it).
-    if (home.canAddBiometric && home.addBiometricDismissed == false && !screenLockMissing && vault.isSetupCompleted()) {
+    if (offer == HomeOffer.ADD_BIOMETRIC) {
         item(key = "add_biometric") {
             val context = LocalContext.current
             ActionCard(
@@ -237,25 +278,89 @@ internal fun LazyListScope.homeCards(
     }
 
     // With your PIN, someone could add their own fingerprint in Settings: lock it.
-    if (biometricOnlyOn && home.hasStrongBiometric && look.action == null && SETTINGS_PACKAGE !in lockedApps && home.lockSettingsDismissed == false) {
+    if (offer == HomeOffer.LOCK_SETTINGS) {
         item(key = "lock_settings") {
             val res = LocalResources.current
-            // What really stands in when a face or fingerprint can't be used: the passphrase where one is set.
-            val passphraseSet by OwnerPassphrase.isSetFlow.collectAsStateWithLifecycle()
             ActionCard(
                 icon = Icons.Default.Lock,
                 title = stringResource(R.string.settings_lock_settings_title),
-                subtitle = stringResource(if (passphraseSet) R.string.home_lock_settings_text_passphrase else R.string.home_lock_settings_text),
+                subtitle = stringResource(R.string.settings_lock_settings_summary),
                 modifier = Modifier.animateItem()
             ) {
                 TextButton(onClick = { homeViewModel.dismissLockSettings() }) { Text(stringResource(R.string.common_not_now)) }
-                FilledTonalButton(onClick = {
-                    val undo = vault.lockSettingsApp()
-                    BioKeyMessages.show(res.getString(R.string.settings_lock_settings_done), Icons.Default.Lock, actionLabel = res.getString(R.string.common_undo), onAction = undo)
-                }) { Text(stringResource(R.string.settings_lock_action)) }
+                // "Lock it" says what in full to a screen reader, wherever focus lands first.
+                val lockDescription = stringResource(R.string.settings_lock_settings_title)
+                FilledTonalButton(
+                    onClick = {
+                        val undo = vault.lockSettingsApp()
+                        BioKeyMessages.show(res.getString(R.string.settings_lock_settings_done), Icons.Default.Lock, actionLabel = res.getString(R.string.common_undo), onAction = undo)
+                    },
+                    modifier = Modifier.semantics { contentDescription = lockDescription }
+                ) { Text(stringResource(R.string.settings_lock_action)) }
             }
         }
     }
+}
+
+/** The width from which auto-sort's note has "Got it" beside its text, each line still on one line at normal text. */
+private val AutoSortBesideWidth = 520.dp
+
+/**
+ * Home's calm offers, in the order they're made: first what auto-sort just did (news, once, right
+ * after setup); then a face or fingerprint (what the other two need); then locking Android
+ * Settings (closes a way round "Face or fingerprint only"); then failed unlock alerts (a record,
+ * nice to have). One shows at a time ([chooseOffer]).
+ */
+internal enum class HomeOffer { AUTO_SORT, ADD_BIOMETRIC, LOCK_SETTINGS, FAILED_ALERTS }
+
+/**
+ * The offers that could be made now. [setupCompleted]: home after setup. [lockSettingsWanted]:
+ * "Face or fingerprint only" is on, protection is on, and Android Settings isn't locked.
+ */
+internal fun eligibleOffers(
+    home: HomeState,
+    setupCompleted: Boolean,
+    attemptsChosen: Boolean,
+    screenLockMissing: Boolean,
+    lockSettingsWanted: Boolean
+): Set<HomeOffer> = buildSet {
+    if (home.autoSortLocked > 0) add(HomeOffer.AUTO_SORT)
+    // Put away, it comes back if the screen lock is removed (every face and fingerprint goes with it).
+    if (home.canAddBiometric && home.addBiometricDismissed == false && !screenLockMissing && setupCompleted) add(HomeOffer.ADD_BIOMETRIC)
+    if (lockSettingsWanted && home.hasStrongBiometric && home.lockSettingsDismissed == false) add(HomeOffer.LOCK_SETTINGS)
+    // Asked once, and only where it can help (a strong face or fingerprint is set up).
+    if (!attemptsChosen && setupCompleted && home.hasStrongBiometric) add(HomeOffer.FAILED_ALERTS)
+}
+
+/**
+ * The one calm offer shown: the one [showing] already, until it's answered or put away, so an
+ * offer never swaps for another under the owner's eyes; else the first [eligible] in
+ * [HomeOffer]'s order. Auto-sort's note is the exception: news of what just happened, it goes
+ * first while it lasts (it lasts one visit).
+ */
+internal fun chooseOffer(eligible: Set<HomeOffer>, showing: HomeOffer?): HomeOffer? = when {
+    HomeOffer.AUTO_SORT in eligible -> HomeOffer.AUTO_SORT
+    showing != null && showing in eligible -> showing
+    else -> HomeOffer.entries.firstOrNull { it in eligible }
+}
+
+/** Home's cards that need the owner, in the order they show when none of them is urgent. */
+internal enum class HomeCard { ALERTS_OFF, NOT_PROTECTING, NO_SCREEN_LOCK, ALERTS_MUTED, ACTIVITY, UNLOCKED_NOW }
+
+/**
+ * The order of the cards that need the owner ([showing]), all before the calm offer: the page's
+ * one urgent card ([urgent], drawn in red) first, so nothing sits above it, then the rest in
+ * [HomeCard]'s order.
+ */
+internal fun homeCardOrder(showing: Set<HomeCard>, urgent: UrgentCard): List<HomeCard> {
+    val lead = when (urgent) {
+        UrgentCard.NOT_PROTECTING -> HomeCard.NOT_PROTECTING
+        UrgentCard.NO_SCREEN_LOCK -> HomeCard.NO_SCREEN_LOCK
+        UrgentCard.ACTIVITY -> HomeCard.ACTIVITY
+        UrgentCard.ALERTS_MUTED -> HomeCard.ALERTS_MUTED
+        UrgentCard.NONE -> null
+    }?.takeIf { it in showing }
+    return listOfNotNull(lead) + HomeCard.entries.filter { it in showing && it != lead }
 }
 
 /** Home's cards that can be urgent, most serious first. */

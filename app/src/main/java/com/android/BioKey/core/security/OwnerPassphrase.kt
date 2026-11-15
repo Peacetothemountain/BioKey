@@ -11,6 +11,7 @@ import androidx.annotation.VisibleForTesting
 import androidx.annotation.WorkerThread
 import androidx.core.content.edit
 import com.android.BioKey.core.diagnostics.DiagnosticLog
+import com.android.BioKey.core.diagnostics.logDuration
 import java.security.KeyStore
 import java.security.KeyStoreException
 import java.security.MessageDigest
@@ -111,12 +112,14 @@ object OwnerPassphrase {
         val elapsed = elapsed
         val bootCount = bootCount
         val pepper = pepper
+        val record = record
         val forgetPepper = forgetPepper
         return@run {
             this.rounds = rounds
             this.elapsed = elapsed
             this.bootCount = bootCount
             this.pepper = pepper
+            this.record = record
             this.forgetPepper = forgetPepper
             cachedBoot = null
         }
@@ -178,6 +181,7 @@ object OwnerPassphrase {
             val encoder = Base64.getEncoder()
             val saltText = encoder.encodeToString(salt)
             val verifierText = encoder.encodeToString(verifier)
+            val replaces = p.contains(KEY_VERIFIER)
             p.edit(commit = true) {
                 putInt(KEY_VERSION, FORMAT_VERSION)
                 putInt(KEY_ROUNDS, useRounds)
@@ -189,7 +193,8 @@ object OwnerPassphrase {
                 remove(KEY_WAIT_BOOT)
             }
             isSetState.value = true
-            DiagnosticLog.log("Passphrase set")
+            DiagnosticLog.log(if (replaces) "Passphrase changed" else "Passphrase set")
+            runCatching { record(context, if (replaces) ProtectionGaps.Change.PASSPHRASE_CHANGED else ProtectionGaps.Change.PASSPHRASE_SET) }
             return true
         } finally {
             salt.fill(0)
@@ -207,7 +212,20 @@ object OwnerPassphrase {
         // that fails here leaves a key that signs nothing anyone keeps; the next passphrase's
         // check value is made with whichever key is there then.
         runCatching { forgetPepper() }
-        if (wasSet) DiagnosticLog.log("Passphrase removed")
+        if (wasSet) {
+            DiagnosticLog.log("Passphrase removed")
+            runCatching { record(context, ProtectionGaps.Change.PASSPHRASE_REMOVED) }
+        }
+    }
+
+    /**
+     * Writes a change of passphrase into security activity: it is a way into every locked app, so
+     * one set, replaced or removed is shown to the owner like any other change of protection.
+     * Replaced in tests.
+     */
+    @VisibleForTesting
+    internal var record: (Context, ProtectionGaps.Change) -> Unit = { context, change ->
+        ProtectionGaps.recordEvent(context.applicationContext, ProtectionGaps.Kind.CHANGED_WITH_SCREEN_LOCK, change.encode())
     }
 
     /**
@@ -300,6 +318,21 @@ object OwnerPassphrase {
         return activeWaitMs(context.applicationContext, p)
     }
 
+    /**
+     * How many more wrong tries there are before one starts a wait: 2 after three in a row (the
+     * fifth starts one), 1 once each starts one. Null when no passphrase is set (or none can be
+     * read yet). Only reads: it changes nothing, the count included, and takes no lock, so it never
+     * waits on a check running. Cheap: callable on the main thread.
+     */
+    fun triesBeforeWait(context: Context): Int? {
+        val p = load(context) ?: return null
+        if (!p.contains(KEY_VERIFIER)) return null
+        val misses = p.getInt(KEY_MISSES, 0).coerceIn(0, MAX_COUNTED_MISSES)
+        var next = misses + 1
+        while (waitForCount(next) <= 0L) next++
+        return next - misses
+    }
+
     private fun activeWaitMs(app: Context, p: SharedPreferences): Long {
         // Never longer than the longest wait there is, whatever the file says.
         val duration = p.getLong(KEY_WAIT_DURATION, 0L).coerceAtMost(LONGEST_WAIT_MS)
@@ -340,8 +373,7 @@ object OwnerPassphrase {
      */
     private fun logMiss(waitMs: Long) {
         if (waitMs <= 0L) return
-        val pause = if (waitMs < 60_000L) "${waitMs / 1_000L} s" else "${waitMs / 60_000L} min"
-        DiagnosticLog.log("Passphrase tries paused for $pause")
+        DiagnosticLog.log("Passphrase tries paused for ${logDuration(waitMs)}")
     }
 
     private fun decodeBytes(encoded: String?, expectedSize: Int): ByteArray? {

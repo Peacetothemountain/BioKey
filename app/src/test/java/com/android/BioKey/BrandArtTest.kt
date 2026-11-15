@@ -6,7 +6,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.os.SystemClock
 import android.view.View
-import androidx.compose.material3.SnackbarDuration
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.ui.brand.KeyMark
 import com.android.BioKey.ui.brand.WordmarkView
@@ -135,12 +134,12 @@ class BrandArtTest {
 
     @Test
     fun messagesExpireWhileWaitingAndAreFreshWhenResent() {
-        val message = BioKeyMessages.Message("Chase unlocked", null, "Undo", null, SnackbarDuration.Long, postedAt = 1_000L)
+        val message = BioKeyMessages.Message("Chase unlocked", null, "Undo", null, postedAt = 1_000L)
         assertFalse(message.isStale(1_000L + BioKeyMessages.MAX_WAIT_MS))
         assertTrue(message.isStale(1_001L + BioKeyMessages.MAX_WAIT_MS))
         // Carried across a rotation: raised again now, so not dropped as stale.
         val now = SystemClock.uptimeMillis()
-        val waited = BioKeyMessages.Message("Chase unlocked", null, "Undo", null, SnackbarDuration.Long, postedAt = now - 60_000L)
+        val waited = BioKeyMessages.Message("Chase unlocked", null, "Undo", null, postedAt = now - 60_000L)
         assertTrue(waited.isStale(now))
         val again = waited.again()
         assertEquals("Undo", again.actionLabel)

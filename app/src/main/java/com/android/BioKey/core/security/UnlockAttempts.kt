@@ -236,9 +236,17 @@ object UnlockAttempts {
         val age = Ageing(boot)
         val kept = filterNot { it.seq <= seen && age.past(it.lastAt, it.net, it.lastElapsed, it.boot) }.sortedByDescending { it.seq }
         val unseen = kept.filter { it.seq > seen }
-        return (unseen.take(MAX_UNSEEN) + kept.filter { it.seq <= seen }.take((MAX_KEPT - unseen.size).coerceAtLeast(0)))
+        return (unseen.endsOf(MAX_UNSEEN) + kept.filter { it.seq <= seen }.take((MAX_KEPT - unseen.size).coerceAtLeast(0)))
             .sortedByDescending { it.seq }
     }
+
+    /**
+     * At most [max] of a list: over that, the first half and the last, so the ones dropped are
+     * from the middle. For unseen records, newest first: piling up new ones can't push out the
+     * oldest, which are what happened first, nor hide the latest.
+     */
+    internal fun <T> List<T>.endsOf(max: Int): List<T> =
+        if (size <= max) this else take(max - max / 2) + takeLast(max / 2)
 
     /** BioKey's security-activity channel is switched off in Android's settings: nothing counts as told. */
     private fun ownChannelMuted(context: Context): Boolean =
@@ -617,7 +625,7 @@ object UnlockAttempts {
             attempts.isEmpty() && offs.size == gaps.size -> res.getString(R.string.gaps_title)
             else -> res.getString(R.string.activity_title)
         }
-        val text = res.getString(notificationText(attempts, gaps, offs))
+        val text = res.getString(notificationText(attempts, gaps, offs, passphrase = runCatching { SecurityEngine.passphraseStandsIn(app) }.getOrDefault(false)))
         val open = PendingIntent.getActivity(
             app,
             NOTIFICATION_ID,
@@ -650,8 +658,15 @@ object UnlockAttempts {
 
     /** What the alert says: the most serious unreviewed record, or what they all are. */
     @VisibleForTesting
-    internal fun notificationText(attempts: List<Attempt>, gaps: List<ProtectionGaps.Gap>, offs: List<ProtectionGaps.Gap>): Int =
+    internal fun notificationText(
+        attempts: List<Attempt>,
+        gaps: List<ProtectionGaps.Gap>,
+        offs: List<ProtectionGaps.Gap>,
+        /** The owner's passphrase is asked for on locked apps, so a miss may have been a wrong one. */
+        passphrase: Boolean = false
+    ): Int =
         when {
+            attempts.any { it.unanswered } && passphrase -> R.string.attempts_notification_text_passphrase
             attempts.any { it.unanswered } -> R.string.attempts_notification_text
             attempts.isNotEmpty() -> R.string.attempts_screen_lock_notification_text
             offs.isNotEmpty() -> R.string.gaps_notification_text
@@ -659,11 +674,19 @@ object UnlockAttempts {
                 R.string.biometrics_changed_notification_text
             gaps.any { it.kind == ProtectionGaps.Kind.SHIELD_ACCESS_REVOKED } -> R.string.shield_access_notification_text
             // Only records that aren't a change of protection: said as what they are.
-            gaps.all { ProtectionGaps.Change.decode(it.detail)?.first == ProtectionGaps.Change.LOG_SHARED } -> R.string.log_shared_notification_text
-            gaps.all { ProtectionGaps.Change.decode(it.detail)?.first?.fromScreenLock == false } -> R.string.biometric_unavailable_notification_text
+            // One made within a day of a face or fingerprint change or a reset is recorded whatever
+            // opened BioKey, so the alert for it doesn't say it was the screen lock.
+            gaps.all { ProtectionGaps.Change.decode(it.detail)?.first == ProtectionGaps.Change.LOG_SHARED } ->
+                if (gaps.any { ProtectionGaps.Change.duringHold(it.detail) }) R.string.log_shared_notification_text_held else R.string.log_shared_notification_text
+            gaps.all { ProtectionGaps.Change.decode(it.detail)?.first == ProtectionGaps.Change.UNLOCK_PROOF_OFF } -> R.string.unlock_proof_off_notification_text
+            // Switched off for apps is somebody's doing: it is said first, whatever else there is of this kind.
+            gaps.any { ProtectionGaps.Change.decode(it.detail)?.first == ProtectionGaps.Change.BIOMETRIC_OFF_FOR_APPS } &&
+                gaps.all { ProtectionGaps.Change.decode(it.detail)?.first?.fromScreenLock == false } -> R.string.biometric_off_for_apps_notification_text
+            gaps.all { ProtectionGaps.Change.decode(it.detail)?.first == ProtectionGaps.Change.BIOMETRIC_UNAVAILABLE } -> R.string.biometric_unavailable_notification_text
             // A mix of those two: neither a change of protection.
             gaps.all { ProtectionGaps.Change.decode(it.detail)?.first.let { c -> c == ProtectionGaps.Change.LOG_SHARED || c?.fromScreenLock == false } } ->
                 R.string.activity_recorded_notification_text
+            gaps.any { ProtectionGaps.Change.duringHold(it.detail) } -> R.string.changes_notification_text_held
             else -> R.string.changes_notification_text
         }
 

@@ -206,7 +206,7 @@ class CompatibilityStartUnderOverlayTest {
         assertTrue("the overlay doesn't stay up", overlays().isEmpty())
         assertFalse("another start isn't waited for", UsageWatchService.startPending)
         advance(60_000)
-        assertTrue(alerts().toString(), alerts().any { it.contains("compatibility mode isn't running") })
+        assertTrue(alerts().toString(), alerts().any { it.contains("compatibility mode isn’t running") })
     }
 
     @Test
@@ -219,7 +219,7 @@ class CompatibilityStartUnderOverlayTest {
         advance(60_000)
         assertEquals("not tried again without an overlay", 1, phone.starts)
         assertNull(startedService())
-        assertTrue(alerts().toString(), alerts().any { it.contains("compatibility mode isn't running") })
+        assertTrue(alerts().toString(), alerts().any { it.contains("compatibility mode isn’t running") })
     }
 
     private fun alerts() = shadowOf(app.getSystemService(NotificationManager::class.java)).allNotifications

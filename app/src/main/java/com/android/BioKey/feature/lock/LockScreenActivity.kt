@@ -758,6 +758,15 @@ class LockScreenActivity : ComponentActivity() {
         if (isFinishing || isDestroyed || !SecurityEngine.passphraseStandsIn(this)) return
         val pkg = lockedPackage
         val selfProtection = isSelfProtection
+        // A cover held over this lock screen (compatibility mode, the app still showing in a small
+        // window it won't leave) would sit over the entry, which couldn't be reached under it, and
+        // standing the cover down to type would show the app. Said on the cover instead: closing
+        // the small window lets the app be opened the usual way, where the entry can be used.
+        if (InstantShieldOverlay.staysOverLockScreen) {
+            engine.resetAuthenticatingStateFor(this)
+            InstantShieldOverlay.onPrompt(pkg, showing = false, message = getString(R.string.cover_held_passphrase))
+            return
+        }
         // As for a prompt: a device lock while the entry is up ends every session, this one included.
         val entry = PassphraseEntry(
             pkg, selfProtection, LockStateTracker.lockGeneration(),
@@ -808,7 +817,7 @@ class LockScreenActivity : ComponentActivity() {
                 cover.setPassphraseBusy(false)
                 when (outcome) {
                     OwnerPassphrase.Outcome.Match -> {
-                        DiagnosticLog.log("$pkg opened with the passphrase")
+                        LockStateTracker.noteUnlockingWith("the passphrase")
                         closePassphraseEntry()
                         onAuthenticated(pkg, entry.selfProtection, entry.generation, entry.others)
                     }

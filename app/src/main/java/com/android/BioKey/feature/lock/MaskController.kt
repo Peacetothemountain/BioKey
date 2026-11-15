@@ -39,6 +39,12 @@ internal class MaskController(
         /** A window of [pkg] may be covered (not BioKey's, nor a sign-in sheet's host). */
         fun isCoverable(pkg: String): Boolean
         fun isOwnWindow(window: AccessibilityWindowInfo): Boolean
+        /**
+         * Where [window], a system window in front while a prompt is up, draws its content (the
+         * prompt's sheet or dialog, not the scrim around it), with a margin; null if that can't
+         * be told. A patch must not go over it.
+         */
+        fun promptContentBounds(window: AccessibilityWindowInfo): Rect? = null
         fun isInteractive(): Boolean
         fun isKeyguardLocked(): Boolean
         /** [pkg] is locked, without a session, and not left on purpose. */
@@ -79,9 +85,10 @@ internal class MaskController(
      * after a window change, such a window may still be on its way under the lock screen. A patch
      * stays until its app has a session or stops being locked, or its window has gone. While the
      * phone is locked, patches are only hidden (they would sit over the keyguard), never removed;
-     * while a prompt is up, likewise, but only on the display(s) it can be on: elsewhere they stay
-     * up and take taps, or a locked app on another display would be usable for as long as a
-     * prompt waits (a fingerprint prompt has no time limit).
+     * while a prompt is up, likewise, but only those that would cover the prompt itself (or all
+     * of them on its display, while where it is can't be told): the rest stay up and take taps,
+     * or a locked app beside the prompt, in picture-in-picture or on another display, would show
+     * for as long as the prompt waits (a fingerprint prompt has no time limit).
      */
     fun update(list: List<AccessibilityWindowInfo>, full: Boolean) {
         if (!vault.isProtectionActive()) {
@@ -95,17 +102,24 @@ internal class MaskController(
             maskedApps = emptySet()
             return
         }
-        if (!host.isInteractive() || host.isKeyguardLocked() || apps.isEmpty()) {
+        val authenticating = SecurityEngine.INSTANCE.isAuthenticating()
+        // No app window listed: nothing to go by, so patches wait hidden. Not while a prompt is
+        // up, though: its scrim fills the display, which is exactly what empties the list, and
+        // the patches clear of the prompt are the ones that must stay.
+        if (!host.isInteractive() || host.isKeyguardLocked() || (apps.isEmpty() && !authenticating)) {
             masks.setHidden(true)
             masks.add(targets)
             return
         }
-        if (SecurityEngine.INSTANCE.isAuthenticating()) {
-            // A patch over the prompt would hide its buttons and fingerprint area: none where it
-            // can be. The prompt's own scrim takes touches there meanwhile, and the windows under
-            // it drop out of the list, so patches there are kept, not followed.
+        if (authenticating) {
+            // A patch over the prompt would hide its buttons and fingerprint area: none where the
+            // prompt is. Its window fills the display (a scrim), so what counts is where its own
+            // content is drawn ([Host.promptContentBounds]); a patch clear of that stays up, and
+            // the window under it isn't shown through the scrim. Where the content can't be
+            // found, every patch on the prompt's display is hidden, as before. The windows under
+            // the prompt drop out of the list, so patches there are kept, not followed.
             val prompt = setOf(Display.DEFAULT_DISPLAY) + listOfNotNull(SecurityEngine.INSTANCE.promptDisplayId())
-            masks.setHiddenOn(prompt)
+            masks.setHiddenOn(prompt, promptAreas(list, prompt))
             masks.show(targets, keepOn = prompt)
             handler.removeCallbacks(recheck)
             handler.postDelayed(recheck, MASK_RECHECK_MS)
@@ -120,6 +134,21 @@ internal class MaskController(
             if (shield.isShowing || LockStateTracker.isRegularLockPending(target.pkg)) continue
             if (target.inPip) coverFromPip(target.pkg, target.windowId) else host.lock(target.pkg, "its window couldn't be masked", target.displayId)
         }
+    }
+
+    /**
+     * Where a prompt's content is on each of [displays], for those where it can be told: the
+     * system window in front there (a prompt is focused while it's up), and what it draws.
+     */
+    private fun promptAreas(list: List<AccessibilityWindowInfo>, displays: Set<Int>): Map<Int, Rect> {
+        val areas = HashMap<Int, Rect>()
+        for (w in list) {
+            if (w.type != AccessibilityWindowInfo.TYPE_SYSTEM || w.displayId !in displays || !(w.isFocused || w.isActive)) continue
+            val content = runCatching { host.promptContentBounds(w) }.getOrNull() ?: continue
+            if (content.isEmpty) continue
+            areas[w.displayId]?.union(content) ?: run { areas[w.displayId] = Rect(content) }
+        }
+        return areas
     }
 
     /** The patch window [w] needs, if any: see [update]. */

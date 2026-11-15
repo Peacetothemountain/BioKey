@@ -1,6 +1,7 @@
 package com.android.BioKey.feature.main
 
 import androidx.activity.compose.LocalActivity
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +17,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
@@ -32,7 +35,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.Stable
@@ -64,6 +70,7 @@ import com.android.BioKey.ui.security.ProtectDialogWindow
 import com.android.BioKey.ui.security.rejectObscuredTouches
 import com.android.BioKey.ui.theme.BioKeyMessages
 import com.android.BioKey.ui.theme.scaledWithText
+import com.android.BioKey.ui.theme.BioKeySheet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -352,12 +359,14 @@ internal fun HomeDialogs(
             },
             onDelete = {
                 val name = currentProfile.name
+                // An empty profile had no apps to stop locking: nothing is said about any.
+                val said = if (currentProfile.packages.isEmpty()) R.string.home_profile_deleted_empty else R.string.home_profile_deleted
                 val deleted = vault.deleteProfile(currentProfile.id)
                 if (deleted != null) ProtectionGaps.recordIfScreenLock(context, ProtectionGaps.Change.PROFILE_DELETED, name)
                 overlays.showEditProfile = false
                 onFilterChange(FILTER_ALL)
                 if (deleted != null) {
-                    BioKeyMessages.show(res.getString(R.string.home_profile_deleted, name), Icons.Default.Delete, actionLabel = res.getString(R.string.common_undo)) {
+                    BioKeyMessages.show(res.getString(said, name), Icons.Default.Delete, actionLabel = res.getString(R.string.common_undo)) {
                         vault.restoreDeletedProfile(deleted)
                     }
                 }
@@ -417,10 +426,16 @@ internal fun HomeDialogs(
         )
     }
 
-    // Last, so it's over an app's options when opened from them.
+    // Opened from an app's options, which have gone by then: one sheet at a time.
     overlays.explainPackage?.let { pkg ->
         val app = installedApps.firstOrNull { it.packageName == pkg }
-        val close = { overlays.explainPackage = null }
+        // Opened from an app's options: closing it (Got it, Back, a tap outside) goes back to
+        // them. Shown on locking an app, it goes back to home.
+        val close = {
+            val backToOptions = !overlays.explainJustLocked
+            overlays.explainPackage = null
+            if (backToOptions) overlays.optionsForPackage = pkg
+        }
         var explanation by remember(pkg) { mutableStateOf<LockExplainer.Explanation?>(null) }
         LaunchedEffect(pkg, app != null) {
             // Gone meanwhile (uninstalled): nothing to say.
@@ -455,9 +470,11 @@ private fun ProtectionSheet(
     onLockAll: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // Open in full: it's short, and in a short window (landscape) half-open would hide its action.
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    BioKeySheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         ProtectDialogWindow()
-        ProtectionSheetContent(look, onAction, onPause, onLockAll)
+        ProtectionSheetContent(look, onAction, onPause, onLockAll, Modifier.verticalScroll(rememberScrollState()))
     }
 }
 
@@ -467,15 +484,15 @@ internal fun ProtectionSheetContent(
     look: ProtectionLook,
     onAction: () -> Unit,
     onPause: () -> Unit,
-    onLockAll: () -> Unit
+    onLockAll: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .rejectObscuredTouches()
             .padding(horizontal = 28.dp)
-            .padding(bottom = 28.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(bottom = 28.dp)
     ) {
         Box(
             modifier = Modifier
@@ -486,27 +503,26 @@ internal fun ProtectionSheetContent(
             Icon(look.icon, contentDescription = null, tint = look.content, modifier = Modifier.size(36.dp))
         }
         Spacer(Modifier.height(16.dp))
+        // At the start, as every sheet's title is.
         Text(
             look.title,
             style = MaterialTheme.typography.headlineSmall,
-            textAlign = TextAlign.Center,
             modifier = Modifier.semantics { heading() }
         )
         Spacer(Modifier.height(8.dp))
-        // The summary centred; anything more (compatibility mode, apps not covered) as a short
-        // start-aligned list under it, easier to read than centred lines.
+        // The summary; anything more (compatibility mode, apps not covered) as a short list under it.
         val lines = look.body.lines()
         Text(
             lines.first(),
             style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         if (lines.size > 1) {
             Spacer(Modifier.height(12.dp))
             Surface(
                 shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                // One step up from the sheet, as its groups of rows are.
+                color = com.android.BioKey.ui.theme.groupColor,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

@@ -108,6 +108,8 @@ class CyberSecurityAuditTest {
         ReinstallMemory.resetForTests(context)
         ReinstallMemory.signersOf = { _, pkg -> installed[pkg] }
         ReinstallMemory.now = { clock }
+        // As on a phone that has the network's time: its records are aged by it.
+        ReinstallMemory.onNetworkTime = { true }
 
         installed[bank] = setOf("aa11bb22")
         vault.setAppLock(bank, true)

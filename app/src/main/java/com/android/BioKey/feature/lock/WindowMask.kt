@@ -70,6 +70,8 @@ internal class WindowMask(
     private var hiddenEverywhere = false
     /** Displays whose patches are hidden: the ones a prompt can be on. */
     private var hiddenOn: Set<Int> = emptySet()
+    /** The area a prompt takes up, by display, where known ([setHiddenOn]). */
+    private var hiddenOver: Map<Int, Rect> = emptyMap()
     private val padding = (PADDING_DP * service.resources.displayMetrics.density).toInt()
 
     override val isEmpty: Boolean get() = patches.isEmpty()
@@ -115,17 +117,32 @@ internal class WindowMask(
      */
     override fun setHidden(hidden: Boolean) = hide(everywhere = hidden, displays = emptySet())
 
-    /** Hides the patches on [displays] only, and shows every other one. */
-    override fun setHiddenOn(displays: Set<Int>) = hide(everywhere = false, displays = displays)
+    /**
+     * Hides the patches on [displays] only, and shows every other one. Where a prompt's own area
+     * on one of them is known ([promptAreas]), only the patches that would cover it are hidden.
+     */
+    override fun setHiddenOn(displays: Set<Int>, promptAreas: Map<Int, Rect>) =
+        hide(everywhere = false, displays = displays, clearOf = promptAreas)
 
-    private fun hide(everywhere: Boolean, displays: Set<Int>) {
-        if (hiddenEverywhere == everywhere && hiddenOn == displays) return
+    private fun hide(everywhere: Boolean, displays: Set<Int>, clearOf: Map<Int, Rect> = emptyMap()) {
+        if (hiddenEverywhere == everywhere && hiddenOn == displays && hiddenOver == clearOf) return
         hiddenEverywhere = everywhere
         hiddenOn = displays
+        hiddenOver = clearOf
         for (patch in patches.values) place(patch)
     }
 
-    private fun isHidden(patch: Patch) = hiddenEverywhere || patch.target.displayId in hiddenOn
+    /**
+     * Hidden everywhere, or on a display a prompt is on: there, a patch that would cover the
+     * prompt, or any patch while the prompt's area isn't known. A patch clear of the prompt stays
+     * up, so the window under it isn't shown through the prompt's scrim for as long as it waits.
+     */
+    private fun isHidden(patch: Patch): Boolean {
+        if (hiddenEverywhere) return true
+        if (patch.target.displayId !in hiddenOn) return false
+        val prompt = hiddenOver[patch.target.displayId] ?: return true
+        return Rect.intersects(patchBounds(patch.target.bounds, padding), prompt)
+    }
 
     /** [pkg] has a session now: its windows are the user's again. */
     override fun forget(pkg: String) {

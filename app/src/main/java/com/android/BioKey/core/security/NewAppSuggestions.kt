@@ -73,7 +73,8 @@ object NewAppSuggestions {
 
     fun ensureChannel(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
-        if (nm.getNotificationChannel(CHANNEL_ID) != null) return
+        // One made by an earlier version has no group yet: put in it once, then left alone.
+        if (nm.getNotificationChannel(CHANNEL_ID)?.group != null) return
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, context.getString(R.string.new_app_channel_name), NotificationManager.IMPORTANCE_DEFAULT).apply {
                 description = context.getString(R.string.new_app_channel_description)
@@ -126,7 +127,7 @@ object NewAppSuggestions {
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_biokey_mark)
             .setContentTitle(context.getString(if (lockedBefore) R.string.new_app_title_again else R.string.new_app_title, label))
-            .setContentText(context.getString(if (lockedBefore) R.string.new_app_text_again else R.string.new_app_text))
+            .setContentText(if (lockedBefore) context.getString(R.string.new_app_text_again) else context.getString(R.string.new_app_text, UnlockMethods.asksFor(context)))
             // Why it wasn't locked by itself takes more than a line.
             .apply { if (lockedBefore) setStyle(NotificationCompat.BigTextStyle().bigText(context.getString(R.string.new_app_text_again))) }
             .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)

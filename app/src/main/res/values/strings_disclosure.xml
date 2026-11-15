@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Prominent disclosures (Disclosures.kt): shown before BioKey sends the user to grant a sensitive permission. -->
+    <string name="disclosure_turning_off">You can turn this off at any time in Android’s settings. If you lock Android Settings in BioKey, it asks you to unlock it first, as any locked app does.</string>
+    <string name="disclosure_accessibility_title">BioKey uses the accessibility service</string>
+    <string name="disclosure_accessibility_reads_app_on_screen">Which app is on screen</string>
+    <string name="disclosure_accessibility_reads_tap_labels">The label of what you tap on the home screen, in its search or in Recents</string>
+    <string name="disclosure_accessibility_reads_recents_names">The names of apps on Recents cards, while Recents is open and an app you’ve locked is unlocked</string>
+    <string name="disclosure_accessibility_reads_window_titles">The title Android gives each window, to tell Google Password Manager’s screens from sign-in sheets over other apps, and to tell which app is on screen when an app hides its screens from accessibility services</string>
+    <string name="disclosure_accessibility_reads_app_lock_prompt">The words on Android’s own App lock prompt (Android 17, only that prompt) while it’s up, to find the app it names, so an app you’ve locked there too asks you only once. The words aren’t kept: only which of your locked apps it named, for 30 days.</string>
+    <string name="disclosure_accessibility_reads_settings_pages">The words on Android’s own screens about BioKey itself: its app info page, its page in Accessibility settings and the question before it’s uninstalled</string>
+    <string name="disclosure_accessibility_used_covering">Covering apps you’ve locked until you unlock them, even before they open</string>
+    <string name="disclosure_accessibility_used_home_back">Pressing Home or Back for you, to leave a locked app you didn’t unlock</string>
+    <string name="disclosure_accessibility_used_lock_screen">Locking the phone when you choose “Lock phone” after too many tries</string>
+    <string name="disclosure_accessibility_used_pip">Opening a locked app’s picture-in-picture window full screen, so it can be covered</string>
+    <string name="disclosure_accessibility_used_recents_session">Locking an unlocked app again when you close it from Recents</string>
+    <string name="disclosure_accessibility_used_self_protection">Asking you to confirm it’s you before BioKey can be switched off, if you turn on “Ask before BioKey is stopped or removed”</string>
+    <string name="disclosure_accessibility_used_lock_this_app">Knowing which app is on screen, for the “Lock this app” tile</string>
+    <string name="disclosure_compatibility_title">BioKey uses usage access and display over other apps</string>
+    <string name="disclosure_compatibility_reads">Which app was just opened, and whether a locked app is still on screen, from Android’s record of when apps on this phone were used</string>
+    <string name="disclosure_compatibility_reads_recent">Which apps were used in the last 24 hours, to list them first in BioKey: read as the list is shown, never kept</string>
+    <string name="disclosure_compatibility_used_covering">Covering apps you’ve locked until you unlock them, without the accessibility service</string>
+    <string name="disclosure_compatibility_used_drawing">Drawing BioKey’s lock cover over a locked app as it opens</string>
+    <string name="disclosure_compatibility_used_lock_this_app">Knowing which app was opened last, for the “Lock this app” tile. While BioKey has nothing to watch (protection paused or no app locked), it looks only when the tile is shown or tapped, and no further back than 6 hours.</string>
+    <string name="disclosure_keeps_log">A log of BioKey’s own lock decisions about your locked apps, and of pauses, Security activity, waits after wrong passphrases and backups as they happen.\nIt stays on this phone for 3 days, at most 500 entries. If the phone restarts and can’t get the time from the network, the last 500 are kept until it can.\nYou can turn off “Diagnostic log” in BioKey’s settings.</string>
+    <string name="disclosure_keeps_security_activity">Security activity, which records:</string>
+    <!-- The lines under "Security activity, which records:", each its own item of a nested list. -->
+    <string name="disclosure_keeps_security_activity_protection_off">Times protection was off, including BioKey being reset (its storage cleared)</string>
+    <string name="disclosure_keeps_security_activity_biometrics">Faces or fingerprints added or removed</string>
+    <string name="disclosure_keeps_security_activity_no_screen_lock">Times the phone had no screen lock</string>
+    <string name="disclosure_keeps_security_activity_unproved">Unlocks let through on Android’s word alone, when the phone’s hardware couldn’t prove the match</string>
+    <string name="disclosure_keeps_security_activity_passphrase">Your passphrase being set, changed or removed</string>
+    <string name="disclosure_keeps_security_activity_sensor_unusable">A face or fingerprint that couldn’t be used, so your screen lock was allowed</string>
+    <string name="disclosure_keeps_security_activity_failed_unlocks">Failed unlocks, if you turn on “Failed unlock alerts”</string>
+    <string name="disclosure_keeps_security_activity_changes">Security activity also records changes made after BioKey was opened with your screen lock, or within a day of a face or fingerprint change or a reset, naming the app or profile changed. Reminders stopped within that day, and the diagnostic log shared at those times, are recorded too.</string>
+    <string name="disclosure_keeps_security_activity_kept">Each Security activity record is kept until you’ve seen it (at least a day for a face or fingerprint change or a reset), and for 7 days after it happened. At most 500 unseen failed unlocks and 500 other unseen records are kept: past that, the oldest and the newest stay and those in between go, though a face or fingerprint change or a reset is always kept. Once seen, at most 50 failed unlocks and 20 other records are kept, besides face or fingerprint changes and resets.</string>
+    <string name="disclosure_keeps_app_lock_seen">Which of your locked apps Android’s own App lock was seen locking too, for 30 days</string>
+    <string name="disclosure_keeps_signing_code">For each app you’ve locked, a code worked out from the certificates it’s signed with</string>
+    <string name="disclosure_keeps_reinstall">If you uninstall a locked app, that code is kept with its package name (the ID Android knows it by, such as com.example.bank) and its profile for 30 days. Reinstalled from the same developer, it’s locked again; from anyone else, BioKey offers to lock it.</string>
+    <string name="disclosure_never_leaves_phone">BioKey never sends anything it sees or keeps off this phone: it has no internet access. Only a diagnostic log you share or a backup you save leaves it.</string>
+    <string name="disclosure_never_reads">BioKey never reads what you type, your messages or anything in other apps beyond what’s listed above</string>
+    <string name="disclosure_section_reads">What BioKey reads</string>
+    <string name="disclosure_section_used_for">What it’s used for</string>
+    <string name="disclosure_section_keeps">What it keeps, on this phone</string>
+    <string name="disclosure_section_never">What it never does</string>
+    <string name="disclosure_read_privacy_policy">Read the privacy policy</string>
+    <string name="disclosure_agree">Agree</string>
+</resources>
