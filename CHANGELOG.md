@@ -2,6 +2,25 @@
 
 BioKey’s releases, newest first. The version is the `versionName` in `app/build.gradle.kts`.
 
+## 2.0.2 (19 November 2026)
+
+Version code 23. Fixes and tidying on 2.0.1.
+
+- **Switching profiles keeps your place.** With the header in sight, the page stays where it
+  was; scrolled down, the search bar and chips stay pinned and the new profile starts right under
+  them. 2.0.1 drew each new page a status bar lower for one frame, then snapped it back.
+- **The picking bar fits narrow phones and large text:** its buttons go under the count when both
+  don’t fit on one row.
+- **The lock screen’s icon ring** is no longer clipped at the top of a short window.
+- **Saved means saved:** a passphrase set or removed, and a restored backup, are reported only once
+  written. Security activity keeps its order after BioKey is stopped mid-write.
+- **Reinstalls:** an app locked in a profile that’s off goes back into that profile.
+- **Names from other apps** are cleaned of hidden control characters, and an unreadable window
+  titled as another locked app is no longer taken for the app you tapped.
+- **BioKey’s screens are kept out of Android’s content capture.**
+- The README, Support page and privacy policy are rewritten plainly, saying the same things in
+  far fewer words.
+
 ## 2.0.1 (14 November 2026)
 
 2.0.0 was built and installed for testing but never released on Google Play, so 2.0.1 is the

@@ -35,141 +35,91 @@ An app lock for Android, modelled on Android 17’s own App lock: the apps you c
 
 ## Features
 
-- Lock the apps you choose behind your face or fingerprint, or your PIN, pattern or password. Only a face or fingerprint that Android counts as strong is accepted: the less secure face unlock some phones have isn’t.
-- With the accessibility engine, a locked app is covered the moment you tap it, before it draws anything.
-- An unlocked app stays unlocked while you use it, and locks again when you leave: at once, after a delay you choose, or when the phone locks. Whenever the phone locks, every locked app locks with it.
-- Profiles (Personal, Finance, Social and Work, or your own), each with its own re-lock delay and on/off switch. Auto-sort locks the apps it recognises and puts each in one of the four (see [Features in detail](#features-in-detail)).
-- BioKey locks itself. Builds from source can also guard its own settings and uninstall (not the Google Play version).
-- Works under Android’s Advanced Protection, through compatibility mode.
-- Pause protection for 15 minutes, 1 hour or until you resume, from the app or the “Protection” Quick Settings tile. While it’s paused, a quiet notification says so, with a Resume button.
-- Optionally, face or fingerprint only: your PIN no longer opens your locked apps or BioKey. If someone adds their own fingerprint in Android’s settings to get round it, BioKey tells you. For a wet finger or a locked-out sensor, you can set a passphrase of your own, which only you know and which isn’t your screen lock.
-- A match counts only with proof from the phone’s secure hardware: each unlock prompt carries a fresh random number that a hardware key must sign, and it can sign only straight after checking you. If that proof ever has to be left off, Security activity says so.
-- Re-lock every locked app at once (before handing your phone over) with “Re-lock now”, from the app, a Quick Settings tile, or by long-pressing BioKey’s icon.
-- See which locked apps are unlocked right now, and when each locks again.
-- Optional failed unlock alerts, and a record of any time protection was off, so you know if someone tried.
-- An offer to lock each app you install that auto-sort didn’t. A locked app uninstalled and installed again within 30 days is locked again (same developer) or offered (anyone else).
-- Lock the app you’re in from Quick Settings (“Lock this app”), without opening BioKey.
-- The first time you lock an app, BioKey says plainly what a lock doesn’t cover: its notifications (still shown; the sheet opens the app’s notification settings in Android to turn them off), its widgets, assistants and apps with access, and for a gallery, files or messaging app, which other apps can see the same photos, files or messages.
-- Password-protected backup and restore of your setup.
-- No `INTERNET` permission. Nothing leaves the phone unless you save or share it yourself.
+- **Lock the apps you choose** behind your face or fingerprint, or your PIN, pattern or password. Only faces and fingerprints Android rates as strong are accepted.
+- **Covered at the tap.** With the accessibility engine, a locked app is covered the moment you tap it, before it draws anything.
+- **Stays unlocked while you use it,** and locks again when you leave: at once, after a delay you choose, or when the phone locks. Whenever the phone locks, every locked app locks with it.
+- **Profiles** (Personal, Finance, Social and Work, or your own), each with its own re-lock delay and on/off switch. Auto-sort locks the apps it recognises and puts each in one.
+- **Face or fingerprint only** (optional): your PIN no longer opens locked apps or BioKey. If someone adds their own fingerprint in Android’s settings, BioKey tells you. An optional **passphrase** of your own covers a wet finger or a locked-out sensor.
+- **Proof of a match:** each unlock must be signed by a key in the phone’s secure hardware, which signs only straight after checking you.
+- **Security activity:** optional failed unlock alerts, and a record of any time protection was off, a face or fingerprint was added, or protection was weakened.
+- **Re-lock now** locks every unlocked app at once, from the app, a Quick Settings tile or BioKey’s icon. **Lock this app** locks the app you’re in from Quick Settings.
+- **Pause** for 15 minutes, 1 hour or until you resume, with a notification that says so.
+- **New and reinstalled apps:** an offer to lock each new app, and a locked app reinstalled within 30 days is locked again.
+- **What locking does:** the first time you lock an app, BioKey says plainly what a lock doesn’t cover (notifications, widgets, other apps with access to the same data).
+- **BioKey locks itself,** and works under Android’s Advanced Protection through compatibility mode.
+- **Password-protected backup** of your setup.
+- **No `INTERNET` permission.** Nothing leaves the phone unless you save or share it yourself.
 
 Requires Android 12 or later.
 
 ## How it works
 
-1. **Covering.** BioKey watches which app is opening, with one of two engines (see [Two engines](#two-engines)). With the accessibility engine, when a locked app is about to open (a tap on its icon, a Recents card or a search result) or appears (any other way, including split screen and picture-in-picture), BioKey covers it at once with an opaque, screenshot-proof overlay. The cover shows the app’s icon with a glow in its colour, and is light or dark as the app’s own launch screen is (from the background its theme gives its window, worked out ahead of time), so going from the cover to the app doesn’t flash from one to the other; where that can’t be told, it follows the phone’s mode.
-2. **Checking it’s you.** A lightweight lock screen takes over from the cover and shows the system `BiometricPrompt`: a face unlock Android counts as strong first, fingerprint at the same time, then your PIN, pattern or password. A face unlock Android counts as weak is never accepted. Android’s word that it matched isn’t enough on its own: see [Proof of a match](#proof-of-a-match). If Android won’t show the lock screen (a start from the background refused, without a word) or the cover, with either engine, the app is sent Home rather than left open, and the diagnostic log says so. Whenever the lock screen has no prompt up (Android dismissed it, or held it back behind the keyguard), a tap anywhere on it asks again.
-3. **Staying unlocked.** An unlocked app stays unlocked for as long as it is on screen, whatever happens inside it (refreshes, dialogs, sign-in sheets, keyboards, chat heads, assistants). It counts as left only once its windows have gone. Then it locks again after its re-lock delay: immediately, after 30 seconds, after 1, 5 or 15 minutes, or when the phone locks. Going straight to a helper app (authenticator, email, the photo picker or a gallery, a file picker, the camera, Settings, a Play Store purchase, review or update page), a screen the app opened (permission request, share sheet), or an interruption (a call, an alarm) and back within 5 minutes doesn’t lock it again, even through several of them in a row.
+1. **Covering.** BioKey watches which app is opening, with one of [two engines](#two-engines). When a locked app opens or appears (split screen and picture-in-picture included), BioKey covers it at once with an opaque, screenshot-proof cover that matches the app’s own launch screen, so there’s no flash.
+2. **Checking it’s you.** A lock screen takes over from the cover and shows Android’s `BiometricPrompt`. Android’s word that it matched isn’t enough on its own (see [Proof of a match](#proof-of-a-match)). If Android won’t show the lock screen or cover, the app is sent Home rather than left open.
+3. **Staying unlocked.** An unlocked app stays unlocked while it’s on screen, whatever happens inside it. Once it’s gone, it locks again after its re-lock delay. A quick trip to a helper app (an authenticator, email, a photo or file picker, the camera, Settings, a Play Store page, a call) and back within 5 minutes doesn’t lock it. Helpers count only if they came with the phone or from a trusted app store, so an app can’t pass itself off as one.
 
-   Besides the helpers BioKey knows by name, it asks Android which apps pick or capture photos and files, and counts only those that came with the phone: an app you install could say it picks files just to be counted. The helpers it knows by name (authenticators, password managers, messages and email, a browser’s sign-in tab) count only if they came with the phone or were installed by an app store: one that itself came with the phone (Google Play, Galaxy Store or another phone maker’s store), or F-Droid, told by the certificate its app is signed with. An app installed from a file could take the name of one that isn’t on the phone, and so could a file calling itself a store. An install made from a computer in a store’s name doesn’t count, and an app that is only in a work profile or Private Space counts only if it is part of the phone.
-
-   The phone locking always locks everything: with the screen as it goes off, or later, once Android’s own lock delay or Smart Lock lets it (until then unlocked apps stay as they were); a screensaver starting and Lockdown from the power menu lock everything at once (see “When the phone locks” below).
-
-### Features in detail
-
-| Feature | What it does |
-|---|---|
-| **Profiles** | Group apps (Personal, Finance, Social and Work, or your own) with their own re-lock delay and their own on/off switch. An app is locked when its own switch is on and its profile is on; switching either off never takes it out of the profile. Each profile is edited from its own page, where several of its apps can be picked (“Select”, or a long press on one) and taken out together, with one Undo; each keeps its own switch. An app lives in at most one profile, and leaves it by choosing “No profile” in its options. An app’s line on BioKey’s main page says only what its group or page doesn’t already: its profile (and whether that’s off), a re-lock delay of its own, whether it’s unlocked now; an app with nothing to add has a one-line row.<br><br>A profile that sets no delay of its own follows the “Default re-lock delay” in BioKey’s settings.<br><br>Auto-sort (on unless you turn it off in BioKey’s settings) locks the apps it recognises and puts each in a built-in profile: banking, payment, crypto and investing apps in Finance; social, chat, messaging and dating apps in Social; email, calendar, documents, work tools, sign-in code and password manager apps in Work; camera, photo, file, notes, health, browser and VPN apps in Personal. It goes by the names it knows first; an app it doesn’t know by name goes by the category it gives itself on Android (social to Social, productivity to Work, photos to Personal). It never moves an app that’s already in a profile, or one you’ve taken out of one, and never puts an app you locked yourself into a profile that’s off. |
-| **BioKey locks itself** | BioKey’s own screens ask you to confirm it’s you, and lock again as soon as you leave them (except for the system settings pages and the backup file picker BioKey opens itself, and a locked app’s lock screen BioKey brings up over them, until it closes) or after 3 minutes of inactivity. That trip out keeps BioKey unlocked for up to two minutes, and ends as soon as you reach Home, however you get there, or another app. It’s kept only while something is running that would notice you going elsewhere: with no engine running, or compatibility mode resting (protection paused, or nothing locked), coming back to BioKey asks who it is. |
-| **Self-protection** | Not in the Google Play version (see [Self-protection builds](#self-protection-builds)). Optional (off by default), accessibility engine only. BioKey’s App info page (force stop, uninstall, clear storage), its accessibility switch and the uninstall dialog ask you to confirm it’s you. Pages you open from inside BioKey are pre-authorised, except Android’s security, screen lock, face and fingerprint, and private space pages. |
-| **Protection alerts** | A notification comes if protection stops (the accessibility service is switched off, or compatibility mode loses a permission or can’t start). |
-| **Pause** | Pause protection for 15 minutes, 1 hour or until you resume (“For 15 minutes”, “For 1 hour”, “Until you resume”), from the app (“Pause protection”) or the “Protection” Quick Settings tile (both ask you to confirm it’s you first; during a timed pause the tile says “Paused until 7:15 PM · tap to resume”; over the phone’s lock screen, once BioKey is set up, it looks the same whether protection is on, paused or off: lit, with no line under its name). While protection is paused, a quiet notification, “Protection is paused” (its channel is “Protection paused”), says until when, with a Resume button that puts protection back at once (it only adds protection, so it asks for nothing); hidden on the lock screen, and not shown in compatibility mode, whose own notification already says so. |
-| **Face or fingerprint only** | Optional, where a strong face or fingerprint is set up. Locked apps and BioKey stop accepting the screen lock (Android’s own App lock always accepts it). Turning it on or off asks for your face or fingerprint, and BioKey’s main page suggests locking Android Settings too (put away with “Not now”, it comes back the next time you turn the option on). BioKey’s settings have it as a switch, “Lock Android Settings too”, with Undo either way.<br><br>Android lets anyone with the PIN add a fingerprint in Android’s settings; BioKey can’t stop that, but notices it (a Keystore key Android destroys when faces or fingerprints change) and tells you.<br><br>If no face or fingerprint is set up any more, or the sensor can’t be used (a fault, an update pending), your [passphrase](#features-in-detail) is asked for if you’ve set one; otherwise the screen lock opens locked apps again (and that’s recorded), so you’re never locked out; changes that need your face or fingerprint (clearing records, restoring a backup, switching protections off) wait until it works, or until you remove it in Android’s settings. |
-| **Passphrase** | Optional, and only does anything while “Face or fingerprint only” is on: a second way into locked apps and BioKey for when the face or fingerprint can’t be used (a wet finger, a sensor locked out). It belongs to BioKey alone, so knowing the phone’s screen lock isn’t enough. Set it in BioKey’s settings, in the Passphrase row under “Face or fingerprint only” (the row shows once that’s on, and stays while a passphrase is set): at least 8 characters, typed twice (“Type it again”) so a typo can’t stick.<br><br>Android’s prompt shows “Use passphrase” where Cancel would be (Back still cancels; from Android 16 QPR2 it’s in the prompt’s own place for another way in, with a key icon), and the lock cover has “Use passphrase” beside Cancel; with no face or fingerprint usable at all, the passphrase is asked for straight away instead of the screen lock. It’s typed on BioKey’s own cover, in a field with no autofill, suggestions or copying. Setting, changing or removing it asks for your face or fingerprint first; with none usable, it can only be removed, and that (like everything else in BioKey that asks who you are) then asks for the passphrase itself, never the screen lock.<br><br>None of the three can be done for a day after a face or fingerprint is added or removed, or after BioKey is reset (“Not until” and the time), and each is recorded in Security activity (“Passphrase set”, “Passphrase changed”, “Passphrase removed”) whatever BioKey was opened with. Otherwise someone who knows the screen lock could add their own fingerprint, set a passphrase only they know, then remove the fingerprint, and keep a way in that nothing showed.<br><br>Wrong tries in a row are counted where a restart can’t reset them: the 5th to 7th each mean a 30-second wait, the 8th and 9th 5 minutes, the 10th and after 30 minutes, whatever the phone’s date says (“Wrong passphrase. Try again in 29 seconds”); the right one clears the count. Forgetting it costs nothing: change or remove it in BioKey’s settings with your face or fingerprint.<br><br>Only a check value is kept (PBKDF2-HMAC-SHA512, 210,000 rounds, a random salt, then mixed with a Keystore key so the stored value can’t be guessed at off the phone), never in a backup.<br><br>With failed unlock alerts on, wrong tries are recorded like a face or fingerprint that didn’t match (the alert then reads “A face, fingerprint or passphrase didn’t match on a locked app”), and an unlock with it reads “then opened with your passphrase”. Where it stands in, a match the phone’s hardware can’t prove never opens anything (see [Proof of a match](#proof-of-a-match)). A restored backup never brings a passphrase: one that leaves “Face or fingerprint only” on with none set offers to set one. |
-| **When the phone locks** | Every locked app locks again when the phone locks. A screen-off that Android doesn’t follow with a lock (its own “lock after” delay, Smart Lock keeping the phone unlocked) leaves unlocked apps as they were; they lock once the phone is seen locked: as the screen turns off or comes back on, every couple of seconds while it’s off, and whenever the keyguard’s windows change. The app left on screen is then covered behind the keyguard. Where BioKey can’t tell whether the phone locked, it locks everything. A screensaver, Lockdown and BioKey itself lock at once. Each profile’s re-lock delay applies as before; “When the phone locks” is the longest. |
-| **Camera over the lock screen** | On by default for a new setup, as Android’s own App lock does; a phone set up with an earlier version keeps them covered until you switch it on. While the phone is locked, its lock-screen camera (a double press of the power button, say) and the emergency dialer open over the keyguard without BioKey’s check (only the phone’s preinstalled camera and phone apps: a downloaded app set as the default camera never counts; and only the very screens the lock screen opens for them by default; any other screen of the app over the keyguard is covered), locked or not, with either engine: the camera only shows what it took meanwhile, so someone holding the locked phone can take photos, as with no app lock at all. Once the phone is unlocked with one of them still on screen (unlocked from inside the camera, say), it’s covered and asked for as usual; an app started behind the keyguard rather than over it is covered there as before. Off, they’re covered over the lock screen too. Switching it on asks first, in a dialog that says what it lets through; switching it on after BioKey was opened with your screen lock is recorded. |
-| **Re-lock now** | Locks every unlocked app again at once, without waiting for the screen to turn off: from BioKey’s main page and the status sheet, the “Re-lock now” Quick Settings tile, or the launcher shortcut (long-press BioKey’s icon; pinned to the home screen it’s “Re-lock”). It only ever locks, so it asks for nothing; while protection is paused it resumes it, and while protection isn’t running it says so instead (“Protection isn’t running right now”). Over the phone’s lock screen its tile has no line under its name. |
-| **Unlocked now** | BioKey’s main page shows the locked apps unlocked right now, each with when it locks again (“Re-locks in 4 minutes”), to lock one or all of them. Rows state a re-lock delay only where it differs from the default, which the “Locked” header states once. |
-| **Failed unlock alerts** | Off until you turn them on (BioKey asks once, where a face or fingerprint is set up). A face or fingerprint that didn’t match on a locked app is recorded as it happens. A match on the same prompt shows those misses were yours, and they go; misses followed by a later unlock stay, marked with how the app was then opened. Misses no face or fingerprint followed are notified the next time you unlock your phone, at least 2 minutes on, never naming the app and never on the lock screen; BioKey’s main page lists them all until reviewed and cleared; a swiped notification comes back at the next unlock. Changing the phone’s date can’t hide or delete them.<br><br>Clearing them, switching the alerts off, deleting the log or restoring any backup needs your face or fingerprint (the screen lock where none is set up). Opened with the PIN, Review doesn’t count as seen: “Mark as reviewed” asks for a face or fingerprint. Review shows the same record several times running once, with how many times. Kept until you’ve seen them, and for 7 days after they happened. If BioKey’s notifications are muted in Android’s settings, the main page says so.<br><br>Optional (“Also record screen lock unlocks”): each locked app opened with the screen lock is recorded too, for owners who never use their PIN. Android doesn’t tell apps about a wrong PIN. |
-| **Protection was off** | If protection is switched off, or BioKey is force-stopped (as Android itself records it), BioKey’s main page shows when, from and to, and you’re told the next time you unlock your phone (while it’s still off, the alert comes back, quietly, at every unlock and about every 15 minutes; if you switched it off on purpose, “Stop reminding” on the main page ends that, and “Remind me” brings it back).<br><br>Also recorded: a face or fingerprint added or removed on the phone (these can’t be cleared, only aged out, and stay new for a day; for that day BioKey can’t tell whether the new face or fingerprint is yours, so changes are recorded and nothing can be marked as reviewed, cleared, silenced or restored), a face or fingerprint that couldn’t be used under “Face or fingerprint only”, face and fingerprint switched off for apps in Android’s settings under it (Android 15 and later; recorded as that, with an alert saying someone may know your screen lock), matches the phone’s hardware couldn’t prove, so Android’s word was taken (see [Proof of a match](#proof-of-a-match)), and, on a phone with one, each way protection is weakened after BioKey was opened with your screen lock and not confirmed with a face or fingerprint: a pause, an app’s lock switched off, a locked app moved or added into a profile that’s off or re-locks later, or taken out of one so it’s locked less, a profile switched off or deleted, a longer re-lock delay, the camera let open over the lock screen, in builds with self-protection its switch off, and (within a day of a face or fingerprint change) “Face or fingerprint only” switched off and the reminders stopped. The diagnostic log opened for sharing after BioKey was opened that way is recorded too, though it changes nothing. (Anything else that asks for a face or fingerprint, a restore included, can’t be done with your screen lock at all.)<br><br>BioKey’s storage cleared in Android’s settings takes every lock and record with it, and Android also switches BioKey’s accessibility service off and (from Android 13) takes back its notification permission, so BioKey can say so only once it’s opened again: its setup screen says when, and once set up it’s recorded; for a day after that, BioKey can’t tell whether a new face or fingerprint is yours, so changes are recorded and some wait (the reset is told from Android’s record of BioKey’s last run, which a clearing keeps, and from BioKey’s storage being new; a changed clock or an update since doesn’t hide it).<br><br>Android stopping BioKey on its own (low memory, a crash), a restart, an update of BioKey, or a moment’s handover between engines isn’t counted (some phone makers’ battery savers force-stop apps the way a person would, and do show), and changing the phone’s clock neither shortens nor hides it. The Play version can’t prevent this (see [Self-protection builds](#self-protection-builds)); it makes sure you find out. |
-| **New apps** | When you install an app auto-sort doesn’t lock, a notification offers to lock it, with a Lock button; several at once (a new phone restoring) gather under one. Can be turned off in BioKey’s settings (“Offer to lock new apps”). |
-| **Locked again after a reinstall** | A locked app uninstalled with its data is remembered for 30 days (its package name, the SHA-256 of its signing certificates, read while it was installed, its profile and when), in BioKey’s own storage, so it survives a restart (Android’s own App lock forgets at a restart). Installed again signed by the same developer (a rotated key counts), it’s locked again in its old profile, and that’s logged. Signed by anyone else, or with no certificate read, it’s never locked by itself: it’s offered, as a new app is, saying it was locked before, even with new-app offers off. An app signed by someone else doesn’t erase the remembered certificate, so the real app installed within the 30 days is still locked again. The 30 days are counted as Security activity’s ages are, on clocks that changing the phone’s date doesn’t move: the time since the phone started, and across a restart the network’s time (Android 13 and later). One timed by the phone’s own clock (Android 12, or no network time) isn’t aged after a restart, so it’s kept past 30 days; at most 200 are kept, the oldest going first. Not in a backup; a restored backup says afresh what’s locked, so the memory is forgotten then. |
-| **Lock this app** | A Quick Settings tile that locks the app the shade was pulled down over (as the engine in use last saw it; compatibility mode, while it has nothing to watch because protection is paused or no app is locked yet, asks Android for the app last opened as the tile is shown or tapped), without opening BioKey: in the profile auto-sort would put it in (if that profile is on) or with none, so the default re-lock delay. Already locked, it locks again at once. Like “Re-lock now”, it only adds protection, so it asks for nothing, except over the phone’s lock screen, where it asks you to unlock the phone first. Never a home screen, BioKey, or the system’s own screens; an app whose profile is off stays as it is (“Turn on Finance in BioKey to lock it”). Over the phone’s lock screen it names no app. |
-| **What locking does** | The first time you switch an app’s lock on (its switch, or a profile chosen in its options), a sheet says what opening it asks for as BioKey is set now (“Opening it asks for your face or fingerprint, or your passphrase”; the “Lock app” row in its options, the offer to lock a new app and setup word it the same way), and what the lock doesn’t cover: its notifications (still shown in full; the row opens the app’s notification settings in Android, where they can be turned off), its home-screen widgets (only if the app has any), assistants and apps you’ve given access to its data; and, for a gallery, files app or the phone’s messaging app, “Your photos/files/messages may still show in other apps” with the other apps holding the matching permissions (3, then “View all”). Once per app, never for apps locked by auto-sort, a new-app offer, a profile’s “Add apps” or the tile, and “Don’t show again” stops it. Every app’s options have it (“What locking does”), before you lock it as well as after (home screens aside, which can’t be locked). |
-| **App list order** | Locked first, then the apps used in the last 24 hours (most recent first), then A–Z, as Android’s own App lock lists them. The order and the Locked / Not locked groups are fixed while you’re on the list, so a row never moves as you flip its switch; they’re worked out again when you come back. Listing recently used apps first needs usage access, which only compatibility mode asks for: without it the list is A–Z after the locked apps. BioKey reads it as the list is shown and keeps nothing. |
-| **No screen lock** | If the phone’s screen lock is removed after setup (which removes every face and fingerprint too), nothing can check who opens a locked app. Android’s own App lock switches itself off for good; BioKey doesn’t lock you out of your own apps instead, and doesn’t go quiet either: locked apps (and BioKey) open without a check, that’s recorded (“no screen lock: locked apps opened without a check”, from when BioKey noticed until a screen lock is back) and told at your next unlock, and BioKey’s main page says so with “Set a screen lock” until there is one. The one exception: with “Face or fingerprint only” on and a passphrase set, locked apps ask for the passphrase, which can still check who it is, so nothing opens without a check. |
-| **Add a face or fingerprint** | Where the phone has the sensor but no strong face or fingerprint is set up, BioKey’s main page suggests adding one (Android’s enrolment page, asking for a strong one). “No thanks” puts it away until the screen lock is next removed. The main page makes one calm offer at a time, after any card that needs you, in this order: once after setup, how many apps auto-sort locked (“BioKey locked 12 apps for you”); adding a face or fingerprint; locking Android Settings; failed unlock alerts. An offer stays until it’s answered or put away, then the next comes. |
-| **Private space** | Where Android Settings lets other apps open private space’s page (Android 15 and later), BioKey’s settings point to it (“Hide apps’ icons”) for hiding an app’s icon, which a lock can’t do. Apps Android 17’s own App lock locks too are marked on BioKey’s main page (“Also locked by Android”). |
-| **Backup and restore** | Your locked apps, profiles and settings, saved to a file you choose, sealed with a password of 8 to 256 characters, typed twice (AES-256-GCM, key from PBKDF2-SHA256). Your passphrase is never in it, and both backing up and restoring say so. A file over 1 megabyte, or one that leads into BioKey’s own storage, is refused. Restore after a reinstall or on a new phone; a restore always asks for your face or fingerprint, and within a day of one being added or removed, or of BioKey being reset, it’s refused before a file is picked (the Restore row in BioKey’s settings says “Not until” and the time). The password you type is held only in memory, and wiped the moment BioKey locks itself. A backup is written only if BioKey is still unlocked once you’ve chosen where to save it; if it locked itself meanwhile, nothing is written and the empty file is deleted (“Backup cancelled. Try again.”). |
-| **Diagnostic log** | On by default, can be turned off. BioKey’s own lock decisions about your locked apps, with pauses, Security activity, waits after wrong passphrases and backups, on the phone, for 3 days and at most 500 entries (after a restart with no network time, the last 500), to help track down a problem. You can share it from BioKey’s settings (“Share the diagnostic log”), with your face or fingerprint (your screen lock if it can’t be used). BioKey’s log viewer shows times as the phone does (12 or 24 hours) and apps by name with the package in brackets; the log itself, and what’s shared, names them by package only. |
-| **Window hardening** | `FLAG_SECURE`, no Recents thumbnails of BioKey, other apps’ overlays hidden (except over a lock screen while compatibility mode’s cover of a picture-in-picture window has to stay above it: Android would hide that cover with them), touches through obscuring windows rejected (tapjacking), on BioKey’s screens and on its covers and patches over locked apps alike, and BioKey’s screens marked accessibility-data-sensitive (Android 14 and later), so only genuine accessibility tools (e.g. TalkBack) can read or operate them there: accessibility malware can’t see your locked apps or tap “Pause protection”. |
-| **No network access** | No `INTERNET` permission. Android’s cloud backup and device-to-device transfer are disabled for BioKey’s data. |
+When the phone locks, everything locks: as the screen goes off, or later if Android’s own lock delay or Smart Lock keeps the phone unlocked meanwhile. A screensaver, Lockdown and **Re-lock now** lock everything at once.
 
 ### Proof of a match
 
-Android’s prompt reports a match, and on its own BioKey would have to take that on trust. Instead, each unlock prompt (and each face or fingerprint check before a change in BioKey) is handed a fresh random 32-byte challenge to sign with a key BioKey keeps in the Android Keystore (the phone’s store for keys, in its secure hardware where it has some): an EC P-256 key, alias `biokey_unlock_proof`, that the hardware lets sign only straight after it has checked the owner, by a strong face or fingerprint or by the screen lock (`BiometricPrompt.CryptoObject`). The unlock counts only if the signature comes back and verifies; a match reported without one opens nothing (“Couldn’t confirm that was you. Try again.”). Code: `core/security/UnlockProof.kt`.
+Each unlock prompt (and each face or fingerprint check before a change in BioKey) gets a fresh random challenge to sign with an EC P-256 key in the Android Keystore (`biokey_unlock_proof`). The hardware lets that key sign only straight after it has checked you (`BiometricPrompt.CryptoObject`), so a match reported without a valid signature opens nothing. Code: `core/security/UnlockProof.kt`.
 
-- The key holds nothing about whose face or fingerprint it was. Adding a fingerprint doesn’t destroy it (the separate key that notices face or fingerprint changes does that job); removing the screen lock does, and BioKey makes a new one once there’s a screen lock again.
-- Where your passphrase stands in (“Face or fingerprint only” on, and a passphrase set), nothing opens on Android’s word alone. The check is never left off: a match the hardware can’t prove opens nothing however often it happens. A locked app’s lock screen says to try again, and “Use passphrase” is there as always; a check before a change in BioKey asks for the passphrase in its place. And where there is no proof to ask for at all (the key can’t be made or used), the face or fingerprint prompt isn’t shown: the passphrase is asked for instead.
-- Otherwise it never locks you out. After two failed signatures in a row, following matches Android reported, the check is left off for an hour (or until BioKey next starts, if that’s sooner), then asked for again, so hardware that can’t sign costs two extra tries, not your apps. Where the key can’t be made or used (no screen lock, a Keystore that fails), prompts run without it.
-- Either way you’re told, not only the diagnostic log: on a phone with a screen lock, Security activity records “A match couldn’t be proved by the phone’s hardware, so Android’s word for it was taken”, with an alert, once until a match is proved again. BioKey keeps one yes or no (in its own file, `biokey_unlock_proof`) to know it has already said so.
-- The key is loaded as BioKey starts; the first prompt after that waits up to 0.3 seconds for it rather than running without the check. Making a new key can take longer, and that prompt then runs without it, as does one that finds the key destroyed (the screen lock removed since) while a new one is made: Security activity records it (once, until a match is proved again), as does the diagnostic log.
-- It isn’t a defence on a rooted phone (see [Limits](#limits)).
+- **Never a lockout.** Where the key can’t be made or used, or its signatures fail twice in a row, BioKey takes Android’s word for an hour, then asks for the signature again, and records it in Security activity.
+- **With a passphrase standing in** (“Face or fingerprint only” on and a passphrase set), there’s no fallback: a match the hardware can’t prove never opens anything, and the passphrase is there instead.
+- Removing the screen lock destroys the key; BioKey makes a new one once there’s a screen lock again. It’s no defence on a rooted phone (see [Limits](#limits)).
+
+### The passphrase
+
+Optional, and only used while “Face or fingerprint only” is on. It belongs to BioKey alone, so knowing the screen lock isn’t enough. It’s at least 8 characters, typed on BioKey’s own cover with no autofill or suggestions, and stored only as a check value (PBKDF2-HMAC-SHA512, 210,000 rounds, random salt, then mixed with a Keystore key so it can’t be tested off the phone), never in a backup. Wrong tries in a row mean a wait (30 seconds from the 5th, 5 minutes from the 8th, 30 minutes from the 10th) that a restart or a date change can’t shorten. Setting, changing or removing it is always recorded, and waits a day after a face or fingerprint change, so someone with your PIN can’t add a fingerprint, set a passphrase and remove the fingerprint unseen.
+
+### Security activity
+
+BioKey records, and tells you at your next unlock:
+
+- times protection was off (switched off or force-stopped), and BioKey’s storage being cleared;
+- a face or fingerprint added or removed (it can’t be cleared, only aged out; for a day after, nothing that clears or silences records can be done);
+- the phone having no screen lock;
+- a face or fingerprint that couldn’t be used under “Face or fingerprint only”, or a match the hardware couldn’t prove;
+- the passphrase set, changed or removed;
+- changes that weaken protection made after BioKey was opened with the screen lock rather than a face or fingerprint;
+- with failed unlock alerts on, faces, fingerprints and passphrases that didn’t match, and optionally every locked app opened with the screen lock.
+
+Records are kept until you’ve seen them, and for 7 days after. Changing the phone’s date can’t hide or delete them.
 
 ### Two engines
 
 | | Accessibility engine (default) | Compatibility mode |
 |---|---|---|
-| **Used when** | The accessibility service is on | Accessibility is unavailable, e.g. Android 17’s Advanced Protection, which reserves accessibility for genuine accessibility tools |
-| **Sees** | Which app is on screen and its windows’ titles; the label of what you tap on the home screen, in its search or in Recents; app names on Recents cards (while Recents is open and a locked app is unlocked); the words on Android’s own App lock prompt, while it’s up (that window only); with self-protection on (not in the Play version), BioKey’s own pages in Android Settings | Which app was just opened, and whether a locked app is still on screen (usage access) |
-| **Covers locked apps** | From the tap, before the app has a window | As the app opens, with an overlay: it checks every 0.15 seconds, so a cold launch is covered as it opens, while a warm one can show for about half a second first (see [Limits](#limits)) |
-| **Self-protection** | Yes (optional; not in the Play version) | No |
+| **Used when** | The accessibility service is on | Accessibility is unavailable, e.g. under Android 17’s Advanced Protection |
+| **Sees** | Which app is on screen and its windows’ titles; the label of what you tap on the home screen, in search or in Recents; Android’s own App lock prompt while it’s up | Which app was just opened (usage access) |
+| **Covers** | From the tap, before the app has a window | As the app opens, checking every 0.15 seconds |
 | **Extra** | | A low-priority notification while running (required by Android) |
 
-BioKey switches between them by itself, including the moment Advanced Protection is turned on or off.
-It never claims to be an accessibility tool: Google Play rejects that and Play Protect blocks it.
+BioKey switches between them by itself. It never claims to be an accessibility tool: Google Play rejects that and Play Protect blocks it.
 
 ### Android 17’s own App lock
 
-Android 17 QPR3 (API 37.2, from Beta 3) adds a native App lock (`PackageManager.getEnableAppLockIntentForPackage`, `ApplicationInfo.isAppLockEnabled`). Turning it on for an app, or even reading whether it’s on, needs `LOCK_APPS`, which only the default launcher can hold, so BioKey can’t use it directly; this was verified on a device. BioKey doesn’t open its page either: it only marks the apps it has seen Android lock too. On top of it BioKey adds profiles, re-lock delays, “Face or fingerprint only”, failed unlock alerts and records, Android’s work profile, and Android 12 to 16.
-
-An app can be locked in both. Android then intercepts its launch: its own cover (`android/com.android.internal.app.LockedAppActivity`, which only the system can show) comes up with its prompt, and the app starts only once that prompt is passed. The accessibility engine recognises that cover. It never covers it, and never counts it as leaving the app you were in. A cover BioKey put up at your tap is lowered, so Android’s prompt shows rather than two at once. Once Android lets the app through, BioKey counts the app as unlocked without asking again: one prompt, not two. Only where it’s sure.
-
-Which app the cover is for, only Android’s prompt says: BioKey reads that window alone (SystemUI’s, titled as Android’s face or fingerprint prompt and come with the cover, never the notification shade or a notification), with Android’s own words for it in the phone’s language, and the name on it counts only if exactly one app on the phone that can be opened, in any of its profiles, has it, and BioKey locks it. A tap on the app just before only says which app it probably was, for the log and for “Also locked by Android”. And the app’s own window must come on screen while the cover or its prompt is still on screen, or within 1.5 seconds of both going.
-
-Otherwise BioKey asks as usual (two prompts). It also asks where Android’s prompt can’t stand in for its own: with “Face or fingerprint only” on (Android always accepts the screen lock), and with failed unlock alerts on (a face or fingerprint that doesn’t match on Android’s prompt never reaches BioKey, nor how the prompt was passed).
-
-Each locked app seen locked by Android is remembered for 30 days, so BioKey’s screens can say so. An app only Android locks is left alone. The diagnostic log says when Android’s App lock asked for one of your locked apps, and whether BioKey asked again.
+Android 17 QPR3 adds a native App lock, but turning it on needs `LOCK_APPS`, which only the default launcher can hold, so BioKey can’t use it. An app can be locked in both: the accessibility engine recognises Android’s prompt, and when it can be sure which app it was for, counts that unlock so you’re asked once. Otherwise (compatibility mode, an ambiguous name, “Face or fingerprint only” or failed unlock alerts on) BioKey asks too. Apps Android locks as well are marked “Also locked by Android”.
 
 ## Permissions
 
 | Permission | Why |
 |---|---|
-| Accessibility service | Sees which app is on screen; reads the label of what you tap on the home screen, in its search or in Recents, and, while Recents is open and a locked app is unlocked, the app names on its cards; the title Android gives each window (to recognise Google Password Manager’s screens, and to tell which app is on screen when an app hides its screens from accessibility services); the words on Android’s own App lock prompt while it’s up (Android 17; that window only, never the shade or a notification), to find the app it names, so an app locked there too asks once; with self-protection on (not in the Play version), recognises BioKey’s own settings pages. Doesn’t read what you type. |
-| `USE_BIOMETRIC` | Checking your face or fingerprint, through the system prompt. |
-| `HIDE_OVERLAY_WINDOWS` | Hides other apps’ overlays while BioKey’s screens are showing (see Window hardening for the one exception). |
-| `POST_NOTIFICATIONS` | The protection alert, Security activity (never naming the app, never on the lock screen), offers to lock new apps, and “Protection is paused” while protection is paused outside compatibility mode (never on the lock screen; its Resume button goes to a receiver of BioKey’s that other apps can’t reach). |
-| `RECEIVE_BOOT_COMPLETED` | After a reboot, starts compatibility mode if it’s in use, or warns if protection is off. |
-| `QUERY_ADVANCED_PROTECTION_MODE` | Detects Android’s Advanced Protection, so BioKey switches to compatibility mode. |
-| Usage access (`PACKAGE_USAGE_STATS`), display over other apps (`SYSTEM_ALERT_WINDOW`), `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE` | Compatibility mode only: which app was opened and whether a locked app is still on screen, covering it and running while the screen is on. |
+| Accessibility service | Sees which app is on screen and covers locked apps. Reads the label of what you tap on the home screen, in search or in Recents; app names on Recents cards while a locked app is unlocked; window titles; and Android 17’s App lock prompt while it’s up. Doesn’t read what you type. |
+| `USE_BIOMETRIC` | Checking your face or fingerprint, through Android’s prompt. |
+| `HIDE_OVERLAY_WINDOWS` | Hides other apps’ overlays over BioKey’s screens. |
+| `POST_NOTIFICATIONS` | Protection alerts, Security activity (never naming the app, never on the lock screen), new-app offers, and “Protection is paused”. |
+| `RECEIVE_BOOT_COMPLETED` | After a restart, starts compatibility mode if it’s in use, or warns if protection is off. |
+| `QUERY_ADVANCED_PROTECTION_MODE` | Detects Advanced Protection, to switch to compatibility mode. |
+| Usage access, display over other apps, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE` | Compatibility mode only. |
 
-The accessibility service is listed in Android’s Accessibility settings as “BioKey”, and its page there links back into BioKey’s main page, behind BioKey’s own lock as usual.
+Package visibility is limited to launchable apps and the kinds BioKey needs to recognise (launchers, keyboards, photo and file pickers, cameras, the lock screen’s shortcuts, Google Play services, Credential Manager, Settings); no `QUERY_ALL_PACKAGES`. Also absent: `INTERNET`, a battery-optimisation exemption, `VIBRATE`.
 
-Package visibility is limited to launchable apps, launchers, keyboards, apps that pick or capture photos and files (galleries, file managers, cameras), the apps that answer the lock screen’s camera and emergency-call shortcuts, Google Play services and Credential Manager, the Settings app and the settings pages BioKey opens (`<queries>`); BioKey doesn’t request `QUERY_ALL_PACKAGES`. Which launchable apps hold photo, file or SMS permissions (“What locking does”), their home-screen widgets and their signing certificates (a reinstall) are read within that visibility, with no extra permission.
-
-BioKey is built to stay within Google Play’s rules, so Play Protect and Advanced Protection have nothing to block:
-
-- **Honest accessibility declaration** (`isAccessibilityTool="false"`), and compatibility mode for when Android reserves accessibility for real accessibility tools.
-- **Prominent disclosure and consent** in the app before every sensitive permission (accessibility, usage access + overlay). Only **Agree** continues; Back or dismissing is not consent.
-- **No blocking of uninstall or disable**: the Google Play version has no self-protection, since Play’s Accessibility API policy allows that only to parental-control and enterprise apps. Builds from source can include it, opt-in.
-- **Minimum permissions**: no `INTERNET`, no `QUERY_ALL_PACKAGES`, no battery-optimisation exemption, no `VIBRATE`.
-
-Installs from Google Play are exempt from Android’s restricted settings and from Play Protect’s fraud protection for sideloaded apps that request accessibility. A build installed from a file has to be allowed restricted settings first (see [Support](https://peacetothemountain.github.io/BioKey/support/)).
+BioKey stays within Google Play’s rules: an honest accessibility declaration (`isAccessibilityTool="false"`), a prominent disclosure before each sensitive permission (only **Agree** continues), and no blocking of uninstall in the Play version. A build installed from a file has to be allowed restricted settings first (see [Support](https://peacetothemountain.github.io/BioKey/support/)).
 
 ## Privacy
 
-BioKey collects no data. It has no internet access, no analytics, no ads and no third-party services. What it keeps stays in its private storage on the phone, and is excluded from cloud backup and device transfer:
-
-- your locked apps, profiles and settings
-- the diagnostic log: a short log of its own lock decisions, pauses, Security activity, waits after wrong passphrases and backups
-- Security activity: times protection was off, faces or fingerprints added or removed, times the phone had no screen lock, your passphrase being set, changed or removed, a face or fingerprint that couldn’t be used, face and fingerprint switched off for apps, matches the phone’s hardware couldn’t prove, changes made after BioKey was opened with your screen lock or within a day of a face or fingerprint change or a reset (with reminders stopped and the log opened for sharing then) and, if you turn them on, failed unlocks; each is kept until you’ve seen it (a face or fingerprint change or a reset at least a day), and for 7 days after it happened (at most 50 seen failed unlocks and 20 seen other records, not counting face or fingerprint changes and resets, which always keep their 7 days)
-- which of your locked apps Android’s own App lock was seen locking too (30 days)
-- a code worked out from each locked app’s signing certificates (SHA-256), kept 30 days after it’s uninstalled (longer only while the phone’s date can’t be checked, at most 200 apps), with its package name and profile, to lock it again if it’s reinstalled
-- which apps “What locking does” has already been shown for, and whether you chose “Don’t show again”
-- if you set one, a check value made from your passphrase, never the passphrase
-- a few yes-or-no notes it needs to work, such as whether Security activity has already said that a match couldn’t be proved
-
-Nothing leaves the phone unless you save a backup file or share the diagnostic log yourself.
+BioKey collects no data: no internet access, no analytics, no ads, no third-party services. Your locked apps, profiles, settings, Security activity and a short diagnostic log stay in its private storage, excluded from cloud backup and device transfer. Nothing leaves the phone unless you save a backup file or share the diagnostic log yourself.
 
 Full policy: [peacetothemountain.github.io/BioKey/privacy](https://peacetothemountain.github.io/BioKey/privacy/) (source: [PRIVACY.md](PRIVACY.md)).
 
@@ -177,81 +127,52 @@ Full policy: [peacetothemountain.github.io/BioKey/privacy](https://peacetothemou
 
 An app lock running as a regular app can’t defend against everything:
 
-- **Root, ADB, or a modified OS** can bypass any app lock. The [proof of a match](#proof-of-a-match) doesn’t change that: on a rooted phone BioKey itself can be changed.
-- **Proof of a match left off:** where the phone’s hardware can’t make or use the signing key (no screen lock, a failing Keystore), and for a prompt that comes while the key is still being made or just after Android destroyed it, BioKey takes Android’s word for a match, as before 2.0, and after two failed signatures in a row it does the same for an hour (or until it next starts). Not where your passphrase stands in (“Face or fingerprint only” on, and a passphrase set): there nothing is opened without the proof, and with no proof to ask for, the passphrase is asked for instead. On a phone with a screen lock, Security activity says when (once, until a match is proved again), as does the diagnostic log.
-- **Compatibility mode** (used under Advanced Protection) hears of an app opening only by asking Android, every 0.15 seconds, so it covers a locked app a little later than the accessibility engine, which knows of the tap. A locked app left showing behind another (one that lets it show through) is covered after a second. It has no self-protection, reads no window titles (so it can’t go by them to tell which app hides its screens), and its cover takes the whole screen, never only one half of a split screen. It shows a low-priority notification, which Android requires for this kind of background work.
-- **Compatibility mode after a restart** starts once Android says it has finished starting up, which on some phones comes many seconds after the first unlock: until then, locked apps open without a check. (The accessibility engine starts with the first unlock.)
-- **Compatibility mode needs both its permissions.** Turning off usage access or display over other apps stops it: BioKey locks every unlocked app again and alerts you, but the app on screen at that moment can’t be covered.
-- **Before the first unlock after a restart** BioKey can’t run: its settings are kept in storage that Android opens only with that first unlock. Until then nothing is covered, so the lock-screen camera opens even with “Let the camera open over the lock screen” off. What was on the phone before the restart stays encrypted by Android until that first unlock.
-- **Safe mode** turns off every downloaded app, BioKey included, until you restart normally: preinstalled locked apps (Photos, Gmail or Chrome, for example) open without a check, and no alert can be shown.
+- **Root, ADB or a modified OS** can bypass any app lock, the proof of a match included.
+- **Before the first unlock after a restart,** and in **safe mode,** BioKey can’t run, so nothing is covered.
+- **Compatibility mode** covers a locked app a little later than the accessibility engine: an app still in memory can show for about half a second. It can’t see apps in Android’s work profile, read window titles, see apps closed from Recents, or cover only half a split screen. It needs both its permissions, and after a restart starts only once Android says start-up has finished.
+- **Launches without a tap** (links, notifications, the quick-switch gesture) are covered when Android reports the window, which on a cold start can take up to about half a second. A launcher’s search result can show for a frame or two.
+- **Apps that hide their windows from accessibility services** (many banking apps) are covered when opened from their icon or Recents card, but can open uncovered another way. BioKey goes by their window title where it names exactly one app, which another app hiding its windows could copy.
+- **Apps that hide other apps’ overlays** can show for a moment before the lock screen in compatibility mode.
 - **Recents previews** of a locked app can’t be blanked; only Android’s own App lock can do that.
-- **Home screens** can’t be locked: BioKey never covers the home screen in use or the phone’s own (which also shows Recents), so you can always get Home. Their lock switches can’t be turned on.
-- **Closing an app from Recents** locks it again only with the accessibility engine (on launchers built on Android’s own, like the Pixel’s). Compatibility mode can’t see it: Android doesn’t tell apps when another app is closed, so the app locks again when its re-lock delay is up.
-- **Compatibility mode on warm launches**: an app that was still in memory can show its last screen for about half a second before the cover. Android holds back app overlays while an app’s opening animation runs; the accessibility engine’s cover isn’t held.
-- **Going Home and straight back within 0.4 seconds** (accessibility engine): an app whose re-lock delay is Immediately stays unlocked. During a transition Android’s list of windows can leave out an app still on screen, so an app counts as left only once it has been off screen for 0.4 seconds; otherwise apps would lock while you were still using them.
-- **Helper apps can’t be told from a switch you make yourself.** Going straight from an unlocked app to a helper (the camera, a gallery or file picker, messages or email, an authenticator, a password manager, Android Settings) and straight back within 5 minutes keeps the app unlocked, even with the re-lock delay “Immediately”, whether the app opened the helper or you did (from a notification or with the quick-switch gesture). Going by Home or Recents ends it. Lock the phone, or use “Re-lock now”, before handing it to someone.
-- **Apps that hide other apps’ overlays** (some banking and payment apps): in compatibility mode Android hides BioKey’s cover over them, so their screen can show for a moment on each launch until the lock screen appears; the lock itself still applies.
-- **Launches without a tap** (links from other apps, notifications, the quick-switch gesture) are covered when Android reports the app’s window, not at the tap. BioKey covers within about 30 to 50 thousandths of a second of hearing of it, but on a cold start Android can report it late: measured at up to about half a second on an emulator (the engine trace shows when the event was made and when it arrived). A tap on an app’s icon or its Recents card is covered at the tap. A launcher’s search result is too, but the launcher tells BioKey of that tap only as the app starts opening, so its opening animation can show for a frame or two (about a tenth of a second) first.
-- **Apps that hide their windows from accessibility services** (Android 14 and later; many banking apps do): the accessibility engine covers them when they’re opened by a tap on their icon or Recents card, or when a window of theirs it has already seen comes back. Opened another way (a link, a notification), they can open uncovered. Since BioKey can’t read which app such a window belongs to, it goes by the window’s title where that is the name of exactly one app on the phone, and another app that hides its windows too could give its window the same title. BioKey would then take that window for the app it names: if that app is locked, BioKey covers the window as if it were that app; if that app is unlocked, it doesn’t count as left while the window is on screen, so it stays unlocked meanwhile (it still locks when the phone does).
-- **Picture-in-picture**: with the accessibility engine, a locked app’s picture-in-picture window is covered by a patch of its own. The window can show for a moment right after the phone is unlocked or while it’s being moved. While an unlock prompt is up, the patch stays unless it would cover the prompt’s own sheet; then (or, where BioKey can’t tell where that sheet is, for every patch on the prompt’s display) it’s hidden until the prompt is done, and the window shows dimmed under the prompt. Compatibility mode can’t see where that window is, or close it: a locked app left in picture-in-picture when the phone locks (or when every unlocked app is locked again, protection resumes or compatibility mode starts) is covered about a second after the phone is unlocked, by BioKey opening it full screen where it can, and otherwise by a cover over the whole screen, which stays until you unlock the app.
-
-  Your passphrase can’t be typed under that cover: “Use passphrase” there says “To use your passphrase, close this app’s picture-in-picture window, then open the app again”.
-
-  Over another locked app, BioKey itself or a screen the app on screen opened (a sign-in tab, say), beside an unlocked app or BioKey in split screen, or while another app’s unlock prompt is up, BioKey doesn’t open it (that would count as leaving the apps on screen): the cover goes up and its prompt follows, once any other prompt is done, and the apps on screen (BioKey included) stay unlocked. An app’s own lock screen coming up doesn’t count as leaving it either, so a playing video doesn’t go into picture-in-picture over it.
-- **Split screen, desktop windows and other displays** (DeX, an external screen): a locked app’s lock screen takes the whole display (desktop windows, Android 14 and later) or sends you Home, so the app is never usable beside the prompt. Windows of locked apps beside the lock screen, or on another display, are covered by patches. One prompt asks for up to three locked apps on screen at once (the other half of a split screen, hidden under the lock screen or patched beside it, and those on other displays), naming them (“Notes and Diary”, “Notes, Diary and Bank”), and unlocks them together; their patches stay until then, and any others stay locked. While the prompt is up, a patch that would cover its sheet is hidden, so that window shows dimmed under the prompt; where BioKey can’t tell where the sheet is, every patch on the prompt’s display is hidden. A locked app on another display whose lock screen can’t start there, and that has no patch, sends that display Home. Failed unlocks on a prompt for several apps are recorded under all their names.
-- **Android’s work profile and other profiles**: compatibility mode can’t see apps in Android’s work profile (apps with the briefcase badge, not BioKey’s Work profile) or another profile, including the work copy of an app installed in both, because Android only shares app-launch information within one profile. They stay locked with the accessibility engine. While you’re in a work app, compatibility mode counts you as still in the last personal app; locking the phone still locks everything.
-- **Notifications** of a locked app still show in full: a lock covers the app, not what it posts. To hide them, turn the app’s notifications off in Android’s settings (Android Settings > Notifications > App notifications), which “What locking does” opens for you. An app also locked with Android’s own App lock has its notifications worded “New message” or “New notification” by Android itself.
-- **Compatibility mode after a permission is given back**: when usage access or display over other apps is taken away, BioKey alerts you; given back in Android’s settings, compatibility mode starts again once you open BioKey (Android doesn’t let it start itself in the background then). Until then locked apps open without a check, which the alert says.
-- **Very short gaps**: protection off for less than 10 seconds (a permission taken back and given again at once, an engine handing over) is alerted but not recorded.
-- **A locked app’s own screensaver** (the Clock’s or Photos’, where that app is locked) shows what it shows (your photos, say) without a check: a screensaver isn’t the app opening, and covering it would stop it. That holds only while screensavers are on, and only for the screensaver the phone is set to use: another window passing itself off as a screensaver is covered. Opening the app itself is still locked. Choose another screensaver if that matters.
-- **Waking or unfolding the phone**: Android can show the last frame of the app left on screen for a moment before the keyguard draws (on emulators, a frame or two at wake, and about 0.2 seconds as a foldable unfolds), for any app. The lock screen of the app that was on screen is already waiting behind the keyguard, so nothing of it shows once the phone is unlocked. In split screen, a locked app beside it is asked for by the same prompt; a locked app beside an app that isn’t locked is covered as it shows again, a moment after the unlock. In compatibility mode the same goes for a screen that goes off within about half a second of an unlock, before BioKey has looked again: the app is covered as it shows after the next unlock.
-- **Faces and fingerprints removed**: Android tells apps when one is added, or when the last one is removed, but not when one of several is removed (which lets nobody in). Only those two are recorded.
-- **Unlock reminders while nothing runs**: with both engines down (compatibility mode lost a permission, say), Android holds back BioKey’s unlock broadcast until BioKey runs again, so the “Protection is off” alert comes back about every 15 minutes rather than at each unlock.
-- **Android 12 and 13** have no way to hide an app’s screens from other accessibility services: one you have turned on can read and operate BioKey’s screens.
-- **Accessibility shortcuts**: a shortcut (volume keys or the accessibility button) assigned to BioKey switches it off with no check. Remove it if that matters to you, Android Settings locked or not; BioKey’s settings warn you while one is assigned and the service is on. Either way, BioKey shows afterwards when protection was off.
-- **Self-protection is heuristic.** There’s no Android API for “this screen can disable app X”, so BioKey recognises those screens by package and content. It’s tested against Pixel layouts; other manufacturers’ Settings may differ. Two ways round it (in builds with self-protection) aren’t recognised: uninstalling BioKey from the Play Store’s “Manage apps” list together with another app (the confirmation doesn’t name BioKey), and Developer options > Running services > Stop. Locking the Play Store and Android Settings closes both.
-- **Clearing BioKey’s storage** (App info > Storage) deletes everything it keeps, the record of failed unlocks and of times protection was off included. The Play version can’t stop that. Android also switches its accessibility service off (and, from Android 13, takes back its notification permission), so protection stops until BioKey is set up again, and BioKey can’t say so before it’s opened (on Android 12, where the notification permission stays, it can once it next runs, and does every so often). Its setup screen then says when, and once set up the reset is recorded and starts a day’s hold, as a face or fingerprint change does: a clearing also forgets which faces and fingerprints were there.
-- **A restart into safe mode** turns off every downloaded app, BioKey included, so BioKey can’t record it (see Safe mode above); a restart with BioKey switched off is recorded once it’s back on.
-- **Home-screen widgets** of a locked app (a mail or photo widget, say) show their content without a check: a widget isn’t the app opening. Remove them from the home screen if that matters (locking such an app says so).
-- **A lock covers the app, not its data**: other apps with permission to read the same photos, files or messages, assistants and apps you’ve given access still can. Locking a gallery, files or messaging app lists the other apps that can.
-- **No screen lock**: with the phone’s screen lock removed nothing can check who opens a locked app, so they open without a check until one is set again (recorded, and said on BioKey’s main page); with “Face or fingerprint only” on and a passphrase set, they ask for the passphrase instead. BioKey notices when it next looks (BioKey opening, the phone being unlocked, a prompt), not the moment it’s removed.
-- **Reinstalled apps**: only apps whose lock switch was on when they were uninstalled with their data, within 30 days, and while BioKey was running (it hears of an uninstall only then; an engine running keeps it running). One whose certificate BioKey never read is offered, not locked.
-- **“Lock this app”** knows the app on screen only while an engine runs; compatibility mode knows the last app opened, and can’t see apps in Android’s work profile.
-- **Private space**: Pixel’s Android Settings doesn’t let other apps open its private space page (it isn’t exported), so BioKey’s pointer to it shows only where a phone maker allows that. Settings pages Android lists but keeps to itself are never offered or opened.
-- **Someone who knows your screen lock** can add their own face or fingerprint in Android’s settings, which “Face or fingerprint only” then accepts. BioKey can’t prevent it (lock Android Settings to make it harder; BioKey suggests it while “Face or fingerprint only” is on) but records it, and the record can’t be cleared. Setting, changing or removing your passphrase waits a day after such a change and is always recorded, so they can’t quietly make it theirs.
-- **After a force stop,** Android also stops BioKey’s reminders and clears its notifications until BioKey runs again: you find out when you next open BioKey, which then shows when it was stopped. If the phone was restarted after the force stop, Android can forget the stop itself; from Android 15 it still remembers that BioKey was left stopped, so the record is kept, though when it stopped can’t be told. Before Android 15 such a stop isn’t recorded.
-- **Whether the phone has locked** can’t be told by Android: hearing of it takes a permission only system apps hold, so BioKey asks whether the phone is locked at the moments above. A phone that locks and is unlocked again with a fingerprint on the dark screen can be unlocked before BioKey has seen it locked: then it can’t tell, and locks everything as the phone is unlocked, so the app left on screen can show for a moment before its cover. Smart Lock keeps apps unlocked only where BioKey saw the keyguard up, with the screen off, and the phone not locked under it, twice at least a second apart (as the keyguard comes up to lock the phone, it is up a moment before the phone counts as locked); otherwise unlocking from its keyguard locks everything, as with any keyguard BioKey can’t vouch for.
-- **Apps locked by Android’s App lock too** are asked for twice where BioKey can’t be sure which app Android’s prompt was for: in compatibility mode (it sees no windows), with the accessibility engine when Android’s prompt can’t be read or its name is shared with another app on the phone (a work and a personal copy among them), when the app takes more than a moment to come after the prompt is passed, and when it hides its windows from accessibility services; and always with “Face or fingerprint only” or failed unlock alerts on. An app left on screen as the phone locks is asked for twice as well: BioKey’s lock screen is up first, behind the keyguard, and Android’s cover waits under it.
+- **Home screens** can’t be locked, so you can always get Home.
+- **Helper apps can’t be told from a switch you make yourself:** going straight to the camera, a picker, messages or an authenticator and back within 5 minutes keeps an app unlocked. Lock the phone or use **Re-lock now** before handing it over.
+- **Going Home and straight back within 0.4 seconds** keeps an app unlocked, since Android’s window list can briefly leave out an app still on screen.
+- **Picture-in-picture, split screen and other displays** are covered by patches, which can show the window for a moment after an unlock or while it’s moved.
+- **Notifications, widgets and data:** a lock covers the app, not what it posts, its home-screen widgets, or other apps that can read the same photos, files or messages. A locked app’s own screensaver shows without a check.
+- **Waking or unfolding the phone** can show the last frame of an app for a moment before the keyguard draws, for any app.
+- **Someone who knows your screen lock** can add their own face or fingerprint. BioKey can’t prevent it, but records it, and the record can’t be cleared.
+- **Clearing BioKey’s storage** deletes every lock and record, and Android switches its accessibility service off. BioKey records the reset once it’s set up again.
+- **Faces and fingerprints removed:** Android says when the last one goes, not one of several.
+- **A force stop** stops BioKey’s reminders until it runs again; before Android 15 a stop followed by a restart can go unrecorded.
+- **An accessibility shortcut** assigned to BioKey switches it off with no check. BioKey’s settings warn while one is assigned.
+- **Android 12 and 13** can’t hide BioKey’s screens from other accessibility services you’ve turned on.
+- **Self-protection** (not in the Play version) recognises Settings screens by their content, and is tested on Pixel layouts.
 
 ### Deliberate choices
 
-- **No intruder photos.** Some app locks take a picture of whoever fails to unlock. That needs the camera permission and photographs people who never agreed to it; BioKey records which app and when, and nothing about who.
-- **English only.** BioKey isn’t translated. What Android shows outside BioKey (notifications, tiles, the launcher shortcut, the accessibility description) is in `strings.xml`, with plurals, ready for translation.
-- **No BioKey PIN in place of the phone’s.** Some app locks add their own PIN for every unlock. BioKey uses the phone’s own face, fingerprint and screen lock, kept in Android’s secure hardware. Its one secret of its own, the [passphrase](#features-in-detail), is optional, only asked for under “Face or fingerprint only” when the face or fingerprint can’t be used, slows guessing down, and costs nothing if forgotten. “Face or fingerprint only” plus locking Android Settings covers the person who knows your PIN.
-- **The diagnostic log is on by default.** With no network access, a user’s log is the only way to trace a missed or unexpected lock. It stays on the phone, keeps 3 days (see Diagnostic log above), names only locked apps, and leaves only when the user shares it.
+- **No intruder photos.** That needs the camera and photographs people who never agreed to it. BioKey records which app and when, nothing about who.
+- **No BioKey PIN in place of the phone’s.** BioKey uses the phone’s own face, fingerprint and screen lock. Its only secret of its own, the passphrase, is optional.
+- **English only.** Strings shown outside BioKey are in `strings.xml`, ready for translation.
+- **The diagnostic log is on by default.** With no network access, it’s the only way to trace a missed lock. It stays on the phone, keeps 3 days, names only locked apps, and leaves only when you share it.
 
 ## Building from source
 
-Requirements: JDK 17 and the Android SDK (compileSdk 37.2; Gradle downloads it if missing). The unit tests run on Java 21, which Gradle downloads if this computer doesn’t have it.
+Requirements: JDK 17 and the Android SDK (compileSdk 37.2; Gradle downloads it if missing). The unit tests run on Java 21, which Gradle also downloads.
 
-The installed app ID is `com.nbdesigns.biokey` (`applicationId`); the Kotlin code lives in the package `com.android.BioKey` (`namespace`). Debug and release builds use the same app ID.
+The app ID is `com.nbdesigns.biokey`; the Kotlin package is `com.android.BioKey`.
 
 ```bash
 ./gradlew :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-On Android 13 and later, Android can block an APK installed from a file from turning on accessibility until you allow restricted settings: try the accessibility switch once, then in BioKey’s App info tap ⋮ > **Allow restricted settings**. BioKey’s setup shows this step from the start where it can tell Android is blocking the switch, and otherwise offers it as help if you come back from Android’s settings with the service still off. Installs from Google Play aren’t affected.
+On Android 13 and later, an APK installed from a file needs **Allow restricted settings** (in BioKey’s App info, ⋮) before accessibility can be turned on.
 
 ### Release builds
 
-Release builds use R8 (minify and resource shrinking). `Log.v/d/i/w` calls are stripped, since their messages can name locked apps; `Log.e` stays for diagnosis, so its messages must not name an app. Keep `app/build/outputs/mapping/release/mapping.txt` from every release you publish: it’s the only way to read that build’s stack traces. (The bundle carries it to Play too.) BioKey’s only native code is AndroidX’s graphics library, which comes stripped, so the build has no native symbol tables of its own to add; for Play’s “debug symbols” upload, zip the libraries from `app/build/intermediates/merged_native_libs/release/mergeReleaseNativeLibs/out/lib/` (one folder per ABI) as `native-debug-symbols.zip`.
+Release builds use R8. `Log.v/d/i/w` calls are stripped, since they can name locked apps; `Log.e` messages must not. Keep `app/build/outputs/mapping/release/mapping.txt` from every release you publish. For Play’s debug symbols, zip the libraries from `app/build/intermediates/merged_native_libs/release/mergeReleaseNativeLibs/out/lib/` as `native-debug-symbols.zip`.
 
-Lint errors fail `:app:lintDebug`, which CI runs; warnings don’t. The quick check inside `assembleRelease` fails the release build on the most serious ones: API calls newer than Android 12 without a version check, and components or intents other apps could reach.
-
-### Signing
-
-To sign a release, copy the example config and point it at your keystore (keep the keystore out of the repo and backed up offline: losing it means you can never update the installed app):
+To sign, copy the example config and point it at your keystore (keep it out of the repo and backed up):
 
 ```bash
 cp key.properties.example key.properties   # git-ignored
@@ -259,168 +180,51 @@ cp key.properties.example key.properties   # git-ignored
 ./gradlew :app:bundleRelease               # App Bundle, for Google Play
 ```
 
-A relative `storeFile` path is resolved from the project root. Without `key.properties`, the release APK is left **unsigned**. It never silently falls back to the public debug key. For local testing only, you can opt in explicitly:
+Without `key.properties` the release APK is left unsigned; it never falls back to the debug key unless you pass `-Pbiokey.allowDebugSignedRelease=true` (its version name then ends in `-debugsigned`).
 
-```bash
-./gradlew :app:assembleRelease -Pbiokey.allowDebugSignedRelease=true
-```
-
-Its version name ends in `-debugsigned`, so it can’t be mistaken for a real release.
-
-### Self-protection builds
-
-Release builds, including the one on Google Play, leave self-protection out: its switch isn’t shown, and a saved or restored “on” reads as off. Google Play’s Accessibility API policy doesn’t allow an app to stop users disabling or uninstalling it, outside parental-control and enterprise apps. Debug builds always have it, so its tests run. For a release you install yourself:
-
-```bash
-./gradlew :app:assembleRelease -Pbiokey.selfProtection=true
-```
-
-Its version name ends in `-selfprotection`. Never upload one to Google Play.
-
-Publishing to Google Play (Play Console declarations, signing, developer verification, the privacy-policy page) is covered in [docs/RELEASING.md](docs/RELEASING.md).
+Release builds, including Google Play’s, leave **self-protection** out, since Play’s Accessibility API policy doesn’t allow blocking uninstall. For a release you install yourself, build with `-Pbiokey.selfProtection=true` (version name ends in `-selfprotection`; never upload it to Play). Publishing to Google Play is covered in [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Testing
-
-### Unit tests
 
 ```bash
 ./gradlew :app:testDebugUnitTest
 ```
 
-The unit tests run on the JVM with Robolectric (mostly as Android 14; the lock-screen tests as Android 12 and 17 too). They cover the locking rules (sessions, helper-app hops, profiles, Recents gestures), both engines, self-protection, backup, the diagnostic log, the proof of a match, and the passphrase’s Settings row and its entry on the lock cover.
+The unit tests run on the JVM with Robolectric and cover the locking rules, both engines, self-protection, backups, the diagnostic log, the proof of a match and the passphrase. `-Pbiokey.tests=gantlet` runs only the lock-screen gantlet; `-Pbiokey.tests=others` runs the rest. Design screenshots (`DesignScreenshotTest`) render every screen for review with `-Pbiokey.screenshots=true`, into `app/build/screenshots/`.
 
-- `-Pbiokey.tests=gantlet` runs only the lock-screen gantlet (below); `-Pbiokey.tests=others` runs everything else.
-- The design screenshots (`DesignScreenshotTest`, Roborazzi) render every screen for review and are never compared. They’re slow, so they run only with `-Pbiokey.screenshots=true`; the PNGs go to `app/build/screenshots/`.
+- **The lock-screen gantlet** must pass before anything reaches `main`: the lock screen, once up, stays up on every screen size and through every way of leaving or covering it, with both engines. Run it with `sh tools/gantlet_tests.sh`. A pre-push hook runs it before any push to `main`; turn it on with `git config core.hooksPath .githooks`.
+- **Device gantlet:** `tools/device_gantlet.py` opens locked apps every way people open them on a phone or emulator over adb, and checks each comes up under BioKey’s lock screen. It also measures cover latency against `tools/gantlet-latency-baseline.json`. `--emulate-foldables` resizes the screen and is for test phones and emulators only.
+- **Emulator gantlet:** `tools/emulator_gantlet.py` runs the device gantlet on foldable emulator profiles, Android 16 and 17, with both engines.
+- **Engine traces:** debug builds record what each engine was told and decided (`core/diagnostics/EngineTrace.kt`). Copy a trace to `app/src/test/resources/traces/` and `EngineReplayTest` replays it into the real engine.
+- **Engine cost:** `tools/engine_cost.py` measures each engine’s idle CPU time on an emulator or test phone.
+- **Baseline profile:** `./gradlew :app:generateBaselineProfile` on a prepared device (see `BaselineProfileGenerator`), then check in `app/src/release/generated/baselineProfiles/`.
 
-### The lock-screen gantlet
-
-The gantlet is the set of unit tests that must pass before anything reaches `main`: BioKey’s lock screen, once up, stays up until you unlock or leave it, on every screen size (phones, foldables’ cover and main screens, tablets), through every way of leaving or covering it, with both engines. The list lives in one place, `testOptions` in `app/build.gradle.kts`; the build fails if an entry there matches no test, so a renamed class can’t quietly drop out.
-
-```bash
-sh tools/gantlet_tests.sh        # reports in app/build/reports/tests/gantlet
-```
-
-CI runs it first, then the rest. A pre-push hook runs it before any push to `main`, and refuses the push if it fails or if the checkout differs from what’s being pushed. Turn the hook on once per clone:
-
-```bash
-git config core.hooksPath .githooks
-```
-
-### Device gantlet
-
-`tools/device_gantlet.py` drives a phone or emulator with BioKey installed over adb, and checks that a locked app, opened every way people open apps, comes up under BioKey’s lock screen and stays there, without being sent Home. It never answers a prompt and never changes BioKey’s settings: the apps passed with `--locked` must already be locked in BioKey.
-
-```bash
-python tools/device_gantlet.py --locked com.twitter.android=X --locked com.google.android.apps.messaging=Messages
-```
-
-Useful options: `--only <name>` (run matching scenarios), `--serial` (pick a device), `--drawer` (also open apps from the app drawer), `--watch-exposure 220,0,120` (fail if the gantlet targets’ colour shows uncovered), and on emulators `--fingerprint` and `--hinge`. Exit status 0 when every scenario passes. `--help` lists them all.
-
-**`--emulate-foldables` is for test phones and emulators only.** It resizes the screen (`wm size`, `wm density`) to foldables’ cover and main screens. A main-screen size makes Pixel Launcher (and other Launcher3 home screens) lay the home screen out on its tablet grid, and it deletes whatever doesn’t fit from the phone’s own layout. Restoring the size doesn’t bring those back.
-
-The gantlet’s own target apps (`tools/gantlet-targets`: Gantlet Plain, Splash, Late, Chain, NewTask, Permission and Loop, each opening in a different way) build with:
-
-```bash
-./gradlew -p tools/gantlet-targets assembleDebug
-```
-
-### Emulator gantlet
-
-`tools/emulator_gantlet.py` runs the device gantlet on foldable emulators (Galaxy Z Fold7 and Flip7, OPPO Find N5, vivo X Fold5, Pixel 9 and 10 Pro Fold screen sizes and hinges), on Android 16 and 17, with both engines. Nothing touches a real phone: every adb command names its emulator. For each profile it creates an AVD, boots it clean, sets a PIN and enrolls a fingerprint, installs BioKey’s debug build and the target apps, sets BioKey up and locks the targets, then runs the gantlet under each engine. Logs and a report go to `tools/out/`.
-
-```bash
-./gradlew :app:assembleDebug
-./gradlew -p tools/gantlet-targets assembleDebug
-python tools/emulator_gantlet.py                                    # every profile, Android 16 and 17
-python tools/emulator_gantlet.py --profiles fold7 --android 17 --parallel 1
-```
-
-The profiles are Google’s Android images with each phone’s screen sizes and hinge, not One UI, ColorOS or OriginOS, which have no emulator images. Behaviour their own software adds is covered by the unit tests (`app/src/test/.../Gantlet*.kt`). Each emulator takes about 3 GB of memory.
-
-### Latency
-
-The device gantlet also reports how fast each cover goes up: per engine and scenario, the milliseconds from the launch (the tap on its icon, or its window opening; in compatibility mode, its resume) until the cover is drawn and until the prompt is asked for, as count, median, 90th percentile and slowest. The debug build logs those moments to logcat under `BioKeyLatency` (`core/diagnostics/LatencyMarks.kt`), on the phone’s uptime clock; release builds never do, since the lines name locked apps.
-
-`tools/gantlet-latency-baseline.json` holds a baseline from a Pixel 11 Pro XL on Android 17. Numbers only mean something on the phone they were measured on. To record a new one, run the gantlet with `--record-latency-baseline` on that phone (every scenario must pass) and commit the file. `--latency-budget` then fails a run whose median for any engine, scenario and mark is more than 20% and at least 16 ms slower than the baseline’s (`--latency-budget 30,25` for another budget).
-
-### Engine cost
-
-`tools/engine_cost.py` measures what each engine costs the battery while nothing is being locked: BioKey’s CPU time (from `/proc`) per minute with the home screen on screen, with another app on screen, and with the screen off. On an emulator or a test phone only: it switches the accessibility service off and on to choose the engine. `--json` writes the numbers, to compare a change to either engine’s polling against.
-
-```bash
-python tools/engine_cost.py --serial emulator-5554 --json tools/out/engine-cost.json
-```
-
-### Engine traces
-
-The debug build records what each protection engine is told and what it decides (`core/diagnostics/EngineTrace.kt`): window events and window lists, usage events, the screen and keyguard, the lock screen and its prompt, unlocks and cancels; then every cover, lock screen started and trip Home. A problem seen on a phone can then be replayed on the JVM, without the phone. Release builds record nothing, since the trace names locked apps.
-
-1. Reproduce the problem on the phone with the debug build.
-2. Copy the trace off it: `adb shell run-as com.nbdesigns.biokey cat files/engine-trace.txt > app/src/test/resources/traces/<name>.trace`.
-3. `EngineReplayTest` replays every trace there into the real engine and checks it decides what the trace says it did. To turn a bug into a test, edit the trace’s decisions (its `o.*` lines) to what should have happened: the test fails until the engine does that.
-
-A replay sets up the phone from the trace (locked apps, their re-lock delays and names, home screens, helper apps, keyboards) and plays every input at the time it came. It doesn’t replay BioKey’s own lock screen (only what the engines were told of it).
-
-### Baseline profile
-
-The baseline profile (code Android compiles ahead of time, so the first cover after an install isn’t drawn by interpreted code) is generated by `baselineprofile/` (`BaselineProfileGenerator`): BioKey starting to its main screen, and the lock path, a locked app opened, covered, its lock screen up and cancelled. It needs a device or emulator on Android 13 or later prepared as the emulator gantlet prepares one (BioKey’s debug build installed and set up, its accessibility engine on, `com.biokey.gantlet.plain` locked; the steps are in the generator’s KDoc), so it isn’t part of CI:
-
-```bash
-./gradlew :app:generateBaselineProfile
-```
-
-It writes `app/src/release/generated/baselineProfiles/` (the baseline and startup profiles), which AGP merges with the hand-written `app/src/main/baseline-prof.txt`; check the generated files in.
-
-### CI
-
-`.github/workflows/ci.yml` runs on every pull request and every push to `main`: the lock-screen gantlet first, a check that the gantlet tools still run and their target apps build, then the rest of the unit tests, the design screenshots, lint, a debug build and a release build shrunk by R8 like a real one (signed with the runner’s throwaway debug key). Test reports and screenshots are kept for 14 days (the R8 mapping isn’t: keep it yourself, see [Release builds](#release-builds)). A push to `main` that changes only `README.md`, `PRIVACY.md` or `LICENSE` runs nothing; a pull request always runs, since `main` requires its “build” check.
+CI (`.github/workflows/ci.yml`) runs on every pull request and push to `main`: the gantlet, the rest of the tests, design screenshots, lint, and debug and R8 release builds. Changes to Markdown files alone run nothing.
 
 ## Project layout
 
 ```
 app/src/main/java/com/android/BioKey/
-core               FeatureLinks (the engines, main screen and service names, installed as
-                   BioKey starts)
+core               FeatureLinks (engine, main screen and service names, installed at start)
 core/data          LockTimeoutMode, SecurityProfile, AppClassifier, PasswordManager, AppText
-                   (cleans names from other apps), OldBuildLeftovers (clears an unreleased
-                   build's files)
 core/security      SecurityVault (settings, locked apps, profiles), LockStateTracker (sessions),
-                   SecurityEngine (BiometricPrompt), UnlockProof (the signed challenge),
-                   OwnerPassphrase, ProtectionEngine (which engine runs),
-                   AdvancedProtection, ProtectionGaps and UnlockAttempts (Security activity),
-                   ProtectionAlerts, PauseNotice ("Protection is paused"), UnlockMethods
-                   (what a locked app asks for), VaultBackup
-core/diagnostics   DiagnosticLog (on-phone log of lock decisions), EngineTrace (debug builds:
-                   what the engines saw and did), LatencyMarks (debug builds: the gantlet's
-                   latency marks), LogDurations (the log's lengths of time, spelled out)
+                   SecurityEngine (BiometricPrompt), UnlockProof, OwnerPassphrase,
+                   ProtectionEngine (which engine runs), ProtectionGaps and UnlockAttempts
+                   (Security activity), ProtectionAlerts, PauseNotice, VaultBackup
+core/diagnostics   DiagnosticLog, EngineTrace and LatencyMarks (debug builds)
 core/receiver      Boot receiver
-feature/lock       BioKeyAccessibilityService, WindowReader (every look at the screen),
-                   MaskController (patches over picture-in-picture and side-by-side windows),
-                   UsageWatchService (compatibility mode) and UsageReader (its look at usage
-                   events), VaultReactions (what follows the vault's changes), LockEngines
-                   (the engines, as core/ asks for them), ForegroundRules,
-                   SessionRules, LockLauncher, InstantShieldOverlay, WindowMask,
-                   LockScreenActivity, LockCoverView, SelfProtectionDetector, RecentsWatcher,
-                   AppInfoCache, AppLabels, ScreenReceiver
-feature/main       MainActivity (BioKey's own lock), main screen, profile sheets, settings,
-                   backup and diagnostic log
+feature/lock       BioKeyAccessibilityService, WindowReader, MaskController, UsageWatchService
+                   (compatibility mode), ForegroundRules, SessionRules, LockScreenActivity,
+                   LockCoverView, SelfProtectionDetector, RecentsWatcher, AppLabels
+feature/main       MainActivity (BioKey's own lock), main page, profiles, settings, backup, log
 feature/setup      First-run setup
 feature/tile       Quick Settings tiles (Protection, Re-lock now, Lock this app)
-ui                 AppIcons
-ui/brand           KeyMark (the launcher icon's key, in vector), BioKeyLogo and WordmarkView (it, still),
-                   BioKeyMarkSideways (the home header's, swirling), header constellation
-ui/theme           BioKeyTheme, components, callout, messages, system haptics, press animation
-ui/disclosure      What BioKey reads and keeps, shown before each permission; the
-                   notification permission
-ui/navigation      IntentNavigationHelper (Settings pages, pinned to the Settings app)
-ui/security        WindowProtection (secure windows, obscured-touch rejection)
-ui/format          Record times, the passphrase's wait
+ui                 Brand, theme, disclosures, navigation, window protection, formatting
 
-app/src/test/      Unit tests, the gantlet (Gantlet*.kt and the list in app/build.gradle.kts),
+app/src/test/      Unit tests, the gantlet (Gantlet*.kt, listed in app/build.gradle.kts),
                    engine replays (resources/traces/)
 baselineprofile/   Baseline profile generator
-tools/             gantlet_tests.sh, device_gantlet.py, emulator_gantlet.py, gantlet-targets/,
-                   gantlet-latency-baseline.json
+tools/             Gantlet scripts and target apps, latency baseline, engine cost
 docs/              The GitHub Pages site (privacy policy, support), RELEASING.md
 .githooks/         pre-push: the gantlet before any push to main
 ```
@@ -429,10 +233,10 @@ docs/              The GitHub Pages site (privacy policy, support), RELEASING.md
 
 - Help with setup and common problems: [Support](https://peacetothemountain.github.io/BioKey/support/).
 - Bugs and feature requests: [GitHub issues](https://github.com/Peacetothemountain/BioKey/issues).
-- Security problems: report them privately, as described in [SECURITY.md](SECURITY.md). Please don’t open a public issue.
+- Security problems: report them privately, as described in [SECURITY.md](SECURITY.md).
 - Email: support.nbdesigns@gmail.com
 
-Pull requests are welcome. Run the unit tests (at least `sh tools/gantlet_tests.sh`) before opening one. Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+Pull requests are welcome. Run at least `sh tools/gantlet_tests.sh` before opening one. Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
