@@ -41,6 +41,7 @@ import com.android.BioKey.feature.main.PROFILE_CARD_TAG
 import com.android.BioKey.feature.main.pinsControls
 import com.android.BioKey.ui.theme.BioKeyTheme
 import org.junit.After
+import androidx.compose.ui.test.performScrollToKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -55,7 +56,7 @@ import org.robolectric.annotation.GraphicsMode
 
 /**
  * Home's search bar and profile chips, pinned at the top of the list: nothing scrolling under them
- * shows through or over them, a chip leaves its page resting on them, and in a short window they
+ * shows through or over them, a chip opens its page at the top, and in a short window they
  * aren't pinned at all.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -129,39 +130,67 @@ class HomeLayoutTest {
     /** Home's list: the one thing that scrolls up and down (the chips scroll across). */
     private val homeList = androidx.compose.ui.test.SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsProperties.VerticalScrollAxisRange)
 
-    @Test
-    fun aChosenChipLeavesThePageRestingOnTheControlsWithItsCardRightUnder() {
+    /**
+     * A chip keeps the list's scroll: the search bar and chips stay exactly where they were, on
+     * the new page and back on All apps, and nothing moves them after. Scrolled down to [row]
+     * first (null: at the top), the new page's card is right under the pinned controls.
+     */
+    private fun assertKeepsTheScroll(chip: String, row: String?) {
         show()
-        chooseFinance()
+        if (row != null) {
+            rule.onNode(homeList).performScrollToKey(pkg(row))
+            rule.waitForIdle()
+        }
+        val searchBefore = searchTop()
+        rule.onNodeWithContentDescription(chip).performClick()
+        rule.waitForIdle()
+        assertEquals(searchBefore, searchTop(), 1f)
         val controls = rule.onNodeWithTag(CONTROLS_KEY).getBoundsInRoot()
         val card = rule.onNodeWithTag(PROFILE_CARD_TAG).getBoundsInRoot()
-        // The controls at the top of the window (pinned), the card straight under them, not at the bottom edge.
-        assertTrue("controls at ${controls.top}", controls.top.value <= 1f)
-        // The search bar clear of the status bar, and the card not under the controls.
-        assertTrue("search at ${searchTop()}, status bar ends at $statusBar", searchTop() >= statusBar)
-        assertTrue("card at ${card.top}, controls end at ${controls.bottom}", card.top >= controls.bottom - 1.dp && card.top <= controls.bottom + 24.dp)
+        assertTrue("card at ${card.top}, controls end at ${controls.bottom}", card.top >= controls.bottom - 1.dp)
+        if (row != null) assertTrue("card at ${card.top}, controls end at ${controls.bottom}", card.top <= controls.bottom + 24.dp)
+        rule.mainClock.advanceTimeBy(2_000)
+        rule.waitForIdle()
+        assertEquals(searchBefore, searchTop(), 1f)
+        rule.onNode(androidx.compose.ui.test.hasText("All apps") and androidx.compose.ui.test.hasClickAction()).performClick()
+        rule.waitForIdle()
+        assertEquals(searchBefore, searchTop(), 1f)
     }
 
     @Test
-    fun aShortProfileStillRestsOnTheControls() {
-        // Two apps only: the page is shorter than the window, yet it rests the same way.
+    fun atTheTopAChipKeepsThePageWhereItWas() = assertKeepsTheScroll("Finance profile, 14 apps", row = null)
+
+    @Test
+    fun scrolledDownAChipKeepsTheControlsPinnedWithTheNewPageUnderThem() = assertKeepsTheScroll("Finance profile, 14 apps", row = "Signal")
+
+    @Test
+    fun aShortProfileKeepsTheScrollToo() {
+        // Two apps only: the page is shorter than the window.
         val vault = SecurityVault.getInstance(context)
         finance.drop(2).forEach { vault.removeAppFromProfile(pkg(it)) }
-        show()
-        rule.onNodeWithContentDescription("Finance profile, 2 apps").performClick()
-        rule.waitForIdle()
-        val controls = rule.onNodeWithTag(CONTROLS_KEY).getBoundsInRoot()
-        val card = rule.onNodeWithTag(PROFILE_CARD_TAG).getBoundsInRoot()
-        assertTrue("controls at ${controls.top}", controls.top.value <= 1f)
-        assertTrue("card at ${card.top}, controls end at ${controls.bottom}", card.top <= controls.bottom + 24.dp)
+        assertKeepsTheScroll("Finance profile, 2 apps", row = null)
+    }
+
+    @Test
+    fun scrolledDownAShortProfileStillStartsRightUnderThePinnedControls() {
+        val vault = SecurityVault.getInstance(context)
+        finance.drop(2).forEach { vault.removeAppFromProfile(pkg(it)) }
+        assertKeepsTheScroll("Finance profile, 2 apps", row = "Signal")
     }
 
     @Test
     fun whatScrollsUnderThePinnedControlsNeverShowsOverThem() {
         show()
         chooseFinance()
-        // The card, and the rows after it, pass under the controls.
-        rule.onNode(homeList).performTouchInput { swipeUp(startY = centerY + 300f, endY = centerY - 100f, durationMillis = 800) }
+        // The page opens at its top: past its header first, then the card, and the rows after it,
+        // pass under the controls.
+        rule.onNode(homeList).performScrollToKey(CONTROLS_KEY)
+        rule.waitForIdle()
+        // Held mid-drag: let go, the card settles wholly in sight or wholly under them.
+        rule.onNode(homeList).performTouchInput {
+            down(androidx.compose.ui.geometry.Offset(centerX, centerY + 300f))
+            repeat(6) { moveBy(androidx.compose.ui.geometry.Offset(0f, -40f)) }
+        }
         rule.waitForIdle()
         val controls = rule.onNodeWithTag(CONTROLS_KEY).getBoundsInRoot()
         val card = rule.onNodeWithTag(PROFILE_CARD_TAG).getBoundsInRoot()
@@ -176,6 +205,7 @@ class HomeLayoutTest {
         // Behind the status bar too: the page's colour, not the card passing under.
         assertEquals("pixel at ($x, ${statusBar / 2})", surface.toArgb(), image.getPixel(x, statusBar / 2))
         assertTrue("search at ${searchTop()}", searchTop() >= statusBar)
+        rule.onNode(homeList).performTouchInput { up() }
     }
 
     @Test

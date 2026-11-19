@@ -54,6 +54,7 @@ object WindowProtection {
             activity.setRecentsScreenshotEnabled(false)
         }
         window.decorView.filterTouchesWhenObscured = true
+        window.decorView.importantForContentCapture = View.IMPORTANT_FOR_CONTENT_CAPTURE_NO_EXCLUDE_DESCENDANTS
         hideFromNonToolAccessibilityServices(window.decorView)
     }
 
@@ -184,6 +185,7 @@ fun ProtectDialogWindow() {
             it.addFlags(WindowProtection.secureFlag(view.context))
             runCatching { it.setHideOverlayWindows(true) }
             it.decorView.filterTouchesWhenObscured = true
+            it.decorView.importantForContentCapture = View.IMPORTANT_FOR_CONTENT_CAPTURE_NO_EXCLUDE_DESCENDANTS
             WindowProtection.hideFromNonToolAccessibilityServices(it.decorView)
         }
         val hostActivity = view.context.findActivity()

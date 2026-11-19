@@ -78,7 +78,6 @@
         <package android:name="com.sec.android.app.clockpackage" />
         <package android:name="com.google.android.googlequicksearchbox" />
         <package android:name="com.google.android.apps.walletnfcrel" />
-        <package android:name="Update" />
         <package android:name="com.android.vending" />
         <package android:name="com.android.chrome" />
         <package android:name="com.chrome.beta" />

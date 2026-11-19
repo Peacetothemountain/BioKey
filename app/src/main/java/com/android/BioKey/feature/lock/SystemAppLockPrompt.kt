@@ -2,6 +2,7 @@ package com.android.BioKey.feature.lock
 
 import android.annotation.SuppressLint
 import android.content.res.Resources
+import com.android.BioKey.core.data.AppText
 
 /**
  * The words of Android's own App lock prompt ([SystemAppLock]), as Android has them in the phone's
@@ -11,12 +12,15 @@ import android.content.res.Resources
  * language; a prompt with none of them isn't Android's App lock prompt.
  */
 internal class SystemAppLockPrompt(
-    private val oneApp: String,
+    oneApp: String,
     twoApps: String? = null,
     threeApps: String? = null,
     /** The prompt's own title ("Verify it's you"): what Android calls its window too. */
-    private val title: String? = null
+    title: String? = null
 ) {
+
+    private val oneApp = AppText.cleanLabel(oneApp, 256)
+    private val title = title?.let { AppText.cleanLabel(it, 256) }
 
     companion object {
         /** What SystemUI names the prompt's window itself, whatever its title. */
@@ -45,10 +49,11 @@ internal class SystemAppLockPrompt(
          * a format with no places.
          */
         internal fun patternOf(format: String): Pair<Regex, List<Int>>? {
+            val cleaned = AppText.cleanLabel(format, 256)
             val place = Regex("%(\\d+)\\\$s")
-            val order = place.findAll(format).map { it.groupValues[1].toInt() }.toList()
+            val order = place.findAll(cleaned).map { it.groupValues[1].toInt() }.toList()
             if (order.isEmpty()) return null
-            val parts = format.split(place).map { Regex.escape(it) }
+            val parts = cleaned.split(place).map { Regex.escape(it) }
             return Regex(parts.joinToString("(.+?)")) to order
         }
     }
@@ -61,7 +66,7 @@ internal class SystemAppLockPrompt(
      * heads-up, which can show any words at all.
      */
     fun isPromptWindow(windowTitle: CharSequence?): Boolean {
-        val t = windowTitle?.toString()?.trim() ?: return false
+        val t = AppText.cleanLabel(windowTitle, 256).takeIf { it.isNotEmpty() } ?: return false
         return t == PROMPT_WINDOW || (title != null && t == title)
     }
 
@@ -71,11 +76,12 @@ internal class SystemAppLockPrompt(
      * name no app); several: the names in its sentence, in their order.
      */
     fun namesIn(texts: List<String>): List<String>? {
-        if (oneApp in texts) return texts.filter { it != oneApp && it != title }
-        for (text in texts) {
+        val cleaned = texts.map { AppText.cleanLabel(it, 256) }.filter { it.isNotEmpty() }
+        if (oneApp in cleaned) return cleaned.filter { it != oneApp && it != title }
+        for (text in cleaned) {
             for ((pattern, order) in forms) {
                 val match = pattern.matchEntire(text) ?: continue
-                val names = match.groupValues.drop(1)
+                val names = match.groupValues.drop(1).map { AppText.cleanLabel(it, 256) }
                 return order.indices.sortedBy { order[it] }.map { names[it] }
             }
         }
@@ -83,5 +89,5 @@ internal class SystemAppLockPrompt(
     }
 
     /** Whether [texts] come from a prompt naming one app ([oneApp]): then exactly one name must match. */
-    fun namesOneApp(texts: List<String>): Boolean = oneApp in texts
+    fun namesOneApp(texts: List<String>): Boolean = texts.any { AppText.cleanLabel(it, 256) == oneApp }
 }

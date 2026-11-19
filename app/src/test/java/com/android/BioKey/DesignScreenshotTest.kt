@@ -478,7 +478,7 @@ class DesignScreenshotTest {
         }
     }
 
-    /** Finance's page, chosen by its chip: it rests with the controls at the top and its card under them. */
+    /** Finance's page, chosen by its chip: it opens at its top, its card under the controls. */
     @Test fun profilePage() = shootAfter("profile_page", home()) {
         onNodeWithContentDescription("Finance profile, 2 apps").performClick()
     }

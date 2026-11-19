@@ -43,7 +43,7 @@ object VaultBackup {
     class WrongPasswordException : Exception("Wrong password, or the file was changed")
 
     fun seal(state: JSONObject, password: CharArray): ByteArray {
-        require(password.size <= MAX_PASSWORD_LENGTH) { "Password is too long" }
+        require(password.size in MIN_PASSWORD_LENGTH..MAX_PASSWORD_LENGTH) { "Password length out of bounds" }
         val random = SecureRandom()
         val salt = ByteArray(SALT_BYTES).also(random::nextBytes)
         val nonce = ByteArray(NONCE_BYTES).also(random::nextBytes)

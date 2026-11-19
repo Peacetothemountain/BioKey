@@ -182,7 +182,7 @@ object OwnerPassphrase {
             val saltText = encoder.encodeToString(salt)
             val verifierText = encoder.encodeToString(verifier)
             val replaces = p.contains(KEY_VERIFIER)
-            p.edit(commit = true) {
+            val saved = p.edit().apply {
                 putInt(KEY_VERSION, FORMAT_VERSION)
                 putInt(KEY_ROUNDS, useRounds)
                 putString(KEY_SALT, saltText)
@@ -191,7 +191,9 @@ object OwnerPassphrase {
                 remove(KEY_WAIT_DURATION)
                 remove(KEY_WAIT_START_ELAPSED)
                 remove(KEY_WAIT_BOOT)
-            }
+            }.commit()
+            // Not on disk: not set (the screens say it wasn't saved), and the old one stands.
+            if (!saved) return false
             isSetState.value = true
             DiagnosticLog.log(if (replaces) "Passphrase changed" else "Passphrase set")
             runCatching { record(context, if (replaces) ProtectionGaps.Change.PASSPHRASE_CHANGED else ProtectionGaps.Change.PASSPHRASE_SET) }
@@ -206,7 +208,10 @@ object OwnerPassphrase {
     fun clear(context: Context): Unit = synchronized(lock) {
         val p = load(context) ?: return
         val wasSet = p.contains(KEY_VERIFIER)
-        p.edit(commit = true) { clear() }
+        // Not cleared on disk: its key stays too, or the passphrase left there could never be checked.
+        // The KTX edit {} can't say whether the write went through.
+        //noinspection UseKtx
+        if (!p.edit().clear().commit()) return
         isSetState.value = false
         // Its key goes with it, so nothing of a removed passphrase is left on the phone. A Keystore
         // that fails here leaves a key that signs nothing anyone keeps; the next passphrase's

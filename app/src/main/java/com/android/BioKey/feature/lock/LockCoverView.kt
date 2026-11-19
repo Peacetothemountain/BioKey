@@ -404,7 +404,8 @@ class LockCoverView(context: Context) : FrameLayout(context) {
         val above = height - reservedBelowIdentity(innerWidth)
         // As usual: centred, then raised by the margin (FrameLayout's centring takes it off whole).
         val top = (height - natural) / 2 - dp(IDENTITY_BOTTOM_DP)
-        if (top >= 0 && top + natural <= above) return
+        // Its ring, drawn just outside the icon, needs the same room above it as in a short window.
+        if (top >= dp(SHORT_TOP_DP) && top + natural <= above) return
 
         // A short window: centred in the space above, the art as much smaller as it takes, and
         // the icon's ring (drawn just outside it) kept clear of the top as well.

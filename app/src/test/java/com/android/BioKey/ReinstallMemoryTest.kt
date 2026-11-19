@@ -248,4 +248,19 @@ class ReinstallMemoryTest {
             NewAppSuggestions.setEnabled(context, true)
         }
     }
+    @Test
+    fun anAppSwitchedOnInAProfileThatIsOffGoesBackToItAfterAReinstall() {
+        val profile = vault.createProfile("Money", "bank")
+        vault.setProfileEnabled(profile.id, false)
+        // Switched on, but its profile is off: not locked, and its certificate is noted all the same.
+        vault.moveAppToProfile(bank, profile.id)
+        assertFalse(vault.isAppLocked(bank))
+        ReinstallMemory.awaitNotesForTests()
+        installed.remove(bank)
+        ReinstallMemory.onUninstalled(context, bank)
+        vault.onPackageUninstalled(bank)
+        installed[bank] = setOf("aa11")
+        assertEquals(ReinstallMemory.Outcome.LOCKED_AGAIN, ReinstallMemory.onInstalled(context, bank))
+        assertTrue(bank in vault.profilesFlow.value.single { it.id == profile.id }.packages)
+    }
 }

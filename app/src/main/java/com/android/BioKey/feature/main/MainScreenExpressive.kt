@@ -15,12 +15,12 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyListLayoutInfo
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.layout.Arrangement
@@ -291,19 +291,27 @@ fun MainScreenExpressive(
     val twoPane = windowWidth >= TwoPaneMinWidth
     val homeFraction by animateFloatAsState(if (twoPane && showSettings) HomePaneFraction else 1f, label = "home_pane")
     var filter by rememberSaveable { mutableStateOf(FILTER_ALL) }
-    /** Where the search bar and chips are in the list: the page a chip opens rests on them ([choosePage]). */
-    var pinControlsAt by remember { mutableStateOf<Int?>(null) }
+    /** Where the search bar and chips are in the list. */
     val controlsIndex = remember { intArrayOf(-1) }
     /** The page shown chosen again: back to resting on the controls. */
     var repinRequests by remember { mutableIntStateOf(0) }
-    /** A page chosen by the owner (a chip, a profile just made): it opens resting on the controls. */
+    /**
+     * The page the list last showed. While it isn't [filter] yet (a page's first frames), the list
+     * is changing pages: it keeps its scroll, and rows don't animate from one page to the next.
+     */
+    var shownPage by remember { mutableStateOf(filter) }
+    val pageChanging = shownPage != filter
+    LaunchedEffect(filter) {
+        withFrameNanos { }
+        withFrameNanos { }
+        shownPage = filter
+    }
+    /** A page chosen by the owner (a chip, a profile just made). It keeps the list's scroll ([pageChanging]). */
     fun choosePage(id: String) {
-        val at = controlsIndex[0].takeIf { it >= 0 }
         if (id == filter) {
-            if (at != null) repinRequests++
+            if (controlsIndex[0] >= 0) repinRequests++
             return
         }
-        pinControlsAt = at
         filter = id
     }
     var searchQuery by rememberSaveable { mutableStateOf("") }
@@ -332,6 +340,9 @@ fun MainScreenExpressive(
     }
     val pageId = currentProfile?.id ?: PICK_ALL
     val picking = pickingIn == pageId
+    // The bar shown while picking, as tall as it is laid out (its buttons go under the count when a
+    // row hasn't room for both): the list leaves room for all of it.
+    var pickBarHeight by remember { mutableIntStateOf(0) }
     LaunchedEffect(pageId) { if (pickingIn != null && pickingIn != pageId) pickingIn = null }
     // An app's options close if it's uninstalled; not while the list is still loading (after
     // the process was restarted, say), or the sheet the user had open would be lost.
@@ -788,11 +799,29 @@ fun MainScreenExpressive(
             // line, edge to edge.
             val wrapChips = sidePad > 0.dp || (twoPane && showSettings)
             val sidePadPx = with(density) { sidePad.roundToPx() }
-            // A page chosen by its chip opens resting on the controls: search and chips at the top
-            // (pinned there), the profile's card or the apps straight under them, where the tap
-            // was looking. Any other way to a page (Back, a profile deleted) opens at the top.
-            val listState = key(filter) { rememberLazyListState(initialFirstVisibleItemIndex = pinControlsAt ?: 0) }
-            LaunchedEffect(filter) { pinControlsAt = null }
+            // A page chosen keeps the scroll the owner left. The header and cards above the controls
+            // are the same on every page, so while they show, the new page is at exactly the same
+            // place. Scrolled past them (the controls pinned at the top), the new page starts right
+            // under the controls. Each page has its own list state, so nothing of the last page's
+            // rows animates over the new one (they faded out across it with one shared state).
+            /** The list's scroll as last laid out: first item, its offset, and the window's height. */
+            val lastScroll = remember { intArrayOf(0, 0, 0) }
+            val listState = key(filter) {
+                val at = controlsIndex[0]
+                val pinnedAt = at >= 0 && lastScroll[0] >= at
+                rememberLazyListState(
+                    initialFirstVisibleItemIndex = if (pinnedAt) at else lastScroll[0],
+                    initialFirstVisibleItemScrollOffset = if (pinnedAt) 0 else lastScroll[1]
+                )
+            }
+            LaunchedEffect(listState) {
+                snapshotFlow { Triple(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, listState.layoutInfo.viewportSize.height) }
+                    .collect { (index, offset, height) ->
+                        lastScroll[0] = index
+                        lastScroll[1] = offset
+                        if (height > 0) lastScroll[2] = height
+                    }
+            }
             // The chips' own scroll, kept here (not in the pinned header, which the list may let go
             // of): the chip chosen is always scrolled into sight, a profile just made among them.
             val chipState = rememberLazyListState()
@@ -816,7 +845,11 @@ fun MainScreenExpressive(
                 derivedStateOf {
                     if (!pinned) return@derivedStateOf 0
                     val items = listState.layoutInfo.visibleItemsInfo
-                    val controls = items.firstOrNull { it.key == CONTROLS_KEY } ?: return@derivedStateOf statusBarTop
+                    // Not laid out yet (a page's first frame): pinned if the page starts at or past
+                    // them, else nothing to clear. Always taking the status bar's height here pushed
+                    // a new page's controls down by it for one frame, a jump at every switch.
+                    val controls = items.firstOrNull { it.key == CONTROLS_KEY }
+                        ?: return@derivedStateOf if (controlsIndex[0] >= 0 && listState.firstVisibleItemIndex >= controlsIndex[0]) statusBarTop else 0
                     // Where it would be if it didn't stick: just after the item before it.
                     val before = items.lastOrNull { it.index == controls.index - 1 }
                     val natural = before?.let { it.offset + it.size } ?: Int.MIN_VALUE
@@ -860,24 +893,15 @@ fun MainScreenExpressive(
             }
             // Room at the end of a short page, so it can still rest with the controls at the top
             // (a profile with a few apps, say): as much as the rows after the controls leave unfilled.
-            var endRoom by remember(filter) { mutableIntStateOf(0) }
+            var endRoom by remember { mutableIntStateOf(0) }
             LaunchedEffect(listState, pinned, statusBarTop) {
                 snapshotFlow { if (pinned) roomToPin(listState.layoutInfo, controlsInset) else 0 }
                     .collect { if (it != null) endRoom = it }
             }
-            // A page chosen to rest on the controls gets there once there's room to (its end room
-            // is only known once laid out), unless the owner has started scrolling it meanwhile.
-            val pinTarget = remember(listState) { pinControlsAt }
-            var pinPending by remember(listState) { mutableStateOf(pinTarget != null) }
-            LaunchedEffect(listState) {
-                listState.interactionSource.interactions.collect { if (it is DragInteraction.Start) pinPending = false }
-            }
-            LaunchedEffect(listState, endRoom, pinPending) {
-                val target = pinTarget ?: return@LaunchedEffect
-                if (pinPending && (listState.firstVisibleItemIndex != target || listState.firstVisibleItemScrollOffset != 0)) {
-                    listState.scrollToItem(target)
-                }
-            }
+            // A new page's own room is only known once it's laid out. Until then, a window's worth,
+            // so a short page can keep the scroll on its first frame (never pulled up, then pushed
+            // back). The room is empty page below the last row: trimming it after moves nothing.
+            val roomShown = if (pageChanging && pinned) maxOf(endRoom, lastScroll[2]) else endRoom
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
@@ -886,7 +910,9 @@ fun MainScreenExpressive(
                     end = sidePad,
                     // Room for the bar shown while apps are picked (its height, its margins and the
                     // navigation bar under it), so the last row can always be scrolled clear of it.
-                    bottom = if (picking) 112.dp + with(density) { WindowInsets.navigationBars.getBottom(this).toDp() } else 96.dp
+                    bottom = if (picking) {
+                        maxOf(112.dp, with(density) { pickBarHeight.toDp() } + 48.dp) + with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
+                    } else 96.dp
                 )
             ) {
                 item(key = "header") {
@@ -1094,13 +1120,16 @@ fun MainScreenExpressive(
                         }
                     }
                 }
-                if (pinned) item(key = END_ROOM_KEY) { Spacer(Modifier.height(with(density) { endRoom.toDp() })) }
+                if (pinned) item(key = END_ROOM_KEY) { Spacer(Modifier.height(with(density) { roomShown.toDp() })) }
             }
 
             // Once the header has scrolled away, cards and rows would pass under the status bar's
             // clock and icons: a band of the page's colour there, as behind the pinned search bar.
             val headerGone by remember(listState) { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
-            val statusBand by androidx.compose.animation.core.animateFloatAsState(if (headerGone) 1f else 0f, label = "statusBand")
+            // A new page starts with its own band; it doesn't fade out the last page's band over its header.
+            val statusBandAnim = remember(listState) { androidx.compose.animation.core.Animatable(if (headerGone) 1f else 0f) }
+            LaunchedEffect(statusBandAnim, headerGone) { statusBandAnim.animateTo(if (headerGone) 1f else 0f) }
+            val statusBand = statusBandAnim.value
             if (statusBand > 0f) {
                 val surface = MaterialTheme.colorScheme.surface
                 Spacer(
@@ -1132,22 +1161,28 @@ fun MainScreenExpressive(
                         .padding(horizontal = GroupInset, vertical = 12.dp)
                         .widthIn(max = HomeColumnWidth)
                         .fillMaxWidth()
+                        .onSizeChanged { pickBarHeight = it.height }
                 ) {
-                    Row(Modifier.padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    // On one row where there's room; otherwise the buttons go under the count, at the
+                    // end, rather than the count breaking a letter to a line (narrow phones, large text).
+                    PickBarLayout(Modifier.padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { pickingIn = null }) {
                             Icon(Icons.Default.Close, contentDescription = stringResource(R.string.home_pick_stop))
                         }
                         Text(
                             pluralStringResource(R.plurals.home_picked_count, pickedHere, pickedHere),
                             style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite }
+                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
                         )
+                    }
+                    // The two buttons wrap too, at the end, where even they don't fit on one line.
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End), itemVerticalAlignment = Alignment.CenterVertically) {
                         val all = pageApps.isNotEmpty() && pickedHere == pageApps.size
                         TextButton(onClick = {
                             picked.removeAll(pageApps)
                             if (!all) picked += pageApps
                         }) { Text(stringResource(if (all) R.string.home_pick_none else R.string.home_pick_all)) }
-                        Spacer(Modifier.width(4.dp))
                         if (profile != null) {
                             // Out of this profile, not unlocked: "Take out", as the record of it says.
                             val takeOut = stringResource(R.string.home_pick_remove_description, profile.name)
@@ -1168,6 +1203,7 @@ fun MainScreenExpressive(
                                 Text(stringResource(R.string.home_pick_switch_off))
                             }
                         }
+                    }
                     }
                 }
             }
@@ -1286,4 +1322,34 @@ internal object AutoSortPass {
      */
     fun regroup(lockedAtLoad: Set<String>?, newlyLocked: Set<String>): Set<String>? =
         if (newlyLocked.isEmpty()) lockedAtLoad else lockedAtLoad?.plus(newlyLocked)
+}
+
+/**
+ * The picking bar's two parts: the count (with Close) at the start and the buttons at the end, on
+ * one row when both fit at their natural widths; otherwise the buttons go on a line of their own
+ * under it, still at the end, so the count never breaks a letter to a line.
+ */
+@Composable
+private fun PickBarLayout(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    androidx.compose.ui.layout.Layout(content, modifier) { measurables, constraints ->
+        val (count, actions) = measurables
+        val width = constraints.maxWidth
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val oneRow = count.maxIntrinsicWidth(constraints.maxHeight) + actions.maxIntrinsicWidth(constraints.maxHeight) <= width
+        val actionsPlaced = actions.measure(loose)
+        if (oneRow) {
+            val countPlaced = count.measure(loose.copy(maxWidth = (width - actionsPlaced.width).coerceAtLeast(0)))
+            val height = maxOf(countPlaced.height, actionsPlaced.height)
+            layout(width, height) {
+                countPlaced.placeRelative(0, (height - countPlaced.height) / 2)
+                actionsPlaced.placeRelative(width - actionsPlaced.width, (height - actionsPlaced.height) / 2)
+            }
+        } else {
+            val countPlaced = count.measure(loose)
+            layout(width, countPlaced.height + actionsPlaced.height) {
+                countPlaced.placeRelative(0, 0)
+                actionsPlaced.placeRelative(width - actionsPlaced.width, countPlaced.height)
+            }
+        }
+    }
 }

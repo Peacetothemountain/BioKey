@@ -726,4 +726,25 @@ class ProtectionGapsTest {
         ProtectionGaps.recordOncePerProcess(context, off)
         assertEquals(2, recorded())
     }
+    @Test
+    fun aStateRecordNeverEndsBeforeItBegan() {
+        val seq = ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.BIOMETRICS_CHANGED)!!
+        // The trusted clock steps back a minute as it moves onto the network's time.
+        now -= 60_000L
+        ProtectionGaps.endEvent(context, seq)
+        val gap = gaps.single { it.seq == seq }
+        assertTrue("Ends at or after it began", gap.to >= gap.from)
+    }
+
+    @Test
+    fun theOrderOfRecordsCarriesOnPastACountLostAtAKill() {
+        val first = ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.BIOMETRICS_CHANGED)!!
+        // Killed before the shared count reached the disk (it's saved in the background).
+        context.getSharedPreferences("biokey_unlock_attempts", Context.MODE_PRIVATE).edit().putLong("seq", 0L).commit()
+        UnlockAttempts.resetForTests()
+        ProtectionGaps.resetForTests()
+        pass(1_000L)
+        val next = ProtectionGaps.recordEvent(context, ProtectionGaps.Kind.BIOMETRICS_REMOVED)!!
+        assertTrue("A new record never takes a number already used ($next after $first)", next > first)
+    }
 }

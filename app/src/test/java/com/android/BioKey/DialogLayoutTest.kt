@@ -132,7 +132,8 @@ class DialogLayoutTest {
     }
 
     @Test
-    @Config(qualifiers = "w411dp-h480dp")
+    // 320dp wide, the width a phone gives this dialog: see [aNewBackupsTwoFieldsShowTogetherAtTwiceTheFontWithTheKeyboardUp].
+    @Config(qualifiers = "w320dp-h480dp")
     fun atTwiceTheFontWithTheKeyboardUpTheFieldBeingTypedInIsWhollyInView() {
         RuntimeEnvironment.setFontScale(2f)
         showChange()
@@ -148,7 +149,8 @@ class DialogLayoutTest {
     }
 
     @Test
-    @Config(qualifiers = "w411dp-h915dp")
+    // 320dp wide, the width a phone gives this dialog: see [aNewBackupsTwoFieldsShowTogetherAtTwiceTheFontWithTheKeyboardUp].
+    @Config(qualifiers = "w320dp-h915dp")
     fun withRoomToSpareNothingScrolls() {
         showChange()
         shot("change_fs1_nokb")
@@ -217,7 +219,8 @@ class DialogLayoutTest {
      * wholly in view or wholly out of it, whichever field has focus.
      */
     @Test
-    @Config(qualifiers = "w411dp-h560dp")
+    // 320dp wide, the width a phone gives this dialog: see [aNewBackupsTwoFieldsShowTogetherAtTwiceTheFontWithTheKeyboardUp].
+    @Config(qualifiers = "w320dp-h560dp")
     fun aNewBackupsIconIsNeverCutWithTheKeyboardUp() {
         rule.setContent {
             BioKeyTheme {
@@ -251,7 +254,8 @@ class DialogLayoutTest {
     }
 
     @Test
-    @Config(qualifiers = "w411dp-h480dp")
+    // 320dp wide, the width a phone gives this dialog: see [aNewBackupsTwoFieldsShowTogetherAtTwiceTheFontWithTheKeyboardUp].
+    @Config(qualifiers = "w320dp-h480dp")
     fun aNewBackupsMismatchMessageIsWhollyInViewAtTwiceTheFont() {
         RuntimeEnvironment.setFontScale(2f)
         rule.setContent {
@@ -284,7 +288,11 @@ class DialogLayoutTest {
     }
 
     @Test
-    @Config(qualifiers = "w411dp-h480dp")
+    // 320dp wide: the width a phone gives this dialog (Android's preferred dialog width). On a wider
+    // window Robolectric measures a dialog that wraps its content at 320dp and at the full width in
+    // turn, and never settles; a phone (seen on a Pixel 9 emulator at 200% text: about two frames a
+    // second while idle, the cursor's) settles at 320dp.
+    @Config(qualifiers = "w320dp-h480dp")
     fun aNewBackupsTwoFieldsShowTogetherAtTwiceTheFontWithTheKeyboardUp() {
         RuntimeEnvironment.setFontScale(2f)
         rule.setContent {

@@ -21,7 +21,7 @@ object AppText {
         for (i in 0 until raw.length) {
             val c = raw[i]
             if (isBidiOrFormatControl(c)) continue
-            if (c.isWhitespace() || c.code < 0x20 || c == '\u007F') {
+            if (c.isWhitespace() || c == '\u2028' || c == '\u2029' || c.code < 0x20 || c == '\u007F') {
                 if (!prevSpace && out.length < maxLength) {
                     out.append(' ')
                     prevSpace = true
@@ -33,13 +33,15 @@ object AppText {
             prevSpace = false
         }
         if (out.isNotEmpty() && out[out.length - 1] == ' ') out.setLength(out.length - 1)
+        if (out.isNotEmpty() && out[out.length - 1].isHighSurrogate()) out.setLength(out.length - 1)
         return out.toString()
     }
 
     /** Cleans a single-line log message while keeping spaces intact and stripping tabs/newlines/bidi. */
     fun cleanLog(raw: String, maxLength: Int = MAX_LOG_LINE): String {
         val needsClean = raw.length > maxLength || raw.any {
-            it == '\n' || it == '\r' || it == '\t' || it.code < 0x20 || it == '\u007F' || isBidiOrFormatControl(it)
+            it == '\n' || it == '\r' || it == '\t' || it == '\u2028' || it == '\u2029' ||
+                it.code < 0x20 || it == '\u007F' || isBidiOrFormatControl(it)
         }
         if (!needsClean) return raw
         val out = StringBuilder(minOf(raw.length, maxLength))
@@ -48,17 +50,19 @@ object AppText {
             val c = raw[i]
             when {
                 isBidiOrFormatControl(c) -> Unit
-                c == '\n' || c == '\r' || c == '\t' -> out.append(' ')
+                c == '\n' || c == '\r' || c == '\t' || c == '\u2028' || c == '\u2029' -> out.append(' ')
                 c.code < 0x20 || c == '\u007F' -> Unit
                 else -> out.append(c)
             }
         }
+        if (out.isNotEmpty() && out[out.length - 1].isHighSurrogate()) out.setLength(out.length - 1)
         return out.toString()
     }
 
-    /** Unicode bidi isolate/override/mark characters and record-separator bytes. */
+    /** Unicode bidi isolate/override/mark characters, C1 controls, and record-separator bytes. */
     fun isBidiOrFormatControl(c: Char): Boolean = when (c) {
         '\u061C', '\u200E', '\u200F',
+        in '\u0080'..'\u009F',
         in '\u202A'..'\u202E',
         in '\u2066'..'\u2069',
         '\uFEFF', '\u001F' -> true

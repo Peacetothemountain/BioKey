@@ -577,4 +577,13 @@ class SystemAppLockTest {
             AlsoLockedByAndroid.clock = System::currentTimeMillis
         }
     }
+    @Test
+    fun namesWrappedInDirectionMarksOrSpacedDifferentlyAreTheSameNames() {
+        val words = SystemAppLockPrompt("This app is protected with app lock", "%1\$s and %2\$s are protected with app lock", title = "Verify it\u2019s you")
+        // Android's own words with a direction mark or a stray space are still its words.
+        assertTrue(words.namesOneApp(listOf("\u200EThis app is protected with app lock ")))
+        assertEquals(listOf("Notes"), words.namesIn(listOf("Verify it\u2019s you", "This app is protected with app lock", "Notes\u200E ")))
+        assertEquals(listOf("Notes", "Diary"), words.namesIn(listOf("\u2068Notes\u2069 and Diary are protected with app lock")))
+        assertTrue(words.isPromptWindow(" Verify it\u2019s you\u200F"))
+    }
 }

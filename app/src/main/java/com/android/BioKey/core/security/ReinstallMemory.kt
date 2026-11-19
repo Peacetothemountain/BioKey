@@ -90,9 +90,12 @@ object ReinstallMemory {
 
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    /** Registered with the vault (BioKeyApplication): apps locked, at load or newly, have their certificates noted. */
+    /**
+     * Registered with the vault (BioKeyApplication): apps with their lock switch on, at load or
+     * newly, have their certificates noted (in a profile that's off too, so a reinstall goes back to it).
+     */
     object VaultListener : SecurityVault.Listener {
-        override fun onLocked(context: Context, packages: Collection<String>) {
+        override fun onSelected(context: Context, packages: Collection<String>) {
             val app = context.applicationContext
             val list = packages.toList()
             worker.execute { runCatching { note(app, list) } }
@@ -217,6 +220,11 @@ object ReinstallMemory {
     /** The remembered packages, for tests. */
     @VisibleForTesting
     internal fun rememberedPackages(context: Context): List<String> = fresh(context, readRemembered(context)).map { it.pkg }
+
+    @VisibleForTesting
+    internal fun awaitNotesForTests() {
+        worker.submit {}.get()
+    }
 
     @VisibleForTesting
     internal fun resetForTests(context: Context) {

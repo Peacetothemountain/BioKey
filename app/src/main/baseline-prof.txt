@@ -50,8 +50,6 @@ HSPLcom/android/BioKey/ui/theme/BioKeyThemeKt;->animationsEnabled(Landroid/conte
 Lcom/android/BioKey/ui/theme/BioKeyThemeKt;
 
 # lock-all.
-HSPLcom/android/BioKey/feature/notification/**->**(**)**
-Lcom/android/BioKey/feature/notification/**;
 
 # BioKey's own lock, which MainActivity shows when BioKey opens.
 HSPLcom/android/BioKey/feature/main/MainActivity**->**(**)**

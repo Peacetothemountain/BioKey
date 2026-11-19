@@ -166,8 +166,9 @@ class ForegroundRulesTest {
         assertTrue(ForegroundRules.isLauncher(context, "com.example.nova", locked))
         // Locked by the user: covered like any app.
         assertFalse(ForegroundRules.isLauncher(context, "com.example.kidsmode", locked))
-        // Not locked: still a home screen (leaving to it is going Home).
-        assertTrue(ForegroundRules.isLauncher(context, "com.example.kidsmode") { false })
+        // Not locked, but not the home screen in use either: an app like any other. An app installed
+        // on the phone can say it is a home screen just to have its taps and windows read as Home's.
+        assertFalse(ForegroundRules.isLauncher(context, "com.example.kidsmode") { false })
         assertFalse(ForegroundRules.isLauncher(context, "com.example.game") { false })
     }
 

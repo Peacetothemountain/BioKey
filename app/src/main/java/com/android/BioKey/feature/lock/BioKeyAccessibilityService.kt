@@ -1057,7 +1057,7 @@ class BioKeyAccessibilityService : AccessibilityService() {
      * many banking apps' are) send no window events and can't be read, so their window can only
      * be told to be [pkg]'s from what just happened: a tap on [pkg], or its unlock. Takes [window]
      * as [pkg]'s if it is an app window in front that BioKey has never identified, can't read,
-     * and isn't BioKey's own. Returns whether it did.
+     * isn't titled as some other locked app, and isn't BioKey's own. Returns whether it did.
      */
     private fun attributeWindow(window: AccessibilityWindowInfo, pkg: String): Boolean {
         if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION || !(window.isActive || window.isFocused)) return false
@@ -1067,6 +1067,14 @@ class BioKeyAccessibilityService : AccessibilityService() {
             LockStateTracker.isRegularLockPending(pkg) || isOwnWindow(window)
         ) return false
         if (windowPackage(window) != null) return false
+        // Titled as another locked app: that app's window, not this one's (it's covered by its title).
+        val title = window.title?.toString()?.takeIf { it.isNotBlank() }
+        if (title != null && ::labels.isInitialized) {
+            val titledApp = labels.appTitled(title, vault.getLockedPackages())
+            if (titledApp != null && titledApp !in PasswordManager.aliasesOf(pkg) && !labels.isTitleOf(pkg, title, vault.getLockedPackages())) {
+                return false
+            }
+        }
         attributedWindows[window.id] = pkg
         foregroundPackage = pkg
         DiagnosticLog.log("A window that can't be read opened: taken to be $pkg")

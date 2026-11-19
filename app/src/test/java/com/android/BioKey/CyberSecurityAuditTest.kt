@@ -307,4 +307,15 @@ class CyberSecurityAuditTest {
     }
 
     private fun assertNotNull(value: Any?) = org.junit.Assert.assertNotNull(value)
+    @Test
+    fun c1ControlsLineSeparatorsAndAHalfSurrogateAreCleanedFromLabelsAndLogLines() {
+        // C1 controls (NEL, CSI...) say nothing in a name and some terminals act on them.
+        assertEquals("BankPAUSED", AppText.cleanLabel("Bank\u0085\u009BPAUSED"))
+        // Unicode's own line and paragraph separators break a log line as a newline does.
+        assertEquals("one two three", AppText.cleanLog("one\u2028two\u2029three"))
+        // Cut at the length limit inside an emoji: the half left over goes too.
+        val emoji = "\uD83D\uDE00"
+        assertEquals("ab", AppText.cleanLabel("ab$emoji", maxLength = 3))
+        assertEquals("ab", AppText.cleanLog("ab$emoji", maxLength = 3))
+    }
 }

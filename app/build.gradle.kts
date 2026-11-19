@@ -185,6 +185,8 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // kotlinx-coroutines' debug-probe agent: it does nothing on Android.
+            excludes += "/DebugProbesKt.bin"
         }
         jniLibs {
             useLegacyPackaging = false

@@ -8,6 +8,7 @@ import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.core.app.ApplicationProvider
 import com.android.BioKey.core.data.AppCategory
@@ -62,6 +63,10 @@ class ProfilePickingTest {
         ProtectionEngine.overrideModeForTests = ProtectionEngine.Mode.ACCESSIBILITY
         rule.setContent { BioKeyTheme { MainScreenExpressive(mode = ProtectionEngine.Mode.ACCESSIBILITY, onPauseRequested = {}) } }
         rule.onNodeWithContentDescription("Finance profile, 3 apps").performClick()
+        rule.waitForIdle()
+        // The page opens at its top: down to its apps, the search bar and chips pinned above them.
+        rule.onNode(androidx.compose.ui.test.SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsProperties.VerticalScrollAxisRange))
+            .performScrollToKey(com.android.BioKey.feature.main.CONTROLS_KEY)
         rule.waitForIdle()
     }
 

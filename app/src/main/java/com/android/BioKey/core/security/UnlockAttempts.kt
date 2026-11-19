@@ -179,6 +179,9 @@ object UnlockAttempts {
             _chosen.value = p.getBoolean(KEY_CHOSEN, false)
             _seen.value = p.getLong(KEY_SEEN_SEQ, 0L)
             val kept = runCatching { parse(p.getString(KEY_ATTEMPTS, null)) }.getOrDefault(emptyList())
+            // The count is saved in the background: never behind a record on the disk (see ensureSeqAtLeast).
+            val maxStoredSeq = kept.maxOfOrNull { it.seq } ?: 0L
+            if (maxStoredSeq > p.getLong(KEY_SEQ, 0L)) p.edit { putLong(KEY_SEQ, maxStoredSeq) }
             prefs = p
             // What's seen and past its time goes from the disk too, not only from what's shown.
             val fresh = kept.fresh(p, bootCount(context))
@@ -222,6 +225,15 @@ object UnlockAttempts {
             val next = p.getLong(KEY_SEQ, 0L) + 1
             p.edit { putLong(KEY_SEQ, next) }
             return next
+        }
+    }
+
+    /** [ProtectionGaps]' records share this count: as it loads, the count is brought up to its newest. */
+    internal fun ensureSeqAtLeast(context: Context, minSeq: Long) {
+        if (minSeq <= 0L) return
+        val p = load(context) ?: return
+        synchronized(lock) {
+            if (minSeq > p.getLong(KEY_SEQ, 0L)) p.edit { putLong(KEY_SEQ, minSeq) }
         }
     }
 

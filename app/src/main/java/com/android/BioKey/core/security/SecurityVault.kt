@@ -53,6 +53,8 @@ class SecurityVault private constructor(private val context: Context) {
     interface Listener {
         /** These apps are locked (all of them as the vault loads, or newly): worth having ready. */
         fun onLocked(context: Context, packages: Collection<String>) {}
+        /** These apps have their lock switch on (all of them as the vault loads, or newly), their profile on or off. */
+        fun onSelected(context: Context, packages: Collection<String>) {}
         /** Protection paused: nothing should stay covered. */
         fun onPaused() {}
     }
@@ -221,7 +223,10 @@ class SecurityVault private constructor(private val context: Context) {
     init {
         load()
         LockStateTracker.timeoutModeOf = ::getTimeoutMode
-        listeners.forEach { it.onLocked(context, getLockedPackages()) }
+        listeners.forEach {
+            it.onLocked(context, getLockedPackages())
+            it.onSelected(context, _selectedAppsFlow.value)
+        }
     }
 
     // ---------------------------------------------------------------------------------------
@@ -270,11 +275,14 @@ class SecurityVault private constructor(private val context: Context) {
      * preferences) is saved with it. Must not be called holding [lock]: the reactions run after it
      * is released, as they call into the engine and home and would block every other write.
      */
-    private fun mutate(change: (selected: MutableSet<String>, profiles: MutableList<SecurityProfile>) -> Unit) {
+    private fun mutate(change: (selected: MutableSet<String>, profiles: MutableList<SecurityProfile>) -> Unit): Future<*> {
         val newlyLocked: Set<String>
+        val newlySelected: Set<String>
+        val persisted: Future<*>
         synchronized(lock) {
             val before = _lockedAppsFlow.value
-            val selected = _selectedAppsFlow.value.toMutableSet()
+            val beforeSelected = _selectedAppsFlow.value
+            val selected = beforeSelected.toMutableSet()
             val profiles = _profilesFlow.value.toMutableList()
             change(selected, profiles)
 
@@ -282,6 +290,7 @@ class SecurityVault private constructor(private val context: Context) {
             val clean = PasswordManager.expand(selected)
             val locked = effectiveLocks(clean, cleanProfiles)
             newlyLocked = locked - before
+            newlySelected = clean - beforeSelected
 
             // An old session must not outlive a lock switched back on: end it before anything
             // can see the app locked.
@@ -290,12 +299,14 @@ class SecurityVault private constructor(private val context: Context) {
             _selectedAppsFlow.value = clean
             _lockedAppsFlow.value = locked
             rebuildProfileTimeouts()
-            persist()
+            persisted = persist()
         }
         if (newlyLocked.isNotEmpty()) {
             LockStateTracker.notifyLocked(newlyLocked)
             listeners.forEach { it.onLocked(context, newlyLocked) }
         }
+        if (newlySelected.isNotEmpty()) listeners.forEach { it.onSelected(context, newlySelected) }
+        return persisted
     }
 
     private fun MutableList<SecurityProfile>.removePackages(targets: Set<String>) {
@@ -481,7 +492,7 @@ class SecurityVault private constructor(private val context: Context) {
         val selected = validPackages(strings("selected"))
         val excluded = PasswordManager.expand(validPackages(strings("autoSortExcluded")))
         val selfProtection = state.optBoolean("selfProtection", false) && selfProtectionAvailable
-        mutate { sel, profs ->
+        val saved = mutate { sel, profs ->
             sel.clear()
             sel += selected
             profs.clear()
@@ -508,6 +519,8 @@ class SecurityVault private constructor(private val context: Context) {
         if (state.has("diagnosticLog") && state.optBoolean("diagnosticLog") != DiagnosticLog.isEnabled()) {
             DiagnosticLog.setEnabled(context, state.optBoolean("diagnosticLog"))
         }
+        // "Restored" only once it's on disk (a restore already runs off the main thread).
+        runCatching { saved.get() }
     }
 
     // ---------------------------------------------------------------------------------------

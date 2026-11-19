@@ -295,4 +295,10 @@ class VaultBackupTest {
         assertFalse(vault.isAccessibilitySelfProtectionEnabled())
         assertFalse(LockStateTracker.isSelfProtectionGranted())
     }
+    @Test
+    fun aBackupIsNeverSealedUnderAPasswordShorterThanTheScreensAllow() {
+        assertThrows(IllegalArgumentException::class.java) {
+            VaultBackup.seal(freshVault().exportState(), "x".repeat(VaultBackup.MIN_PASSWORD_LENGTH - 1).toCharArray())
+        }
+    }
 }

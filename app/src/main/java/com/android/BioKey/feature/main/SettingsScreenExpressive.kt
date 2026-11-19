@@ -256,7 +256,8 @@ fun SettingsScreenExpressive(
     val heldUntil = remember(gapsForHold, holdCheck) { UnlockAttempts.heldUntil(context) }
     LaunchedEffect(heldUntil) {
         val until = heldUntil ?: return@LaunchedEffect
-        kotlinx.coroutines.delay((until - System.currentTimeMillis()).coerceAtLeast(0L) + 500L)
+        // heldUntil is on the trusted clock: measured on it, so a phone clock ahead of it doesn't wake this early.
+        kotlinx.coroutines.delay((until - com.android.BioKey.core.security.TrustedClock.now()).coerceAtLeast(0L) + 500L)
         holdCheck++
     }
 

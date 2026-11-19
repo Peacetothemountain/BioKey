@@ -357,17 +357,23 @@ object ProtectionGaps {
     fun load(context: Context): SharedPreferences? {
         prefs?.let { return it }
         if (context.getSystemService(UserManager::class.java)?.isUserUnlocked == false) return null
-        synchronized(lock) {
+        var maxSeq = 0L
+        val loaded = synchronized(lock) {
             prefs?.let { return it }
             val p = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val kept = runCatching { parse(p.getString(KEY_GAPS, null)) }.getOrDefault(emptyList())
+            maxSeq = kept.maxOfOrNull { it.seq } ?: 0L
             prefs = p
             _cleared.value = cleared(p)
             // What's seen and past its time goes from the disk too, not only from what's shown.
             val fresh = kept.fresh(context)
             if (fresh != kept) save(p, fresh) else _gaps.value = kept
-            return p
+            p
         }
+        // The count is saved in the background: killed before it was, the next record would take a
+        // number already used (and could count as seen). Never behind a record on the disk.
+        if (maxSeq > 0L) UnlockAttempts.ensureSeqAtLeast(context, maxSeq)
+        return loaded
     }
 
     /** The hooks above as they are outside tests ([restoreHooksForTests]): taken as BioKey starts, so they are said once. */
@@ -474,7 +480,8 @@ object ProtectionGaps {
         synchronized(lock) {
             val list = _gaps.value
             if (list.none { it.seq == seq }) return
-            save(p, list.map { if (it.seq == seq) it.copy(to = now).stamped(context) else it })
+            // Never before it began (the clock can step back as it moves onto the network's time).
+            save(p, list.map { if (it.seq == seq) it.copy(to = maxOf(it.from, now)).stamped(context) else it })
         }
     }
 

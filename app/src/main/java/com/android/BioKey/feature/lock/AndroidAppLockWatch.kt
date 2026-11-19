@@ -299,19 +299,23 @@ internal class AndroidAppLockWatch(
 
     private fun readLaunchableNames(): Map<String, List<String>> = runCatching {
         val found = HashMap<String, MutableSet<String>>()
+        // Cleaned as the prompt's words are (SystemAppLockPrompt): a name wrapped in direction marks
+        // or spaced out differently is the same name, so two apps sharing it are both seen.
+        fun record(raw: CharSequence?, entry: String) {
+            val clean = com.android.BioKey.core.data.AppText.cleanLabel(raw, 256)
+            if (clean.isNotEmpty()) found.getOrPut(clean) { HashSet() } += entry
+        }
         val pm = context.packageManager
         val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         for (pkg in pm.queryIntentActivities(launcher, 0).mapNotNullTo(HashSet()) { it.activityInfo?.packageName }) {
-            val label = runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }.getOrNull() ?: continue
-            found.getOrPut(label) { HashSet() } += pkg
+            record(runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)) }.getOrNull(), pkg)
         }
         val me = Process.myUserHandle()
         val apps = context.getSystemService(LauncherApps::class.java)
         for (user in context.getSystemService(UserManager::class.java)?.userProfiles.orEmpty()) {
             if (user == me) continue
             for (activity in runCatching { apps?.getActivityList(null, user) }.getOrNull().orEmpty()) {
-                val label = runCatching { pm.getApplicationLabel(activity.applicationInfo).toString() }.getOrNull() ?: continue
-                found.getOrPut(label) { HashSet() } += "${activity.componentName.packageName}@${user.hashCode()}"
+                record(runCatching { pm.getApplicationLabel(activity.applicationInfo) }.getOrNull(), "${activity.componentName.packageName}@${user.hashCode()}")
             }
         }
         found.mapValues { it.value.toList() }
